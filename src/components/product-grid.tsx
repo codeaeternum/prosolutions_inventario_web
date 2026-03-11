@@ -57,6 +57,7 @@ export function ProductGrid({ products, isLoggedIn, isApproved, customerType }: 
                 src={product.images[0]}
                 alt={product.name}
                 fill
+                sizes="(max-width: 1024px) 50vw, 33vw"
                 className="object-cover group-hover:scale-105 transition-transform"
               />
             ) : (
@@ -102,7 +103,7 @@ export function ProductGrid({ products, isLoggedIn, isApproved, customerType }: 
               isLoggedIn && isApproved ? (
                 <div className="text-base font-bold text-primary">
                   {formatPrice(
-                    customerType === "WHOLESALE"
+                    customerType === "STORE"
                       ? product.wholesalePrice
                       : product.retailPrice
                   )}
@@ -116,11 +117,11 @@ export function ProductGrid({ products, isLoggedIn, isApproved, customerType }: 
             ) : (
               <div className="text-base font-bold text-primary">
                 {formatPrice(
-                  isLoggedIn && isApproved && customerType === "WHOLESALE"
+                  isLoggedIn && isApproved && customerType === "STORE"
                     ? product.wholesalePrice
                     : product.retailPrice
                 )}
-                {isLoggedIn && isApproved && customerType === "WHOLESALE" && (
+                {isLoggedIn && isApproved && customerType === "STORE" && (
                   <span className="text-[10px] font-normal text-cyan-600 ml-1">
                     mayoreo
                   </span>

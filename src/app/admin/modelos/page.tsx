@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Layers } from "lucide-react"
 
 interface Brand {
@@ -30,6 +40,8 @@ export default function ModelsPage() {
   const [formData, setFormData] = useState({ name: "", brandId: "" })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
 
   const fetchData = async () => {
     try {
@@ -83,12 +95,14 @@ export default function ModelsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar este modelo?")) return
-
+    setDeleteDialogOpen(false)
+    setDeleteTargetId(null)
     try {
       const res = await fetch(`/api/models/${id}`, { method: "DELETE" })
       if (res.ok) {
         fetchData()
+      } else {
+        setError("Error al eliminar")
       }
     } catch {
       setError("Error al eliminar")
@@ -212,7 +226,10 @@ export default function ModelsPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDelete(model.id)}
+                      onClick={() => {
+                        setDeleteTargetId(model.id)
+                        setDeleteDialogOpen(true)
+                      }}
                       disabled={model._count.products > 0}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -240,6 +257,26 @@ export default function ModelsPage() {
           </Button>
         </div>
       )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar este modelo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Si el modelo tiene productos asociados no podrás eliminarlo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => deleteTargetId && void handleDelete(deleteTargetId)}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

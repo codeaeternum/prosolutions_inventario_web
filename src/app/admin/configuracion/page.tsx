@@ -1,11 +1,33 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Save, RefreshCw, DollarSign, Clock, Percent, CheckCircle } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import {
+  Save,
+  RefreshCw,
+  DollarSign,
+  Clock,
+  Percent,
+  CheckCircle,
+  RotateCcw,
+  AlertCircle,
+  Settings2,
+} from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+
+const DEFAULTS = {
+  tempReservationMinutes: 30,
+  depositPercentage: 50,
+  depositReservationHours: 48,
+  pendingVerificationHours: 24,
+  exchangeRate: 17.5,
+  bankTransferInfo: "BBVA\nProSolutions SA\n0123456789",
+  bankCashInfo: "OXXO\nJuan Pérez\n4152 3133 4444 5555",
+}
 
 interface Settings {
   tempReservationMinutes: number
@@ -13,33 +35,64 @@ interface Settings {
   depositReservationHours: number
   pendingVerificationHours: number
   exchangeRate: number
+  bankTransferInfo?: string
+  bankCashInfo?: string
+  updatedAt?: string
+}
+
+function formatDate(iso?: string) {
+  if (!iso) return null
+  try {
+    return new Date(iso).toLocaleString("es-MX", {
+      dateStyle: "short",
+      timeStyle: "short",
+    })
+  } catch {
+    return null
+  }
 }
 
 export default function ConfiguracionPage() {
-  const [settings, setSettings] = useState<Settings>({
-    tempReservationMinutes: 30,
-    depositPercentage: 50,
-    depositReservationHours: 48,
-    pendingVerificationHours: 24,
-    exchangeRate: 17.50,
-  })
+  const [settings, setSettings] = useState<Settings>(DEFAULTS)
+  const [initialSettings, setInitialSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [fetchError, setFetchError] = useState(false)
+  const isFirstLoad = useRef(true)
 
   useEffect(() => {
     fetchSettings()
   }, [])
 
   async function fetchSettings() {
+    setLoading(true)
+    setFetchError(false)
     try {
       const res = await fetch("/api/settings")
       if (res.ok) {
         const data = await res.json()
-        setSettings(data)
+        const next: Settings = {
+          tempReservationMinutes: data.tempReservationMinutes ?? DEFAULTS.tempReservationMinutes,
+          depositPercentage: data.depositPercentage ?? DEFAULTS.depositPercentage,
+          depositReservationHours: data.depositReservationHours ?? DEFAULTS.depositReservationHours,
+          pendingVerificationHours: data.pendingVerificationHours ?? DEFAULTS.pendingVerificationHours,
+          exchangeRate: Number(data.exchangeRate) ?? DEFAULTS.exchangeRate,
+          bankTransferInfo: data.bankTransferInfo ?? DEFAULTS.bankTransferInfo,
+          bankCashInfo: data.bankCashInfo ?? DEFAULTS.bankCashInfo,
+          updatedAt: data.updatedAt,
+        }
+        setSettings(next)
+        if (isFirstLoad.current) {
+          setInitialSettings(next)
+          isFirstLoad.current = false
+        }
+      } else {
+        setFetchError(true)
       }
     } catch (error) {
       console.error("Error fetching settings:", error)
+      setFetchError(true)
     } finally {
       setLoading(false)
     }
@@ -48,7 +101,6 @@ export default function ConfiguracionPage() {
   async function handleSave() {
     setSaving(true)
     setSaved(false)
-
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -57,11 +109,18 @@ export default function ConfiguracionPage() {
       })
 
       if (res.ok) {
+        const data = await res.json()
+        setSettings((prev) => ({ ...prev, updatedAt: data.updatedAt }))
+        setInitialSettings((prev) => (prev ? { ...prev, ...settings, updatedAt: data.updatedAt } : null))
         setSaved(true)
+        toast.success("Configuración guardada correctamente")
         setTimeout(() => setSaved(false), 3000)
+      } else {
+        toast.error("No se pudo guardar la configuración")
       }
     } catch (error) {
       console.error("Error saving settings:", error)
+      toast.error("Error de conexión")
     } finally {
       setSaving(false)
     }
@@ -72,209 +131,283 @@ export default function ConfiguracionPage() {
     setSettings((prev) => ({ ...prev, [field]: numValue }))
   }
 
+  function handleResetDefaults() {
+    setSettings(DEFAULTS)
+    toast.info("Valores restablecidos. Pulsa «Guardar» para aplicarlos.")
+  }
+
+  const hasChanges =
+    initialSettings &&
+    (settings.tempReservationMinutes !== initialSettings.tempReservationMinutes ||
+      settings.depositPercentage !== initialSettings.depositPercentage ||
+      settings.depositReservationHours !== initialSettings.depositReservationHours ||
+      settings.pendingVerificationHours !== initialSettings.pendingVerificationHours ||
+      settings.exchangeRate !== initialSettings.exchangeRate ||
+      settings.bankTransferInfo !== initialSettings.bankTransferInfo ||
+      settings.bankCashInfo !== initialSettings.bankCashInfo)
+
+  const lastUpdated = formatDate(settings.updatedAt)
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Cargando configuración…</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8">
+      {/* Cabecera */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Configuración</h1>
-          <p className="text-muted-foreground">
-            Ajusta los parámetros del sistema
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <Settings2 className="h-7 w-7" />
+            Configuración
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Ajusta reservas, tipo de cambio y tiempos del sistema
           </p>
-        </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-          ) : saved ? (
-            <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
-          ) : (
-            <Save className="h-4 w-4 mr-2" />
+          {lastUpdated && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Última actualización: {lastUpdated}
+            </p>
           )}
-          {saved ? "Guardado" : "Guardar cambios"}
-        </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={fetchSettings} disabled={loading}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Recargar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleResetDefaults}
+            disabled={saving}
+          >
+            <RotateCcw className="h-4 w-4 mr-2" />
+            Valores por defecto
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving || !hasChanges}
+          >
+            {saving ? (
+              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+            ) : saved ? (
+              <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
+            ) : (
+              <Save className="h-4 w-4 mr-2" />
+            )}
+            {saved ? "Guardado" : "Guardar cambios"}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Configuración de Moneda */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Moneda
-            </CardTitle>
-            <CardDescription>
-              Configura el tipo de cambio para mostrar precios en dólares
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="exchangeRate">Tipo de cambio (MXN → USD)</Label>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">$1 USD =</span>
-                <Input
-                  id="exchangeRate"
-                  type="number"
-                  step="0.01"
-                  min="1"
-                  value={settings.exchangeRate}
-                  onChange={(e) => handleChange("exchangeRate", e.target.value)}
-                  className="w-28"
-                />
-                <span className="text-muted-foreground">MXN</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Los precios se almacenan en MXN y se convierten usando este tipo de cambio
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      {fetchError && (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <span>No se pudo cargar la configuración. Revisa la conexión y pulsa «Recargar».</span>
+        </div>
+      )}
 
-        {/* Configuración de Reservas Temporales */}
-        <Card>
-          <CardHeader>
+      {/* Bloque: Reservas */}
+      <Card>
+        <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
-              Reservas Temporales
+              Tiempos y Plazos
             </CardTitle>
             <CardDescription>
-              Reservas sin pago previo
+              Tiempos para reservas temporales y con depósito. El tipo de cambio (USD) ya no se usa públicamente, todo es en MXN.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="tempMinutes">Duración de reserva</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="tempMinutes"
-                  type="number"
-                  min="5"
-                  value={settings.tempReservationMinutes}
-                  onChange={(e) => handleChange("tempReservationMinutes", e.target.value)}
-                  className="w-28"
-                />
-                <span className="text-muted-foreground">minutos</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Tiempo que el cliente tiene para pasar a recoger
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Configuración de Depósito */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Percent className="h-5 w-5" />
-              Reservas con Depósito
-            </CardTitle>
-            <CardDescription>
-              Reservas que requieren anticipo
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="depositPercent">Porcentaje de anticipo</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="depositPercent"
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={settings.depositPercentage}
-                  onChange={(e) => handleChange("depositPercentage", e.target.value)}
-                  className="w-28"
-                />
-                <span className="text-muted-foreground">%</span>
+          <CardContent className="space-y-8">
+          <div>
+            <h4 className="text-sm font-medium mb-3">Reserva temporal (sin pago previo)</h4>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="tempMinutes">Duración</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="tempMinutes"
+                    type="number"
+                    min="5"
+                    max="1440"
+                    value={settings.tempReservationMinutes}
+                    onChange={(e) => handleChange("tempReservationMinutes", e.target.value)}
+                    className="w-24"
+                  />
+                  <span className="text-muted-foreground text-sm">minutos</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Tiempo que tiene el cliente para recoger
+                </p>
               </div>
             </div>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="depositHours">Tiempo para recoger</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="depositHours"
-                  type="number"
-                  min="1"
-                  value={settings.depositReservationHours}
-                  onChange={(e) => handleChange("depositReservationHours", e.target.value)}
-                  className="w-28"
-                />
-                <span className="text-muted-foreground">horas</span>
+          <div className="border-t pt-6">
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <Percent className="h-4 w-4" />
+              Reserva con depósito
+            </h4>
+            <div className="grid gap-6 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="depositPercent">Porcentaje de anticipo</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="depositPercent"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={settings.depositPercentage}
+                    onChange={(e) => handleChange("depositPercentage", e.target.value)}
+                    className="w-24"
+                  />
+                  <span className="text-muted-foreground text-sm">%</span>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Después de verificar el depósito
-              </p>
+              <div className="space-y-2">
+                <Label htmlFor="depositHours">Horas para recoger (tras verificar depósito)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="depositHours"
+                    type="number"
+                    min="1"
+                    max="720"
+                    value={settings.depositReservationHours}
+                    onChange={(e) => handleChange("depositReservationHours", e.target.value)}
+                    className="w-24"
+                  />
+                  <span className="text-muted-foreground text-sm">horas</span>
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* Configuración de Verificación */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5" />
-              Verificación
-            </CardTitle>
-            <CardDescription>
-              Tiempos para verificar depósitos
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <div className="border-t pt-6">
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <CheckCircle className="h-4 w-4" />
+              Verificación de depósito
+            </h4>
             <div className="space-y-2">
-              <Label htmlFor="verifyHours">Tiempo máximo para verificar</Label>
+              <Label htmlFor="verifyHours">Plazo máximo para que un admin verifique el depósito</Label>
               <div className="flex items-center gap-2">
                 <Input
                   id="verifyHours"
                   type="number"
                   min="1"
+                  max="168"
                   value={settings.pendingVerificationHours}
                   onChange={(e) => handleChange("pendingVerificationHours", e.target.value)}
-                  className="w-28"
+                  className="w-24"
                 />
-                <span className="text-muted-foreground">horas</span>
+                <span className="text-muted-foreground text-sm">horas</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Si no se verifica, la reserva expira automáticamente
+                Si no se verifica en este tiempo, la reserva puede expirar
               </p>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Resumen */}
+      {/* Bloque: Datos Financieros e Impuestos */}
       <Card>
         <CardHeader>
-          <CardTitle>Resumen de Configuración</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <DollarSign className="h-5 w-5" />
+            Finanzas y Tipo de Cambio
+          </CardTitle>
+          <CardDescription>
+            Ajustes generales de moneda y datos para transferencias/depósitos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="exchangeRate">Tipo de Cambio (MXN por USD)</Label>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">$</span>
+              <Input
+                id="exchangeRate"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={settings.exchangeRate}
+                onChange={(e) => handleChange("exchangeRate", e.target.value)}
+                className="w-32 font-bold text-lg"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Se usa como referencia si importas productos en dólares.
+            </p>
+          </div>
+          
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-medium mb-3">Datos para Pagos (Web y Bot)</h4>
+            
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="bankTransferInfo">Transferencia Bancaria (SPEI)</Label>
+                <Textarea
+                  id="bankTransferInfo"
+                  value={settings.bankTransferInfo || ""}
+                  onChange={(e) => setSettings(prev => ({ ...prev, bankTransferInfo: e.target.value }))}
+                  placeholder="Ej:\nBanco: BBVA\nTitular: ProSolutions SA\nCuenta: 0123456789"
+                  className="resize-none h-24"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Escribe los datos en líneas separadas (Banco, Titular, Cuenta/CLABE).
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bankCashInfo">Depósito en Efectivo</Label>
+                <Textarea
+                  id="bankCashInfo"
+                  value={settings.bankCashInfo || ""}
+                  onChange={(e) => setSettings(prev => ({ ...prev, bankCashInfo: e.target.value }))}
+                  placeholder="Ej:\nTienda: OXXO / Spin\nTitular: Juan Pérez\nTarjeta: 4152 3133 4444 5555"
+                  className="resize-none h-24"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Escribe los datos en líneas separadas para pagos físicos.
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Resumen */}
+      <Card className="bg-muted/40">
+        <CardHeader>
+          <CardTitle>Resumen</CardTitle>
+          <CardDescription>Valores actuales que se aplicarán al guardar</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <p className="text-2xl font-bold">${settings.exchangeRate.toFixed(2)}</p>
-              <p className="text-sm text-muted-foreground">MXN por USD</p>
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="rounded-lg border bg-background p-4 text-center">
+              <p className="text-2xl font-bold tabular-nums">${settings.exchangeRate.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground">MXN por USD</p>
             </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <p className="text-2xl font-bold">{settings.tempReservationMinutes}</p>
-              <p className="text-sm text-muted-foreground">min reserva temp.</p>
+            <div className="rounded-lg border bg-background p-4 text-center">
+              <p className="text-2xl font-bold tabular-nums">{settings.tempReservationMinutes}</p>
+              <p className="text-xs text-muted-foreground">min. reserva temp.</p>
             </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <p className="text-2xl font-bold">{settings.depositPercentage}%</p>
-              <p className="text-sm text-muted-foreground">anticipo</p>
+            <div className="rounded-lg border bg-background p-4 text-center">
+              <p className="text-2xl font-bold tabular-nums">{settings.depositPercentage}%</p>
+              <p className="text-xs text-muted-foreground">anticipo</p>
             </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <p className="text-2xl font-bold">{settings.depositReservationHours}h</p>
-              <p className="text-sm text-muted-foreground">para recoger</p>
+            <div className="rounded-lg border bg-background p-4 text-center">
+              <p className="text-2xl font-bold tabular-nums">{settings.depositReservationHours}h</p>
+              <p className="text-xs text-muted-foreground">para recoger</p>
             </div>
-            <div className="text-center p-4 bg-muted rounded-lg">
-              <p className="text-2xl font-bold">{settings.pendingVerificationHours}h</p>
-              <p className="text-sm text-muted-foreground">para verificar</p>
+            <div className="rounded-lg border bg-background p-4 text-center">
+              <p className="text-2xl font-bold tabular-nums">{settings.pendingVerificationHours}h</p>
+              <p className="text-xs text-muted-foreground">para verificar</p>
             </div>
           </div>
         </CardContent>

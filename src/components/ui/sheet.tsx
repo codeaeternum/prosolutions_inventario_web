@@ -106,12 +106,13 @@ const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
                     onClick={() => setOpen(false)}
                 />
 
-                {/* Content */}
+                {/* Content: scroll interno en móvil cuando el contenido es largo */}
                 <div
                     ref={ref}
                     className={cn(
-                        "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 animate-in",
+                        "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 animate-in overflow-y-auto max-h-[90dvh]",
                         sideClasses[side],
+                        (side === "bottom" || side === "top") && "touch-pan-y",
                         className
                     )}
                     {...props}

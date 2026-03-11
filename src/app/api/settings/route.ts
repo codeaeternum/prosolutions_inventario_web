@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { DEFAULT_SETTINGS as DEFAULTS } from "@/lib/settings"
+
+const DEFAULT_SETTINGS = {
+  id: "default",
+  ...DEFAULTS,
+  updatedAt: new Date().toISOString(),
+}
 
 // GET - Obtener configuración
 export async function GET() {
@@ -14,17 +21,35 @@ export async function GET() {
       settings = await prisma.settings.create({
         data: {
           id: "default",
-          tempReservationMinutes: 30,
-          depositPercentage: 50,
-          depositReservationHours: 48,
-          pendingVerificationHours: 24,
-          exchangeRate: 17.50,
+          tempReservationMinutes: DEFAULTS.tempReservationMinutes,
+          depositPercentage: DEFAULTS.depositPercentage,
+          depositReservationHours: DEFAULTS.depositReservationHours,
+          pendingVerificationHours: DEFAULTS.pendingVerificationHours,
+          exchangeRate: DEFAULTS.exchangeRate,
         },
       })
     }
 
-    return NextResponse.json(settings)
-  } catch (error) {
+    const bankTransferInfoSetting = await prisma.systemSettings.findUnique({
+      where: { key: "bank_transfer_info" }
+    })
+    
+    const bankCashInfoSetting = await prisma.systemSettings.findUnique({
+      where: { key: "bank_cash_info" }
+    })
+
+    return NextResponse.json({
+      ...settings,
+      bankTransferInfo: bankTransferInfoSetting?.value || DEFAULTS.bankTransferInfo,
+      bankCashInfo: bankCashInfoSetting?.value || DEFAULTS.bankCashInfo
+    })
+  } catch (error: unknown) {
+    // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
+    const isPrisma = error && typeof error === "object" && "code" in error
+    if (isPrisma && (error as { code: string }).code === "P2021") {
+      console.warn("[settings] Tabla Settings no existe. Ejecuta: npx prisma db push")
+      return NextResponse.json(DEFAULT_SETTINGS)
+    }
     console.error("Error fetching settings:", error)
     return NextResponse.json(
       { error: "Error al obtener configuración" },
@@ -36,15 +61,8 @@ export async function GET() {
 // PATCH - Actualizar configuración (solo admin)
 export async function PATCH(req: Request) {
   try {
-    const session = await auth()
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
-
-    if (session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 403 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
     const body = await req.json()
     const {
@@ -53,6 +71,8 @@ export async function PATCH(req: Request) {
       depositReservationHours,
       pendingVerificationHours,
       exchangeRate,
+      bankTransferInfo,
+      bankCashInfo,
     } = body
 
     const settings = await prisma.settings.upsert({
@@ -74,7 +94,23 @@ export async function PATCH(req: Request) {
       },
     })
 
-    return NextResponse.json(settings)
+    if (bankTransferInfo !== undefined) {
+      await prisma.systemSettings.upsert({
+        where: { key: "bank_transfer_info" },
+        create: { key: "bank_transfer_info", value: bankTransferInfo ?? DEFAULTS.bankTransferInfo },
+        update: { value: bankTransferInfo ?? DEFAULTS.bankTransferInfo },
+      })
+    }
+
+    if (bankCashInfo !== undefined) {
+      await prisma.systemSettings.upsert({
+        where: { key: "bank_cash_info" },
+        create: { key: "bank_cash_info", value: bankCashInfo ?? DEFAULTS.bankCashInfo },
+        update: { value: bankCashInfo ?? DEFAULTS.bankCashInfo },
+      })
+    }
+
+    return NextResponse.json({ ...settings, bankTransferInfo, bankCashInfo })
   } catch (error) {
     console.error("Error updating settings:", error)
     return NextResponse.json(

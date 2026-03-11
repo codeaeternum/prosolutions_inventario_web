@@ -38,12 +38,17 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "iPhone 11", variants: ["A2111", "A2223", "A2221"] },
     { name: "iPhone SE 3ra Gen", variants: ["A2595", "A2782", "A2783", "A2784"] },
     { name: "iPhone SE 2da Gen", variants: ["A2275", "A2296", "A2298"] },
+    { name: "iPhone SE 1ra Gen", variants: ["A1662", "A1723", "A1724"] },
     { name: "iPhone XS Max", variants: ["A1921", "A2101", "A2102", "A2104"] },
     { name: "iPhone XS", variants: ["A1920", "A2097", "A2098", "A2100"] },
     { name: "iPhone XR", variants: ["A1984", "A2105", "A2106", "A2108"] },
     { name: "iPhone X", variants: ["A1865", "A1901", "A1902"] },
     { name: "iPhone 8 Plus", variants: ["A1864", "A1897", "A1898"] },
     { name: "iPhone 8", variants: ["A1863", "A1905", "A1906"] },
+    { name: "iPad Pro 12.9 (M2)", variants: ["A2436", "A2764"] },
+    { name: "iPad Pro 11 (M2)", variants: ["A2759", "A2435"] },
+    { name: "iPad Air (5ta Gen)", variants: ["A2588", "A2589"] },
+    { name: "iPad mini (6ta Gen)", variants: ["A2567", "A2568"] },
   ],
   Samsung: [
     { name: "Galaxy S25 Ultra", variants: ["SM-S938B", "SM-S938B/DS", "SM-S938U", "SM-S938U1", "SM-S938W", "SM-S938N", "SM-S9380"] },
@@ -72,6 +77,12 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "Galaxy A25 5G", variants: ["SM-A256B", "SM-A256B/DS", "SM-A256E"] },
     { name: "Galaxy A15 5G", variants: ["SM-A156B", "SM-A156B/DS", "SM-A156E"] },
     { name: "Galaxy A15", variants: ["SM-A155F", "SM-A155F/DS", "SM-A155M"] },
+    { name: "Galaxy A14", variants: ["SM-A145F", "SM-A145M"] },
+    { name: "Galaxy A05", variants: ["SM-A055F", "SM-A055M"] },
+    { name: "Galaxy M54", variants: ["SM-M546B"] },
+    { name: "Galaxy M34", variants: ["SM-M346B"] },
+    { name: "Galaxy Tab S9", variants: ["SM-X710", "SM-X716B"] },
+    { name: "Galaxy Tab S8", variants: ["SM-X700", "SM-X706B"] },
   ],
   Xiaomi: [
     { name: "Xiaomi 14 Ultra", variants: ["24030PN60G", "2403DPN60G"] },
@@ -92,6 +103,11 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "POCO F5 Pro", variants: ["23013PC75G", "23013PC75C"] },
     { name: "POCO F5", variants: ["23049PCD8G", "23049PCD8I"] },
     { name: "POCO M6 Pro", variants: ["23053RN02A", "23053RN02G"] },
+    { name: "Xiaomi 14T Pro", variants: ["2407FPN8EG", "2407FPN8EC"] },
+    { name: "Xiaomi 14T", variants: ["2406APNFAG", "2406APNFAC"] },
+    { name: "Redmi 14C", variants: ["2409BRN2CG"] },
+    { name: "Redmi 13C", variants: ["23100RN82L", "23106RN0DA"] },
+    { name: "Xiaomi Pad 6", variants: ["23043RP34G", "23043RP34C"] },
   ],
   Motorola: [
     { name: "Motorola Edge 50 Ultra", variants: ["XT2401-1", "XT2401-2", "XT2401-3"] },
@@ -106,6 +122,9 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "Moto G14", variants: ["XT2341-1", "XT2341-2", "XT2341-3"] },
     { name: "Moto Razr 40 Ultra", variants: ["XT2321-1", "XT2321-2", "XT2321-3"] },
     { name: "Moto Razr 40", variants: ["XT2323-1", "XT2323-2", "XT2323-3"] },
+    { name: "ThinkPhone", variants: ["XT2309-1", "XT2309-2", "XT2309-3"] },
+    { name: "Moto G Play", variants: ["XT2413-1", "XT2413-2"] },
+    { name: "Moto G Power", variants: ["XT2415-1", "XT2415-2"] },
   ],
   Huawei: [
     { name: "Huawei Pura 70 Ultra", variants: ["LNA-AL00", "LNA-LX9"] },
@@ -118,6 +137,9 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "Huawei Nova 12", variants: ["BKL-AL00", "BKL-LX9"] },
     { name: "Huawei Nova 11 Pro", variants: ["GOA-AL00", "GOA-LX9"] },
     { name: "Huawei Nova 11", variants: ["FOA-AL00", "FOA-LX9"] },
+    { name: "Huawei MatePad 11", variants: ["DBY-W09"] },
+    { name: "Huawei nova Y91", variants: ["STG-LX1"] },
+    { name: "Huawei nova Y72", variants: ["MGA-LX9"] },
   ],
   OPPO: [
     { name: "OPPO Find X7 Ultra", variants: ["PHZ110", "PHZ120"] },
@@ -149,6 +171,8 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "Pixel 7a", variants: ["GHL1X", "GWKK3"] },
     { name: "Pixel 6 Pro", variants: ["G8VOU", "GLU0G"] },
     { name: "Pixel 6", variants: ["GB7N6", "G9S9B"] },
+    { name: "Pixel Fold", variants: ["G9FPL", "G0B96"] },
+    { name: "Pixel Tablet", variants: ["GTU8P"] },
   ],
   Realme: [
     { name: "Realme GT 5 Pro", variants: ["RMX3888", "RMX3886"] },
@@ -159,6 +183,59 @@ const deviceData: Record<string, { name: string; variants: string[] }[]> = {
     { name: "Realme 12 5G", variants: ["RMX3994", "RMX3992"] },
     { name: "Realme C67", variants: ["RMX3890", "RMX3892"] },
     { name: "Realme C55", variants: ["RMX3710", "RMX3712"] },
+  ],
+  Honor: [
+    { name: "Honor Magic6 Pro", variants: ["BVL-N49"] },
+    { name: "Honor Magic5 Pro", variants: ["PGT-N19"] },
+    { name: "Honor 90", variants: ["REA-NX9"] },
+    { name: "Honor X9b", variants: ["ALI-NX1"] },
+    { name: "Honor X8b", variants: ["LLY-LX1", "LLY-LX2"] },
+    { name: "Honor 200 Smart", variants: ["CLL-NX1"] },
+    { name: "Honor 200 Lite", variants: ["CLY-LX1"] },
+  ],
+  Nothing: [
+    { name: "Nothing Phone (2a)", variants: ["A142"] },
+    { name: "Nothing Phone (2)", variants: ["A065"] },
+    { name: "Nothing Phone (1)", variants: ["A063"] },
+  ],
+  Sony: [
+    { name: "Xperia 1 VI", variants: ["XQ-EC54", "XQ-EC72"] },
+    { name: "Xperia 1 V", variants: ["XQ-DQ54", "XQ-DQ72"] },
+    { name: "Xperia 5 V", variants: ["XQ-DE54", "XQ-DE72"] },
+    { name: "Xperia 10 VI", variants: ["XQ-ES54", "XQ-ES72"] },
+    { name: "Xperia 10 V", variants: ["XQ-DC54", "XQ-DC72"] },
+  ],
+  Tecno: [
+    { name: "Camon 30 Premier", variants: ["CL9"] },
+    { name: "Camon 30 Pro", variants: ["CL8"] },
+    { name: "Spark 20 Pro+", variants: ["KJ7"] },
+    { name: "Spark 20 Pro", variants: ["KJ6"] },
+    { name: "Spark 20", variants: ["KJ5"] },
+    { name: "Pova 6 Pro", variants: ["LI9"] },
+    { name: "Pova 5 Pro", variants: ["LH8n"] },
+  ],
+  Nokia: [
+    { name: "Nokia G42", variants: ["TA-1581"] },
+    { name: "Nokia G22", variants: ["TA-1528"] },
+    { name: "Nokia G310", variants: ["TA-1573"] },
+    { name: "Nokia C32", variants: ["TA-1534"] },
+    { name: "Nokia C22", variants: ["TA-1533"] },
+    { name: "Nokia XR21", variants: ["TA-1486"] },
+  ],
+  ZTE: [
+    { name: "Nubia Z60 Ultra", variants: ["NX721J"] },
+    { name: "Blade V50", variants: ["ZTE 8050"] },
+    { name: "Blade V40", variants: ["ZTE 8045"] },
+  ],
+  Alcatel: [
+    { name: "Alcatel 3X", variants: ["5061K"] },
+    { name: "Alcatel 1SE", variants: ["5030F"] },
+    { name: "Alcatel 1V", variants: ["5001A"] },
+  ],
+  TCL: [
+    { name: "TCL 50 XL", variants: ["T611A"] },
+    { name: "TCL 40 SE", variants: ["T610K"] },
+    { name: "TCL 30 SE", variants: ["6165H"] },
   ],
 }
 
@@ -182,7 +259,7 @@ async function main() {
       password: hashedPassword,
       name: 'Administrador',
       role: UserRole.ADMIN,
-      customerType: CustomerType.RETAIL,
+      customerType: CustomerType.NORMAL,
       status: UserStatus.APPROVED,
     },
   })
@@ -224,6 +301,10 @@ async function main() {
     { name: 'Sensores', slug: 'sensores', icon: 'scan' },
     { name: 'Herramientas', slug: 'herramientas', icon: 'wrench' },
     { name: 'Accesorios', slug: 'accesorios', icon: 'package' },
+    { name: 'Micas de cristal', slug: 'micas', icon: 'shield' },
+    { name: 'Fundas y Cases', slug: 'fundas', icon: 'smartphone' },
+    { name: 'Cables y adaptadores', slug: 'cables', icon: 'cable' },
+    { name: 'Altavoces externos', slug: 'altavoces-externos', icon: 'speaker' },
   ]
 
   for (const category of categories) {
@@ -291,10 +372,11 @@ async function main() {
     console.log(`${brandName}: ${models.length} modelos`)
   }
 
-  // Create sample products
+  // Create sample products - ELIMINADO para producción
+  /*
   console.log('')
   console.log('>>> Creando productos de demostración...')
-  
+
   const sampleProducts = [
     { model: 'iPhone 16 Pro Max', brand: 'Apple', category: 'Pantallas OLED', name: 'Pantalla OLED iPhone 16 Pro Max', retail: 4500, wholesale: 3800, stock: 15 },
     { model: 'iPhone 16 Pro', brand: 'Apple', category: 'Pantallas OLED', name: 'Pantalla OLED iPhone 16 Pro', retail: 4200, wholesale: 3500, stock: 12 },
@@ -317,8 +399,8 @@ async function main() {
   for (const product of sampleProducts) {
     try {
       const brand = await prisma.brand.findFirst({ where: { name: product.brand } })
-      const model = await prisma.model.findFirst({ 
-        where: { name: product.model, brandId: brand?.id } 
+      const model = await prisma.model.findFirst({
+        where: { name: product.model, brandId: brand?.id }
       })
       const category = await prisma.category.findFirst({ where: { name: product.category } })
 
@@ -351,7 +433,8 @@ async function main() {
     }
   }
 
-  console.log(`Productos de demostración: ${sampleProducts.length}`)
+  console.log(`Productos de demostración omitidos.`)
+  */
 
   console.log('')
   console.log('========================================')

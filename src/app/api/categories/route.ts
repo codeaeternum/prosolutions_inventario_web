@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { z } from "zod"
+import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { generateSlug } from "@/lib/utils"
+
+const createCategorySchema = z.object({
+  name: z.string().min(1, "El nombre es requerido").max(200),
+  icon: z.string().max(100).optional().nullable().default(""),
+})
 
 export async function GET() {
   try {
@@ -20,16 +26,16 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
-    const { name, icon } = await req.json()
-
-    if (!name) {
-      return NextResponse.json({ error: "El nombre es requerido" }, { status: 400 })
+    const body = await req.json()
+    const parseResult = createCategorySchema.safeParse(body)
+    if (!parseResult.success) {
+      const msg = parseResult.error.flatten().fieldErrors.name?.[0] ?? "Datos inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
     }
+    const { name, icon } = parseResult.data
 
     const slug = generateSlug(name)
 
@@ -42,7 +48,7 @@ export async function POST(req: Request) {
     }
 
     const category = await prisma.category.create({
-      data: { name, slug, icon },
+      data: { name, slug, icon: icon || null },
     })
 
     return NextResponse.json(category)

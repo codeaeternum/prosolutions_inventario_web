@@ -1,10 +1,26 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { sendNotificationToAdmins } from "../../notifications/stream/route"
 
+const CRON_SECRET = process.env.CRON_SECRET
+
 // GET /api/reservations/check-expiring - Verificar y notificar reservas próximas a expirar
-// Puede ser llamada por un cron job externo cada 5-10 minutos
-export async function GET() {
+// Debe ser llamada por un cron con el header Authorization: Bearer <CRON_SECRET> o X-Cron-Secret: <CRON_SECRET>
+export async function GET(req: NextRequest) {
+  if (!CRON_SECRET) {
+    return NextResponse.json(
+      { error: "Cron no configurado (CRON_SECRET)" },
+      { status: 503 }
+    )
+  }
+  const authHeader = req.headers.get("authorization")
+  const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null
+  const secretHeader = req.headers.get("x-cron-secret")
+  const secret = bearer ?? secretHeader
+  if (secret !== CRON_SECRET) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 })
+  }
+
   try {
     const now = new Date()
     const thirtyMinutesFromNow = new Date(now.getTime() + 30 * 60 * 1000)
@@ -160,7 +176,7 @@ export async function GET() {
 }
 
 // POST - Forzar verificación (requiere auth admin)
-export async function POST() {
+export async function POST(req: NextRequest) {
   // Mismo comportamiento que GET, útil para llamadas manuales
-  return GET()
+  return GET(req)
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 
 export async function PATCH(
@@ -7,20 +7,36 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
+    const session = getSession(result)!
 
     const { id } = await params
     const body = await req.json()
-    const { status, customerType } = body
+    const { status, customerType, role } = body
+
+    // Prevent admin from demoting themselves
+    if (role && role !== "ADMIN" && session.user.id === id) {
+      return NextResponse.json(
+        { error: "No puedes quitarte el rol de administrador a ti mismo" },
+        { status: 400 }
+      )
+    }
+
+    // Validate role if provided
+    if (role && !["ADMIN", "CUSTOMER"].includes(role)) {
+      return NextResponse.json(
+        { error: "Rol inválido" },
+        { status: 400 }
+      )
+    }
 
     const user = await prisma.user.update({
       where: { id },
       data: {
         ...(status && { status }),
         ...(customerType && { customerType }),
+        ...(role && { role }),
       },
       select: {
         id: true,
@@ -28,6 +44,7 @@ export async function PATCH(
         email: true,
         status: true,
         customerType: true,
+        role: true,
       },
     })
 
@@ -43,10 +60,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
     const { id } = await params
 

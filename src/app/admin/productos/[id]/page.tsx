@@ -9,6 +9,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Loader2, ArrowLeft, Plus, X, ScanBarcode, Globe, Trash2 } from "lucide-react"
 import { ImageUpload } from "@/components/image-upload"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import Link from "next/link"
 import Image from "next/image"
 
@@ -51,6 +61,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [error, setError] = useState("")
   const [product, setProduct] = useState<Product | null>(null)
 
@@ -72,7 +83,6 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
     stock: "0",
     minStock: "1",
     categoryId: "",
-    isPublic: false,
     isUniversal: false,
     isActive: true,
   })
@@ -114,7 +124,6 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
           stock: productData.stock.toString(),
           minStock: productData.minStock.toString(),
           categoryId: productData.categoryId,
-          isPublic: productData.isPublic,
           isUniversal: productData.isUniversal,
           isActive: productData.isActive,
         })
@@ -182,10 +191,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
   }
 
   const handleDelete = async () => {
-    if (!confirm("¿Estás seguro de eliminar este producto? Esta acción no se puede deshacer.")) {
-      return
-    }
-
+    setDeleteDialogOpen(false)
     setDeleting(true)
     try {
       const res = await fetch(`/api/products/${resolvedParams.id}`, {
@@ -244,7 +250,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
         <Button
           variant="destructive"
           size="sm"
-          onClick={handleDelete}
+          onClick={() => setDeleteDialogOpen(true)}
           disabled={deleting}
         >
           {deleting ? (
@@ -255,6 +261,26 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
           Eliminar
         </Button>
       </div>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar este producto?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Se eliminará el producto y podrían afectarse reservas o movimientos asociados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void handleDelete()}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {error && (
         <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
@@ -332,7 +358,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
                   id="categoryId"
                   value={formData.categoryId}
                   onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   required
                 >
                   <option value="">Selecciona categoría</option>
@@ -422,12 +448,12 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
                   <input
                     type="checkbox"
                     id="isPublic"
-                    checked={formData.isPublic}
-                    onChange={(e) => setFormData({ ...formData, isPublic: e.target.checked })}
+                    checked={formData.isActive}
+                    onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
                     className="h-4 w-4"
                   />
                   <Label htmlFor="isPublic" className="cursor-pointer">
-                    Mostrar en catálogo público
+                    Producto Activo (Visible en el sistema)
                   </Label>
                 </div>
 
@@ -484,7 +510,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
                   <select
                     value={selectedBrand}
                     onChange={(e) => setSelectedBrand(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="">Todas las marcas</option>
                     {brands.map((brand) => (
@@ -500,7 +526,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
                   <div className="flex gap-2">
                     <select
                       id="modelSelect"
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       defaultValue=""
                     >
                       <option value="" disabled>

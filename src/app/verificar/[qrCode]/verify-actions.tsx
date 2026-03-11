@@ -38,14 +38,14 @@ export function VerifyActions({
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.error || "Error al completar")
+        setError(data.error || "No se pudo marcar como entregado. Intenta de nuevo.")
         return
       }
 
       setCompleted(true)
       router.refresh()
     } catch {
-      setError("Error de conexión")
+      setError("Error de conexión. Intenta de nuevo.")
     } finally {
       setCompleting(false)
     }
@@ -54,18 +54,18 @@ export function VerifyActions({
   return (
     <div className="space-y-3 pt-4 border-t">
       {error && (
-        <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm dark:bg-red-950/30">
+        <div className="p-3 bg-destructive/10 text-destructive rounded-lg text-sm" role="alert">
           {error}
         </div>
       )}
 
       {completed ? (
-        <div className="p-4 bg-green-50 dark:bg-green-950/30 rounded-lg text-center">
-          <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
-          <p className="font-medium text-green-700 dark:text-green-400">
-            Reserva Completada
+        <div className="p-4 bg-primary/10 rounded-lg text-center border border-primary/20">
+          <CheckCircle className="h-8 w-8 text-primary mx-auto mb-2" />
+          <p className="font-medium text-foreground">
+            Reserva completada
           </p>
-          <p className="text-sm text-green-600 dark:text-green-500">
+          <p className="text-sm text-muted-foreground">
             El producto ha sido entregado exitosamente
           </p>
         </div>
@@ -73,7 +73,7 @@ export function VerifyActions({
         <Button
           onClick={handleComplete}
           disabled={completing}
-          className="w-full h-12 text-lg bg-green-600 hover:bg-green-700"
+          className="w-full h-12 text-lg"
         >
           {completing ? (
             <>
@@ -88,11 +88,11 @@ export function VerifyActions({
           )}
         </Button>
       ) : isExpired ? (
-        <div className="p-3 bg-red-50 dark:bg-red-950/30 rounded-lg text-center text-sm text-red-600 dark:text-red-400">
+        <div className="p-3 bg-destructive/10 rounded-lg text-center text-sm text-destructive" role="status">
           Esta reserva ha expirado y no puede ser completada
         </div>
       ) : (
-        <div className="p-3 bg-yellow-50 dark:bg-yellow-950/30 rounded-lg text-center text-sm text-yellow-600 dark:text-yellow-400">
+        <div className="p-3 bg-muted rounded-lg text-center text-sm text-muted-foreground border border-border" role="status">
           Esta reserva aún no está lista para entrega.
           Estado actual: {status}
         </div>

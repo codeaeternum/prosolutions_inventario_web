@@ -1,19 +1,48 @@
+# =============================================================================
+# ProSolutions Inventario — Stack Docker
+# Definido según: .env, src/lib/env.ts y uso en src/
+# Para Portainer: definir en el stack las env que usan ${VAR}
+#
+# Servicios:
+#   app   — Next.js (web + API). Puerto 3005 en el host.
+#   bot   — Bot de Telegram (Telegraf, long polling). Notificaciones y comandos.
+#   db    — PostgreSQL 16. Puerto 5432.
+#
+# Variables que debes definir en Portainer (mínimo):
+#   NEXTAUTH_SECRET, NEXTAUTH_URL, TELEGRAM_BOT_TOKEN
+# =============================================================================
+
 services:
   app:
+    image: prosolutions-app:latest
     build:
       context: .
       dockerfile: Dockerfile
     container_name: prosolutions-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3005:3000"
     environment:
+      # --- Base de datos (Prisma) — requerida ---
       - DATABASE_URL=postgresql://prosolutions:prosolutions123@db:5432/prosolutions_db?schema=public
+
+      # --- NextAuth (sesiones y login) — requeridas ---
+      # AUTH_SECRET debe ser el mismo valor que NEXTAUTH_SECRET (NextAuth v5)
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-key-change-me}
-      - NEXTAUTH_URL=https://prosolutions.ascnex.com
+      - AUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-key-change-me}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://prosolutions.ascnex.com}
+
+      # --- Telegram — notificaciones desde la web y enlaces al bot ---
+      # Solo se usa el token del bot (obtener en @BotFather). La API es https://api.telegram.org por defecto; no hay variable de URL.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+
+      # --- Web Push (opcional) — notificaciones en el navegador ---
       - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - VAPID_EMAIL=${VAPID_EMAIL:-admin@prosolutions.com}
+
+      # --- Cron (opcional) — protege /api/reservations/check-expiring ---
+      - CRON_SECRET=${CRON_SECRET:-}
     volumes:
       - uploads:/app/public/uploads
     depends_on:
@@ -23,11 +52,12 @@ services:
       test: [ "CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health" ]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 60s
     networks:
       - prosolutions-network
 
-  # Migration service - uses builder stage with full node_modules
+  # Migraciones Prisma — uso: docker compose --profile migrate run --rm migrate
   migrate:
     build:
       context: .
@@ -46,10 +76,39 @@ services:
     profiles:
       - migrate
 
+  # --- Bot de Telegram: comandos, reservas, ventas, notificaciones a admins ---
+  # Usa el mismo TELEGRAM_BOT_TOKEN que la app. Conexión a Telegram vía long polling (no webhook).
+  bot:
+    image: prosolutions-bot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: prosolutions-bot
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://prosolutions:prosolutions123@db:5432/prosolutions_db?schema=public
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      # Ollama (opcional): si usas IA local en el bot
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - NODE_ENV=production
+    volumes:
+      - uploads:/app/public/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - prosolutions-network
+    command: [ "npm", "run", "bot:start" ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # --- PostgreSQL: datos de productos, usuarios, reservas, movimientos ---
   db:
     image: postgres:16-alpine
     container_name: prosolutions-db
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       - POSTGRES_USER=prosolutions
       - POSTGRES_PASSWORD=prosolutions123

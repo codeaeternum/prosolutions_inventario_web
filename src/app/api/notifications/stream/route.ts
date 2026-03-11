@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { NextRequest } from "next/server"
+import { requireAdmin } from "@/lib/api-auth"
 
 // Almacenar conexiones activas
 const connections = new Map<string, ReadableStreamDefaultController>()
@@ -42,30 +42,8 @@ export function sendNotificationToAdmins(notification: Omit<NotificationPayload,
 }
 
 export async function GET(req: NextRequest) {
-  const session = await auth()
-
-  // Solo admins pueden conectarse - enviar SSE de error en lugar de JSON
-  if (!session?.user || session.user.role !== "ADMIN") {
-    const errorStream = new ReadableStream({
-      start(controller) {
-        const errorEvent = `data: ${JSON.stringify({
-          type: "error",
-          code: "UNAUTHORIZED",
-          message: "No autorizado para recibir notificaciones",
-          timestamp: new Date().toISOString(),
-        })}\n\n`
-        controller.enqueue(new TextEncoder().encode(errorEvent))
-        controller.close()
-      },
-    })
-
-    return new Response(errorStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-      },
-    })
-  }
+  const result = await requireAdmin()
+  if (result.error) return result.error
 
   const connectionId = crypto.randomUUID()
 

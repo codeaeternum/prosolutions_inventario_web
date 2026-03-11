@@ -1,0 +1,153 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { Printer, Share2, ArrowLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { formatPrice, formatDate } from "@/lib/utils"
+
+interface TicketData {
+  title: string
+  folio: string
+  date: string
+  client?: string
+  cashier?: string
+  items: { name: string; qty: number; price: number; total: number }[]
+  total: number
+  paymentMethod?: string
+  notes?: string
+  newBalance?: number
+}
+
+export function TicketPrintView({ data }: { data: TicketData }) {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const handlePrint = () => {
+    window.print()
+  }
+
+  const handleShareWa = () => {
+    let text = `*PROSOLUTIONS - ${data.title}*\n`
+    text += `Folio: ${data.folio}\n`
+    text += `Fecha: ${formatDate(data.date)}\n`
+    if (data.client) text += `Cliente: ${data.client}\n`
+    text += `------------------------\n`
+    data.items.forEach(i => {
+      text += `${i.qty}x ${i.name} - ${formatPrice(i.total)}\n`
+    })
+    text += `------------------------\n`
+    text += `*TOTAL: ${formatPrice(data.total)}*\n`
+    if (data.newBalance !== undefined) {
+      text += `Saldo actual: ${formatPrice(data.newBalance)}\n`
+    }
+    text += `\n¡Gracias por tu preferencia!`
+
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`
+    window.open(url, '_blank')
+  }
+
+  if (!mounted) return null
+
+  return (
+    <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
+      {/* Controles NO imprimibles */}
+      <div className="max-w-sm mx-auto mb-6 flex items-center justify-between gap-2 print:hidden bg-background p-4 rounded-xl shadow-sm">
+        <Button variant="outline" size="sm" onClick={() => window.history.back()}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Volver
+        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={handleShareWa}>
+            <Share2 className="w-4 h-4 mr-2" />
+            WhatsApp
+          </Button>
+          <Button size="sm" onClick={handlePrint}>
+            <Printer className="w-4 h-4 mr-2" />
+            Imprimir
+          </Button>
+        </div>
+      </div>
+
+      {/* TICKET (Formato térmico 58mm/80mm) */}
+      <div className="max-w-[80mm] mx-auto bg-white text-black p-4 shadow-lg print:shadow-none print:p-0">
+        
+        {/* Cabecera */}
+        <div className="text-center mb-4">
+          <h1 className="font-bold text-lg leading-tight uppercase">PROSOLUTIONS</h1>
+          <p className="text-[10px] uppercase text-gray-600">Venta de refacciones y<br/>Reparación profesional</p>
+          <div className="border-b-2 border-dashed border-gray-300 my-2"></div>
+          <h2 className="font-bold text-sm">{data.title}</h2>
+          <p className="text-xs">Folio: {data.folio}</p>
+          <p className="text-[10px]">{formatDate(data.date)}</p>
+          {data.client && <p className="text-xs mt-1">Cliente: {data.client}</p>}
+          {data.cashier && <p className="text-[10px]">Atendió: {data.cashier}</p>}
+        </div>
+
+        <div className="border-b border-gray-300 my-2"></div>
+
+        {/* Artículos */}
+        <div className="mb-4">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left pb-1 font-normal w-3/5">CANT/DESCRIPCIÓN</th>
+                <th className="text-right pb-1 font-normal w-2/5">IMPORTE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.items.map((item, idx) => (
+                <tr key={idx}>
+                  <td className="py-1">
+                    <div className="font-medium">{item.name}</div>
+                    <div className="text-[10px] text-gray-500">{item.qty} x {formatPrice(item.price)}</div>
+                  </td>
+                  <td className="text-right align-bottom py-1">{formatPrice(item.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="border-b-2 border-dashed border-gray-300 my-2"></div>
+
+        {/* Totales */}
+        <div className="space-y-1 mb-4">
+          <div className="flex justify-between font-bold text-sm">
+            <span>TOTAL:</span>
+            <span>{formatPrice(data.total)}</span>
+          </div>
+          {data.paymentMethod && (
+            <div className="flex justify-between text-xs text-gray-600">
+              <span>MÉTODO:</span>
+              <span>{data.paymentMethod}</span>
+            </div>
+          )}
+          {data.newBalance !== undefined && (
+            <div className="flex justify-between text-xs font-medium mt-2 pt-2 border-t border-gray-200">
+              <span>SALDO ACTUAL:</span>
+              <span>{formatPrice(data.newBalance)}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Notas y Pie */}
+        {data.notes && (
+          <div className="text-[10px] text-gray-500 mb-4 p-2 bg-gray-50 border border-gray-200 rounded">
+            {data.notes}
+          </div>
+        )}
+
+        <div className="text-center text-[10px] text-gray-500 mt-6">
+          <p>¡Gracias por tu preferencia!</p>
+          <p className="mt-1">ProSolutions - {new Date().getFullYear()}</p>
+        </div>
+
+        {/* Espacio extra abajo para que la térmica corte bien */}
+        <div className="h-8 print:block hidden"></div>
+      </div>
+    </div>
+  )
+}

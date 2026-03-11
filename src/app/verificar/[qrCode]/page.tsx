@@ -3,16 +3,20 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { PriceDisplay } from "@/components/price-display"
 import { CheckCircle, XCircle, Clock, AlertTriangle, Package } from "lucide-react"
 import Image from "next/image"
 import { VerifyActions } from "./verify-actions"
 
 export const dynamic = "force-dynamic"
 
-async function getReservation(qrCode: string) {
+async function getReservation(code: string) {
   try {
-    return await prisma.reservation.findUnique({
-      where: { qrCode },
+    // Aceptar id (QR del bot) o qrCode (campo único de la reserva)
+    return await prisma.reservation.findFirst({
+      where: {
+        OR: [{ id: code }, { qrCode: code }],
+      },
       include: {
         product: {
           select: {
@@ -50,13 +54,13 @@ function getStatusInfo(status: string, isExpired: boolean) {
   }
 
   const statusMap: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: typeof CheckCircle; color: string }> = {
-    PENDING: { label: "Pendiente", variant: "secondary", icon: Clock, color: "text-yellow-500" },
-    DEPOSIT_VERIFIED: { label: "Depósito Verificado", variant: "default", icon: CheckCircle, color: "text-blue-500" },
-    APPROVED: { label: "Aprobada", variant: "default", icon: CheckCircle, color: "text-green-500" },
-    REJECTED: { label: "Rechazada", variant: "destructive", icon: XCircle, color: "text-red-500" },
-    COMPLETED: { label: "Completada", variant: "default", icon: CheckCircle, color: "text-green-500" },
-    CANCELLED: { label: "Cancelada", variant: "destructive", icon: XCircle, color: "text-gray-500" },
-    EXPIRED: { label: "Expirada", variant: "destructive", icon: AlertTriangle, color: "text-red-500" },
+    PENDING: { label: "Pendiente", variant: "secondary", icon: Clock, color: "text-muted-foreground" },
+    DEPOSIT_VERIFIED: { label: "Depósito Verificado", variant: "default", icon: CheckCircle, color: "text-primary" },
+    APPROVED: { label: "Aprobada", variant: "default", icon: CheckCircle, color: "text-primary" },
+    REJECTED: { label: "Rechazada", variant: "destructive", icon: XCircle, color: "text-destructive" },
+    COMPLETED: { label: "Completada", variant: "default", icon: CheckCircle, color: "text-primary" },
+    CANCELLED: { label: "Cancelada", variant: "destructive", icon: XCircle, color: "text-muted-foreground" },
+    EXPIRED: { label: "Expirada", variant: "destructive", icon: AlertTriangle, color: "text-destructive" },
   }
 
   return statusMap[status] || statusMap.PENDING
@@ -80,17 +84,19 @@ export default async function VerifyPage({
   if (!reservation) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-        <Card className="w-full max-w-md">
+        <main id="main-content" className="w-full max-w-md" role="main">
+        <Card className="w-full">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-red-100 flex items-center justify-center">
-              <XCircle className="h-10 w-10 text-red-500" />
+            <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
+              <XCircle className="h-10 w-10 text-destructive" />
             </div>
-            <CardTitle className="text-2xl">Reserva No Encontrada</CardTitle>
+            <CardTitle className="text-2xl">Reserva no encontrada</CardTitle>
             <CardDescription>
               El código QR escaneado no corresponde a ninguna reserva válida.
             </CardDescription>
           </CardHeader>
         </Card>
+        </main>
       </div>
     )
   }
@@ -100,16 +106,13 @@ export default async function VerifyPage({
   const statusInfo = getStatusInfo(reservation.status, isExpired)
   const StatusIcon = statusInfo.icon
 
-  const formatPrice = (price: number) =>
-    new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(price)
-
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-      <Card className="w-full max-w-lg">
+      <main id="main-content" className="w-full max-w-lg" role="main">
+      <Card className="w-full">
         <CardHeader className="text-center pb-2">
-          <div className={`mx-auto mb-4 h-16 w-16 rounded-full flex items-center justify-center ${
-            canComplete ? "bg-green-100" : isExpired ? "bg-red-100" : "bg-blue-100"
-          }`}>
+          <div className={`mx-auto mb-4 h-16 w-16 rounded-full flex items-center justify-center ${canComplete ? "bg-primary/10" : isExpired ? "bg-destructive/10" : "bg-muted"
+            }`}>
             <StatusIcon className={`h-10 w-10 ${statusInfo.color}`} />
           </div>
           <div className="flex justify-center mb-2">
@@ -134,6 +137,7 @@ export default async function VerifyPage({
                   src={reservation.product.images[0]}
                   alt={reservation.product.name}
                   fill
+                  sizes="80px"
                   className="object-cover"
                 />
               ) : (
@@ -148,7 +152,7 @@ export default async function VerifyPage({
                 Cantidad: {reservation.quantity}
               </p>
               <p className="font-bold text-primary mt-1">
-                {formatPrice(reservation.totalPrice)}
+                <PriceDisplay price={reservation.totalPrice} />
               </p>
             </div>
           </div>
@@ -162,7 +166,7 @@ export default async function VerifyPage({
               <p className="text-sm text-muted-foreground">{reservation.user.phone}</p>
             )}
             <Badge variant="outline" className="mt-2 text-xs">
-              {reservation.user.customerType === "WHOLESALE" ? "Mayoreo" : "Menudeo"}
+              {reservation.user.customerType === "STORE" ? "Mayoreo" : "Menudeo"}
             </Badge>
           </div>
 
@@ -177,7 +181,7 @@ export default async function VerifyPage({
             {reservation.depositAmount && (
               <div>
                 <span className="text-muted-foreground">Depósito:</span>
-                <p className="font-medium">{formatPrice(reservation.depositAmount)}</p>
+                <p className="font-medium"><PriceDisplay price={reservation.depositAmount ?? 0} /></p>
               </div>
             )}
             <div>
@@ -195,7 +199,7 @@ export default async function VerifyPage({
               <span className="text-muted-foreground">
                 {isExpired ? "Expiró:" : "Expira:"}
               </span>
-              <p className={`font-medium ${isExpired ? "text-red-500" : ""}`}>
+              <p className={`font-medium ${isExpired ? "text-destructive" : ""}`}>
                 {new Date(reservation.expiresAt).toLocaleString("es-MX", {
                   day: "2-digit",
                   month: "short",
@@ -215,6 +219,7 @@ export default async function VerifyPage({
           />
         </CardContent>
       </Card>
+      </main>
     </div>
   )
 }

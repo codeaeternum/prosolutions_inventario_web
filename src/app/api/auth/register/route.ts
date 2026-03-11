@@ -1,35 +1,53 @@
 import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
+import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
+import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+
+const registerSchema = z
+  .object({
+    name: z.string().min(1, "El nombre es requerido").max(200),
+    email: z.string().email().optional().or(z.literal("")),
+    phone: z.string().max(50).optional().or(z.literal("")),
+    password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+    customerType: z.enum(["TECHNICIAN", "STORE", "NORMAL"]).default("NORMAL"),
+  })
+  .refine((data) => data.email?.trim() || data.phone?.trim(), {
+    message: "Correo electrónico o teléfono es requerido",
+    path: ["email"],
+  })
+
+const REGISTER_WINDOW_MS = 15 * 60 * 1000
+const REGISTER_MAX_ATTEMPTS = 5
 
 export async function POST(req: Request) {
   try {
-    const { name, email, phone, password, customerType } = await req.json()
-
-    // Validate: name and password are required, plus either email or phone
-    if (!name || !password) {
+    const ip = getClientIp(req)
+    if (!checkAndRecord("register", ip, REGISTER_WINDOW_MS, REGISTER_MAX_ATTEMPTS)) {
       return NextResponse.json(
-        { error: "Nombre y contraseña son requeridos" },
+        { error: "Demasiados intentos de registro. Espera unos minutos." },
+        { status: 429 }
+      )
+    }
+    const body = await req.json()
+    const parseResult = registerSchema.safeParse(body)
+    if (!parseResult.success) {
+      const first = parseResult.error.flatten().fieldErrors
+      const message =
+        first.name?.[0] ?? first.password?.[0] ?? first.email?.[0] ?? "Datos inválidos"
+      return NextResponse.json(
+        { error: typeof message === "string" ? message : "Datos inválidos" },
         { status: 400 }
       )
     }
+    const { name, email, phone, password, customerType: requestedType } = parseResult.data
+    const emailOrNull = email?.trim() || null
+    const phoneOrNull = phone?.trim() || null
 
-    if (!email && !phone) {
-      return NextResponse.json(
-        { error: "Correo electrónico o teléfono es requerido" },
-        { status: 400 }
-      )
-    }
-
-    // Validate customerType
-    const validTypes = ["RETAIL", "WHOLESALE"]
-    const requestedType = validTypes.includes(customerType) ? customerType : "RETAIL"
-
-    // Check if user already exists (by email or phone)
-    if (email) {
+    if (emailOrNull) {
       const existingByEmail = await prisma.user.findUnique({
-        where: { email },
+        where: { email: emailOrNull },
       })
       if (existingByEmail) {
         return NextResponse.json(
@@ -39,9 +57,9 @@ export async function POST(req: Request) {
       }
     }
 
-    if (phone) {
+    if (phoneOrNull) {
       const existingByPhone = await prisma.user.findFirst({
-        where: { phone },
+        where: { phone: phoneOrNull },
       })
       if (existingByPhone) {
         return NextResponse.json(
@@ -60,11 +78,11 @@ export async function POST(req: Request) {
     const user = await prisma.user.create({
       data: {
         name,
-        email: email || null,
-        phone: phone || null,
+        email: emailOrNull,
+        phone: phoneOrNull,
         password: hashedPassword,
         role: "CUSTOMER",
-        customerType: "RETAIL",
+        customerType: "NORMAL",
         requestedCustomerType: requestedType,
         status: "PENDING",
       },
@@ -74,7 +92,7 @@ export async function POST(req: Request) {
     sendNotificationToAdmins({
       type: "user_registered",
       title: "👤 Nueva solicitud de cuenta",
-      message: `${name} solicita cuenta ${requestedType === "WHOLESALE" ? "mayorista" : "menudeo"}`,
+      message: `${name} solicita cuenta de tipo ${requestedType === "TECHNICIAN" ? "Técnico" : requestedType === "STORE" ? "Tienda" : "Particular"}`,
       data: {
         userId: user.id,
         name,

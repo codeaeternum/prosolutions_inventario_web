@@ -112,7 +112,8 @@ function SelectContent({ children }: SelectContentProps) {
     return (
         <div
             ref={ref}
-            className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
+            data-select-content
+            className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
         >
             {children}
         </div>
@@ -130,9 +131,10 @@ function SelectItem({ value, children, className, ...props }: SelectItemProps) {
 
     return (
         <div
+            data-select-item
             className={cn(
                 "relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
-                isSelected && "bg-accent",
+                isSelected && "bg-accent text-accent-foreground",
                 className
             )}
             onClick={() => onValueChange(value)}

@@ -11,6 +11,8 @@ interface ImageUploadProps {
   onChange: (images: string[]) => void
   maxImages?: number
   className?: string
+  /** Si true, sube archivos al servidor (recomendado para productos). Si false, usa base64 (solo para comprobantes pequeños). */
+  uploadToServer?: boolean
 }
 
 export function ImageUpload({
@@ -18,9 +20,11 @@ export function ImageUpload({
   onChange,
   maxImages = 5,
   className,
+  uploadToServer = true,
 }: ImageUploadProps) {
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFiles = useCallback(
@@ -29,29 +33,48 @@ export function ImageUpload({
       if (images.length >= maxImages) return
 
       setUploading(true)
+      setUploadError(null)
 
       const remainingSlots = maxImages - images.length
-      const filesToProcess = Array.from(files).slice(0, remainingSlots)
+      const filesToProcess = Array.from(files).slice(0, remainingSlots).filter((f) =>
+        f.type.startsWith("image/")
+      )
 
       const newImages: string[] = []
 
-      for (const file of filesToProcess) {
-        if (!file.type.startsWith("image/")) continue
-
-        // Convert to base64 for now (can be changed to upload to storage later)
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.readAsDataURL(file)
-        })
-
-        newImages.push(base64)
+      if (uploadToServer) {
+        for (const file of filesToProcess) {
+          try {
+            const formData = new FormData()
+            formData.append("file", file)
+            const res = await fetch("/api/upload/product", {
+              method: "POST",
+              body: formData,
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Error al subir")
+            if (data.url) newImages.push(data.url)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "Error al subir la imagen"
+            setUploadError(msg)
+            break
+          }
+        }
+      } else {
+        for (const file of filesToProcess) {
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.readAsDataURL(file)
+          })
+          newImages.push(base64)
+        }
       }
 
-      onChange([...images, ...newImages])
+      if (newImages.length > 0) onChange([...images, ...newImages])
       setUploading(false)
     },
-    [images, maxImages, onChange]
+    [images, maxImages, onChange, uploadToServer]
   )
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -94,14 +117,16 @@ export function ImageUpload({
                 src={image}
                 alt={`Imagen ${index + 1}`}
                 fill
+                sizes="(max-width: 640px) 33vw, 20vw"
                 className="object-cover"
               />
               <button
                 type="button"
                 onClick={() => removeImage(index)}
-                className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full shadow-sm hover:bg-destructive/90 transition-colors"
+                title="Eliminar imagen"
               >
-                <X className="h-3 w-3" />
+                <X className="h-4 w-4" />
               </button>
               {index === 0 && (
                 <span className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 bg-primary text-primary-foreground rounded">
@@ -163,6 +188,9 @@ export function ImageUpload({
         <p className="text-xs text-muted-foreground text-center">
           Máximo de {maxImages} imágenes alcanzado
         </p>
+      )}
+      {uploadError && (
+        <p className="text-xs text-destructive text-center">{uploadError}</p>
       )}
     </div>
   )

@@ -59,18 +59,18 @@ export default function RegisterPage() {
     countryCode: "+52",
     password: "",
     confirmPassword: "",
-    customerType: "RETAIL" as "RETAIL" | "WHOLESALE",
+    customerType: "NORMAL" as "NORMAL" | "STORE",
   })
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
-  
+
   // Email autocomplete
   const [emailSuggestions, setEmailSuggestions] = useState<string[]>([])
   const [showEmailSuggestions, setShowEmailSuggestions] = useState(false)
   const emailInputRef = useRef<HTMLInputElement>(null)
-  
+
   // Country code dropdown
   const [showCountryDropdown, setShowCountryDropdown] = useState(false)
   const countryDropdownRef = useRef<HTMLDivElement>(null)
@@ -166,7 +166,7 @@ export default function RegisterPage() {
     }
 
     // Prepare contact info
-    const contactInfo = contactMethod === "email" 
+    const contactInfo = contactMethod === "email"
       ? { email: formData.email, phone: null }
       : { email: null, phone: `${formData.countryCode}${formData.phone.replace(/\s/g, "")}` }
 
@@ -185,13 +185,13 @@ export default function RegisterPage() {
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.error || "Error al registrar")
+        setError(data.error || "No se pudo crear la cuenta. Revisa los datos e intenta de nuevo.")
         return
       }
 
       setSuccess(true)
     } catch {
-      setError("Error al conectar con el servidor")
+      setError("No se pudo conectar. Revisa tu conexión e intenta de nuevo.")
     } finally {
       setIsLoading(false)
     }
@@ -206,14 +206,15 @@ export default function RegisterPage() {
           <ThemeToggle />
         </div>
 
+        <main id="main-content" role="main" className="w-full flex justify-center">
         <Card className="w-full max-w-md text-center">
           <CardHeader>
             <div className="flex justify-center mb-4">
               <CheckCircle className="h-16 w-16 text-green-500" />
             </div>
-            <CardTitle className="text-2xl">Solicitud Enviada</CardTitle>
+            <CardTitle className="text-2xl">Solicitud enviada</CardTitle>
             <CardDescription>
-              Tu solicitud de cuenta ha sido enviada correctamente
+              Tu solicitud de cuenta se envió correctamente. Te avisaremos cuando sea aprobada.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -223,7 +224,7 @@ export default function RegisterPage() {
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm font-medium">Tipo de cuenta solicitada:</p>
               <p className="text-primary font-bold">
-                {formData.customerType === "WHOLESALE" ? "Mayorista" : "Menudeo"}
+                {formData.customerType === "STORE" ? "Mayorista" : "Menudeo"}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 El administrador determinará el tipo final de tu cuenta
@@ -235,10 +236,11 @@ export default function RegisterPage() {
               className="w-full"
               onClick={() => router.push("/login")}
             >
-              Ir a Iniciar Sesión
+              Ir a iniciar sesión
             </Button>
           </CardFooter>
         </Card>
+        </main>
       </div>
     )
   }
@@ -249,6 +251,7 @@ export default function RegisterPage() {
         <ThemeToggle />
       </div>
 
+      <main id="main-content" role="main" className="w-full flex justify-center">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
@@ -260,16 +263,16 @@ export default function RegisterPage() {
               className="rounded-lg"
             />
           </div>
-          <CardTitle className="text-2xl">Solicitar Acceso</CardTitle>
+          <CardTitle className="text-2xl">Solicitar acceso</CardTitle>
           <CardDescription>
-            Completa el formulario para solicitar una cuenta
+            Completa el formulario. Un administrador revisará tu solicitud y te notificará por correo.
           </CardDescription>
         </CardHeader>
 
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {error && (
-              <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md" role="alert">
                 {error}
               </div>
             )}
@@ -430,10 +433,10 @@ export default function RegisterPage() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, customerType: "RETAIL" })}
+                  onClick={() => setFormData({ ...formData, customerType: "NORMAL" })}
                   className={cn(
                     "flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all",
-                    formData.customerType === "RETAIL"
+                    formData.customerType === "NORMAL"
                       ? "border-primary bg-primary/10"
                       : "border-muted hover:border-muted-foreground/50"
                   )}
@@ -441,11 +444,11 @@ export default function RegisterPage() {
                 >
                   <ShoppingBag className={cn(
                     "h-8 w-8",
-                    formData.customerType === "RETAIL" ? "text-primary" : "text-muted-foreground"
+                    formData.customerType === "NORMAL" ? "text-primary" : "text-muted-foreground"
                   )} />
                   <span className={cn(
                     "font-medium",
-                    formData.customerType === "RETAIL" ? "text-primary" : ""
+                    formData.customerType === "NORMAL" ? "text-primary" : ""
                   )}>
                     Menudeo
                   </span>
@@ -455,10 +458,10 @@ export default function RegisterPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, customerType: "WHOLESALE" })}
+                  onClick={() => setFormData({ ...formData, customerType: "STORE" })}
                   className={cn(
                     "flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all",
-                    formData.customerType === "WHOLESALE"
+                    formData.customerType === "STORE"
                       ? "border-primary bg-primary/10"
                       : "border-muted hover:border-muted-foreground/50"
                   )}
@@ -466,11 +469,11 @@ export default function RegisterPage() {
                 >
                   <Store className={cn(
                     "h-8 w-8",
-                    formData.customerType === "WHOLESALE" ? "text-primary" : "text-muted-foreground"
+                    formData.customerType === "STORE" ? "text-primary" : "text-muted-foreground"
                   )} />
                   <span className={cn(
                     "font-medium",
-                    formData.customerType === "WHOLESALE" ? "text-primary" : ""
+                    formData.customerType === "STORE" ? "text-primary" : ""
                   )}>
                     Mayoreo
                   </span>
@@ -548,6 +551,7 @@ export default function RegisterPage() {
           </CardFooter>
         </form>
       </Card>
+      </main>
     </div>
   )
 }

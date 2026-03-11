@@ -1,9 +1,14 @@
 import NextAuth from "next-auth"
-import { authConfig } from "@/lib/auth.config"
+import { authConfig, getAuthRedirect } from "@/lib/auth.config"
+import { NextResponse } from "next/server"
 
 const { auth } = NextAuth(authConfig)
 
-export default auth
+export default auth((req) => {
+  const redirect = getAuthRedirect(req.auth, req.nextUrl)
+  if (redirect) return redirect
+  return NextResponse.next()
+})
 
 export const config = {
   matcher: [

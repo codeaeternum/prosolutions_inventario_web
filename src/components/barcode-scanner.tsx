@@ -34,11 +34,18 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
       const html5QrCode = new Html5Qrcode(scannerId)
       scannerRef.current = html5QrCode
 
+      // Viewfinder cuadrado y responsive: ~70% del lado menor, sin recortes
+      const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight)
+        const size = Math.floor(Math.min(minEdge * 0.75, 400))
+        return { width: size, height: size }
+      }
+
       await html5QrCode.start(
-        { facingMode: "environment" }, // Use back camera
+        { facingMode: "environment" },
         {
           fps: 10,
-          qrbox: { width: 250, height: 150 },
+          qrbox: qrboxFunction,
           aspectRatio: 1.0,
         },
         (decodedText) => {
@@ -85,7 +92,7 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
   }, [])
 
   return (
-    <Card className="w-full max-w-md mx-auto">
+    <Card className="w-full max-w-lg mx-auto overflow-hidden">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Camera className="h-5 w-5" />
@@ -114,7 +121,7 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
             <div
               id="barcode-scanner-container"
               ref={containerRef}
-              className={`w-full aspect-video bg-muted rounded-lg overflow-hidden ${
+              className={`w-full aspect-square max-h-[min(70vmin,400px)] bg-muted rounded-lg overflow-hidden ${
                 isScanning ? "" : "hidden"
               }`}
             />

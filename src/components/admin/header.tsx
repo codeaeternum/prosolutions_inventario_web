@@ -3,7 +3,6 @@
 import { signOut } from "next-auth/react"
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { CurrencyToggleCompact } from "@/components/currency-toggle"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { SearchBar } from "@/components/search-bar"
@@ -31,7 +30,7 @@ export function AdminHeader({ user }: AdminHeaderProps) {
     .slice(0, 2)
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-16 items-center justify-between px-4 lg:px-8">
         <div className="flex items-center gap-4 flex-1 pl-12 lg:pl-0">
           <SearchBar className="hidden sm:block max-w-md flex-1" />
@@ -45,8 +44,6 @@ export function AdminHeader({ user }: AdminHeaderProps) {
           </Button>
 
           <NotificationsDropdown />
-
-          <CurrencyToggleCompact />
 
           <ThemeToggle />
 

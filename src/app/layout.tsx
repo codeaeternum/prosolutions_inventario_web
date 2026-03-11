@@ -6,6 +6,9 @@ import { CurrencyProvider } from "@/components/currency-provider"
 import { SessionProvider } from "@/components/session-provider"
 import { MobileNav } from "@/components/mobile-nav"
 import { CartProvider } from "@/components/cart-context"
+import { ToastProvider } from "@/components/toast-provider"
+import { PwaInstallBanner } from "@/components/pwa-install-banner"
+import { PwaUpdateBanner } from "@/components/pwa-update-banner"
 import { auth } from "@/lib/auth"
 
 const inter = Inter({
@@ -13,21 +16,44 @@ const inter = Inter({
   variable: "--font-inter",
 })
 
+const siteName = "Pro-Solutions"
+const defaultTitle = "Pro-Solutions | Refacciones para Celulares"
+const defaultDescription = "Catálogo de refacciones para celulares - Pro-Solutions Téc. Diego Alvarez"
+
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXTAUTH_URL ?? "https://prosolutions.ascnex.com"
+  ),
   title: {
-    default: "Pro-Solutions | Refacciones para Celulares",
-    template: "%s | Pro-Solutions"
+    default: defaultTitle,
+    template: "%s | Pro-Solutions",
   },
-  description: "Catálogo de refacciones para celulares - Pro-Solutions Téc. Diego Alvarez",
+  description: defaultDescription,
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Pro-Solutions",
+    title: siteName,
   },
   icons: {
     icon: "/favicon.ico",
     apple: "/icons/icon-192x192.png",
+  },
+  openGraph: {
+    type: "website",
+    locale: "es_MX",
+    siteName,
+    title: defaultTitle,
+    description: defaultDescription,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: defaultTitle,
+    description: defaultDescription,
+  },
+  robots: {
+    index: true,
+    follow: true,
   },
 }
 
@@ -49,11 +75,12 @@ export default async function RootLayout({
   children: React.ReactNode
 }>) {
   const session = await auth()
-  const isAdmin = session?.user?.role === "ADMIN"
+  const canAccessAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "EMPLOYEE"
 
   return (
     <html lang="es" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased`}>
+        <a href="#main-content" className="skip-link">Saltar al contenido</a>
         <SessionProvider>
           <ThemeProvider
             attribute="class"
@@ -63,10 +90,15 @@ export default async function RootLayout({
           >
             <CurrencyProvider>
               <CartProvider>
-                {children}
+                <ToastProvider />
+                <PwaUpdateBanner />
+                <div className="min-h-screen safe-area-page">
+                  {children}
+                </div>
+                <MobileNav isAdmin={canAccessAdmin} />
+                <PwaInstallBanner />
               </CartProvider>
             </CurrencyProvider>
-            <MobileNav isAdmin={isAdmin} />
           </ThemeProvider>
         </SessionProvider>
       </body>

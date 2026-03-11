@@ -16,12 +16,18 @@ import {
   Clock,
   TrendingUp,
   Boxes,
+  ScanBarcode,
+  Plus,
+  ArrowRightLeft,
 } from "lucide-react"
-import { formatDate } from "@/lib/utils"
+import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
 
 async function getDashboardStats() {
   try {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
     const [
       totalProducts,
       totalUsers,
@@ -30,6 +36,8 @@ async function getDashboardStats() {
       allProducts,
       totalBrands,
       recentReservations,
+      todaysSales,
+      activeRegister
     ] = await Promise.all([
       prisma.product.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: "CUSTOMER" } }),
@@ -49,10 +57,32 @@ async function getDashboardStats() {
         orderBy: { createdAt: "desc" },
         take: 5,
       }),
+      // Ventas de hoy
+      prisma.inventoryMovement.aggregate({
+        _sum: { totalPrice: true },
+        where: {
+          type: "OUT",
+          reason: { contains: "Venta" },
+          createdAt: { gte: today }
+        }
+      }),
+      // Caja activa
+      prisma.cashRegister.findFirst({
+        where: { status: "OPEN" },
+        include: { movements: true }
+      })
     ])
 
     // Contar productos con stock bajo en JS
     const lowStockProducts = allProducts.filter(p => p.stock <= p.minStock).length
+    
+    // Total caja activa
+    let cashTotal = activeRegister?.initialAmount || 0;
+    if (activeRegister) {
+        cashTotal = activeRegister.movements.reduce((sum, mov) => {
+            return mov.type === "IN" ? sum + mov.amount : sum - mov.amount
+        }, cashTotal)
+    }
 
     return {
       totalProducts,
@@ -62,6 +92,9 @@ async function getDashboardStats() {
       lowStockProducts,
       totalBrands,
       recentReservations,
+      todaysSales: todaysSales._sum.totalPrice || 0,
+      cashTotal,
+      isRegisterOpen: !!activeRegister
     }
   } catch (error) {
     console.error("Error fetching dashboard stats:", error)
@@ -73,6 +106,9 @@ async function getDashboardStats() {
       lowStockProducts: 0,
       totalBrands: 0,
       recentReservations: [],
+      todaysSales: 0,
+      cashTotal: 0,
+      isRegisterOpen: false
     }
   }
 }
@@ -110,35 +146,56 @@ export default async function AdminDashboard() {
 
   const statCards = [
     {
-      title: "Productos",
-      value: stats.totalProducts,
-      description: "Productos activos",
-      icon: Package,
-      href: "/admin/productos",
+      title: "Ventas de Hoy",
+      value: formatPrice(stats.todaysSales),
+      description: "Ingresos del día actual",
+      icon: TrendingUp,
+      href: "/admin/movimientos",
+      alert: stats.todaysSales > 0 ? "¡Buen trabajo!" : null,
+      alertClass: "text-green-500",
     },
     {
-      title: "Usuarios",
-      value: stats.totalUsers,
-      description: "Clientes registrados",
-      icon: Users,
-      href: "/admin/usuarios",
-      alert: stats.pendingUsers > 0 ? `${stats.pendingUsers} pendientes` : null,
+      title: "Caja Actual",
+      value: stats.isRegisterOpen ? formatPrice(stats.cashTotal) : "Cerrada",
+      description: stats.isRegisterOpen ? "Efectivo en turno" : "Abre caja para operar",
+      icon: ShoppingCart,
+      href: "/admin/caja",
+      alert: stats.isRegisterOpen ? "Turno activo" : "Requiere apertura",
+      alertClass: stats.isRegisterOpen ? "text-green-500" : "text-amber-500",
     },
     {
       title: "Reservas",
       value: stats.pendingReservations,
-      description: "Pendientes de aprobar",
-      icon: ShoppingCart,
+      description: "Pendientes de aprobar/entregar",
+      icon: Clock,
       href: "/admin/reservas",
       alert: stats.pendingReservations > 0 ? "Requiere atención" : null,
+      alertClass: "text-amber-500",
+    },
+    {
+      title: "Usuarios Nuevos",
+      value: stats.pendingUsers,
+      description: "Clientes por verificar",
+      icon: UserPlus,
+      href: "/admin/usuarios",
+      alert: stats.pendingUsers > 0 ? `${stats.pendingUsers} esperando` : null,
+      alertClass: "text-amber-500",
     },
     {
       title: "Stock Bajo",
       value: stats.lowStockProducts,
       description: "Productos por reabastecer",
       icon: AlertTriangle,
-      href: "/admin/productos?filter=low-stock",
+      href: "/admin/productos",
       alert: stats.lowStockProducts > 0 ? "Revisar inventario" : null,
+      alertClass: "text-destructive",
+    },
+    {
+      title: "Productos",
+      value: stats.totalProducts,
+      description: "Activos en el catálogo",
+      icon: Package,
+      href: "/admin/productos",
     },
   ]
 
@@ -147,31 +204,73 @@ export default async function AdminDashboard() {
       <div>
         <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
         <p className="text-muted-foreground">
-          Resumen general de Pro-Solutions
+          Resumen general y métricas de operación
         </p>
       </div>
 
+      {/* Accesos rápidos */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Accesos rápidos</CardTitle>
+          <CardDescription>
+            Acciones frecuentes del día a día
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild size="sm" className="gap-2">
+              <Link href="/admin/ventas">
+                <ShoppingCart className="h-4 w-4" />
+                Punto de Venta
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/caja">
+                <ShoppingCart className="h-4 w-4" />
+                Caja
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/productos/nuevo">
+                <Plus className="h-4 w-4" />
+                Agregar producto
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/reservas">
+                <Clock className="h-4 w-4" />
+                Reservas
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/inventario">
+                <ArrowRightLeft className="h-4 w-4" />
+                Ajustes de Lote
+              </Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {statCards.map((stat) => (
           <Link key={stat.title} href={stat.href}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer h-full flex flex-col">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">
                   {stat.title}
                 </CardTitle>
-                <stat.icon className="h-4 w-4 text-muted-foreground" />
+                <stat.icon className="h-4 w-4 text-muted-foreground shrink-0" />
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex-1 flex flex-col">
                 <div className="text-2xl font-bold">{stat.value}</div>
                 <p className="text-xs text-muted-foreground">
                   {stat.description}
                 </p>
-                {stat.alert && (
-                  <Badge variant="destructive" className="mt-2">
-                    {stat.alert}
-                  </Badge>
-                )}
+                <p className={`text-xs mt-2 min-h-[20px] ${stat.alertClass || "text-destructive"}`}>
+                  {stat.alert ? stat.alert : ""}
+                </p>
               </CardContent>
             </Card>
           </Link>
@@ -252,25 +351,27 @@ export default async function AdminDashboard() {
                     </div>
                   </div>
                 ))}
-                <Button variant="outline" className="w-full" asChild>
-                  <Link href="/admin/reservas">Ver todas</Link>
-                </Button>
+                <div className="pt-2">
+                  <Button asChild variant="outline" className="w-full">
+                    <Link href="/admin/reservas">Ver y Gestionar Reservas 📦</Link>
+                  </Button>
+                </div>
               </div>
             ) : (
-              <p className="text-muted-foreground text-center py-4">
-                No hay reservas pendientes
+              <p className="text-muted-foreground">
+                No hay reservas recientes.
               </p>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Low Stock Alert */}
+      {/* Low Stock Alert — mismo estilo que otras cards, sin botón destacado */}
       {lowStockProducts.length > 0 && (
-        <Card className="border-warning">
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-warning">
-              <AlertTriangle className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
               Alerta de Stock Bajo
             </CardTitle>
             <CardDescription>
@@ -291,7 +392,7 @@ export default async function AdminDashboard() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <Badge variant={product.stock === 0 ? "destructive" : "warning"}>
+                    <Badge variant={product.stock === 0 ? "destructive" : "secondary"}>
                       {product.stock} UD
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -301,10 +402,10 @@ export default async function AdminDashboard() {
                 </div>
               ))}
             </div>
-            <Button variant="outline" className="w-full mt-4" asChild>
+            <Button variant="outline" size="sm" className="mt-4 gap-2" asChild>
               <Link href="/admin/productos?filter=low-stock">
-                <Boxes className="mr-2 h-4 w-4" />
-                Gestionar Inventario
+                <Boxes className="h-4 w-4" />
+                Ver productos con stock bajo
               </Link>
             </Button>
           </CardContent>

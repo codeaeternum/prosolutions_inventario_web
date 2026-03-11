@@ -7,9 +7,21 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Loader2, ArrowLeft, Plus, X, ScanBarcode, Globe } from "lucide-react"
 import { ImageUpload } from "@/components/image-upload"
 import Link from "next/link"
+import { toast } from "sonner"
+
+const selectClassName =
+  "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
 
 interface Brand {
   id: string
@@ -42,6 +54,15 @@ export default function NewProductPage() {
   const [selectedModels, setSelectedModels] = useState<Model[]>([])
   const [images, setImages] = useState<string[]>([])
 
+  const [dialogCategory, setDialogCategory] = useState(false)
+  const [dialogBrand, setDialogBrand] = useState(false)
+  const [dialogModel, setDialogModel] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState("")
+  const [newBrandName, setNewBrandName] = useState("")
+  const [newModelName, setNewModelName] = useState("")
+  const [newModelBrandId, setNewModelBrandId] = useState("")
+  const [adding, setAdding] = useState(false)
+
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -51,34 +72,128 @@ export default function NewProductPage() {
     stock: "0",
     minStock: "1",
     categoryId: "",
-    isPublic: false,
     isUniversal: false,
+    isActive: true,
   })
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [brandsRes, modelsRes, categoriesRes] = await Promise.all([
-          fetch("/api/brands"),
-          fetch("/api/models"),
-          fetch("/api/categories"),
-        ])
-        const [brandsData, modelsData, categoriesData] = await Promise.all([
-          brandsRes.json(),
-          modelsRes.json(),
-          categoriesRes.json(),
-        ])
-        setBrands(brandsData)
-        setModels(modelsData)
-        setCategories(categoriesData)
-      } catch {
-        setError("Error al cargar datos")
-      } finally {
-        setLoading(false)
-      }
+  const fetchData = async () => {
+    try {
+      const [brandsRes, modelsRes, categoriesRes] = await Promise.all([
+        fetch("/api/brands"),
+        fetch("/api/models"),
+        fetch("/api/categories"),
+      ])
+      const [brandsData, modelsData, categoriesData] = await Promise.all([
+        brandsRes.json(),
+        modelsRes.json(),
+        categoriesRes.json(),
+      ])
+      setBrands(brandsData)
+      setModels(modelsData)
+      setCategories(categoriesData)
+    } catch {
+      setError("Error al cargar datos")
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
     fetchData()
   }, [])
+
+  async function handleAddCategory() {
+    if (!newCategoryName.trim()) {
+      toast.error("Escribe el nombre de la categoría")
+      return
+    }
+    setAdding(true)
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCategoryName.trim() }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        toast.error(data.error || "Error al crear categoría")
+        return
+      }
+      const created = await res.json()
+      await fetchData()
+      setFormData((prev) => ({ ...prev, categoryId: created.id }))
+      setNewCategoryName("")
+      setDialogCategory(false)
+      toast.success("Categoría agregada")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function handleAddBrand() {
+    if (!newBrandName.trim()) {
+      toast.error("Escribe el nombre de la marca")
+      return
+    }
+    setAdding(true)
+    try {
+      const res = await fetch("/api/brands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newBrandName.trim() }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        toast.error(data.error || "Error al crear marca")
+        return
+      }
+      const created = await res.json()
+      await fetchData()
+      setSelectedBrand(created.name)
+      setNewBrandName("")
+      setDialogBrand(false)
+      toast.success("Marca agregada")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function handleCreateModel() {
+    if (!newModelName.trim() || !newModelBrandId) {
+      toast.error("Escribe el nombre y selecciona la marca")
+      return
+    }
+    setAdding(true)
+    try {
+      const res = await fetch("/api/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newModelName.trim(), brandId: newModelBrandId }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        toast.error(data.error || "Error al crear modelo")
+        return
+      }
+      const created = await res.json()
+      await fetchData()
+      if (!selectedModels.find((m) => m.id === created.id)) {
+        setSelectedModels((prev) => [...prev, created])
+      }
+      setNewModelName("")
+      setNewModelBrandId("")
+      setDialogModel(false)
+      toast.success("Modelo agregado")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setAdding(false)
+    }
+  }
 
   useEffect(() => {
     if (selectedBrand) {
@@ -213,20 +328,52 @@ export default function NewProductPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="categoryId">Categoría *</Label>
-                <select
-                  id="categoryId"
-                  value={formData.categoryId}
-                  onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-                  required
-                >
-                  <option value="">Selecciona categoría</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <select
+                    id="categoryId"
+                    value={formData.categoryId}
+                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                    className={selectClassName}
+                    required
+                  >
+                    <option value="">Selecciona categoría</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Dialog open={dialogCategory} onOpenChange={setDialogCategory}>
+                    <DialogTrigger asChild>
+                      <Button type="button" variant="outline" size="icon" title="Agregar categoría">
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Nueva categoría</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-2 py-2">
+                        <Label htmlFor="newCategoryName">Nombre</Label>
+                        <Input
+                          id="newCategoryName"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          placeholder="Ej: Pantallas"
+                        />
+                      </div>
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setDialogCategory(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="button" onClick={handleAddCategory} disabled={adding}>
+                          {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Agregar
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -236,7 +383,7 @@ export default function NewProductPage() {
             <CardHeader>
               <CardTitle>Fotografías</CardTitle>
               <CardDescription>
-                Agrega hasta 5 imágenes del producto. La primera será la imagen principal.
+                Sube hasta 5 imágenes. La primera será la principal.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -310,16 +457,16 @@ export default function NewProductPage() {
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    id="isPublic"
-                    checked={formData.isPublic}
-                    onChange={(e) => setFormData({ ...formData, isPublic: e.target.checked })}
+                    id="isActive"
+                    checked={formData.isActive}
+                    onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
                     className="h-4 w-4"
                   />
-                  <Label htmlFor="isPublic" className="cursor-pointer">
-                    Mostrar en catálogo público
+                  <Label htmlFor="isActive" className="cursor-pointer flex items-center gap-2">
+                    Producto Activo (Visible en el sistema)
                   </Label>
                 </div>
-
+                
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -370,18 +517,50 @@ export default function NewProductPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Filtrar por marca</Label>
-                  <select
-                    value={selectedBrand}
-                    onChange={(e) => setSelectedBrand(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-                  >
-                    <option value="">Todas las marcas</option>
-                    {brands.map((brand) => (
-                      <option key={brand.id} value={brand.name}>
-                        {brand.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedBrand}
+                      onChange={(e) => setSelectedBrand(e.target.value)}
+                      className={selectClassName}
+                    >
+                      <option value="">Todas las marcas</option>
+                      {brands.map((brand) => (
+                        <option key={brand.id} value={brand.name}>
+                          {brand.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Dialog open={dialogBrand} onOpenChange={setDialogBrand}>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" size="icon" title="Agregar marca">
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Nueva marca</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-2 py-2">
+                          <Label htmlFor="newBrandName">Nombre</Label>
+                          <Input
+                            id="newBrandName"
+                            value={newBrandName}
+                            onChange={(e) => setNewBrandName(e.target.value)}
+                            placeholder="Ej: Samsung"
+                          />
+                        </div>
+                        <DialogFooter>
+                          <Button type="button" variant="outline" onClick={() => setDialogBrand(false)}>
+                            Cancelar
+                          </Button>
+                          <Button type="button" onClick={handleAddBrand} disabled={adding}>
+                            {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Agregar
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -389,7 +568,7 @@ export default function NewProductPage() {
                   <div className="flex gap-2">
                     <select
                       id="modelSelect"
-                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                      className={selectClassName}
                       defaultValue=""
                     >
                       <option value="" disabled>
@@ -412,9 +591,58 @@ export default function NewProductPage() {
                           select.value = ""
                         }
                       }}
+                      title="Añadir a compatibles"
                     >
                       <Plus className="h-4 w-4" />
                     </Button>
+                    <Dialog open={dialogModel} onOpenChange={setDialogModel}>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" size="sm" title="Crear nuevo modelo">
+                          Nuevo
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Nuevo modelo</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 py-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="newModelBrand">Marca</Label>
+                            <select
+                              id="newModelBrand"
+                              value={newModelBrandId}
+                              onChange={(e) => setNewModelBrandId(e.target.value)}
+                              className={selectClassName}
+                            >
+                              <option value="">Selecciona marca</option>
+                              {brands.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="newModelName">Nombre del modelo</Label>
+                            <Input
+                              id="newModelName"
+                              value={newModelName}
+                              onChange={(e) => setNewModelName(e.target.value)}
+                              placeholder="Ej: Galaxy S24"
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button type="button" variant="outline" onClick={() => setDialogModel(false)}>
+                            Cancelar
+                          </Button>
+                          <Button type="button" onClick={handleCreateModel} disabled={adding}>
+                            {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Agregar
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </div>
                 </div>
               </div>
@@ -423,9 +651,9 @@ export default function NewProductPage() {
         )}
 
         {/* Submit */}
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 pb-20 pt-4">
           <Button type="button" variant="outline" asChild>
-            <Link href="/admin/productos">Cancelar</Link>
+            <Link href="/admin/inventario">Cancelar</Link>
           </Button>
           <Button type="submit" disabled={saving}>
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

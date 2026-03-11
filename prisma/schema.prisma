@@ -11,12 +11,14 @@ datasource db {
 
 enum UserRole {
   ADMIN
+  EMPLOYEE
   CUSTOMER
 }
 
 enum CustomerType {
-  RETAIL    // Menudeo
-  WHOLESALE // Mayoreo
+  TECHNICIAN  // Técnico de reparación
+  STORE       // Local de venta de refacciones
+  NORMAL      // Cliente particular
 }
 
 enum UserStatus {
@@ -27,6 +29,7 @@ enum UserStatus {
 
 enum ReservationStatus {
   PENDING           // Esperando acción
+  PENDING_PAYMENT   // Esperando comprobante de pago (transferencia)
   DEPOSIT_VERIFIED  // Depósito verificado por admin
   APPROVED          // Aprobada y lista para recoger
   REJECTED          // Rechazada por admin
@@ -44,23 +47,69 @@ enum MovementType {
   IN
   OUT
   ADJUSTMENT
+  RETURN
 }
 
-// ==================== MODELS ====================
+model InventoryMovement {
+  id            String       @id @default(cuid())
+
+  type          MovementType
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reason        String?
+  notes         String?
+
+  unitPrice     Float?
+  totalPrice    Float?
+
+  productId     String
+  userId        String?
+  
+  relatedId     String?      // ID de movimiento relacionado (ej: devolución de una venta)
+  related       InventoryMovement? @relation("RelatedMovement", fields: [relatedId], references: [id])
+  relatedTo     InventoryMovement[] @relation("RelatedMovement")
+
+  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime     @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+  @@index([relatedId])
+}
 
 model User {
   id                    String       @id @default(cuid())
   email                 String?      @unique  // Opcional para permitir registro solo con teléfono
-  password              String
+  telegramId            String?      @unique  // ID de Telegram para usuarios del bot
+  qrCode                String?      @unique  // Código QR único para identificación en tienda
+  password              String?      // Opcional si solo se registra por Bot
   name                  String
+  businessName          String?      // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
   phone                 String?      @unique  // Único si se proporciona
   role                  UserRole     @default(CUSTOMER)
-  customerType          CustomerType @default(RETAIL)
-  requestedCustomerType CustomerType @default(RETAIL)  // Tipo solicitado al registrarse
+  customerType          CustomerType @default(NORMAL)
+  requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse
   status                UserStatus   @default(PENDING)
+  
+  // Metas de compra
+  monthlyPurchaseGoal   Float?       // Meta mensual de compra en pesos
+  totalPurchases        Float        @default(0)  // Total de compras acumuladas
+  currentMonthPurchases Float        @default(0)  // Compras del mes actual
+  lastPurchaseReset     DateTime?    // Último reinicio del contador mensual
 
-  reservations  Reservation[]
-  movements     InventoryMovement[]
+  // Crédito (pago diferido)
+  creditLimit   Float?   // Límite en pesos; null = sin línea de crédito
+  creditBalance Float    @default(0) // Saldo deudor actual (lo que debe el cliente)
+
+  reservations     Reservation[]
+  movements        InventoryMovement[]
+  creditMovements  CreditMovement[]
+  cashRegistersOpened CashRegister[] @relation("RegisterOpenedBy")
+  cashRegistersClosed CashRegister[] @relation("RegisterClosedBy")
+  cashMovements       CashMovement[]
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -207,25 +256,34 @@ model Reservation {
   @@index([expiresAt])
 }
 
-model InventoryMovement {
-  id            String       @id @default(cuid())
 
-  type          MovementType
-  quantity      Int
-  previousStock Int
-  newStock      Int
-  reason        String?
-  notes         String? // Comentario o nota opcional sobre el movimiento
 
-  productId     String
-  userId        String?      // Quien hizo el movimiento
+// Movimientos de crédito (deuda y abonos)
+enum CreditMovementType {
+  DEBT    // Venta/reserva a crédito → aumenta saldo deudor
+  PAYMENT // Abono del cliente → disminuye saldo deudor
+}
 
-  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+enum CreditReferenceType {
+  RESERVATION
+  SALE
+  MANUAL
+}
 
-  createdAt     DateTime     @default(now())
+model CreditMovement {
+  id            String               @id @default(cuid())
+  amount        Float                 // Positivo = deuda, negativo = abono (siempre guardamos positivo y usamos type)
+  type          CreditMovementType
+  referenceType CreditReferenceType?
+  referenceId   String?               // ID de Reservation o InventoryMovement
+  notes         String?
 
-  @@index([productId])
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime             @default(now())
+
+  @@index([userId])
   @@index([createdAt])
 }
 
@@ -248,6 +306,7 @@ model Settings {
   updatedAt                 DateTime @updatedAt
 }
 
+
 model PushSubscription {
   id        String   @id @default(cuid())
   endpoint  String   @unique
@@ -255,4 +314,58 @@ model PushSubscription {
   userId    String?
 
   createdAt DateTime @default(now())
+}
+
+model CashRegister {
+  id              String   @id @default(cuid())
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  
+  initialAmount   Float    @default(0) // Dinero en caja al abrir
+  finalAmount     Float?               // Dinero físico contado al cerrar
+  
+  status          String   @default("OPEN") // OPEN, CLOSED
+  
+  openedById      String
+  openedBy        User     @relation("RegisterOpenedBy", fields: [openedById], references: [id])
+  
+  closedById      String?
+  closedBy        User?    @relation("RegisterClosedBy", fields: [closedById], references: [id])
+  
+  notes           String?
+  
+  movements       CashMovement[]
+}
+
+enum CashMovementType {
+  IN      // Entrada de dinero (ventas, abonos)
+  OUT     // Salida de dinero (gastos, retiros, devoluciones)
+}
+
+model CashMovement {
+  id              String   @id @default(cuid())
+  amount          Float
+  type            CashMovementType
+  description     String
+  
+  // Referencias a otros módulos (opcional)
+  referenceType   String?  // Ej: "SALE", "RESERVATION", "CREDIT_PAYMENT", "EXPENSE"
+  referenceId     String?  // El ID del movimiento asociado
+  
+  registerId      String
+  register        CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  
+  createdAt       DateTime @default(now())
+}
+
+// Configuraciones del Sistema (Dólar, Tiempos, Banco)
+model SystemSettings {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  type      String   @default("STRING") // STRING, NUMBER, JSON
+  updatedAt DateTime @updatedAt
 }

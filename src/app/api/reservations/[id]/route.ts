@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { getSession, requireAuth, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { getSettings } from "@/lib/settings"
 import { sendNotificationToAdmins } from "../../notifications/stream/route"
 
 // GET - Obtener una reserva específica
@@ -9,12 +10,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth()
+    const result = await requireAuth()
+    if (result.error) return result.error
+    const session = getSession(result)!
     const { id } = await params
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
 
     const reservation = await prisma.reservation.findUnique({
       where: { id },
@@ -51,8 +50,7 @@ export async function GET(
     }
 
     // Solo el dueño o admin puede ver la reserva
-    const isAdmin = session.user.role === "ADMIN"
-    if (!isAdmin && reservation.userId !== session.user.id) {
+    if (reservation.userId !== session.user.id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 })
     }
 
@@ -72,12 +70,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth()
+    const result = await requireAdmin()
+    if (result.error) return result.error
+    const session = getSession(result)!
     const { id } = await params
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
 
     const body = await req.json()
     const { action, adminNotes } = body
@@ -167,10 +163,8 @@ export async function PATCH(
         }
 
         // Obtener configuración para nueva expiración
-        const settings = await prisma.settings.findUnique({
-          where: { id: "default" },
-        })
-        const depositHours = settings?.depositReservationHours ?? 48
+        const settings = await getSettings()
+        const depositHours = settings.depositReservationHours
 
         const updated = await prisma.reservation.update({
           where: { id },

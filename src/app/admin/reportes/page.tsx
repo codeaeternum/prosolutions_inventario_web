@@ -456,7 +456,7 @@ export default function ReportsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="text-xs">
-                      {client.customerType === "WHOLESALE" ? "Mayoreo" : "Menudeo"}
+                      {client.customerType === "STORE" ? "Mayoreo" : "Menudeo"}
                     </Badge>
                     <Badge className="bg-green-500 hover:bg-green-600">
                       {client.completedReservations} compras

@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { z } from "zod"
+import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { generateSlug } from "@/lib/utils"
+
+const createModelSchema = z.object({
+  name: z.string().min(1, "El nombre es requerido").max(200),
+  brandId: z.string().min(1, "La marca es requerida"),
+})
 
 export async function GET(req: Request) {
   try {
@@ -25,16 +31,17 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
-    const { name, brandId } = await req.json()
-
-    if (!name || !brandId) {
-      return NextResponse.json({ error: "Nombre y marca son requeridos" }, { status: 400 })
+    const body = await req.json()
+    const parseResult = createModelSchema.safeParse(body)
+    if (!parseResult.success) {
+      const err = parseResult.error.flatten().fieldErrors
+      const msg = err.name?.[0] ?? err.brandId?.[0] ?? "Datos inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
     }
+    const { name, brandId } = parseResult.data
 
     const slug = generateSlug(name)
 

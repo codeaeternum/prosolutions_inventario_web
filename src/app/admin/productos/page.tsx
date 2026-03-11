@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
@@ -23,6 +24,8 @@ import {
   Upload,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
+import { Breadcrumbs } from "@/components/admin/breadcrumbs"
+import { EmptyState } from "@/components/admin/empty-state"
 import {
   Dialog,
   DialogContent,
@@ -31,6 +34,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Pagination } from "@/components/ui/pagination"
+import { toast } from "sonner"
 
 interface ProductModel {
   model: {
@@ -57,9 +62,17 @@ interface Product {
 
 type ViewMode = "grid-large" | "grid-small" | "list"
 
+const DEFAULT_LIMIT = 20
+
 export default function ProductsPage() {
   const { formatPrice } = useCurrency()
+  const searchParams = useSearchParams()
+  const pageFromUrl = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
+  const limitFromUrl = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT))
+
   const [products, setProducts] = useState<Product[]>([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<"all" | "low-stock" | "public">("all")
@@ -70,27 +83,37 @@ export default function ProductsPage() {
   const [importResult, setImportResult] = useState<{ message: string; errors: string[] } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const fetchProducts = async () => {
+  const fetchProducts = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
       if (search) params.append("search", search)
       if (filter === "low-stock") params.append("lowStock", "true")
-
+      params.set("page", String(pageFromUrl))
+      params.set("limit", String(limitFromUrl))
+      
       const res = await fetch(`/api/products?${params}`)
       const data = await res.json()
-      setProducts(data)
+      if (data && typeof data === "object" && "products" in data) {
+        setProducts(data.products ?? [])
+        setTotal(data.total ?? 0)
+        setTotalPages(data.totalPages ?? 1)
+      } else {
+        setProducts(Array.isArray(data) ? data : [])
+        setTotal(Array.isArray(data) ? data.length : 0)
+        setTotalPages(1)
+      }
     } catch (error) {
       console.error("Error fetching products:", error)
+      toast.error("No se pudieron cargar los productos. Reintenta en un momento.")
     } finally {
       setLoading(false)
     }
-  }
+  }, [search, filter, pageFromUrl, limitFromUrl])
 
   useEffect(() => {
     fetchProducts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter])
+  }, [fetchProducts])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -113,7 +136,7 @@ export default function ProductsPage() {
       a.remove()
     } catch (error) {
       console.error("Error exporting:", error)
-      alert("Error al exportar productos")
+      toast.error("Error al exportar productos. Reintenta en un momento.")
     } finally {
       setExporting(false)
     }
@@ -174,6 +197,7 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      <Breadcrumbs items={[{ label: "Productos" }]} />
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Productos</h2>
@@ -233,7 +257,7 @@ export default function ProductsPage() {
             )}
 
             {importResult && (
-              <div className={`p-3 rounded-lg ${importResult.errors.length > 0 ? "bg-yellow-50 dark:bg-yellow-950/20" : "bg-green-50 dark:bg-green-950/20"}`}>
+              <div className={`p-3 rounded-lg border ${importResult.errors.length > 0 ? "bg-destructive/5 border-destructive/20 text-destructive" : "bg-primary/5 border-primary/20 text-foreground"}`} role="status">
                 <p className="font-medium">{importResult.message}</p>
                 {importResult.errors.length > 0 && (
                   <ul className="mt-2 text-sm text-muted-foreground list-disc list-inside">
@@ -336,7 +360,7 @@ export default function ProductsPage() {
       {/* Products Display */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin" />
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : filteredProducts.length > 0 ? (
         <>
@@ -352,6 +376,7 @@ export default function ProductsPage() {
                           src={product.images[0]}
                           alt={product.name}
                           fill
+                          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
                           className="object-cover"
                         />
                       ) : (
@@ -434,6 +459,7 @@ export default function ProductsPage() {
                           src={product.images[0]}
                           alt={product.name}
                           fill
+                          sizes="(max-width: 640px) 50vw, (max-width: 1280px) 20vw, 16vw"
                           className="object-cover"
                         />
                       ) : (
@@ -496,6 +522,7 @@ export default function ProductsPage() {
                                 src={product.images[0]}
                                 alt={product.name}
                                 fill
+                                sizes="48px"
                                 className="object-cover"
                               />
                             ) : (
@@ -551,18 +578,28 @@ export default function ProductsPage() {
               ))}
             </div>
           )}
+
+          {/* Pagination */}
+          <div className="pt-4 border-t">
+            <Pagination
+              page={pageFromUrl}
+              limit={limitFromUrl}
+              total={total}
+              totalPages={totalPages}
+              query={{
+                ...(search && { search }),
+                ...(filter === "low-stock" && { lowStock: "true" }),
+              }}
+            />
+          </div>
         </>
       ) : (
-        <div className="text-center py-12 text-muted-foreground">
-          <Package className="h-16 w-16 mx-auto mb-4 opacity-50" />
-          <p>No se encontraron productos</p>
-          <Button className="mt-4" asChild>
-            <Link href="/admin/productos/nuevo">
-              <Plus className="mr-2 h-4 w-4" />
-              Agregar primer producto
-            </Link>
-          </Button>
-        </div>
+        <EmptyState 
+          icon={Package} 
+          title="No se encontraron productos" 
+          description={search ? "Prueba con otros términos de búsqueda." : "Agrega tu primer producto al inventario."} 
+          action={{ label: "Agregar primer producto", href: "/admin/productos/nuevo", icon: Plus }} 
+        />
       )}
     </div>
   )

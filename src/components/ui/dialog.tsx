@@ -97,9 +97,9 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
                     onClick={() => setOpen(false)}
                 />
 
-                {/* Content */}
-                <div className="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] sm:rounded-lg">
-                    <div ref={ref} className={cn("", className)} {...props}>
+                {/* Content: en móvil ocupa altura útil y hace scroll interno */}
+                <div className="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg max-h-[90dvh] translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] sm:rounded-lg overflow-hidden flex flex-col">
+                    <div ref={ref} className={cn("overflow-y-auto min-h-0 flex-1 pr-8", className)} {...props}>
                         {children}
                     </div>
                     <button

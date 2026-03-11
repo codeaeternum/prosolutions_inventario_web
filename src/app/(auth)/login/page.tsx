@@ -82,8 +82,8 @@ export default function LoginPage() {
     setIsLoading(true)
     setErrorMsg("")
 
-    const identifier = loginMethod === "email" 
-      ? email 
+    const identifier = loginMethod === "email"
+      ? email
       : `${countryCode}${phone.replace(/\s/g, "")}`
 
     try {
@@ -100,7 +100,7 @@ export default function LoginPage() {
         router.refresh()
       }
     } catch {
-      setErrorMsg("Error al iniciar sesión")
+      setErrorMsg("No se pudo conectar. Revisa tu conexión a internet e intenta de nuevo.")
     } finally {
       setIsLoading(false)
     }
@@ -114,6 +114,7 @@ export default function LoginPage() {
         <ThemeToggle />
       </div>
 
+      <main id="main-content" role="main" className="w-full flex justify-center">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
@@ -125,16 +126,16 @@ export default function LoginPage() {
               className="rounded-lg"
             />
           </div>
-          <CardTitle className="text-2xl">Iniciar Sesión</CardTitle>
+          <CardTitle className="text-2xl">Iniciar sesión</CardTitle>
           <CardDescription>
-            Ingresa tus credenciales para acceder
+            Usa tu correo o teléfono y contraseña para acceder a tu cuenta
           </CardDescription>
         </CardHeader>
 
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {errorMsg && (
-              <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md" role="alert">
                 {errorMsg}
               </div>
             )}
@@ -299,12 +300,18 @@ export default function LoginPage() {
             <p className="text-sm text-muted-foreground text-center">
               ¿No tienes cuenta?{" "}
               <Link href="/register" className="text-primary hover:underline">
-                Solicitar acceso
+                Regístrate aquí
+              </Link>
+            </p>
+            <p className="text-sm text-muted-foreground text-center">
+              <Link href="/catalogo" className="text-primary hover:underline">
+                Ver catálogo sin iniciar sesión →
               </Link>
             </p>
           </CardFooter>
         </form>
       </Card>
+      </main>
     </div>
   )
 }

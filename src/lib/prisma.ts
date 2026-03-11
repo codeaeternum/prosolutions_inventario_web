@@ -3,14 +3,19 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'
 
 // En desarrollo local usamos localhost, en Docker/producción usa 'db'
-function getConnectionString() {
+function getConnectionString(): string {
   const envUrl = process.env.DATABASE_URL
   if (!envUrl) {
-    return 'postgresql://prosolutions:prosolutions123@localhost:5432/prosolutions_db'
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("DATABASE_URL es requerida en producción. Configure la variable de entorno.")
+    }
+    throw new Error(
+      "DATABASE_URL no está definida. Cree un archivo .env con DATABASE_URL."
+    )
   }
   // Para desarrollo local, reemplazar 'db' por 'localhost'
-  if (process.env.NODE_ENV !== 'production' && envUrl.includes('@db:')) {
-    return envUrl.replace('@db:', '@localhost:')
+  if (process.env.NODE_ENV !== "production" && envUrl.includes("@db:")) {
+    return envUrl.replace("@db:", "@localhost:")
   }
   return envUrl
 }

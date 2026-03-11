@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { requireAdmin } from "@/lib/api-auth"
 import { sendNotificationToAdmins, NotificationType } from "../stream/route"
 
 // API para enviar notificaciones programáticamente
 export async function POST(req: NextRequest) {
-  const session = await auth()
-
-  // Solo admins pueden enviar notificaciones manuales
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-  }
+  const result = await requireAdmin()
+  if (result.error) return result.error
 
   try {
     const body = await req.json()

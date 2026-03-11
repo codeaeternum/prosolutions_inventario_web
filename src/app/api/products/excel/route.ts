@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import * as XLSX from "xlsx"
 
 export async function GET() {
     try {
-        const session = await auth()
-        if (!session || session.user.role !== "ADMIN") {
-            return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-        }
+        const result = await requireAdmin()
+        if (result.error) return result.error
 
         // Get all products with related data
         const products = await prisma.product.findMany({
@@ -97,10 +95,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
-        const session = await auth()
-        if (!session || session.user.role !== "ADMIN") {
-            return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-        }
+        const result = await requireAdmin()
+        if (result.error) return result.error
 
         const formData = await request.formData()
         const file = formData.get("file") as File

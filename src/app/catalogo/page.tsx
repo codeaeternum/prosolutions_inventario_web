@@ -9,15 +9,17 @@ import {
   Search,
   Filter,
   X,
-  Home,
-  ShoppingCart,
-  User,
-  CalendarCheck,
   ChevronDown,
   Package,
   Smartphone,
   SlidersHorizontal,
+  ShoppingCart,
+  CalendarCheck,
+  User,
+  LogIn,
+  UserPlus,
 } from "lucide-react"
+import { toast } from "sonner"
 import { useCart } from "@/components/cart-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -39,9 +41,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { CurrencyToggleCompact } from "@/components/currency-toggle"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
+import type { Product } from "@/types"
 
 interface Brand {
   id: string
@@ -62,16 +64,10 @@ interface Category {
   _count: { products: number }
 }
 
-interface Product {
-  id: string
-  name: string
-  images: string[]
-  stock: number
-  minStock: number
-  hidePrice: boolean
-  retailPrice: number
-  wholesalePrice: number
-  isPublic: boolean
+type ProductWithDetails = Product & {
+  description?: string | null
+  hidePrice?: boolean
+  isPublic?: boolean
   models: Array<{
     model: {
       name: string
@@ -85,11 +81,12 @@ export default function CatalogoPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const { formatPrice } = useCurrency()
+  const { addItem, totalItems } = useCart()
 
   const [brands, setBrands] = useState<Brand[]>([])
   const [models, setModels] = useState<Model[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts] = useState<ProductWithDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [filtersOpen, setFiltersOpen] = useState(false)
 
@@ -99,16 +96,21 @@ export default function CatalogoPage() {
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
+  // Dialog state (must be at top level, before any return)
+  const [selectedProduct, setSelectedProduct] = useState<ProductWithDetails | null>(null)
+  const [detailsProduct, setDetailsProduct] = useState<ProductWithDetails | null>(null)
+  const [reservationOpen, setReservationOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [quantity, setQuantity] = useState(1)
+
   const isLoggedIn = !!session
   const isApproved = session?.user?.status === "APPROVED"
-  const customerType = session?.user?.customerType
+  const customerType = session?.user?.customerType || "NORMAL"
 
-  // Redirect if not logged in or not approved
+  // Redirect to pending only if logged in but not approved
   useEffect(() => {
     if (status === "loading") return
-    if (!session) {
-      router.push("/login")
-    } else if (session.user?.status !== "APPROVED") {
+    if (session && session.user?.status !== "APPROVED" && session.user?.role !== "ADMIN") {
       router.push("/pending")
     }
   }, [session, status, router])
@@ -129,6 +131,7 @@ export default function CatalogoPage() {
         setCategories(categoriesData)
       } catch (error) {
         console.error("Error loading data:", error)
+        toast.error("No se pudieron cargar categorías y marcas. Reintenta en un momento.")
       }
     }
 
@@ -169,11 +172,12 @@ export default function CatalogoPage() {
 
         const res = await fetch(`/api/products?${params.toString()}`)
         const data = await res.json()
+        const list = Array.isArray(data) ? data : (data?.products ?? [])
 
         // Filter only public products for non-admin
         const filteredProducts = session?.user?.role === "ADMIN"
-          ? data
-          : data.filter((p: Product) => p.isPublic)
+          ? list
+          : list.filter((p: ProductWithDetails) => p.isPublic)
 
         setProducts(filteredProducts)
       } catch (error) {
@@ -204,7 +208,7 @@ export default function CatalogoPage() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Nombre, codigo..."
+            placeholder="Buscar por nombre o código..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -214,7 +218,7 @@ export default function CatalogoPage() {
 
       {/* Categories */}
       <div>
-        <label className="text-sm font-medium mb-2 block">Categoria</label>
+        <label className="text-sm font-medium mb-2 block">Categoría</label>
         <div className="flex flex-wrap gap-2">
           {categories.map((cat) => (
             <Badge
@@ -288,13 +292,18 @@ export default function CatalogoPage() {
     )
   }
 
-  // Cart integration
-  const { addItem } = useCart()
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
-  const [reservationOpen, setReservationOpen] = useState(false)
-  const [quantity, setQuantity] = useState(1)
-
-  const handleAddToCartClick = (product: Product) => {
+  const handleAddToCartClick = (product: ProductWithDetails) => {
+    // Check if user is logged in
+    if (!session) {
+      toast.error("Inicia sesión para agregar productos al carrito")
+      router.push("/login?callbackUrl=/catalogo")
+      return
+    }
+    // Check if user is approved
+    if (session.user?.status !== "APPROVED" && session.user?.role !== "ADMIN") {
+      toast.error("Tu cuenta debe ser aprobada para hacer reservas")
+      return
+    }
     setSelectedProduct(product)
     setQuantity(1)
     setReservationOpen(true)
@@ -303,7 +312,7 @@ export default function CatalogoPage() {
   const handleConfirmAddToCart = () => {
     if (!selectedProduct) return
 
-    const price = customerType === "WHOLESALE"
+    const price = customerType === "STORE"
       ? selectedProduct.wholesalePrice
       : selectedProduct.retailPrice
 
@@ -317,8 +326,7 @@ export default function CatalogoPage() {
     })
 
     setReservationOpen(false)
-    // Optional: Toast notification
-    alert("Producto agregado al carrito")
+    toast.success("Producto agregado al carrito")
   }
 
   return (
@@ -327,9 +335,9 @@ export default function CatalogoPage() {
       <Dialog open={reservationOpen} onOpenChange={setReservationOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reservar Producto</DialogTitle>
+            <DialogTitle>Reservar producto</DialogTitle>
             <DialogDescription>
-              {selectedProduct?.name}
+              {selectedProduct?.name}. Elige la cantidad y agrega al carrito para completar la reserva.
             </DialogDescription>
           </DialogHeader>
 
@@ -338,7 +346,7 @@ export default function CatalogoPage() {
               <span className="text-sm font-medium">Precio Unitario:</span>
               <span className="font-bold text-primary">
                 {selectedProduct && formatPrice(
-                  customerType === "WHOLESALE"
+                  customerType === "STORE"
                     ? selectedProduct.wholesalePrice
                     : selectedProduct.retailPrice
                 )}
@@ -375,7 +383,7 @@ export default function CatalogoPage() {
               <span className="text-sm font-medium">Subtotal:</span>
               <span className="text-xl font-bold text-primary">
                 {selectedProduct && formatPrice(
-                  (customerType === "WHOLESALE"
+                  (customerType === "STORE"
                     ? selectedProduct.wholesalePrice
                     : selectedProduct.retailPrice) * quantity
                 )}
@@ -395,8 +403,78 @@ export default function CatalogoPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Product Details Dialog */}
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Detalles del Producto</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid md:grid-cols-2 gap-6 pb-6">
+            {/* Image */}
+            <div className="aspect-square relative bg-muted rounded-lg overflow-hidden">
+              {detailsProduct?.images[0] ? (
+                <Image
+                  src={detailsProduct.images[0]}
+                  alt={detailsProduct.name}
+                  fill
+                  sizes="(max-width: 768px) 100vw, 400px"
+                  className="object-cover"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <Package className="h-16 w-16 text-muted-foreground/40" />
+                </div>
+              )}
+            </div>
+
+            {/* Info */}
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-xl font-bold">{detailsProduct?.name}</h3>
+                <p className="text-2xl font-bold text-primary mt-2">
+                  {detailsProduct && formatPrice(
+                    customerType === "STORE"
+                      ? detailsProduct.wholesalePrice
+                      : detailsProduct.retailPrice
+                  )}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <Badge variant={detailsProduct?.stock && detailsProduct.stock > 0 ? "default" : "secondary"}>
+                    {detailsProduct?.stock && detailsProduct.stock > 0 ? "Disponible" : "Agotado"}
+                  </Badge>
+                  <Badge variant="outline">
+                    {detailsProduct?.category?.name}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="text-sm text-muted-foreground whitespace-pre-line">
+                {detailsProduct?.description || "Sin descripción disponible."}
+              </div>
+
+              {detailsProduct?.stock && detailsProduct.stock > 0 && (
+                <Button
+                  className="w-full mt-4"
+                  size="lg"
+                  onClick={() => {
+                    if (detailsProduct) {
+                      setDetailsOpen(false)
+                      handleAddToCartClick(detailsProduct)
+                    }
+                  }}
+                >
+                  <ShoppingCart className="mr-2 h-5 w-5" />
+                  Agregar al Carrito
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background">
         <div className="container mx-auto max-w-7xl flex h-14 items-center justify-between px-4 gap-2">
           <Link href="/" className="flex items-center gap-2 shrink-0">
             <Image
@@ -414,7 +492,7 @@ export default function CatalogoPage() {
             <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar productos..."
+                placeholder="Buscar por nombre o código..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 w-full"
@@ -423,23 +501,61 @@ export default function CatalogoPage() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <CurrencyToggleCompact />
             <ThemeToggle />
-            <Button variant="ghost" size="icon" asChild className="hidden sm:flex">
-              <Link href="/mis-reservas">
-                <CalendarCheck className="h-5 w-5" />
+
+            {/* Cart - always visible */}
+            <Button variant="ghost" size="icon" asChild className="relative">
+              <Link href="/carrito">
+                <ShoppingCart className="h-5 w-5" />
+                {totalItems > 0 && (
+                  <span className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold rounded-full">
+                    {totalItems > 9 ? "9+" : totalItems}
+                  </span>
+                )}
               </Link>
             </Button>
-            <Button variant="ghost" size="icon" asChild>
-              <Link href="/perfil">
-                <User className="h-5 w-5" />
-              </Link>
-            </Button>
+
+            {/* Auth-dependent buttons */}
+            {isLoggedIn ? (
+              <>
+                <Button variant="ghost" size="icon" asChild className="hidden sm:flex">
+                  <Link href="/mis-reservas">
+                    <CalendarCheck className="h-5 w-5" />
+                  </Link>
+                </Button>
+                <Button variant="ghost" size="icon" asChild>
+                  <Link href="/perfil">
+                    <User className="h-5 w-5" />
+                  </Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild className="hidden sm:flex">
+                  <Link href="/login">
+                    <LogIn className="h-4 w-4 mr-1" />
+                    Ingresar
+                  </Link>
+                </Button>
+                <Button size="sm" asChild className="hidden sm:flex">
+                  <Link href="/register">
+                    <UserPlus className="h-4 w-4 mr-1" />
+                    Registrarse
+                  </Link>
+                </Button>
+                {/* Mobile: just icon for login */}
+                <Button variant="ghost" size="icon" asChild className="sm:hidden">
+                  <Link href="/login">
+                    <LogIn className="h-5 w-5" />
+                  </Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
 
-      <div className="container mx-auto max-w-7xl px-4 py-4">
+      <main id="main-content" className="container mx-auto max-w-7xl px-4 py-4" role="main">
         {/* Mobile search + filter button */}
         <div className="md:hidden flex gap-2 mb-4">
           <div className="relative flex-1">
@@ -522,13 +638,15 @@ export default function CatalogoPage() {
             </div>
 
             {loading ? (
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" aria-busy="true" aria-label="Cargando productos">
                 {[...Array(6)].map((_, i) => (
-                  <Card key={i} className="animate-pulse">
+                  <Card key={i} className="animate-pulse overflow-hidden">
                     <div className="aspect-square bg-muted" />
                     <CardContent className="p-3">
-                      <div className="h-4 bg-muted rounded mb-2" />
-                      <div className="h-3 bg-muted rounded w-2/3" />
+                      <div className="h-3 bg-muted rounded w-1/2 mb-2" />
+                      <div className="h-4 bg-muted rounded mb-2 min-h-[2.5rem]" />
+                      <div className="h-3 bg-muted rounded w-2/3 mb-2" />
+                      <div className="h-5 bg-muted rounded w-1/3 mt-2" />
                     </CardContent>
                   </Card>
                 ))}
@@ -547,54 +665,65 @@ export default function CatalogoPage() {
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                 {products.map((product) => (
                   <Card key={product.id} className="overflow-hidden group hover:shadow-md transition-shadow relative">
-                    <div className="aspect-square relative bg-gradient-to-br from-muted to-muted/50">
-                      {product.images[0] ? (
-                        <Image
-                          src={product.images[0]}
-                          alt={product.name}
-                          fill
-                          className="object-cover group-hover:scale-105 transition-transform"
-                        />
-                      ) : (
-                        <div className="flex items-center justify-center h-full">
-                          <Package className="h-12 w-12 text-muted-foreground/40" />
-                        </div>
-                      )}
+                    {/* Card Content - Make clickable for details */}
+                    <div
+                      className="cursor-pointer"
+                      onClick={() => {
+                        setDetailsProduct(product)
+                        setDetailsOpen(true)
+                      }}
+                    >
+                      <div className="aspect-square relative bg-gradient-to-br from-muted to-muted/50">
+                        {product.images[0] ? (
+                          <Image
+                            src={product.images[0]}
+                            alt={product.name}
+                            fill
+                            sizes="(max-width: 1024px) 50vw, 33vw"
+                            className="object-cover group-hover:scale-105 transition-transform"
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center h-full">
+                            <Package className="h-12 w-12 text-muted-foreground/40" />
+                          </div>
+                        )}
 
-                      {/* Stock badge */}
-                      {product.stock > 0 && product.stock <= product.minStock && (
-                        <Badge variant="destructive" className="absolute top-2 right-2 text-[10px] px-1.5">
-                          {product.stock} UD
-                        </Badge>
-                      )}
-                      {product.stock === 0 && (
-                        <Badge variant="secondary" className="absolute top-2 right-2 text-[10px] px-1.5">
-                          Agotado
-                        </Badge>
-                      )}
-                      {product.stock > product.minStock && (
-                        <Badge variant="default" className="absolute top-2 right-2 text-[10px] px-1.5 bg-green-600">
-                          {product.stock} UD
-                        </Badge>
-                      )}
-
-                      {/* Add button overlay on desktop, always visible on mobile if stock > 0 */}
-                      {product.stock > 0 && (
-                        <div className="absolute bottom-2 right-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button
-                            size="sm"
-                            className="h-8 w-8 rounded-full shadow-lg p-0"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              handleAddToCartClick(product)
-                            }}
-                          >
-                            <ShoppingCart className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      )}
+                        {/* Stock badge */}
+                        {product.stock > 0 && product.stock <= product.minStock && (
+                          <Badge variant="destructive" className="absolute top-2 right-2 text-[10px] px-1.5 z-10">
+                            {product.stock} UD
+                          </Badge>
+                        )}
+                        {product.stock === 0 && (
+                          <Badge variant="secondary" className="absolute top-2 right-2 text-[10px] px-1.5 z-10">
+                            Agotado
+                          </Badge>
+                        )}
+                        {product.stock > product.minStock && (
+                          <Badge variant="default" className="absolute top-2 right-2 text-[10px] px-1.5 bg-green-600 z-10">
+                            {product.stock} UD
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    <CardContent className="p-3">
+
+                    {/* Add button - Always visible and separated from click area */}
+                    {product.stock > 0 && (
+                      <div className="absolute bottom-3 right-3 z-20">
+                        <Button
+                          size="sm"
+                          className="h-9 px-3 rounded-full shadow-lg font-medium"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAddToCartClick(product)
+                          }}
+                        >
+                          <ShoppingCart className="h-4 w-4 mr-2" />
+                          Agregar
+                        </Button>
+                      </div>
+                    )}
+                    <CardContent className="p-3 cursor-pointer" onClick={() => { setDetailsProduct(product); setDetailsOpen(true); }}>
                       <div className="text-[10px] text-muted-foreground truncate mb-0.5">
                         {product.models[0]?.model?.brand?.name} {product.models[0]?.model?.name}
                       </div>
@@ -606,13 +735,17 @@ export default function CatalogoPage() {
                       </Badge>
                       <div className="flex items-center justify-between">
                         <div className="text-base font-bold text-primary">
-                          {formatPrice(
-                            customerType === "WHOLESALE"
-                              ? product.wholesalePrice
-                              : product.retailPrice
+                          {!product.hidePrice ? (
+                            formatPrice(
+                              customerType === "STORE"
+                                ? product.wholesalePrice
+                                : product.retailPrice
+                            )
+                          ) : (
+                            <span className="text-xs text-muted-foreground font-normal">Consultar precio</span>
                           )}
                         </div>
-                        {customerType === "WHOLESALE" && (
+                        {customerType === "STORE" && !product.hidePrice && (
                           <span className="text-[10px] text-cyan-600">mayoreo</span>
                         )}
                       </div>
@@ -623,29 +756,7 @@ export default function CatalogoPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* Mobile bottom navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50">
-        <div className="flex items-center justify-around h-16">
-          <Link href="/" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
-            <Home className="h-5 w-5" />
-            <span className="text-[10px]">Inicio</span>
-          </Link>
-          <Link href="/catalogo" className="flex flex-col items-center gap-1 text-primary">
-            <ShoppingCart className="h-5 w-5" />
-            <span className="text-[10px]">Catalogo</span>
-          </Link>
-          <Link href="/mis-reservas" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
-            <CalendarCheck className="h-5 w-5" />
-            <span className="text-[10px]">Reservas</span>
-          </Link>
-          <Link href="/perfil" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
-            <User className="h-5 w-5" />
-            <span className="text-[10px]">Perfil</span>
-          </Link>
-        </div>
-      </nav>
+      </main>
     </div>
   )
 }

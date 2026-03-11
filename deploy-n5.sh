@@ -37,10 +37,9 @@ else
     git commit -m "deploy: update from Mac $(date '+%Y-%m-%d %H:%M')" || true
 fi
 
-# Push con la rama actual
-CURRENT_BRANCH=$(git branch --show-current)
-echo -e "${YELLOW}Pushing to ${CURRENT_BRANCH}...${NC}"
-git push origin "$CURRENT_BRANCH"
+# Push a main
+echo -e "${YELLOW}Pushing to main...${NC}"
+git push origin main
 
 # --- PASO 2: Deploy en N5 ---
 echo -e "${BLUE}>>> [N5 PRO] Conectando vía Tailscale a ${REMOTE_HOST}...${NC}"
@@ -57,11 +56,10 @@ fi
 
 echo -e "${GREEN}>>> Actualizando código y reconstruyendo contenedores...${NC}"
 
-# Comando remoto - PowerShell syntax (Windows SSH usa PowerShell por defecto)
+# Comando remoto - PowerShell (Windows SSH en N5 Pro)
 ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_HOST" "
 cd D:\\Projectos
 
-# Si la carpeta existe pero NO es repo git, la borra
 if (Test-Path 'prosolutions_inventario_web') {
     if (-not (Test-Path 'prosolutions_inventario_web\\.git')) {
         Write-Host '>>> Carpeta existe pero no es repo git, borrando...'
@@ -69,15 +67,14 @@ if (Test-Path 'prosolutions_inventario_web') {
     }
 }
 
-# Clonar si no existe
 if (-not (Test-Path 'prosolutions_inventario_web')) {
     Write-Host '>>> Clonando repositorio por primera vez...'
-    git clone https://github.com/GalindoAsc/prosolutions_inventario_web.git
+    git clone https://github.com/codeaeternum/prosolutions_inventario_web.git
 }
 
 cd prosolutions_inventario_web
 
-Write-Host '>>> Actualizando desde GitHub...'
+Write-Host '>>> Actualizando desde GitHub (main)...'
 git fetch --all
 git reset --hard origin/main
 git clean -fd
@@ -92,7 +89,7 @@ Start-Sleep -Seconds 10
 Write-Host '>>> Ejecutando migraciones...'
 docker compose --profile migrate run --rm migrate
 
-Write-Host '>>> Verificando estado...'
+Write-Host '>>> Estado de contenedores:'
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 "
 

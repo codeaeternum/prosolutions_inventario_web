@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { BarcodeScanner } from "@/components/barcode-scanner"
 import { ArrowLeft, Search, Loader2, Package, Plus } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 import { useCurrency } from "@/components/currency-provider"
 
 interface Product {
@@ -27,14 +28,15 @@ export default function ScanProductPage() {
   const [product, setProduct] = useState<Product | null>(null)
   const [notFound, setNotFound] = useState(false)
 
-  const searchProduct = async (code: string) => {
+    const searchProduct = async (code: string) => {
     setSearching(true)
     setNotFound(false)
     setProduct(null)
 
     try {
-      const res = await fetch(`/api/products?search=${encodeURIComponent(code)}`)
-      const products = await res.json()
+      const res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}`)
+      const data = await res.json()
+      const products = Array.isArray(data.products) ? data.products : []
 
       if (products.length > 0) {
         // Find exact barcode match
@@ -146,18 +148,12 @@ export default function ScanProductPage() {
                 </div>
               </div>
             ) : notFound ? (
-              <div className="text-center py-8">
-                <Package className="h-16 w-16 mx-auto mb-4 text-muted-foreground/50" />
-                <p className="text-muted-foreground mb-4">
-                  No se encontró ningún producto con este código
-                </p>
-                <Button asChild>
-                  <Link href={`/admin/productos/nuevo?barcode=${scannedCode}`}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Crear Producto con este código
-                  </Link>
-                </Button>
-              </div>
+              <EmptyState 
+                icon={Package} 
+                title="Producto no encontrado" 
+                description="No se encontró ningún producto con este código." 
+                action={{ label: "Crear Producto con este código", href: `/admin/productos/nuevo?barcode=${scannedCode}`, icon: Plus }} 
+              />
             ) : null}
           </CardContent>
         </Card>

@@ -15,6 +15,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { toast } from "sonner"
+import {
   CalendarCheck,
   Clock,
   Package,
@@ -28,35 +39,13 @@ import {
   LogOut,
   QrCode,
 } from "lucide-react"
-import { formatPrice } from "@/lib/utils"
+import { useCurrency } from "@/components/currency-provider"
 import { signOut, useSession } from "next-auth/react"
 import { CountdownTimer } from "@/components/countdown-timer"
 import { ReservationQR } from "@/components/reservation-qr"
+import type { Reservation } from "@/types"
 
-interface Reservation {
-  id: string
-  qrCode?: string
-  quantity: number
-  totalPrice: number
-  depositAmount: number | null
-  depositPaid: boolean
-  type: "TEMPORARY" | "DEPOSIT"
-  status: string
-  paymentProofUrl: string | null
-  paymentMethod: string | null
-  expiresAt: string
-  createdAt: string
-  product: {
-    id: string
-    name: string
-    images: string[]
-    category: {
-      name: string
-    }
-  }
-}
-
-const statusLabels: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; description: string }> = {
+const statusLabels: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success"; description: string }> = {
   PENDING: {
     label: "Pendiente",
     variant: "outline",
@@ -79,7 +68,7 @@ const statusLabels: Record<string, { label: string; variant: "default" | "second
   },
   COMPLETED: {
     label: "Entregada",
-    variant: "secondary",
+    variant: "success",
     description: "Producto entregado exitosamente"
   },
   CANCELLED: {
@@ -89,12 +78,13 @@ const statusLabels: Record<string, { label: string; variant: "default" | "second
   },
   EXPIRED: {
     label: "Expirada",
-    variant: "secondary",
+    variant: "destructive",
     description: "La reserva expiró"
   },
 }
 
 export default function MisReservasPage() {
+  const { formatPrice } = useCurrency()
   const sessionData = useSession()
   const session = sessionData?.data
   const status = sessionData?.status
@@ -104,6 +94,8 @@ export default function MisReservasPage() {
   const [cancellingId, setCancellingId] = useState<string | null>(null)
   const [showQRDialog, setShowQRDialog] = useState(false)
   const [selectedQR, setSelectedQR] = useState<{ qrCode: string; id: string } | null>(null)
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [reservationToCancel, setReservationToCancel] = useState<string | null>(null)
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -115,12 +107,15 @@ export default function MisReservasPage() {
     const fetchReservations = async () => {
       try {
         const res = await fetch("/api/reservations")
+        const data = await res.json()
         if (res.ok) {
-          const data = await res.json()
-          setReservations(data)
+          setReservations(data.reservations ?? data ?? [])
+        } else {
+          toast.error("No se pudieron cargar tus reservas. Reintenta en un momento.")
         }
       } catch (error) {
         console.error("Error fetching reservations:", error)
+        toast.error("Error de conexión. Reintenta más tarde.")
       } finally {
         setIsLoading(false)
       }
@@ -131,10 +126,17 @@ export default function MisReservasPage() {
     }
   }, [session])
 
-  const handleCancel = async (id: string) => {
-    setCancellingId(id)
+  const handleCancelClick = (id: string) => {
+    setReservationToCancel(id)
+    setCancelDialogOpen(true)
+  }
+
+  const handleConfirmCancel = async () => {
+    if (!reservationToCancel) return
+    setCancellingId(reservationToCancel)
+    setCancelDialogOpen(false)
     try {
-      const res = await fetch(`/api/reservations/${id}`, {
+      const res = await fetch(`/api/reservations/${reservationToCancel}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "cancel" }),
@@ -142,13 +144,18 @@ export default function MisReservasPage() {
 
       if (res.ok) {
         setReservations(prev =>
-          prev.map(r => r.id === id ? { ...r, status: "CANCELLED" } : r)
+          prev.map(r => r.id === reservationToCancel ? { ...r, status: "CANCELLED" } : r)
         )
+        toast.success("Reserva cancelada exitosamente")
+      } else {
+        toast.error("Error al cancelar la reserva")
       }
     } catch (error) {
       console.error("Error cancelling reservation:", error)
+      toast.error("Error al cancelar la reserva")
     } finally {
       setCancellingId(null)
+      setReservationToCancel(null)
     }
   }
 
@@ -170,7 +177,7 @@ export default function MisReservasPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur">
+      <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur">
         <div className="container mx-auto max-w-7xl flex h-14 items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2">
             <Image
@@ -206,7 +213,7 @@ export default function MisReservasPage() {
         </div>
       </header>
 
-      <main className="container mx-auto max-w-2xl px-4 py-6">
+      <main id="main-content" className="container mx-auto max-w-2xl px-4 py-6" role="main">
         <div className="mb-6">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <CalendarCheck className="h-5 w-5" />
@@ -220,12 +227,12 @@ export default function MisReservasPage() {
               <CalendarCheck className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="font-medium mb-2">No tienes reservas</h3>
               <p className="text-sm text-muted-foreground mb-4">
-                Cuando reserves un producto, aparecerá aquí
+                Las reservas que hagas desde el catálogo o el carrito aparecerán aquí. Puedes ver el estado, el QR y cancelar si lo necesitas.
               </p>
               <Button asChild size="sm">
-                <Link href="/">
+                <Link href="/catalogo">
                   <ShoppingCart className="h-4 w-4 mr-2" />
-                  Ver Productos
+                  Ir al catálogo
                 </Link>
               </Button>
             </CardContent>
@@ -264,12 +271,14 @@ export default function MisReservasPage() {
 
                           {/* Product Image (only if no QR) */}
                           {!reservation.qrCode && (
-                            <div className="h-16 w-16 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                              {reservation.product.images[0] ? (
-                                <img
+                            <div className="h-16 w-16 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                              {reservation.product?.images?.[0] ? (
+                                <Image
                                   src={reservation.product.images[0]}
-                                  alt={reservation.product.name}
-                                  className="h-full w-full object-cover rounded-lg"
+                                  alt={reservation.product?.name ?? "Producto"}
+                                  fill
+                                  sizes="64px"
+                                  className="object-cover rounded-lg"
                                 />
                               ) : (
                                 <Package className="h-6 w-6 text-muted-foreground" />
@@ -279,13 +288,15 @@ export default function MisReservasPage() {
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2">
-                              <h3 className="font-medium text-sm truncate">{reservation.product.name}</h3>
+                              <h3 className="font-medium text-sm truncate" title={reservation.product?.name}>
+                                {reservation.product?.name ?? "Producto"}
+                              </h3>
                               <Badge variant={statusLabels[reservation.status]?.variant || "outline"} className="text-[10px] px-1.5 flex-shrink-0">
                                 {statusLabels[reservation.status]?.label || reservation.status}
                               </Badge>
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              {statusLabels[reservation.status]?.description}
+                              {statusLabels[reservation.status]?.description ?? "—"}
                             </p>
                             <div className="flex flex-wrap items-center gap-2 mt-2">
                               <Badge variant="outline" className="text-[10px] px-1.5">
@@ -314,7 +325,7 @@ export default function MisReservasPage() {
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 text-destructive hover:text-destructive"
-                                onClick={() => handleCancel(reservation.id)}
+                                onClick={() => handleCancelClick(reservation.id)}
                                 disabled={cancellingId === reservation.id}
                               >
                                 {cancellingId === reservation.id ? (
@@ -347,20 +358,22 @@ export default function MisReservasPage() {
                     <Card key={reservation.id} className="overflow-hidden opacity-60">
                       <CardContent className="p-3">
                         <div className="flex gap-3 items-center">
-                          <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                            {reservation.product.images[0] ? (
-                              <img
-                                src={reservation.product.images[0]}
-                                alt={reservation.product.name}
-                                className="h-full w-full object-cover rounded-lg"
-                              />
-                            ) : (
-                              <Package className="h-5 w-5 text-muted-foreground" />
-                            )}
+                          <div className="h-12 w-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                            {reservation.product?.images?.[0] ? (
+                                <Image
+                                  src={reservation.product.images[0]}
+                                  alt={reservation.product?.name ?? "Producto"}
+                                  fill
+                                  sizes="48px"
+                                  className="object-cover rounded-lg"
+                                />
+                              ) : (
+                                <Package className="h-5 w-5 text-muted-foreground" />
+                              )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
-                              <h3 className="font-medium text-sm truncate">{reservation.product.name}</h3>
+                              <h3 className="font-medium text-sm truncate" title={reservation.product?.name}>{reservation.product?.name ?? "Producto"}</h3>
                               <Badge variant={statusLabels[reservation.status]?.variant || "outline"} className="text-[10px] px-1.5">
                                 {statusLabels[reservation.status]?.label || reservation.status}
                               </Badge>
@@ -405,6 +418,27 @@ export default function MisReservasPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cancelar reserva?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. El producto volverá a estar disponible para otros clientes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, mantener</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmCancel}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Sí, cancelar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

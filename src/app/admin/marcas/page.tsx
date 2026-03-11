@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Smartphone } from "lucide-react"
 
 interface Brand {
@@ -23,6 +33,8 @@ export default function BrandsPage() {
   const [formData, setFormData] = useState({ name: "", logo: "" })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
 
   const fetchBrands = async () => {
     try {
@@ -69,12 +81,14 @@ export default function BrandsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta marca?")) return
-
+    setDeleteDialogOpen(false)
+    setDeleteTargetId(null)
     try {
       const res = await fetch(`/api/brands/${id}`, { method: "DELETE" })
       if (res.ok) {
         fetchBrands()
+      } else {
+        setError("Error al eliminar")
       }
     } catch {
       setError("Error al eliminar")
@@ -157,7 +171,10 @@ export default function BrandsPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => handleDelete(brand.id)}
+                  onClick={() => {
+                    setDeleteTargetId(brand.id)
+                    setDeleteDialogOpen(true)
+                  }}
                   disabled={brand._count.models > 0}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -183,6 +200,26 @@ export default function BrandsPage() {
           </Button>
         </div>
       )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar esta marca?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Si la marca tiene modelos asociados no podrás eliminarla.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => deleteTargetId && void handleDelete(deleteTargetId)}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

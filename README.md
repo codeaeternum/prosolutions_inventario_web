@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pro-Solutions Inventario
 
-## Getting Started
+Sistema de inventario, reservas y ventas para refacciones de celulares. Incluye web (Next.js), API REST, bot de Telegram y PWA para el dueño.
 
-First, run the development server:
+## Requisitos
+
+- **Node.js** 20+
+- **PostgreSQL** 16 (o compatible)
+- **npm** o pnpm
+
+## Configuración rápida
+
+1. Clonar el repositorio e instalar dependencias:
+
+```bash
+npm install
+```
+
+2. Crear `.env` en la raíz con al menos:
+
+```env
+DATABASE_URL="postgresql://usuario:contraseña@localhost:5432/nombre_bd"
+NEXTAUTH_SECRET="una-clave-secreta-larga-y-aleatoria"
+NEXTAUTH_URL="http://localhost:3000"
+```
+
+Para el bot de Telegram (opcional):
+
+```env
+TELEGRAM_BOT_TOKEN="token_de_BotFather"
+```
+
+3. Crear la base de datos y aplicar el esquema:
+
+```bash
+npm run db:push
+npm run db:seed
+```
+
+4. Arrancar en desarrollo:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abre [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Comando | Descripción |
+|---------|-------------|
+| `npm run dev` | Next.js en desarrollo |
+| `npm run build` | Build de producción |
+| `npm run start` | Servidor de producción (tras `build`) |
+| `npm run db:push` | Sincroniza el esquema Prisma con la BD |
+| `npm run db:seed` | Carga datos iniciales (opcional) |
+| `npm run db:studio` | Abre Prisma Studio |
+| `npm run bot:dev` | Bot de Telegram en desarrollo |
+| `npm run bot:start` | Bot de Telegram (producción) |
+| `npm run pwa:icons` | Genera iconos PWA desde `public/logo.jpg` |
+| `npm run test` | Tests (Vitest) |
+| `npm run lint` | Linter |
 
-## Learn More
+## Despliegue con Docker
 
-To learn more about Next.js, take a look at the following resources:
+Build y ejecución local:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+docker compose build
+docker compose up -d
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+La app queda en el puerto **3005** (mapeado desde el 3000 del contenedor). Para desplegar en Portainer usando solo imágenes (sin build en Portainer), ver **docs/PORTAINER-STACK.md**.
 
-## Deploy on Vercel
+## Documentación
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **[docs/PORTAINER-STACK.md](docs/PORTAINER-STACK.md)** — Despliegue en Portainer (N5, Cloudflare, etc.)
+- **[docs/PWA-DUENO.md](docs/PWA-DUENO.md)** — PWA para el dueño: instalar en el móvil y escanear QR
+- **[docs/APP-IOS-DUENO.md](docs/APP-IOS-DUENO.md)** — Opciones de app iOS
+- **[docs/MEJORAS-PROYECTO.md](docs/MEJORAS-PROYECTO.md)** — Mejoras posibles del proyecto
+- **AUDIT.md** / **AUDIT-MODULOS.md** — Auditoría de seguridad y módulos
+- **src/bot/BOT-FUNCIONAMIENTO.md** — Cómo funciona el bot de Telegram
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Estructura breve
+
+- `src/app` — Next.js App Router (páginas y APIs)
+- `src/components` — Componentes reutilizables y UI
+- `src/lib` — Auth, Prisma, utilidades
+- `src/bot` — Bot de Telegram (Telegraf)
+- `prisma` — Esquema y seed de la BD
+
+## Licencia
+
+Uso interno / privado según corresponda.

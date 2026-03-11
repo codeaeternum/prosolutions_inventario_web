@@ -34,6 +34,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           throw new Error("Usuario no encontrado")
         }
 
+        // Bot-registered users may not have a password
+        if (!user.password) {
+          throw new Error("Esta cuenta fue creada vía Telegram. Por favor usa el Bot para acceder.")
+        }
+
         const passwordMatch = await bcrypt.compare(
           credentials.password as string,
           user.password

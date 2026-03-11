@@ -39,9 +39,15 @@ export function SearchBar({ className }: { className?: string }) {
 
       setLoading(true)
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`)
+        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(query)}`)
         const data = await res.json()
-        setResults(data)
+        const mappedResults = (data.products || []).map((p: any) => ({
+          type: "product" as const,
+          id: p.id,
+          name: p.name,
+          subtitle: `${p.category?.name || ""} - ${p.barcode || "Sin código"}`,
+        }))
+        setResults(mappedResults)
         setShowResults(true)
       } catch (error) {
         console.error("Search error:", error)

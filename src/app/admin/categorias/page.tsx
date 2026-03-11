@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Tags } from "lucide-react"
 
 interface Category {
@@ -23,6 +33,8 @@ export default function CategoriesPage() {
   const [formData, setFormData] = useState({ name: "", icon: "" })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
 
   const fetchCategories = async () => {
     try {
@@ -69,12 +81,14 @@ export default function CategoriesPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta categoría?")) return
-
+    setDeleteDialogOpen(false)
+    setDeleteTargetId(null)
     try {
       const res = await fetch(`/api/categories/${id}`, { method: "DELETE" })
       if (res.ok) {
         fetchCategories()
+      } else {
+        setError("Error al eliminar")
       }
     } catch {
       setError("Error al eliminar")
@@ -157,7 +171,10 @@ export default function CategoriesPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => handleDelete(category.id)}
+                  onClick={() => {
+                    setDeleteTargetId(category.id)
+                    setDeleteDialogOpen(true)
+                  }}
                   disabled={category._count.products > 0}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -183,6 +200,26 @@ export default function CategoriesPage() {
           </Button>
         </div>
       )}
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar esta categoría?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. Si la categoría tiene productos asociados no podrás eliminarla.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => deleteTargetId && void handleDelete(deleteTargetId)}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

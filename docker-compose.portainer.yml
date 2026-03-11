@@ -1,0 +1,83 @@
+# ProSolutions — Compose para Portainer Web editor (solo imágenes, sin build)
+# 1) En el N5: docker compose build
+# 2) Portainer → Web editor → pegar este archivo
+# 3) Añadir variables de entorno y desplegar
+
+services:
+  app:
+    image: prosolutions-app:latest
+    container_name: prosolutions-app
+    restart: unless-stopped
+    ports:
+      - "3005:3000"
+    environment:
+      - DATABASE_URL=postgresql://prosolutions:prosolutions123@db:5432/prosolutions_db?schema=public
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-key-change-me}
+      - AUTH_SECRET=${NEXTAUTH_SECRET:-super-secret-key-change-me}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://prosolutions.ascnex.com}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - VAPID_EMAIL=${VAPID_EMAIL:-admin@prosolutions.com}
+      - CRON_SECRET=${CRON_SECRET:-}
+    volumes:
+      - uploads:/app/public/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - prosolutions-network
+
+  bot:
+    image: prosolutions-bot:latest
+    container_name: prosolutions-bot
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://prosolutions:prosolutions123@db:5432/prosolutions_db?schema=public
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - NODE_ENV=production
+    volumes:
+      - uploads:/app/public/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - prosolutions-network
+    command: ["npm", "run", "bot:start"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway" 
+      
+  db:
+    image: postgres:16-alpine
+    container_name: prosolutions-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=prosolutions
+      - POSTGRES_PASSWORD=prosolutions123
+      - POSTGRES_DB=prosolutions_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prosolutions -d prosolutions_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prosolutions-network
+
+networks:
+  prosolutions-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  uploads:

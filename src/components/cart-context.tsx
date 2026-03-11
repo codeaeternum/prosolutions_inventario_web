@@ -32,9 +32,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
         const savedCart = localStorage.getItem("cart")
         if (savedCart) {
             try {
-                setItems(JSON.parse(savedCart))
-            } catch (e) {
-                console.error("Failed to parse cart", e)
+                const parsed = JSON.parse(savedCart)
+                if (Array.isArray(parsed) && parsed.every((i) => i?.productId && typeof i.quantity === "number")) {
+                    setItems(parsed)
+                }
+            } catch {
+                localStorage.removeItem("cart")
             }
         }
         setIsInitialized(true)

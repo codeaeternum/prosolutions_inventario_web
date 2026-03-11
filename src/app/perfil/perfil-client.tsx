@@ -1,12 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { signOut } from "next-auth/react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { CurrencyToggleCompact } from "@/components/currency-toggle"
 import {
     User,
     Mail,
@@ -16,9 +15,11 @@ import {
     CalendarCheck,
     Shield,
     Clock,
-    Home
+    Home,
+    CreditCard
 } from "lucide-react"
 import Link from "next/link"
+import { useCurrency } from "@/components/currency-provider"
 
 interface UserData {
     name?: string | null
@@ -43,17 +44,28 @@ function getStatusBadge(status: string) {
 
 function getCustomerTypeBadge(type: string) {
     switch (type) {
-        case "WHOLESALE":
-            return <Badge variant="secondary">Mayoreo</Badge>
-        case "RETAIL":
-            return <Badge variant="outline">Menudeo</Badge>
+        case "STORE":
+            return <Badge variant="secondary">Tienda (Mayoreo)</Badge>
+        case "TECHNICIAN":
+            return <Badge variant="secondary">Técnico</Badge>
+        case "NORMAL":
+            return <Badge variant="outline">Cliente Particular</Badge>
         default:
             return <Badge variant="outline">{type}</Badge>
     }
 }
 
 export default function PerfilClient({ user }: { user: UserData }) {
+    const { formatPrice } = useCurrency()
     const [isLoggingOut, setIsLoggingOut] = useState(false)
+    const [credit, setCredit] = useState<{ creditLimit: number | null; creditBalance: number } | null>(null)
+
+    useEffect(() => {
+        fetch("/api/credit/balance")
+            .then((res) => res.ok ? res.json() : null)
+            .then((data) => data && (data.creditLimit != null || data.creditBalance > 0) ? setCredit(data) : setCredit(null))
+            .catch(() => setCredit(null))
+    }, [])
 
     const handleLogout = async () => {
         setIsLoggingOut(true)
@@ -63,25 +75,26 @@ export default function PerfilClient({ user }: { user: UserData }) {
     return (
         <div className="min-h-screen bg-muted/40 pb-24">
             {/* Header */}
-            <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                 <div className="container mx-auto max-w-lg flex h-16 items-center justify-between px-4">
                     <Link href="/" className="flex items-center gap-2">
                         <Home className="h-5 w-5 text-primary" />
                         <span className="font-bold text-lg tracking-tight">Pro-Solutions</span>
                     </Link>
                     <div className="flex items-center gap-3">
-                        <CurrencyToggleCompact />
                         <ThemeToggle />
                     </div>
                 </div>
             </header>
 
-            <main className="container mx-auto max-w-lg px-4 py-6 space-y-6">
+            <main id="main-content" className="container mx-auto max-w-lg px-4 py-6 space-y-6" role="main">
                 {/* Welcome & Status */}
-                <div className="flex flex-col gap-2">
-                    <h1 className="text-2xl font-bold tracking-tight">Hola, {user.name?.split(" ")[0]}</h1>
-                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                        <span>{user.email}</span>
+                <div className="flex flex-col gap-2 min-w-0">
+                    <h1 className="text-2xl font-bold tracking-tight truncate" title={user.name ?? undefined}>
+                        Hola, {user.name?.split(" ")[0] ?? "Usuario"}
+                    </h1>
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm min-w-0">
+                        <span className="truncate" title={user.email ?? undefined}>{user.email ?? "—"}</span>
                         {user.role === "ADMIN" && <Badge variant="outline" className="text-xs">Admin</Badge>}
                     </div>
                 </div>
@@ -103,6 +116,30 @@ export default function PerfilClient({ user }: { user: UserData }) {
                         </div>
                     </CardContent>
                 </Card>
+
+                {/* Crédito: saldo y límite */}
+                {credit != null && (credit.creditBalance > 0 || credit.creditLimit != null) && (
+                    <Card className="border-none shadow-md overflow-hidden">
+                        <CardContent className="p-4">
+                            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
+                                <CreditCard className="h-4 w-4" />
+                                Línea de crédito
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                {credit.creditBalance > 0 && (
+                                    <p className="text-lg font-semibold">
+                                        Saldo a pagar: {formatPrice(credit.creditBalance)}
+                                    </p>
+                                )}
+                                {credit.creditLimit != null && credit.creditLimit > 0 && (
+                                    <p className="text-sm text-muted-foreground">
+                                        Límite: {formatPrice(credit.creditLimit)}
+                                    </p>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
 
                 {/* Account Pending Alert */}
                 {user?.status === "PENDING" && (

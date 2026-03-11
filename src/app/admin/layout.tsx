@@ -10,16 +10,16 @@ export default async function AdminLayout({
 }) {
   const session = await auth()
 
-  if (!session || session.user.role !== "ADMIN") {
+  if (!session || (session.user.role !== "ADMIN" && session.user.role !== "EMPLOYEE")) {
     redirect("/login")
   }
 
   return (
     <div className="min-h-screen bg-background">
-      <AdminSidebar />
+      <AdminSidebar user={{ role: session.user.role }} />
       <div className="lg:pl-64">
         <AdminHeader user={session.user} />
-        <main className="p-4 lg:p-8">
+        <main id="main-content" className="p-4 lg:p-8" role="main">
           {children}
         </main>
       </div>

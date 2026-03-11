@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 
 // GET /api/reservations/verify?code=xxx - Verificar reserva por código QR
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
     const { searchParams } = new URL(request.url)
     const qrCode = searchParams.get("code")
@@ -17,8 +15,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Código QR requerido" }, { status: 400 })
     }
 
-    const reservation = await prisma.reservation.findUnique({
-      where: { qrCode },
+    const reservation = await prisma.reservation.findFirst({
+      where: { OR: [{ id: qrCode }, { qrCode }] },
       include: {
         product: {
           select: {
@@ -71,10 +69,8 @@ export async function GET(request: NextRequest) {
 // POST /api/reservations/verify - Completar reserva por código QR
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdmin()
+    if (result.error) return result.error
 
     const body = await request.json()
     const { qrCode } = body
@@ -83,8 +79,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Código QR requerido" }, { status: 400 })
     }
 
-    const reservation = await prisma.reservation.findUnique({
-      where: { qrCode },
+    const reservation = await prisma.reservation.findFirst({
+      where: { OR: [{ id: qrCode }, { qrCode }] },
       include: {
         product: { select: { name: true } },
         user: { select: { name: true } },

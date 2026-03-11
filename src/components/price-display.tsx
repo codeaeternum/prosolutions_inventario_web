@@ -6,25 +6,11 @@ import { cn } from "@/lib/utils"
 interface PriceDisplayProps {
   price: number
   className?: string
-  showOriginal?: boolean // Mostrar precio original en MXN si está en USD
 }
 
-export function PriceDisplay({ price, className, showOriginal = false }: PriceDisplayProps) {
-  const { formatPrice, currency } = useCurrency()
-
-  return (
-    <span className={cn("", className)}>
-      {formatPrice(price)}
-      {showOriginal && currency === "USD" && (
-        <span className="text-xs text-muted-foreground ml-1">
-          ({new Intl.NumberFormat("es-MX", {
-            style: "currency",
-            currency: "MXN",
-          }).format(price)})
-        </span>
-      )}
-    </span>
-  )
+export function PriceDisplay({ price, className }: PriceDisplayProps) {
+  const { formatPrice } = useCurrency()
+  return <span className={cn("", className)}>{formatPrice(price)}</span>
 }
 
 // Para usar en server components, pasar el formatPrice como prop

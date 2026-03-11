@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { auth } from "@/lib/auth"
+import { requireAdminOrEmployee } from "@/lib/api-auth"
 
 // Tipo para status de reserva (del schema)
-type ReservationStatusType = "PENDING" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
+type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
 
 type TransactionClient = Omit<
   typeof prisma,
@@ -12,10 +12,8 @@ type TransactionClient = Omit<
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAdminOrEmployee()
+    if (result.error) return result.error
 
     const { searchParams } = new URL(req.url)
     const fromDate = searchParams.get("from")

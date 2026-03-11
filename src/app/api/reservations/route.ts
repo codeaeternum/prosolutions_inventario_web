@@ -1,20 +1,30 @@
 import { NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { z } from "zod"
+import { getSession, requireAuth } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { getSettings } from "@/lib/settings"
 import { sendNotificationToAdmins } from "../notifications/stream/route"
+
+const createReservationSchema = z.object({
+  productId: z.string().min(1, "El producto es requerido"),
+  quantity: z.coerce.number().int().min(1).default(1),
+  type: z.enum(["TEMPORARY", "DEPOSIT"]).default("TEMPORARY"),
+  paymentProofUrl: z.string().optional(),
+  paymentMethod: z.enum(["STORE", "TRANSFER", "CREDIT"]).optional(),
+})
 
 // GET - Obtener reservas (admin: todas, cliente: las suyas)
 export async function GET(req: Request) {
   try {
-    const session = await auth()
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAuth()
+    if (result.error) return result.error
+    const session = getSession(result)!
 
     const { searchParams } = new URL(req.url)
     const status = searchParams.get("status")
     const type = searchParams.get("type")
+    const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
     const isAdmin = session.user.role === "ADMIN"
 
@@ -34,35 +44,49 @@ export async function GET(req: Request) {
       where.type = type
     }
 
-    const reservations = await prisma.reservation.findMany({
-      where,
-      include: {
-        product: {
-          include: {
-            category: true,
-            models: {
-              include: {
-                model: {
-                  include: { brand: true },
-                },
+    const include = {
+      product: {
+        include: {
+          category: true,
+          models: {
+            include: {
+              model: {
+                include: { brand: true },
               },
             },
           },
         },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            customerType: true,
-          },
+      },
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          customerType: true,
         },
       },
-      orderBy: { createdAt: "desc" },
-    })
+    }
 
-    return NextResponse.json(reservations)
+    const [reservations, total] = await Promise.all([
+      prisma.reservation.findMany({
+        where,
+        include,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.reservation.count({ where }),
+    ])
+
+    const totalPages = Math.ceil(total / limit) || 1
+    return NextResponse.json({
+      reservations,
+      total,
+      page,
+      limit,
+      totalPages,
+    })
   } catch (error) {
     console.error("Error fetching reservations:", error)
     return NextResponse.json(
@@ -75,11 +99,9 @@ export async function GET(req: Request) {
 // POST - Crear nueva reserva
 export async function POST(req: Request) {
   try {
-    const session = await auth()
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
-    }
+    const result = await requireAuth()
+    if (result.error) return result.error
+    const session = getSession(result)!
 
     if (session.user.status !== "APPROVED") {
       return NextResponse.json(
@@ -89,20 +111,16 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { 
-      productId, 
-      quantity = 1, 
-      type = "TEMPORARY",  // TEMPORARY o DEPOSIT
-      paymentProofUrl,
-      paymentMethod,
-    } = body
-
-    if (!productId) {
+    const parseResult = createReservationSchema.safeParse(body)
+    if (!parseResult.success) {
+      const first = parseResult.error.flatten().fieldErrors
+      const message = first.productId?.[0] ?? first.quantity?.[0] ?? parseResult.error.message
       return NextResponse.json(
-        { error: "El producto es requerido" },
+        { error: typeof message === "string" ? message : "Datos inválidos" },
         { status: 400 }
       )
     }
+    const { productId, quantity, type, paymentProofUrl, paymentMethod } = parseResult.data
 
     // Obtener producto
     const product = await prisma.product.findUnique({
@@ -123,18 +141,15 @@ export async function POST(req: Request) {
       )
     }
 
-    // Obtener configuración
-    const settings = await prisma.settings.findUnique({
-      where: { id: "default" },
-    })
+    // Obtener configuración (usa valores por defecto si la tabla no existe)
+    const settings = await getSettings()
+    const tempMinutes = settings.tempReservationMinutes
+    const depositPercentage = settings.depositPercentage
+    const pendingHours = settings.pendingVerificationHours
 
-    const tempMinutes = settings?.tempReservationMinutes ?? 30
-    const depositPercentage = settings?.depositPercentage ?? 50
-    const pendingHours = settings?.pendingVerificationHours ?? 24
-
-    // Calcular precio según tipo de cliente
-    const unitPrice = session.user.customerType === "WHOLESALE" 
-      ? product.wholesalePrice 
+    // Calcular precio según tipo de cliente (STORE = mayoreo)
+    const unitPrice = session.user.customerType === "STORE"
+      ? product.wholesalePrice
       : product.retailPrice
     const totalPrice = unitPrice * quantity
 
@@ -160,6 +175,28 @@ export async function POST(req: Request) {
       }
     }
 
+    // Si es a crédito: validar límite y saldo
+    if (paymentMethod === "CREDIT") {
+      const userWithCredit = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { creditLimit: true, creditBalance: true },
+      })
+      const limit = userWithCredit?.creditLimit ?? 0
+      const currentBalance = userWithCredit?.creditBalance ?? 0
+      if (limit == null || limit <= 0) {
+        return NextResponse.json(
+          { error: "No tienes línea de crédito asignada. Contacta al administrador." },
+          { status: 400 }
+        )
+      }
+      if (currentBalance + totalPrice > limit) {
+        return NextResponse.json(
+          { error: `Superas tu límite de crédito (saldo: $${currentBalance.toLocaleString()}, límite: $${limit.toLocaleString()})` },
+          { status: 400 }
+        )
+      }
+    }
+
     // Crear reserva
     const reservation = await prisma.reservation.create({
       data: {
@@ -170,8 +207,8 @@ export async function POST(req: Request) {
         depositAmount,
         type,
         status,
-        paymentProofUrl,
-        paymentMethod,
+        paymentProofUrl: paymentMethod === "CREDIT" ? null : paymentProofUrl,
+        paymentMethod: paymentMethod ?? null,
         expiresAt,
       },
       include: {
@@ -185,6 +222,26 @@ export async function POST(req: Request) {
         },
       },
     })
+
+    // Si es a crédito: registrar movimiento y actualizar saldo
+    if (paymentMethod === "CREDIT") {
+      await prisma.$transaction([
+        prisma.creditMovement.create({
+          data: {
+            userId: session.user.id,
+            amount: totalPrice,
+            type: "DEBT",
+            referenceType: "RESERVATION",
+            referenceId: reservation.id,
+            notes: `Reserva #${reservation.id.slice(-8)} - ${product.name} x${quantity}`,
+          },
+        }),
+        prisma.user.update({
+          where: { id: session.user.id },
+          data: { creditBalance: { increment: totalPrice } },
+        }),
+      ])
+    }
 
     // Reducir stock temporalmente
     await prisma.product.update({
