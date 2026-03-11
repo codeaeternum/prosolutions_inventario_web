@@ -150,7 +150,7 @@ export default async function AdminDashboard() {
       value: formatPrice(stats.todaysSales),
       description: "Ingresos del día actual",
       icon: TrendingUp,
-      href: "/admin/movimientos",
+      href: "/admin/ventas",
       alert: stats.todaysSales > 0 ? "¡Buen trabajo!" : null,
       alertClass: "text-green-500",
     },
