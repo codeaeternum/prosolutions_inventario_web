@@ -84,6 +84,15 @@ export default function UsersPage() {
     customerType: "NORMAL",
   })
 
+  // Credit management dialog
+  const [creditOpen, setCreditOpen] = useState(false)
+  const [creditUser, setCreditUser] = useState<User | null>(null)
+  const [creditLimitValue, setCreditLimitValue] = useState("")
+  const [creditSaving, setCreditSaving] = useState(false)
+  const [abonoAmount, setAbonoAmount] = useState("")
+  const [abonoNotes, setAbonoNotes] = useState("")
+  const [abonoSaving, setAbonoSaving] = useState(false)
+
   const fetchUsers = useCallback(async () => {
     try {
       const params = new URLSearchParams()
@@ -198,6 +207,66 @@ export default function UsersPage() {
   }
 
   const pendingCount = users.filter((u) => u.status === "PENDING").length
+
+  const openCreditDialog = (user: User) => {
+    setCreditUser(user)
+    setCreditLimitValue(user.creditLimit?.toString() ?? "")
+    setAbonoAmount("")
+    setAbonoNotes("")
+    setCreditOpen(true)
+  }
+
+  const handleSaveCreditLimit = async () => {
+    if (!creditUser) return
+    const limit = creditLimitValue === "" ? null : parseFloat(creditLimitValue)
+    if (limit !== null && (isNaN(limit) || limit < 0)) {
+      toast.error("Ingresa un límite válido")
+      return
+    }
+    setCreditSaving(true)
+    try {
+      const res = await fetch(`/api/credit/users/${creditUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creditLimit: limit }),
+      })
+      if (res.ok) {
+        toast.success(limit === null ? "Línea de crédito removida" : `Límite actualizado a $${limit.toLocaleString()}`)
+        fetchUsers()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || "Error al actualizar")
+      }
+    } catch { toast.error("Error de conexión") }
+    finally { setCreditSaving(false) }
+  }
+
+  const handleQuickAbono = async () => {
+    if (!creditUser || !abonoAmount) return
+    const amount = parseFloat(abonoAmount)
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Monto inválido")
+      return
+    }
+    setAbonoSaving(true)
+    try {
+      const res = await fetch("/api/credit/payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: creditUser.id, amount, notes: abonoNotes || undefined }),
+      })
+      if (res.ok) {
+        toast.success(`Abono de $${amount.toLocaleString()} registrado`)
+        setAbonoAmount("")
+        setAbonoNotes("")
+        fetchUsers()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || "Error al abonar")
+      }
+    } catch { toast.error("Error de conexión") }
+    finally { setAbonoSaving(false) }
+  }
 
   const statusColors = {
     PENDING: "warning",
@@ -534,6 +603,17 @@ export default function UsersPage() {
                               <SelectItem value="ADMIN">Administrador</SelectItem>
                             </SelectContent>
                           </Select>
+                          {user.role !== "ADMIN" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1"
+                              onClick={() => openCreditDialog(user)}
+                            >
+                              <CreditCard className="h-3.5 w-3.5" />
+                              Crédito
+                            </Button>
+                          )}
                         </>
                       )}
 
@@ -573,6 +653,84 @@ export default function UsersPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Credit Management Dialog */}
+      <Dialog open={creditOpen} onOpenChange={(open) => { setCreditOpen(open); if (!open) setCreditUser(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Gestión de Crédito</DialogTitle>
+          </DialogHeader>
+          {creditUser && (
+            <div className="space-y-5 py-2">
+              <div className="p-3 bg-muted rounded-lg">
+                <p className="font-semibold">{creditUser.name}</p>
+                <p className="text-xs text-muted-foreground">{creditUser.email}</p>
+                {(creditUser.creditBalance ?? 0) > 0 && (
+                  <p className="text-sm font-medium text-destructive mt-1">
+                    Deuda actual: ${(creditUser.creditBalance ?? 0).toLocaleString()}
+                  </p>
+                )}
+              </div>
+
+              {/* Editar Límite */}
+              <div className="space-y-2">
+                <Label>Límite de Crédito ($)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="100"
+                    placeholder="Ej: 5000 (vacío = sin crédito)"
+                    value={creditLimitValue}
+                    onChange={(e) => setCreditLimitValue(e.target.value)}
+                  />
+                  <Button onClick={handleSaveCreditLimit} disabled={creditSaving} size="sm" className="shrink-0">
+                    {creditSaving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Guardar
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Actual: {creditUser.creditLimit != null ? `$${creditUser.creditLimit.toLocaleString()}` : "Sin crédito"}
+                </p>
+              </div>
+
+              {/* Abono Rápido */}
+              {(creditUser.creditBalance ?? 0) > 0 && (
+                <div className="space-y-2 border-t pt-4">
+                  <Label>Registrar Abono Rápido</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="Monto"
+                      value={abonoAmount}
+                      onChange={(e) => setAbonoAmount(e.target.value)}
+                    />
+                    <Button
+                      onClick={handleQuickAbono}
+                      disabled={abonoSaving || !abonoAmount || parseFloat(abonoAmount) <= 0}
+                      size="sm"
+                      className="shrink-0 bg-green-600 hover:bg-green-700"
+                    >
+                      {abonoSaving && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      <DollarSign className="h-3.5 w-3.5 mr-1" />Abonar
+                    </Button>
+                  </div>
+                  <Input
+                    placeholder="Notas (opcional)"
+                    value={abonoNotes}
+                    onChange={(e) => setAbonoNotes(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreditOpen(false)}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

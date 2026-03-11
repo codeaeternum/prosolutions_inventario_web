@@ -78,6 +78,12 @@ export default function VentasPage() {
     const [paymentMethod, setPaymentMethod] = useState("EFECTIVO")
     const [cashGiven, setCashGiven] = useState("")
 
+    // Credit payment state
+    const [creditSearch, setCreditSearch] = useState("")
+    const [creditResults, setCreditResults] = useState<Array<{ id: string; name: string; phone: string | null; creditLimit: number | null; creditBalance: number }>>([])
+    const [creditSearching, setCreditSearching] = useState(false)
+    const [creditCustomer, setCreditCustomer] = useState<{ id: string; name: string; creditLimit: number | null; creditBalance: number } | null>(null)
+
     const handleScan = async (code: string) => {
         const cleanCode = code.trim()
         if (!cleanCode) return
@@ -162,8 +168,32 @@ export default function VentasPage() {
         setCart(prev => prev.filter(item => item.product.id !== productId))
     }
 
+    const searchCreditCustomers = async (query: string) => {
+        if (query.length < 2) { setCreditResults([]); return }
+        setCreditSearching(true)
+        try {
+            const res = await fetch(`/api/users?search=${encodeURIComponent(query)}&role=CUSTOMER&limit=8`)
+            const data = await res.json()
+            setCreditResults((data.users ?? []).filter((u: any) => u.creditLimit != null))
+        } catch { setCreditResults([]) }
+        finally { setCreditSearching(false) }
+    }
+
     const processSale = async () => {
         if (cart.length === 0) return
+
+        // Validar crédito si aplica
+        if (paymentMethod === "CREDITO") {
+            if (!creditCustomer) {
+                toast.error("Selecciona un cliente para venta a crédito")
+                return
+            }
+            const available = (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)
+            if (cartTotal > available) {
+                toast.error(`Crédito insuficiente. Disponible: $${available.toLocaleString()}, Total: $${cartTotal.toLocaleString()}`)
+                return
+            }
+        }
 
         setProcessing(true)
         try {
@@ -177,7 +207,7 @@ export default function VentasPage() {
                         productId: item.product.id,
                         type: "SALE",
                         quantity: item.quantity,
-                        reason: "Venta en local",
+                        reason: paymentMethod === "CREDITO" ? `Venta a crédito — ${creditCustomer!.name}` : "Venta en local",
                         unitPrice: item.product.retailPrice,
                         totalPrice: item.product.retailPrice * item.quantity,
                     }),
@@ -189,19 +219,40 @@ export default function VentasPage() {
                     return
                 }
                 const data = await res.json();
-                lastMovementId = data.id; // Guardamos el id para el ticket
+                lastMovementId = data.id;
+            }
+
+            // Si es a crédito: registrar deuda
+            if (paymentMethod === "CREDITO" && creditCustomer) {
+                const creditRes = await fetch("/api/credit/debt", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userId: creditCustomer.id,
+                        amount: cartTotal,
+                        notes: `Venta POS: ${cart.map(i => `${i.product.name} x${i.quantity}`).join(", ")}`,
+                    }),
+                })
+                if (!creditRes.ok) {
+                    const err = await creditRes.json()
+                    toast.error(`Venta registrada pero error al cargar crédito: ${err.error}`)
+                }
             }
 
             const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0)
             const totalPrice = cart.reduce((sum, item) => sum + (item.product.retailPrice * item.quantity), 0)
 
-            toast.success(`✅ Venta registrada: ${totalItems} producto(s) - $${totalPrice.toLocaleString()}`)
+            const methodLabel = paymentMethod === "CREDITO" ? ` (a crédito: ${creditCustomer!.name})` : ""
+            toast.success(`✅ Venta registrada: ${totalItems} producto(s) - $${totalPrice.toLocaleString()}${methodLabel}`)
 
             setLastSale({
                 product: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
                 quantity: totalItems
             })
             setCart([])
+            setCreditCustomer(null)
+            setCreditSearch("")
+            setCreditResults([])
 
             // Opcional: Si fue una sola línea, abrir el ticket de esa venta
             if (cart.length === 1 && lastMovementId) {
@@ -433,6 +484,7 @@ export default function VentasPage() {
                                     <SelectItem value="EFECTIVO">Efectivo</SelectItem>
                                     <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
                                     <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
+                                    <SelectItem value="CREDITO">💳 A crédito (cobro a cuenta)</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -458,6 +510,75 @@ export default function VentasPage() {
                                 )}
                             </div>
                         )}
+
+                        {paymentMethod === "CREDITO" && (
+                            <div className="space-y-3">
+                                {!creditCustomer ? (
+                                    <>
+                                        <div className="space-y-2">
+                                            <Label>Buscar Cliente con Crédito</Label>
+                                            <div className="relative">
+                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                                <Input
+                                                    placeholder="Nombre o teléfono..."
+                                                    value={creditSearch}
+                                                    onChange={(e) => {
+                                                        setCreditSearch(e.target.value)
+                                                        searchCreditCustomers(e.target.value)
+                                                    }}
+                                                    className="pl-9"
+                                                />
+                                                {creditSearching && (
+                                                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        {creditResults.length > 0 && (
+                                            <div className="border rounded-lg max-h-36 overflow-y-auto">
+                                                {creditResults.map((u) => {
+                                                    const available = Math.max(0, (u.creditLimit || 0) - (u.creditBalance || 0))
+                                                    return (
+                                                        <button
+                                                            key={u.id}
+                                                            className="w-full text-left p-2.5 hover:bg-muted border-b last:border-0 text-sm"
+                                                            onClick={() => { setCreditCustomer(u); setCreditSearch(""); setCreditResults([]) }}
+                                                        >
+                                                            <p className="font-medium">{u.name}</p>
+                                                            <p className="text-xs text-muted-foreground">
+                                                                Disponible: ${available.toLocaleString()} de ${(u.creditLimit || 0).toLocaleString()}
+                                                            </p>
+                                                        </button>
+                                                    )
+                                                })}
+                                            </div>
+                                        )}
+                                        {creditSearch.length >= 2 && creditResults.length === 0 && !creditSearching && (
+                                            <p className="text-xs text-muted-foreground text-center py-2">
+                                                No se encontraron clientes con crédito
+                                            </p>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="p-3 bg-primary/10 rounded-lg">
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <p className="font-semibold text-sm">💳 {creditCustomer.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    Disponible: ${Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)).toLocaleString()}
+                                                    {" "}de ${(creditCustomer.creditLimit ?? 0).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <Button variant="ghost" size="sm" onClick={() => setCreditCustomer(null)}>Cambiar</Button>
+                                        </div>
+                                        {cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)) && (
+                                            <p className="text-destructive text-xs font-medium mt-2">
+                                                ⚠️ El total supera el crédito disponible
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowCheckout(false)} disabled={processing}>Cancelar</Button>
@@ -467,7 +588,7 @@ export default function VentasPage() {
                                 setShowCheckout(false);
                                 await processSale();
                             }} 
-                            disabled={processing || (paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal))}
+                            disabled={processing || (paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal)) || (paymentMethod === "CREDITO" && (!creditCustomer || cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0))))}
                         >
                             {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                             Cobrar e Imprimir

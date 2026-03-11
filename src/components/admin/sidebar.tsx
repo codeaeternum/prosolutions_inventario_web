@@ -38,6 +38,7 @@ const navigationGroups = [
     name: "Operaciones",
     items: [
       { name: "Punto de Venta", href: "/admin/ventas", icon: ShoppingCart },
+      { name: "Caja", href: "/admin/caja", icon: Wallet },
       { name: "Reservas", href: "/admin/reservas", icon: CalendarCheck },
       { name: "Movimientos", href: "/admin/movimientos", icon: ArrowLeftRight },
     ]

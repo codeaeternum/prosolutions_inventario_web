@@ -173,7 +173,7 @@ export default function MovimientosInventario() {
                             <CardTitle>Recepción y Ajustes (Lote)</CardTitle>
                             <CardDescription>Escanea o busca productos para agregarlos a la lista de trabajo y guárdalos todos a la vez.</CardDescription>
                         </div>
-                        <Button variant="outline" onClick={() => setShowScanner(true)}>
+                        <Button variant="outline" onClick={() => setShowScanner(true)} title="Abre la cámara para escanear código de barras o QR y agregar el producto al lote">
                             <ScanBarcode className="w-4 h-4 mr-2" />
                             Escanear
                         </Button>
@@ -233,10 +233,13 @@ export default function MovimientosInventario() {
                                                 <SelectContent>
                                                     {movementTypes.map(t => (
                                                         <SelectItem key={t.value} value={t.value}>
-                                                            <span className="flex items-center gap-2">
-                                                                <t.icon className={`h-4 w-4 ${t.color}`} />
-                                                                {t.label}
-                                                            </span>
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <span className="flex items-center gap-2">
+                                                                    <t.icon className={`h-4 w-4 ${t.color}`} />
+                                                                    {t.label}
+                                                                </span>
+                                                                <span className="text-xs text-muted-foreground whitespace-normal">{t.help}</span>
+                                                            </div>
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -259,12 +262,14 @@ export default function MovimientosInventario() {
                                 <div className="space-y-2">
                                     <Label>Motivo Global (requerido)</Label>
                                     <Input placeholder="Ej: Compra proveedor Apple, Inventario de marzo..." value={globalReason} onChange={e => setGlobalReason(e.target.value)} />
+                                    <p className="text-xs text-muted-foreground">Se usará como motivo en todos los movimientos de este lote (ej.: compra, inventario, corrección).</p>
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Notas (opcional)</Label>
                                     <Textarea placeholder="Factura #1234, etc..." value={globalNotes} onChange={e => setGlobalNotes(e.target.value)} className="resize-none h-16" />
+                                    <p className="text-xs text-muted-foreground">Información extra (factura, observaciones) que quedará registrada con el lote.</p>
                                 </div>
-                                <Button className="w-full sm:w-auto h-12" onClick={handleSaveBatch} disabled={saving || !globalReason.trim()}>
+                                <Button className="w-full sm:w-auto h-12" onClick={handleSaveBatch} disabled={saving || !globalReason.trim()} title="Guarda todos los movimientos del lote con el motivo indicado y actualiza el stock.">
                                     {saving ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCircle className="mr-2 h-5 w-5" />}
                                     Procesar Lote ({batchItems.length} prod.)
                                 </Button>

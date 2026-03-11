@@ -15,9 +15,18 @@ export async function GET(req: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
+    const searchQuery = searchParams.get("search")
+
     const where = {
       ...(status && { status: status as "PENDING" | "APPROVED" | "REJECTED" }),
       ...(roleParam && { role: roleParam as UserRole }),
+      ...(searchQuery && {
+        OR: [
+          { name: { contains: searchQuery, mode: "insensitive" as const } },
+          { email: { contains: searchQuery, mode: "insensitive" as const } },
+          { phone: { contains: searchQuery, mode: "insensitive" as const } },
+        ],
+      }),
     }
 
     const select = {
