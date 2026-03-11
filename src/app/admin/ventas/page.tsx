@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -83,6 +84,13 @@ export default function VentasPage() {
     const [creditResults, setCreditResults] = useState<Array<{ id: string; name: string; phone: string | null; creditLimit: number | null; creditBalance: number }>>([])
     const [creditSearching, setCreditSearching] = useState(false)
     const [creditCustomer, setCreditCustomer] = useState<{ id: string; name: string; creditLimit: number | null; creditBalance: number } | null>(null)
+
+    // Cash register state
+    const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
+
+    useEffect(() => {
+        fetch('/api/caja').then(r => r.json()).then(d => setCajaOpen(!!d.active)).catch(() => {})
+    }, [])
 
     const handleScan = async (code: string) => {
         const cleanCode = code.trim()
@@ -277,6 +285,15 @@ export default function VentasPage() {
                     <h1 className="text-2xl font-bold flex items-center gap-2">
                         <ShoppingCart className="h-6 w-6" />
                         Venta Rápida
+                        {cajaOpen !== null && (
+                            cajaOpen ? (
+                                <Badge variant="default" className="bg-green-600 text-xs font-normal ml-2">Caja abierta ✅</Badge>
+                            ) : (
+                                <Link href="/admin/caja">
+                                    <Badge variant="destructive" className="text-xs font-normal ml-2 cursor-pointer hover:opacity-80">⚠️ Caja cerrada — Abrir</Badge>
+                                </Link>
+                            )
+                        )}
                     </h1>
                     <p className="text-muted-foreground">
                         Registra ventas en local y actualiza el inventario

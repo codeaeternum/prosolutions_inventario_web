@@ -179,6 +179,7 @@ model Product {
 
   retailPrice    Float     // Precio menudeo
   wholesalePrice Float     // Precio mayoreo
+  costPrice      Float?    // Precio de costo (cuánto costó adquirirlo)
 
   stock          Int       @default(0)
   minStock       Int       @default(1)

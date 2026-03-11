@@ -78,6 +78,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
     name: "",
     description: "",
     barcode: "",
+    costPrice: "",
     retailPrice: "",
     wholesalePrice: "",
     stock: "0",
@@ -119,6 +120,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
           name: productData.name,
           description: productData.description || "",
           barcode: productData.barcode || "",
+          costPrice: productData.costPrice?.toString() || "",
           retailPrice: productData.retailPrice?.toString() || "",
           wholesalePrice: productData.wholesalePrice?.toString() || "",
           stock: productData.stock.toString(),
@@ -378,6 +380,18 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
               <CardTitle>Precios y Stock</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="costPrice">Precio de Costo</Label>
+                <Input
+                  id="costPrice"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.costPrice}
+                  onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                  placeholder="0.00 (cuánto te costó)"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="retailPrice">Precio Menudeo *</Label>
@@ -406,6 +420,17 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
                   />
                 </div>
               </div>
+              {formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (
+                <div className="p-3 bg-muted rounded-lg text-sm space-y-1">
+                  <p className="font-medium">Ganancia estimada:</p>
+                  <div className="flex gap-4">
+                    <span className="text-green-600">Menudeo: ${(parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)</span>
+                    {formData.wholesalePrice && (
+                      <span className="text-blue-600">Mayoreo: ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
