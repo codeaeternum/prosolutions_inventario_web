@@ -236,7 +236,8 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
 
         const user = await prisma.user.findUnique({ where: { telegramId } })
         if (!user) return ctx.reply('⚠️ Debes estar registrado para reservar. Usa /start')
-        if (user.status !== 'APPROVED' && user.role !== 'ADMIN') {
+        // Solo cuentas APPROVED reservan; el dominio aplica la misma regla al confirmar.
+        if (user.status !== 'APPROVED') {
             return ctx.reply('⏳ Tu cuenta está pendiente de verificación.')
         }
 
@@ -306,7 +307,11 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
 
         try {
             const user = await prisma.user.findUnique({ where: { telegramId } })
-            if (!user) return
+            // Approval is revalidated at confirmation time: the status may have changed since the flow started.
+            if (!user || user.status !== 'APPROVED') {
+                delete sessions.reservation[telegramId]
+                return ctx.reply('⏳ Tu cuenta debe estar aprobada para completar la reserva.')
+            }
 
             session.operationKey ??= randomUUID()
             const result = await createReservations(prisma, user.id, {

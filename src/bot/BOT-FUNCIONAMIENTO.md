@@ -48,13 +48,13 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
   1. El bot pide **cantidad** (mensaje de texto). Se valida que sea ≤ stock. Se guarda en `reservationSessions[telegramId]`.
   2. El bot pide **método de pago**: botones “Pago en Tienda” o “Transferencia (Subir comprobante)”.
   3. Si **Pago en Tienda** → se llama `processReservation(ctx, 'STORE')`.
-  4. Si **Transferencia** → se pide **foto del comprobante**. Al recibir la foto se guarda en `public/uploads/payments/` y se llama `processReservation(ctx, 'TRANSFER', urlLocal)`.
+  4. Si **Transferencia** → se pide **foto del comprobante**. Al recibir la foto se guarda fuera de `public/` en almacenamiento privado (`storage/payment-proofs/`, servido por `/api/payment-proofs/<archivo>` con sesión y propiedad verificadas) y se llama `processReservation(ctx, 'TRANSFER', urlLocal)`.
 - **processReservation**:
   - Usa **ajustes**: `reservation_hours` y `bank_info` de `SystemSettings` (configurables con `/ajustes`).
   - Crea un registro `Reservation` en la BD (status `PENDING` o `PENDING_PAYMENT` según método).
   - Resta la cantidad del **stock** del producto.
   - Genera un QR con el ID de la reserva y lo envía al usuario.
-  - Notifica a todos los admins por Telegram (con foto del comprobante si es transferencia).
+  - Notifica a todos los admins por Telegram (el comprobante se revisa solo desde la sesión web autenticada).
 - **Importante**: Las reservas del bot **no** pasan por la API REST de la web; se crean directamente con Prisma. La web y el cron de expiración usan la misma tabla.
 
 ### 2.6 Ventas rápidas y carrito (solo ADMIN)

@@ -47,6 +47,9 @@ const nextConfig: NextConfig = {
     })
     return [
       { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-store" }] },
+      // Comprobantes de pago son objetos privados: nunca permitir caché pública, sea cual sea el handler.
+      { source: "/api/payment-proofs/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/uploads/payments/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       {
         source: "/:path*",
         headers: securityHeaders,

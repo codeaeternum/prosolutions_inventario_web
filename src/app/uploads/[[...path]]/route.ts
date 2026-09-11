@@ -11,7 +11,8 @@ export async function GET(
     const resolvedParams = await params;
     const filePathParams = resolvedParams.path || [];
     
-    if (filePathParams[0] === "payments") {
+    // Case-insensitive: on case-insensitive filesystems the file could exist under another casing.
+    if (filePathParams[0]?.toLowerCase() === "payments") {
       if (filePathParams.length !== 2) return new NextResponse("Not Found", { status: 404 })
       return getPrivateProof(req, { params: Promise.resolve({ filename: filePathParams[1] }) })
     }
