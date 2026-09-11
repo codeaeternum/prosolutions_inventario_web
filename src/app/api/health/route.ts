@@ -8,7 +8,10 @@ export async function GET() {
   const headers = { "Cache-Control": "no-store" }
   try {
     // Validate critical tables and the required migration, without exposing records.
-    await prisma.$transaction([
+    const [failedMigrations] = await prisma.$transaction([
+      // A missing _prisma_migrations table or a failed row means the schema was
+      // not created with `migrate deploy` (or a migration is stuck): not ready.
+      prisma.$queryRaw`SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NULL LIMIT 1`,
       prisma.$queryRaw`SELECT "id", "stock" FROM "Product" LIMIT 0`,
       prisma.$queryRaw`SELECT "id", "businessVersion", "paymentMethod" FROM "InventoryMovement" LIMIT 0`,
       prisma.$queryRaw`SELECT "id", "version", "status" FROM "RepairOrder" LIMIT 0`,
@@ -19,6 +22,12 @@ export async function GET() {
       prisma.$queryRaw`SELECT "id", "amount" FROM "CreditMovement" LIMIT 0`,
       prisma.$queryRaw`SELECT "id", "amount" FROM "CashMovement" LIMIT 0`,
     ])
+    if (Array.isArray(failedMigrations) && failedMigrations.length > 0) {
+      return NextResponse.json(
+        { status: "degraded", schema: "migration_failed", timestamp },
+        { status: 503, headers },
+      )
+    }
     return NextResponse.json({ status: "ok", schema: "ready", timestamp }, { headers })
   } catch {
     return NextResponse.json(

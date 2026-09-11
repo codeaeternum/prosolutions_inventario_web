@@ -79,15 +79,23 @@ git fetch --all
 git reset --hard origin/main
 git clean -fd
 
-Write-Host '>>> Reconstruyendo contenedores Docker...'
-docker compose down
-docker compose up -d --build
+Write-Host '>>> Construyendo imágenes (incluida la de migraciones)...'
+docker compose -f docker-compose.yml --profile migrate build
+if (\$LASTEXITCODE -ne 0) { exit 1 }
 
-Write-Host '>>> Esperando a que inicie...'
-Start-Sleep -Seconds 10
+Write-Host '>>> Asegurando DB y aplicando migraciones ANTES de promover la app...'
+docker compose -f docker-compose.yml up -d db
+if (\$LASTEXITCODE -ne 0) { exit 1 }
+docker compose -f docker-compose.yml --profile migrate run --rm migrate
+if (\$LASTEXITCODE -ne 0) { Write-Host 'Migracion fallo; app no promovida.'; exit 1 }
 
-Write-Host '>>> Ejecutando migraciones...'
-docker compose --profile migrate run --rm migrate
+Write-Host '>>> Promoviendo app y bot...'
+docker compose -f docker-compose.yml up -d --force-recreate app bot
+if (\$LASTEXITCODE -ne 0) { exit 1 }
+
+Write-Host '>>> Esperando readiness (health 503 hasta esquema listo)...'
+Start-Sleep -Seconds 15
+docker inspect prosolutions-app --format '{{.State.Health.Status}}'
 
 Write-Host '>>> Estado de contenedores:'
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'

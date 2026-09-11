@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Exec(git init)"
+      "Exec(git init)",
+      "Exec(git commit)",
+      "Exec(ssh)",
+      "Exec(sed)",
+      "Exec(scp)",
+      "Exec(git stash)",
+      "Exec(git add)"
     ]
   }
 }

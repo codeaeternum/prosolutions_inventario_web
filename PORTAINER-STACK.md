@@ -12,9 +12,9 @@
 .\deploy.ps1
 ```
 
-o bien `.\deploy-n5.ps1`. Eso hace en esta máquina: **build** de las imágenes → **up** con `docker-compose.portainer.yml` y tu `.env`. No hace falta abrir Portainer ni SSH.
+o bien `.\deploy-n5.ps1`. Eso hace en esta máquina: **build** de las imágenes (incluida `prosolutions-migrate`) → **db** → **`prisma migrate deploy`** → **up** de `app`/`bot` con `docker-compose.portainer.yml` y tu `.env` → **espera a que `/api/health` reporte healthy**. Si la migración falla, el script se detiene y la app nueva no se promueve. No hace falta abrir Portainer ni SSH.
 
-**Requisitos en el N5:** Tener el repo (clonado o esta carpeta) y un `.env` en la misma carpeta con `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`.
+**Requisitos en el N5:** Tener el repo (clonado o esta carpeta) y un `.env` en la misma carpeta con `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD` y `CRON_SECRET` (todas obligatorias en el compose actual).
 
 *(Si algún día trabajas desde otro PC y quieres desplegar en el N5 por SSH: `.\deploy.ps1 -Remote`.)*
 
@@ -36,7 +36,7 @@ Tu aplicación está publicada en Cloudflare como:
 
 1. **Stacks** → **Add stack** → nombre: `prosolutions`.
 2. **Build method:** Repository → URL del repo (o Web editor pegando el `docker-compose.yml`).
-3. Añadir variables de entorno (ver tabla más abajo); mínimo: `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://prosolutions.ascnex.com`, `TELEGRAM_BOT_TOKEN`.
+3. Añadir variables de entorno (ver tabla más abajo); mínimo: `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://prosolutions.ascnex.com`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD`, `CRON_SECRET`.
 4. **Deploy**. La app quedará en `http://<ip-del-n5>:3005` y Cloudflare seguirá sirviendo `https://prosolutions.ascnex.com`.
 
 ---
@@ -86,7 +86,7 @@ La definición actual del stack está en el repo:
 
 | Archivo | Qué contiene |
 |---------|----------------|
-| `docker-compose.yml` | Servicios `app`, `bot`, `db`, redes, volúmenes, puertos (3005, 5432). |
+| `docker-compose.yml` | Servicios `app`, `bot`, `db`, `migrate` (perfil), redes, volúmenes, puerto 3005 (5432 ya no se publica al host). |
 | `.env` | Variables que la app espera (`NEXTAUTH_SECRET`, `TELEGRAM_BOT_TOKEN`, VAPID, etc.). No se sube al repo. |
 
 Para “recrear igual” que antes: usa el mismo `docker-compose.yml` del repo y las mismas variables que tenías en Portainer o en tu `.env` local.
@@ -131,29 +131,59 @@ Para “recrear igual” que antes: usa el mismo `docker-compose.yml` del repo y
 
 ## 3. Variables de entorno recomendadas
 
-| Variable | Descripción |
-|----------|-------------|
-| `NEXTAUTH_SECRET` | Clave para JWT/sesiones (genera una con `openssl rand -base64 32`) |
-| `NEXTAUTH_URL` | URL pública de la app, ej. `https://prosolutions.ascnex.com` |
-| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | (Opcional) Clave pública VAPID para web push |
-| `VAPID_PRIVATE_KEY` | (Opcional) Clave privada VAPID |
-| `VAPID_EMAIL` | (Opcional) Email para VAPID |
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `NEXTAUTH_SECRET` | Sí | Clave para JWT/sesiones (genera una con `openssl rand -base64 32`) |
+| `NEXTAUTH_URL` | Sí | URL pública de la app, ej. `https://prosolutions.ascnex.com` |
+| `TELEGRAM_BOT_TOKEN` | Sí | Token del bot de Telegram |
+| `DATABASE_URL` | Sí | `postgresql://prosolutions:<POSTGRES_PASSWORD>@db:5432/prosolutions_db` |
+| `POSTGRES_PASSWORD` | Sí | Contraseña del servicio `db`; debe coincidir con la de `DATABASE_URL` |
+| `CRON_SECRET` | Sí | Secreto del endpoint de tareas programadas |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | No | Clave pública VAPID para web push |
+| `VAPID_PRIVATE_KEY` | No | Clave privada VAPID |
+| `VAPID_EMAIL` | No | Email para VAPID |
 
-El `docker-compose.yml` ya define valores por defecto para `NEXTAUTH_URL`; en producción conviene fijar `NEXTAUTH_SECRET`, `NEXTAUTH_URL` y `TELEGRAM_BOT_TOKEN`.
+El compose usa `${VAR:?...}`: sin estas variables el despliegue falla al validar, no arranca con defaults inseguros.
+
+### Volúmenes (primera vez)
+
+`postgres_data` y `uploads` son volúmenes **external** con nombre fijo (`prosolutions_postgres_data`, `prosolutions_uploads`). En un host nuevo créalos antes del primer `up`:
+
+```bash
+docker volume create prosolutions_postgres_data
+docker volume create prosolutions_uploads
+```
 
 ---
 
-## 4. Después del deploy
+## 4. Migraciones y después del deploy
 
 - **App:** `http://<ip-n5>:3005` (puerto 3005 → 3000 del contenedor).
-- **PostgreSQL:** puerto 5432 si necesitas conectar desde fuera.
-- La primera vez, si usas migraciones con Prisma, el servicio `migrate` (perfil `migrate`) puede ejecutarse aparte o ya estar definido en el compose; en este proyecto el deploy normal usa `app`, `bot` y `db`.
+- **PostgreSQL:** ya **no** se publica en el host; solo la red interna `prosolutions-network` alcanza `db`.
 
-Si quieres ejecutar migraciones a mano en el contenedor de la app:
+### Migraciones: orden obligatorio
 
-```bash
-docker exec prosolutions-app npx prisma migrate deploy
+El esquema se aplica con `prisma migrate deploy` desde la imagen dedicada `prosolutions-migrate:latest` (Dockerfile target `migrate`). **La imagen final de la app no lleva Prisma CLI**: `docker exec prosolutions-app npx prisma …` ya no funciona a propósito. La app tampoco sincroniza el esquema al arrancar: un preflight (`scripts/docker-preflight.mjs`) verifica la conexión, `_prisma_migrations` sin fallos y las tablas/columnas de todas las migraciones; si falta algo, el contenedor falla de forma visible hasta que la migración se ejecute.
+
+```powershell
+# En el N5, desde la carpeta del proyecto (con .env):
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
 ```
 
-(o el equivalente desde la consola del contenedor en Portainer).
+Los scripts `deploy.ps1` / `deploy-n5.ps1` / `deploy-n5.sh` ya hacen esto en ese orden y abortan si la migración falla.
+
+### BD vacía vs BD existente
+
+- **BD vacía (instalación nueva):** `migrate deploy` crea todo el esquema desde `prisma/migrations/` empezando por `20250309000000_baseline`. No uses `db push`.
+- **BD existente con tablas pero sin `_prisma_migrations`** (creada con `db push` antes de tener historial): `migrate deploy` falla con **P3005**. Primero verifica que el esquema real coincide con lo que crea la baseline (compara con un dump o `prisma migrate diff`), y solo entonces marca como aplicadas las migraciones ya reflejadas:
+
+  ```bash
+  npx prisma migrate resolve --applied 20250309000000_baseline
+  npx prisma migrate resolve --applied 20250310000000_add_credit_module
+  npx prisma migrate deploy
+  npx prisma migrate status
+  ```
+
+  Hazlo con un backup verificado en la mano. Si el diff muestra diferencias, resuélvelas antes de marcar.

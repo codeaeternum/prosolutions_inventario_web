@@ -70,6 +70,23 @@ services:
       retries: 5
     networks: [prosolutions-network]
 
+  # Paso de migración explícito: corre `prisma migrate deploy` una vez y termina.
+  # La imagen se construye con: docker compose -f docker-compose.yml --profile migrate build
+  # Ejecutar ANTES de promover app/bot:
+  #   docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+  # Si Portainer no respeta `profiles`, el servicio corre una vez al desplegar el
+  # stack y queda en estado Exited (sin restart); eso es lo esperado.
+  migrate:
+    image: ${MIGRATE_IMAGE:-prosolutions-migrate:latest}
+    profiles: ["migrate"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [prosolutions-network]
+
 networks:
   prosolutions-network:
     driver: bridge

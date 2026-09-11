@@ -30,12 +30,14 @@ Para el bot de Telegram (opcional):
 TELEGRAM_BOT_TOKEN="token_de_BotFather"
 ```
 
-3. Crear la base de datos y aplicar el esquema:
+3. Crear la base de datos y aplicar las migraciones:
 
 ```bash
-npm run db:push
-npm run db:seed
+npm run db:deploy
+npm run db:seed   # opcional: datos de ejemplo
 ```
+
+(No uses `db:push`: deja la base sin historial de migraciones y `migrate deploy` fallará después con P3005.)
 
 4. Arrancar en desarrollo:
 
@@ -52,14 +54,17 @@ Abre [http://localhost:3000](http://localhost:3000).
 | `npm run dev` | Next.js en desarrollo |
 | `npm run build` | Build de producción |
 | `npm run start` | Servidor de producción (tras `build`) |
-| `npm run db:push` | Sincroniza el esquema Prisma con la BD |
+| `npm run db:deploy` | Aplica migraciones pendientes (`prisma migrate deploy`) |
+| `npm run db:migrate` | `prisma migrate dev` (crear/aplicar migraciones en desarrollo) |
+| `npm run db:status` | Estado de migraciones aplicadas/pendientes |
 | `npm run db:seed` | Carga datos iniciales (opcional) |
 | `npm run db:studio` | Abre Prisma Studio |
 | `npm run bot:dev` | Bot de Telegram en desarrollo |
 | `npm run bot:start` | Bot de Telegram (producción) |
 | `npm run pwa:icons` | Genera iconos PWA desde `public/logo.jpg` |
 | `npm run test` | Tests (Vitest) |
-| `npm run lint` | Linter |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | ESLint sobre `src` y `scripts` (falla con warnings) |
 
 ## Despliegue con Docker
 
@@ -70,15 +75,15 @@ docker compose build
 docker compose up -d
 ```
 
-La app queda en el puerto **3005** (mapeado desde el 3000 del contenedor). Para desplegar en Portainer usando solo imágenes (sin build en Portainer), ver **docs/PORTAINER-STACK.md**.
+La app queda en el puerto **3005** (mapeado desde el 3000 del contenedor). El despliegue ordenado es: build → `db` → `migrate` (`prisma migrate deploy`) → `app`/`bot` → health. Detalles y paso de migración manual en **PORTAINER-STACK.md**.
 
 ## Documentación
 
-- **[docs/PORTAINER-STACK.md](docs/PORTAINER-STACK.md)** — Despliegue en Portainer (N5, Cloudflare, etc.)
+- **[PORTAINER-STACK.md](PORTAINER-STACK.md)** — Despliegue en Portainer (N5, Cloudflare, migraciones, etc.)
 - **[docs/PWA-DUENO.md](docs/PWA-DUENO.md)** — PWA para el dueño: instalar en el móvil y escanear QR
 - **[docs/APP-IOS-DUENO.md](docs/APP-IOS-DUENO.md)** — Opciones de app iOS
 - **[docs/MEJORAS-PROYECTO.md](docs/MEJORAS-PROYECTO.md)** — Mejoras posibles del proyecto
-- **AUDIT.md** / **AUDIT-MODULOS.md** — Auditoría de seguridad y módulos
+- **AUDIT-MODULOS.md** y **docs/auditoria-2026-09-11/** — Auditorías de seguridad, módulos y operación
 - **src/bot/BOT-FUNCIONAMIENTO.md** — Cómo funciona el bot de Telegram
 
 ## Estructura breve

@@ -22,7 +22,9 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Fail-fast schema check before starting the server (no Prisma CLI in this image).
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/docker-preflight.mjs ./scripts/docker-preflight.mjs
 RUN mkdir -p ./public/uploads ./storage/payment-proofs ./.next/cache && chown -R nextjs:nodejs ./public/uploads ./storage ./.next/cache
 USER nextjs
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "scripts/docker-preflight.mjs"]

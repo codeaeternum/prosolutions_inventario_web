@@ -346,6 +346,10 @@ CREATE UNIQUE INDEX "PushSubscription_endpoint_key" ON "PushSubscription"("endpo
 -- CreateIndex
 CREATE UNIQUE INDEX "SystemSettings_key_key" ON "SystemSettings"("key");
 
+-- Fuzzy product search (similarity() in /api/search/pos and bot) needs pg_trgm.
+-- Kept as raw SQL because Prisma schema cannot express gin_trgm_ops.
+CREATE INDEX IF NOT EXISTS idx_product_name_trgm ON "Product" USING GIN (name gin_trgm_ops);
+
 -- AddForeignKey
 ALTER TABLE "InventoryMovement" ADD CONSTRAINT "InventoryMovement_relatedId_fkey" FOREIGN KEY ("relatedId") REFERENCES "InventoryMovement"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 

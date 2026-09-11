@@ -1,6 +1,6 @@
 # ProSolutions - Despliegue completo sin pasos manuales
 # Pensado para ejecutar EN EL N5 PRO (donde está Cursor y el proyecto).
-# Por defecto: build + up en esta máquina. Sin SSH, sin Portainer manual.
+# Por defecto: build + migraciones (migrate deploy) + up en esta máquina. Sin SSH, sin Portainer manual.
 # Opción -Remote: desde otro PC, push a GitHub y deploy vía SSH al N5.
 
 param(
@@ -14,13 +14,40 @@ $REMOTE_PATH = "D:\Projectos\prosolutions_inventario_web"
 
 # Por defecto: modo local (estamos en el N5)
 if (-not $Remote) {
-    Write-Host "[N5] Build y up en esta maquina..." -ForegroundColor Cyan
+    Write-Host "[N5] Build, migracion y up en esta maquina..." -ForegroundColor Cyan
     if (-not (Test-Path ".env")) { Write-Host "Falta .env en la carpeta del proyecto." -ForegroundColor Red; exit 1 }
-    docker compose -f docker-compose.yml build --no-cache
+
+    # 1) Build de todas las imagenes, incluida la de migraciones (perfil migrate).
+    docker compose -f docker-compose.yml --profile migrate build --no-cache
     if ($LASTEXITCODE -ne 0) { exit 1 }
-    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate
+
+    # 2) DB primero; luego migraciones ANTES de promover app/bot.
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
     if ($LASTEXITCODE -ne 0) { exit 1 }
-    Start-Sleep -Seconds 5
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "La migracion fallo. No se promueve la app nueva; revisa el error arriba." -ForegroundColor Red
+        exit 1
+    }
+
+    # 3) Promover solo app y bot (db ya corre).
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+
+    # 4) Esperar readiness real: /api/health responde 503 hasta que el esquema esta listo.
+    Write-Host "Esperando a que prosolutions-app reporte healthy..." -ForegroundColor Yellow
+    $deadline = (Get-Date).AddSeconds(150)
+    $health = ""
+    do {
+        Start-Sleep -Seconds 5
+        $health = docker inspect prosolutions-app --format "{{.State.Health.Status}}" 2>$null
+        if ($health -eq "healthy") { break }
+    } while ((Get-Date) -lt $deadline)
+    if ($health -ne "healthy") {
+        Write-Host "prosolutions-app no llego a healthy (estado: $health)." -ForegroundColor Red
+        docker logs prosolutions-app --tail 30
+        exit 1
+    }
     docker ps -a --filter "name=prosolutions" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     Write-Host "Listo. App: https://prosolutions.ascnex.com" -ForegroundColor Green
     exit 0
@@ -70,11 +97,17 @@ if (-not (Test-Path '.env')) { Write-Host 'Falta .env en el N5 en ' `$path; exit
 git fetch --all
 git reset --hard origin/main
 git clean -fd
-docker compose -f docker-compose.yml build --no-cache
+docker compose -f docker-compose.yml --profile migrate build --no-cache
 if (`$LASTEXITCODE -ne 0) { exit 1 }
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
 if (`$LASTEXITCODE -ne 0) { exit 1 }
-Write-Host 'Contenedores actualizados.'
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+if (`$LASTEXITCODE -ne 0) { Write-Host 'Migracion fallo; app no promovida.'; exit 1 }
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
+if (`$LASTEXITCODE -ne 0) { exit 1 }
+Write-Host 'Contenedores actualizados. Esperando health...'
+Start-Sleep -Seconds 15
+docker inspect prosolutions-app --format '{{.State.Health.Status}}'
 docker ps -a --filter 'name=prosolutions' --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 "@
 

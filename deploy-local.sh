@@ -63,12 +63,12 @@ start_db() {
     echo -e "${GREEN}>>> PostgreSQL listo!${NC}"
 }
 
-# Función para sincronizar schema
+# Función para aplicar migraciones (misma vía que producción: migrate deploy)
 sync_schema() {
-    echo -e "${BLUE}>>> Sincronizando schema de Prisma...${NC}"
+    echo -e "${BLUE}>>> Aplicando migraciones de Prisma (migrate deploy)...${NC}"
     npx prisma generate
-    npx prisma db push
-    echo -e "${GREEN}>>> Schema sincronizado!${NC}"
+    npx prisma migrate deploy
+    echo -e "${GREEN}>>> Migraciones aplicadas!${NC}"
 }
 
 # Función para ejecutar seed
