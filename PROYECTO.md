@@ -51,7 +51,7 @@ npm run dev
 docker compose -f docker-compose.dev.yml up -d
 
 # Prisma
-npx prisma db push          # Sincronizar schema
+npx prisma migrate deploy   # Aplicar migraciones (no usar db push)
 npx prisma generate         # Generar cliente
 npx prisma studio           # UI para ver datos
 npx tsx prisma/seed.ts      # Ejecutar seed

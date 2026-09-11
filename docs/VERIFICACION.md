@@ -29,8 +29,9 @@ Estado detallado del host y todos los contenedores: **docs/MINISFORUM-N5-ESTADO.
 | `npm test` | OK — 21 tests (Vitest) pasando. |
 | `docker compose -f docker-compose.yml config` | OK — Compose válido. |
 | `docker compose -f docker-compose.portainer.yml config` | OK — Compose Portainer válido. |
-| `npm run lint` | En algunos entornos (p. ej. Windows) puede fallar con "Invalid project directory .../lint". Alternativa: `npm run lint:eslint`. |
-| `npm run lint:eslint` | Ejecuta ESLint sobre `src`. Puede reportar warnings/errors de estilo y hooks; los críticos (hooks condicionales, uso de `<Link>`) están corregidos. |
+| `npm run lint` | Ejecuta ESLint directo sobre `src` y `scripts` con `--max-warnings 0` (Next 16 ya no tiene `next lint`). |
+| `npm run lint:eslint` | ESLint sobre `src` y `scripts` sin límite de warnings (reporte completo). |
+| `npm run typecheck` | `tsc --noEmit`. |
 
 ## Correcciones aplicadas durante la verificación
 
@@ -45,8 +46,10 @@ Estado detallado del host y todos los contenedores: **docs/MINISFORUM-N5-ESTADO.
 ## Comandos recomendados antes de desplegar
 
 ```bash
-npm run build
+npm run typecheck
 npm test
+npm run build
 docker compose -f docker-compose.yml config
-# Opcional: npm run lint:eslint
+# La migración en producción la ejecuta el servicio/imagen "migrate"
+# (docker compose --profile migrate run --rm migrate), nunca db push ni el arranque de la app.
 ```

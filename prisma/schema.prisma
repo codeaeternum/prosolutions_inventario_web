@@ -1,4 +1,9 @@
 // ProSolutions Inventario - Database Schema
+//
+// NOTA: la BD contiene objetos que este archivo no puede expresar (índice
+// parcial "CashRegister_one_open", CHECK constraints de 20260911000000 e índice
+// GIN trigram idx_product_name_trgm). `prisma migrate dev` puede proponer
+// borrarlos: revisa el SQL generado antes de aplicar (usa --create-only).
 generator client {
   provider = "prisma-client-js"
 }

@@ -88,7 +88,7 @@ La migración añade las columnas `creditLimit` y `creditBalance` en `User` y la
 
 ### Si la BD ya tiene tablas (error P3005)
 
-Si es la primera migración en el historial de Prisma pero la base de datos **ya contenía tablas** (ej. en N5 Pro tras un despliegue previo), `migrate deploy` puede fallar con **P3005** (database schema is not empty). En ese caso:
+Si es la primera migración en el historial de Prisma pero la base de datos **ya contenía tablas** (ej. en N5 Pro tras un despliegue previo), `migrate deploy` puede fallar con **P3005** (database schema is not empty). Hoy el historial incluye `20250309000000_baseline` (esquema completo inicial): en ese caso también hay que marcar la baseline como aplicada — ver la sección "BD vacía vs BD existente" de **PORTAINER-STACK.md**. Para el caso particular de que solo falte este módulo:
 
 1. **Ejecutar el SQL a mano** y **marcar la migración como aplicada** usando el script:
 

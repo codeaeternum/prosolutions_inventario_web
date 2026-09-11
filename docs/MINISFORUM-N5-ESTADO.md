@@ -102,17 +102,23 @@ Definidas en Portainer (stack) o en `.env` si usas `docker compose` por CLI:
 - **En el N5:** En la carpeta del proyecto ejecutar `.\deploy.ps1` o `.\deploy-n5.ps1`. Hace build y up en esta máquina; no hace falta Portainer ni pasos manuales. Requiere `.env` en la misma carpeta.
 - **Desde otro PC (opcional):** `.\deploy.ps1 -Remote` hace push a GitHub y deploy vía SSH al N5. O desde Mac/Linux: `./deploy-n5.sh`.
 
-### Migración de crédito en BD ya existente (N5)
+### Migraciones en BD ya existente (N5)
 
-Si la base de datos ya tenía tablas y `npx prisma migrate deploy` falla con **P3005** (schema not empty), aplica la migración del módulo de crédito a mano y márcala como aplicada:
+El historial arranca con `20250309000000_baseline`, que crea el esquema inicial completo. Si la BD ya tenía tablas (creadas con `db push` antes de existir migraciones), `migrate deploy` falla con **P3005** (schema not empty). Con backup verificado en la mano:
 
-**En el N5 (PowerShell), desde la carpeta del proyecto** (con `DATABASE_URL` en `.env` apuntando al Postgres del N5, ej. `postgresql://user:pass@localhost:5432/prosolutions_db`):
+1. Compara el esquema real con lo que crea la baseline (`pg_dump --schema-only` o `npx prisma migrate diff`).
+2. Si coincide, marca como aplicadas las migraciones ya reflejadas y despliega el resto:
 
 ```powershell
-.\scripts\migrate-credit-on-existing-db.ps1
+# En el N5 (PowerShell), desde la carpeta del proyecto, con DATABASE_URL en .env
+# apuntando al Postgres del N5 (ej. postgresql://user:pass@localhost:5432/prosolutions_db):
+npx prisma migrate resolve --applied 20250309000000_baseline
+npx prisma migrate resolve --applied 20250310000000_add_credit_module
+npx prisma migrate deploy
+npx prisma migrate status
 ```
 
-El script: (1) ejecuta el SQL de la migración con `prisma db execute`, (2) marca la migración como aplicada con `prisma migrate resolve`. Luego verifica con `npx prisma migrate status`.
+`.\scripts\migrate-credit-on-existing-db.ps1` sigue disponible para el caso particular de que solo falte el módulo de crédito: (1) ejecuta su SQL con `prisma db execute`, (2) marca la migración como aplicada con `prisma migrate resolve`.
 
 ---
 
