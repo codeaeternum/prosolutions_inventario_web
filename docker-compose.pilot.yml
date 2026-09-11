@@ -1,0 +1,64 @@
+name: prosolutions-pilot
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: prosolutions_pilot
+      POSTGRES_USER: pilot
+      POSTGRES_PASSWORD: ${PILOT_DB_PASSWORD:?Set a dedicated pilot password}
+    volumes:
+      - pilot_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pilot -d prosolutions_pilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  app:
+    image: prosolutions-pilot-app:20260911
+    build:
+      context: .
+      target: runner
+    environment:
+      DATABASE_URL: postgresql://pilot:${PILOT_DB_PASSWORD}@db:5432/prosolutions_pilot
+      AUTH_SECRET: ${PILOT_AUTH_SECRET:?Set a dedicated pilot session secret}
+      NEXTAUTH_SECRET: ${PILOT_AUTH_SECRET}
+      NEXTAUTH_URL: ${PILOT_URL:-http://localhost:3316}
+      AUTH_TRUST_HOST: "true"
+      TELEGRAM_BOT_TOKEN: ""
+      PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+    ports:
+      - "${PILOT_BIND:-127.0.0.1}:3316:3000"
+    volumes:
+      - pilot_uploads:/app/public/uploads
+      - pilot_proofs:/app/storage/payment-proofs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  migrate:
+    profiles: ["setup"]
+    image: prosolutions-pilot-tools:20260911
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://pilot:${PILOT_DB_PASSWORD}@db:5432/prosolutions_pilot
+      PILOT_SEED_ACK: fictional-data-only
+      PILOT_ADMIN_PASSWORD: ${PILOT_ADMIN_PASSWORD:?Set a dedicated demo password}
+      TELEGRAM_BOT_TOKEN: ""
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pilot_db:
+    name: prosolutions_pilot_db
+  pilot_uploads:
+    name: prosolutions_pilot_uploads
+  pilot_proofs:
+    name: prosolutions_pilot_proofs

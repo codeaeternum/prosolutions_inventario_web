@@ -1,0 +1,23 @@
+# Development Docker Compose for local (OrbStack on MacBook)
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prosolutions-db-dev
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=prosolutions
+      - POSTGRES_PASSWORD=prosolutions123
+      - POSTGRES_DB=prosolutions_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prosolutions -d prosolutions_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data_dev:

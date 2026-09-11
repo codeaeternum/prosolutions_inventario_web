@@ -1,0 +1,110 @@
+import { createHash } from "node:crypto"
+import { Prisma, type PrismaClient } from "@prisma/client"
+import { z } from "zod"
+
+export class BusinessError extends Error {
+  constructor(message: string, public status = 400, public code = "INVALID_OPERATION") {
+    super(message)
+    this.name = "BusinessError"
+  }
+}
+
+export type Transaction = Prisma.TransactionClient
+export const operationKeySchema = z.string().trim().min(8).max(160).regex(/^[A-Za-z0-9:._-]+$/)
+export const itemSchema = z.object({ productId: z.string().min(1), quantity: z.number().int().min(1).max(100000) })
+export const itemsSchema = z.array(itemSchema).min(1).max(100)
+export type Item = z.infer<typeof itemSchema>
+
+/** Money crosses the domain boundary as whole cents; legacy Float storage stays unchanged. */
+export function cents(value: number, allowZero = false): number {
+  if (!Number.isFinite(value) || value < 0 || (!allowZero && value === 0) || value > 100000000) {
+    throw new BusinessError("Importe inválido: debe ser positivo y finito.")
+  }
+  const result = Math.round((value + Number.EPSILON) * 100)
+  if (Math.abs(value * 100 - result) > 0.000001) throw new BusinessError("El importe admite como máximo dos decimales.")
+  return result
+}
+
+export function amount(value: number): number { return value / 100 }
+
+export function mergeItems(input: Item[]): Item[] {
+  const rows = itemsSchema.parse(input)
+  const merged = new Map<string, number>()
+  for (const row of rows) merged.set(row.productId, (merged.get(row.productId) ?? 0) + row.quantity)
+  return [...merged].sort(([a], [b]) => a.localeCompare(b)).map(([productId, quantity]) => itemSchema.parse({ productId, quantity }))
+}
+
+export async function actor(tx: Transaction, id: string, permission: "customer" | "staff" | "admin" = "customer") {
+  const user = await tx.user.findUnique({ where: { id } })
+  if (!user || user.status !== "APPROVED") throw new BusinessError("La cuenta no está autorizada para operar.", 403, "ACCOUNT_NOT_APPROVED")
+  if (permission === "admin" && user.role !== "ADMIN") throw new BusinessError("Se requiere administrador.", 403)
+  if (permission === "staff" && !["ADMIN", "EMPLOYEE"].includes(user.role)) throw new BusinessError("Acceso denegado.", 403)
+  return user
+}
+
+export async function transaction<T>(db: PrismaClient, work: (tx: Transaction) => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await db.$transaction(work, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 15000 })
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : ""
+      if (!["P2034", "P2002", "40001", "40P01"].includes(code)) throw error
+      if (attempt === 3) throw new BusinessError("Otra operación cambió estos datos. Reintenta conservando el mismo folio.", 409, "CONCURRENT_OPERATION")
+      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+  throw new BusinessError("No se pudo confirmar la operación.", 409)
+}
+
+/** Receipt and every business write commit together. Reuse with a changed actor/payload fails closed. */
+export async function operation<T extends object>(
+  db: PrismaClient,
+  input: { key: string; actorId: string; kind: string; payload: unknown; permission?: "customer" | "staff" | "admin" },
+  work: (tx: Transaction, operationId: string) => Promise<T>,
+): Promise<T & { operationId: string }> {
+  const key = operationKeySchema.parse(input.key)
+  const requestHash = createHash("sha256").update(JSON.stringify(input.payload)).digest("hex")
+  return transaction(db, async tx => {
+    await actor(tx, input.actorId, input.permission)
+    const existing = await tx.businessOperation.findUnique({ where: { key } })
+    if (existing) {
+      if (existing.actorId !== input.actorId || existing.kind !== input.kind || existing.requestHash !== requestHash) {
+        throw new BusinessError("El identificador ya se usó para otra operación.", 409, "IDEMPOTENCY_CONFLICT")
+      }
+      return existing.response as unknown as T & { operationId: string }
+    }
+    const receipt = await tx.businessOperation.create({ data: { key, actorId: input.actorId, kind: input.kind, requestHash, response: {} } })
+    const response = { ...await work(tx, receipt.id), operationId: receipt.id }
+    const json = JSON.parse(JSON.stringify(response)) as Prisma.InputJsonValue
+    await tx.businessOperation.update({ where: { id: receipt.id }, data: { response: json } })
+    return json as unknown as T & { operationId: string }
+  })
+}
+
+export async function takeStock(tx: Transaction, productId: string, quantity: number) {
+  const product = await tx.product.findUnique({ where: { id: productId } })
+  if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
+  const result = await tx.product.updateMany({ where: { id: productId, isActive: true, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } })
+  if (result.count !== 1) throw new BusinessError(`Stock insuficiente para ${product.name}.`, 409, "INSUFFICIENT_STOCK")
+  return product
+}
+
+export async function openRegister(tx: Transaction) {
+  const registers = await tx.cashRegister.findMany({ where: { status: "OPEN" }, take: 2 })
+  if (registers.length !== 1) throw new BusinessError(registers.length ? "Hay más de una caja abierta; requiere revisión." : "Abre la caja antes de registrar efectivo.", 409, "REGISTER_REQUIRED")
+  const locked = await tx.cashRegister.updateMany({ where: { id: registers[0].id, status: "OPEN" }, data: { status: "OPEN" } })
+  if (locked.count !== 1) throw new BusinessError("La caja acaba de cerrarse.", 409)
+  return registers[0]
+}
+
+export async function addDebt(tx: Transaction, userId: string, totalCents: number, reference: { type: "SALE" | "RESERVATION" | "MANUAL"; id?: string; notes: string }) {
+  if (totalCents === 0) return
+  const user = await tx.user.findUnique({ where: { id: userId } })
+  if (!user || user.status !== "APPROVED") throw new BusinessError("El cliente no está habilitado para crédito.", 409)
+  const balance = cents(user.creditBalance, true)
+  const limit = user.creditLimit == null ? 0 : cents(user.creditLimit, true)
+  if (limit <= 0 || balance + totalCents > limit) throw new BusinessError("Crédito disponible insuficiente.", 409, "INSUFFICIENT_CREDIT")
+  const updated = await tx.user.updateMany({ where: { id: userId, creditBalance: user.creditBalance, creditLimit: user.creditLimit }, data: { creditBalance: amount(balance + totalCents) } })
+  if (updated.count !== 1) throw new BusinessError("El saldo cambió; reintenta.", 409)
+  return tx.creditMovement.create({ data: { userId, type: "DEBT", amount: amount(totalCents), referenceType: reference.type, referenceId: reference.id, notes: reference.notes } })
+}

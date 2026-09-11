@@ -1,0 +1,13 @@
+import { NextResponse } from "next/server"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { prisma } from "@/lib/prisma"
+import { changeCredit } from "@/lib/domain/credit"
+import { businessFailure } from "@/lib/domain/http"
+
+export async function POST(req: Request) {
+  try {
+    const auth = await requireAdmin()
+    if (auth.error) return auth.error
+    return NextResponse.json(await changeCredit(prisma, getSession(auth)!.user.id, "PAYMENT", await req.json()))
+  } catch (error) { return businessFailure(error) }
+}

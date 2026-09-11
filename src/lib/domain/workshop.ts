@@ -1,0 +1,72 @@
+import type { PrismaClient } from "@prisma/client"
+import { z } from "zod"
+import { BusinessError, operation, operationKeySchema } from "./operations"
+import { repairNextStages, repairLabels } from "../workshop-labels"
+
+const text = z.string().trim().min(1).max(500)
+const optionalText = z.string().trim().max(500).optional()
+const createSchema = z.object({
+  idempotencyKey: operationKeySchema, customerName: text,
+  customerPhone: z.string().trim().min(7).max(30).regex(/^[+\d\s()-]+$/),
+  equipmentType: text, brand: optionalText, model: optionalText, serialNumber: optionalText,
+  accessories: optionalText, intakeCondition: optionalText, reportedIssue: text,
+  intakeBranchId: z.string().min(1), assignedToId: z.string().min(1).optional(),
+  promisedAt: z.iso.datetime().optional(),
+})
+export async function createRepair(db: PrismaClient, actorId: string, raw: unknown) {
+  const { idempotencyKey, promisedAt, ...input } = createSchema.parse(raw)
+  return operation(db, { key: idempotencyKey, actorId, kind: "REPAIR_CREATE", permission: "admin", payload: { ...input, promisedAt } }, async tx => {
+    const branch = await tx.workshopBranch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
+    if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
+    if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } })) throw new BusinessError("La persona asignada no está habilitada.")
+    const order = await tx.repairOrder.create({ data: { ...input, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null } })
+    await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
+    return { order }
+  })
+}
+const actionSchema = z.object({
+  idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
+  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN"]),
+  detail: z.string().trim().min(1).max(2000), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
+  quoteCents: z.number().int().min(0).max(100000000).optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
+})
+export async function updateRepair(db: PrismaClient, actorId: string, id: string, raw: unknown) {
+  const input = actionSchema.parse(raw)
+  return operation(db, { key: input.idempotencyKey, actorId, kind: "REPAIR_UPDATE", permission: "admin", payload: { id, ...input } }, async tx => {
+    const order = await tx.repairOrder.findUnique({ where: { id } })
+    if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
+    if (["DELIVERED", "CANCELLED"].includes(order.status)) throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
+    const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
+    let detail = input.detail
+    if (input.action === "QUOTE") {
+      if (!["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) || input.quoteCents === undefined) throw new BusinessError("Registra el diagnóstico e importe antes de solicitar autorización.", 409)
+      Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL" })
+      detail = `Presupuesto ${(input.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
+    } else if (input.action === "APPROVE") {
+      if (order.status !== "WAITING_APPROVAL" || order.quoteCents === null) throw new BusinessError("No hay presupuesto pendiente de autorizar.", 409)
+      Object.assign(data, { approvedQuoteCents: order.quoteCents, quoteApprovedAt: new Date(), status: "IN_REPAIR" })
+      detail = `Autorización registrada por el operador para ${(order.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
+    } else if (input.action === "STATUS") {
+      if (!input.status || !repairNextStages[order.status].includes(input.status)) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
+      data.status = input.status
+      if (input.status === "READY") data.qualityCheck = input.detail
+      if (input.status === "DELIVERED") data.deliveredTo = input.detail
+      detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}. ${input.detail}`
+    } else if (input.action === "ASSIGN") {
+      const assignee = input.assignedToId ? await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } }) : null
+      if (!assignee) throw new BusinessError("Selecciona una persona habilitada.")
+      data.assignedToId = assignee.id
+      detail = `Responsable: ${assignee.name}. ${input.detail}`
+    } else if (input.action === "TRANSFER") {
+      const branch = input.branchId ? await tx.workshopBranch.findFirst({ where: { id: input.branchId, isActive: true } }) : null
+      if (!branch || branch.id === order.currentBranchId) throw new BusinessError("Selecciona una sucursal destino distinta y activa.")
+      data.currentBranchId = branch.id
+      detail = `Ubicación actualizada a ${branch.name}. ${input.detail}`
+    }
+    const result = await tx.repairOrder.updateMany({ where: { id, version: input.expectedVersion }, data })
+    if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
+    await tx.repairEvent.create({ data: { actorId, orderId: id, type: input.action, detail } })
+    return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
+  })
+}

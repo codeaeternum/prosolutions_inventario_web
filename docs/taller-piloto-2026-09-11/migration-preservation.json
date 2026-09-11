@@ -1,0 +1,140 @@
+{
+  "time": "2026-09-11T08:36:21.566Z",
+  "source": "encrypted verified desktop backup 2026-09-11",
+  "network": "none; CLI shares isolated loopback namespace",
+  "storage": "tmpfs",
+  "tablesCompared": 15,
+  "preserved": true,
+  "comparison": "all preexisting business columns and rows, canonical JSON and SHA256; added metadata excluded",
+  "before": [
+    {
+      "table": "Brand",
+      "fingerprint": "18:31f70b423b2c590228e40e503f0fdaabbac30f3cef372775d378d0205db321cc"
+    },
+    {
+      "table": "CashMovement",
+      "fingerprint": "5:f808b25101cbdbed847bc38dc84bf7f5edb3ae1dd105cd91b82e5069444fb19d"
+    },
+    {
+      "table": "CashRegister",
+      "fingerprint": "1:46e1f46a3a14f839374ffb7914063bde0ef79b801f56ec0624bf447d9e63c314"
+    },
+    {
+      "table": "Category",
+      "fingerprint": "22:7e1f2b18cef1a95bf25c49ed44b8520cd6df9c699df54123c66dcff96e8014cb"
+    },
+    {
+      "table": "CreditMovement",
+      "fingerprint": "9:ffac23a4ed7475da9926853be8b3c4adabcd79ed69a931db230e3a88f307da9f"
+    },
+    {
+      "table": "InventoryMovement",
+      "fingerprint": "153:fadf1a858ef1753f50dc548daf0fbb6eda1521702d52e4d969b5c85316027488"
+    },
+    {
+      "table": "Model",
+      "fingerprint": "302:5364b312aa9fbbc2e739240e26ec6b33534dba87e95b242e48a76317d42f0b81"
+    },
+    {
+      "table": "PriceHistory",
+      "fingerprint": "4:826bd21094e34e57490960bf12657fa49790a4397ffc4482f9d87d7ee6835e6d"
+    },
+    {
+      "table": "Product",
+      "fingerprint": "98:01d9a98721f727931abb9d2c12fb6d480c552fec0bb42dfd8be1c99132f61181"
+    },
+    {
+      "table": "ProductModel",
+      "fingerprint": "127:125473f1a66c93c528fef1debff70ed6274a0f951e7a3054cf015bf500173e89"
+    },
+    {
+      "table": "PushSubscription",
+      "fingerprint": "0:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "table": "Reservation",
+      "fingerprint": "3:8bcff8bdef651fd9a25f7bd9be3c32071f4923ef70aa5e069878ff4e532bbd23"
+    },
+    {
+      "table": "Settings",
+      "fingerprint": "1:67a5810f13ae8534450fcdb43e53e40ed56348d4f477f5c13fe4ef25b3b16df1"
+    },
+    {
+      "table": "SystemSettings",
+      "fingerprint": "0:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "table": "User",
+      "fingerprint": "5:347bb650e55866e37f0bbb1e5b8e89229f826f4ba4278c8fe013c9a0a5570f04"
+    }
+  ],
+  "after": [
+    {
+      "table": "Brand",
+      "fingerprint": "18:31f70b423b2c590228e40e503f0fdaabbac30f3cef372775d378d0205db321cc"
+    },
+    {
+      "table": "CashMovement",
+      "fingerprint": "5:f808b25101cbdbed847bc38dc84bf7f5edb3ae1dd105cd91b82e5069444fb19d"
+    },
+    {
+      "table": "CashRegister",
+      "fingerprint": "1:46e1f46a3a14f839374ffb7914063bde0ef79b801f56ec0624bf447d9e63c314"
+    },
+    {
+      "table": "Category",
+      "fingerprint": "22:7e1f2b18cef1a95bf25c49ed44b8520cd6df9c699df54123c66dcff96e8014cb"
+    },
+    {
+      "table": "CreditMovement",
+      "fingerprint": "9:ffac23a4ed7475da9926853be8b3c4adabcd79ed69a931db230e3a88f307da9f"
+    },
+    {
+      "table": "InventoryMovement",
+      "fingerprint": "153:fadf1a858ef1753f50dc548daf0fbb6eda1521702d52e4d969b5c85316027488"
+    },
+    {
+      "table": "Model",
+      "fingerprint": "302:5364b312aa9fbbc2e739240e26ec6b33534dba87e95b242e48a76317d42f0b81"
+    },
+    {
+      "table": "PriceHistory",
+      "fingerprint": "4:826bd21094e34e57490960bf12657fa49790a4397ffc4482f9d87d7ee6835e6d"
+    },
+    {
+      "table": "Product",
+      "fingerprint": "98:01d9a98721f727931abb9d2c12fb6d480c552fec0bb42dfd8be1c99132f61181"
+    },
+    {
+      "table": "ProductModel",
+      "fingerprint": "127:125473f1a66c93c528fef1debff70ed6274a0f951e7a3054cf015bf500173e89"
+    },
+    {
+      "table": "PushSubscription",
+      "fingerprint": "0:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "table": "Reservation",
+      "fingerprint": "3:8bcff8bdef651fd9a25f7bd9be3c32071f4923ef70aa5e069878ff4e532bbd23"
+    },
+    {
+      "table": "Settings",
+      "fingerprint": "1:67a5810f13ae8534450fcdb43e53e40ed56348d4f477f5c13fe4ef25b3b16df1"
+    },
+    {
+      "table": "SystemSettings",
+      "fingerprint": "0:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "table": "User",
+      "fingerprint": "5:347bb650e55866e37f0bbb1e5b8e89229f826f4ba4278c8fe013c9a0a5570f04"
+    }
+  ],
+  "migrations": [
+    "20250309000000_baseline",
+    "20250310000000_add_credit_module",
+    "20260911000000_transactional_operations",
+    "20260911010000_sale_metadata",
+    "20260911020000_workshop_pilot"
+  ]
+}

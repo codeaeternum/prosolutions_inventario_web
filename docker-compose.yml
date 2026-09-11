@@ -1,0 +1,106 @@
+name: prosolutions
+
+services:
+  app:
+    image: ${APP_IMAGE:-prosolutions-app:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prosolutions-app
+    restart: unless-stopped
+    ports:
+      - "3005:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Define a random session secret}
+      AUTH_SECRET: ${NEXTAUTH_SECRET:?Define a random session secret}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?Define the public HTTPS URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
+      CRON_SECRET: ${CRON_SECRET:?Define a random cron secret}
+      PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_EMAIL: ${VAPID_EMAIL:-mailto:admin@prosolutions.com}
+    volumes:
+      - uploads:/app/public/uploads
+      - payment_proofs:/app/storage/payment-proofs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks: [prosolutions-network]
+
+  bot:
+    image: ${BOT_IMAGE:-prosolutions-bot:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: prosolutions-bot
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
+      PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    volumes:
+      - uploads:/app/public/uploads
+      - payment_proofs:/app/storage/payment-proofs
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [prosolutions-network]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: prosolutions-db
+    restart: unless-stopped
+    # No host port: only app/bot and explicitly attached maintenance jobs can connect.
+    environment:
+      POSTGRES_USER: prosolutions
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define the existing or coordinated rotated PostgreSQL password}
+      POSTGRES_DB: prosolutions_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prosolutions -d prosolutions_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks: [prosolutions-network]
+
+  migrate:
+    image: ${MIGRATE_IMAGE:-prosolutions-migrate:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [prosolutions-network]
+    profiles: [migrate]
+
+networks:
+  prosolutions-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    external: true
+    name: prosolutions_postgres_data
+  uploads:
+    external: true
+    name: prosolutions_uploads
+  payment_proofs:
+    name: prosolutions_payment_proofs

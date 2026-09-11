@@ -1,0 +1,66 @@
+import { NextResponse } from "next/server"
+import { z } from "zod"
+import { requireAdmin } from "@/lib/api-auth"
+import { prisma } from "@/lib/prisma"
+import { generateSlug } from "@/lib/utils"
+
+const createModelSchema = z.object({
+  name: z.string().min(1, "El nombre es requerido").max(200),
+  brandId: z.string().min(1, "La marca es requerida"),
+})
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const brandId = searchParams.get("brandId")
+
+    const models = await prisma.model.findMany({
+      where: brandId ? { brandId } : undefined,
+      include: {
+        brand: { select: { name: true } },
+        _count: { select: { products: true } },
+      },
+      orderBy: [{ brand: { name: "asc" } }, { name: "asc" }],
+    })
+    return NextResponse.json(models)
+  } catch (error) {
+    console.error("Error fetching models:", error)
+    return NextResponse.json({ error: "Error al obtener modelos" }, { status: 500 })
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const result = await requireAdmin()
+    if (result.error) return result.error
+
+    const body = await req.json()
+    const parseResult = createModelSchema.safeParse(body)
+    if (!parseResult.success) {
+      const err = parseResult.error.flatten().fieldErrors
+      const msg = err.name?.[0] ?? err.brandId?.[0] ?? "Datos inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
+    }
+    const { name, brandId } = parseResult.data
+
+    const slug = generateSlug(name)
+
+    const existingModel = await prisma.model.findFirst({
+      where: { brandId, slug },
+    })
+
+    if (existingModel) {
+      return NextResponse.json({ error: "Este modelo ya existe para esta marca" }, { status: 400 })
+    }
+
+    const model = await prisma.model.create({
+      data: { name, slug, brandId },
+      include: { brand: { select: { name: true } } },
+    })
+
+    return NextResponse.json(model)
+  } catch (error) {
+    console.error("Error creating model:", error)
+    return NextResponse.json({ error: "Error al crear modelo" }, { status: 500 })
+  }
+}

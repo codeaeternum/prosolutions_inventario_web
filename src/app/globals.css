@@ -1,0 +1,255 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ==========================================
+   PRO-SOLUTIONS - Design tokens (HSL)
+   Variables en formato H S% L% para consistencia y soporte de opacidad (ej. bg-primary/50).
+   ========================================== */
+
+:root {
+  /* Superficies */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 14.5%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 14.5%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 14.5%;
+
+  /* Primario / Secundario / Muted */
+  --primary: 0 0% 20.5%;
+  --primary-foreground: 0 0% 98.5%;
+  --secondary: 0 0% 97%;
+  --secondary-foreground: 0 0% 20.5%;
+  --muted: 0 0% 97%;
+  --muted-foreground: 0 0% 55.6%;
+  --accent: 0 0% 97%;
+  --accent-foreground: 0 0% 20.5%;
+
+  /* Estados semánticos */
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 10%;
+
+  /* Bordes e inputs */
+  --border: 0 0% 92.2%;
+  --input: 0 0% 92.2%;
+  --ring: 0 0% 70.8%;
+
+  /* Radius (único token base) */
+  --radius: 0.625rem;
+
+  /* Sidebar */
+  --sidebar-background: 0 0% 98%;
+  --sidebar-foreground: 0 0% 14.5%;
+  --sidebar-primary: 0 0% 20.5%;
+  --sidebar-primary-foreground: 0 0% 98.5%;
+  --sidebar-accent: 0 0% 97%;
+  --sidebar-accent-foreground: 0 0% 20.5%;
+  --sidebar-border: 0 0% 92.2%;
+  --sidebar-ring: 0 0% 70.8%;
+  --sidebar: 0 0% 98.5%;
+
+  /* Charts */
+  --chart-1: 25 95% 53%;
+  --chart-2: 173 58% 39%;
+  --chart-3: 220 70% 50%;
+  --chart-4: 43 96% 56%;
+  --chart-5: 27 96% 61%;
+}
+
+/* Skip link: visible al foco para accesibilidad */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0.5rem;
+  z-index: 100;
+  padding: 0.75rem 1rem;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+  border-radius: var(--radius);
+  transition: top 0.2s ease;
+}
+.skip-link:focus {
+  top: 0.5rem;
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Safe area para dispositivos iOS (notch, Dynamic Island, barra de gestos) */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Contenedor principal: evita que la barra superior e inferior del iPhone tapen contenido */
+.safe-area-page {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+@media (max-width: 767px) {
+  .safe-area-page {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Headers sticky: que se peguen debajo del notch/Dynamic Island al hacer scroll */
+.safe-area-sticky {
+  top: env(safe-area-inset-top, 0px);
+}
+
+.dark {
+  --background: 0 0% 14.5%;
+  --foreground: 0 0% 98.5%;
+  --card: 0 0% 20.5%;
+  --card-foreground: 0 0% 98.5%;
+  --popover: 0 0% 20.5%;
+  --popover-foreground: 0 0% 98.5%;
+
+  --primary: 0 0% 92.2%;
+  --primary-foreground: 0 0% 20.5%;
+  --secondary: 0 0% 26.9%;
+  --secondary-foreground: 0 0% 98.5%;
+  --muted: 0 0% 26.9%;
+  --muted-foreground: 0 0% 70.8%;
+  --accent: 0 0% 26.9%;
+  --accent-foreground: 0 0% 98.5%;
+
+  --destructive: 0 63% 55%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 0 0% 100% / 10%;
+  --input: 0 0% 100% / 15%;
+  --ring: 0 0% 55.6%;
+
+  --sidebar-background: 0 0% 8%;
+  --sidebar-foreground: 0 0% 98.5%;
+  --sidebar-primary: 264 67% 58%;
+  --sidebar-primary-foreground: 0 0% 98.5%;
+  --sidebar-accent: 0 0% 26.9%;
+  --sidebar-accent-foreground: 0 0% 98.5%;
+  --sidebar-border: 0 0% 100% / 10%;
+  --sidebar-ring: 0 0% 55.6%;
+  --sidebar: 0 0% 20.5%;
+
+  --chart-1: 264 67% 58%;
+  --chart-2: 162 76% 45%;
+  --chart-3: 27 96% 61%;
+  --chart-4: 304 63% 58%;
+  --chart-5: 16 95% 58%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Select/Dropdown: forzar contraste en dark para que el texto no se pierda */
+.dark [data-select-content] {
+  background: hsl(var(--popover)) !important;
+  color: hsl(var(--popover-foreground)) !important;
+  border-color: hsl(var(--border));
+}
+.dark [data-select-content] [data-select-item] {
+  color: inherit;
+}
+
+/* Select nativo: contraste en dark para que el control se vea */
+.dark select {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+}
+.dark select option {
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

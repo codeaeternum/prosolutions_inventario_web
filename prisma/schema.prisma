@@ -1,0 +1,471 @@
+// ProSolutions Inventario - Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== ENUMS ====================
+
+enum UserRole {
+  ADMIN
+  EMPLOYEE
+  CUSTOMER
+}
+
+enum CustomerType {
+  TECHNICIAN  // Técnico de reparación
+  STORE       // Local de venta de refacciones
+  NORMAL      // Cliente particular
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ReservationStatus {
+  PENDING           // Esperando acción
+  PENDING_PAYMENT   // Esperando comprobante de pago (transferencia)
+  DEPOSIT_VERIFIED  // Depósito verificado por admin
+  APPROVED          // Aprobada y lista para recoger
+  REJECTED          // Rechazada por admin
+  COMPLETED         // Entregada al cliente
+  CANCELLED         // Cancelada por cliente
+  EXPIRED           // Expirada automáticamente
+}
+
+enum ReservationType {
+  TEMPORARY  // Reserva temporal sin pago (expira en X minutos)
+  DEPOSIT    // Reserva con depósito del 50% (expira en X horas si no se recoge)
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  RETURN
+}
+
+model InventoryMovement {
+  businessVersion Int @default(0)
+  paymentMethod String?
+  customerId String?
+  reservationId String?
+  id            String       @id @default(cuid())
+
+  type          MovementType
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reason        String?
+  notes         String?
+
+  unitPrice     Float?
+  totalPrice    Float?
+
+  productId     String
+  userId        String?
+  
+  relatedId     String?      // ID de movimiento relacionado (ej: devolución de una venta)
+  related       InventoryMovement? @relation("RelatedMovement", fields: [relatedId], references: [id])
+  relatedTo     InventoryMovement[] @relation("RelatedMovement")
+
+  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime     @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+  @@index([relatedId])
+}
+
+model User {
+  id                    String       @id @default(cuid())
+  email                 String?      @unique  // Opcional para permitir registro solo con teléfono
+  telegramId            String?      @unique  // ID de Telegram para usuarios del bot
+  qrCode                String?      @unique  // Código QR único para identificación en tienda
+  password              String?      // Opcional si solo se registra por Bot
+  name                  String
+  businessName          String?      // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
+  phone                 String?      @unique  // Único si se proporciona
+  role                  UserRole     @default(CUSTOMER)
+  customerType          CustomerType @default(NORMAL)
+  requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse
+  status                UserStatus   @default(PENDING)
+  
+  // Metas de compra
+  monthlyPurchaseGoal   Float?       // Meta mensual de compra en pesos
+  totalPurchases        Float        @default(0)  // Total de compras acumuladas
+  currentMonthPurchases Float        @default(0)  // Compras del mes actual
+  lastPurchaseReset     DateTime?    // Último reinicio del contador mensual
+
+  // Crédito (pago diferido)
+  creditLimit   Float?   // Límite en pesos; null = sin línea de crédito
+  creditBalance Float    @default(0) // Saldo deudor actual (lo que debe el cliente)
+
+  assignedRepairs RepairOrder[] @relation("RepairAssignedTo")
+  createdRepairs RepairOrder[] @relation("RepairCreatedBy")
+  repairEvents RepairEvent[]
+  businessOperations BusinessOperation[]
+  reservations     Reservation[]
+  movements        InventoryMovement[]
+  creditMovements  CreditMovement[]
+  priceChanges     PriceHistory[]  @relation("PriceChanges")
+  cashRegistersOpened CashRegister[] @relation("RegisterOpenedBy")
+  cashRegistersClosed CashRegister[] @relation("RegisterClosedBy")
+  cashMovements       CashMovement[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Brand {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  logo      String?
+
+  models    Model[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Model {
+  id        String    @id @default(cuid())
+  name      String              // Ej: "Galaxy S25 Ultra"
+  slug      String
+  brandId   String
+
+
+  brand     Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  products  ProductModel[] // Relación muchos a muchos con productos
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([brandId, slug])
+  @@index([name])
+}
+
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  icon      String?
+
+  products  Product[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Product {
+  id             String    @id @default(cuid())
+  name           String
+  description    String?
+  barcode        String?   @unique
+
+  retailPrice    Float     // Precio menudeo
+  wholesalePrice Float     // Precio mayoreo
+  costPrice      Float?    // Precio de costo (cuánto costó adquirirlo)
+
+  stock          Int       @default(0)
+  minStock       Int       @default(1)
+
+  images         String[]  // Array de URLs
+
+  isActive       Boolean   @default(true)
+  isUniversal    Boolean   @default(false)  // Producto universal (aparece en todos los modelos)
+
+  categoryId     String
+
+  // Relación muchos a muchos con modelos
+  models         ProductModel[]
+  category       Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  reservations   Reservation[]
+  movements      InventoryMovement[]
+  priceHistory   PriceHistory[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([categoryId])
+  @@index([barcode])
+  @@index([isUniversal])
+}
+
+// Historial de cambios de precio
+model PriceHistory {
+  id           String   @id @default(cuid())
+  productId    String
+  field        String   // "retailPrice", "wholesalePrice", "costPrice"
+  oldValue     Float
+  newValue     Float
+  changedById  String?
+
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  changedBy    User?    @relation("PriceChanges", fields: [changedById], references: [id])
+
+  createdAt    DateTime @default(now())
+
+  @@index([productId])
+}
+
+// Tabla intermedia para relación muchos a muchos entre Product y Model
+model ProductModel {
+  id        String   @id @default(cuid())
+  productId String
+  modelId   String
+
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, modelId])
+  @@index([productId])
+  @@index([modelId])
+}
+
+model Reservation {
+  // 0 preserves legacy records; 1 uses transactional reservation accounting.
+  businessVersion Int @default(0)
+  id              String            @id @default(cuid())
+  qrCode          String            @unique @default(cuid()) // Código QR único para verificación
+
+  quantity        Int
+  totalPrice      Float
+  depositAmount   Float?            // Monto de anticipo (50% si aplica)
+  depositPaid     Boolean           @default(false)
+
+  // Tipo de reserva
+  type            ReservationType   @default(TEMPORARY)  // TEMPORARY = sin pago, DEPOSIT = con anticipo
+
+  status          ReservationStatus @default(PENDING)
+
+  paymentProofUrl String?           // URL del comprobante de pago
+  paymentMethod   String?           // "transferencia", "oxxo", "efectivo"
+  adminNotes      String?
+
+  expiresAt       DateTime          // Fecha/hora de expiración de la reserva
+
+  userId          String
+  productId       String
+
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([productId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+
+
+// Movimientos de crédito (deuda y abonos)
+enum CreditMovementType {
+  REVERSAL // Reducción de deuda sin entrada de dinero
+  DEBT    // Venta/reserva a crédito → aumenta saldo deudor
+  PAYMENT // Abono del cliente → disminuye saldo deudor
+}
+
+enum CreditReferenceType {
+  RESERVATION
+  SALE
+  MANUAL
+}
+
+model CreditMovement {
+  id            String               @id @default(cuid())
+  amount        Float                 // Positivo = deuda, negativo = abono (siempre guardamos positivo y usamos type)
+  type          CreditMovementType
+  referenceType CreditReferenceType?
+  referenceId   String?               // ID de Reservation o InventoryMovement
+  notes         String?
+
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime             @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Settings {
+  id                        String  @id @default("default")
+  
+  // Configuración de reservas temporales (sin pago)
+  tempReservationMinutes    Int     @default(30)     // Minutos que dura una reserva temporal
+  
+  // Configuración de reservas con depósito
+  depositPercentage         Int     @default(50)     // Porcentaje de anticipo requerido
+  depositReservationHours   Int     @default(48)     // Horas para recoger después de verificar depósito
+  
+  // Configuración de expiración pendiente de verificación
+  pendingVerificationHours  Int     @default(24)     // Horas para que admin verifique el depósito
+
+  // Configuración de moneda
+  exchangeRate              Float   @default(17.50)  // Tipo de cambio MXN a USD
+
+  updatedAt                 DateTime @updatedAt
+}
+
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  keys      String   // JSON stringified
+  userId    String?
+
+  createdAt DateTime @default(now())
+}
+
+model CashRegister {
+  id              String   @id @default(cuid())
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  
+  initialAmount   Float    @default(0) // Dinero en caja al abrir
+  finalAmount     Float?               // Dinero físico contado al cerrar
+  
+  status          String   @default("OPEN") // OPEN, CLOSED
+  
+  openedById      String
+  openedBy        User     @relation("RegisterOpenedBy", fields: [openedById], references: [id])
+  
+  closedById      String?
+  closedBy        User?    @relation("RegisterClosedBy", fields: [closedById], references: [id])
+  
+  notes           String?
+  
+  movements       CashMovement[]
+}
+
+enum CashMovementType {
+  IN      // Entrada de dinero (ventas, abonos)
+  OUT     // Salida de dinero (gastos, retiros, devoluciones)
+}
+
+model CashMovement {
+  id              String   @id @default(cuid())
+  amount          Float
+  type            CashMovementType
+  description     String
+  
+  // Referencias a otros módulos (opcional)
+  referenceType   String?  // Ej: "SALE", "RESERVATION", "CREDIT_PAYMENT", "EXPENSE"
+  referenceId     String?  // El ID del movimiento asociado
+  
+  registerId      String
+  register        CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  
+  createdAt       DateTime @default(now())
+}
+
+// Configuraciones del Sistema (Dólar, Tiempos, Banco)
+model SystemSettings {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  type      String   @default("STRING") // STRING, NUMBER, JSON
+  updatedAt DateTime @updatedAt
+}
+
+// Durable receipt for retries; never delete while its business records exist.
+model BusinessOperation {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  actorId     String
+  kind        String
+  requestHash String
+  response    Json
+  createdAt   DateTime @default(now())
+  actor       User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId, createdAt])
+}
+
+// Workshop pilot: reception and custody only. Cash/stock remain separate until branch accounting is implemented.
+enum RepairStatus {
+  RECEIVED
+  DIAGNOSIS
+  WAITING_APPROVAL
+  WAITING_PARTS
+  IN_REPAIR
+  QUALITY_CHECK
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+model WorkshopBranch {
+  id String @id @default(cuid())
+  name String @unique
+  isActive Boolean @default(true)
+  receivedOrders RepairOrder[] @relation("IntakeBranch")
+  heldOrders RepairOrder[] @relation("CurrentBranch")
+  createdAt DateTime @default(now())
+}
+
+model RepairOrder {
+  id String @id @default(cuid())
+  number Int @unique @default(autoincrement())
+  version Int @default(1)
+  status RepairStatus @default(RECEIVED)
+  customerName String
+  customerPhone String
+  equipmentType String
+  brand String?
+  model String?
+  serialNumber String?
+  accessories String?
+  intakeCondition String?
+  reportedIssue String
+  diagnosis String?
+  quoteCents Int?
+  approvedQuoteCents Int?
+  quoteApprovedAt DateTime?
+  qualityCheck String?
+  deliveredTo String?
+  promisedAt DateTime?
+  intakeBranchId String
+  currentBranchId String
+  intakeBranch WorkshopBranch @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
+  currentBranch WorkshopBranch @relation("CurrentBranch", fields: [currentBranchId], references: [id], onDelete: Restrict)
+  assignedToId String?
+  assignedTo User? @relation("RepairAssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdById String
+  createdBy User @relation("RepairCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  events RepairEvent[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([currentBranchId, status, createdAt])
+  @@index([assignedToId, status])
+  @@index([customerPhone])
+}
+
+model RepairEvent {
+  id String @id @default(cuid())
+  orderId String
+  order RepairOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId String
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  type String
+  detail String
+  createdAt DateTime @default(now())
+  @@index([orderId, createdAt])
+}
