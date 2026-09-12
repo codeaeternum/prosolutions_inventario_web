@@ -58,6 +58,7 @@ interface Product {
   isUniversal: boolean
   models: ProductModel[]
   category: { name: string }
+  stocks?: { quantity: number; branch: { id: string; name: string } }[]
 }
 
 type ViewMode = "grid-large" | "grid-small" | "list"
@@ -575,6 +576,11 @@ export default function ProductsPage() {
                           <Badge variant={getStockVariant(product)}>
                             {product.stock}
                           </Badge>
+                          {product.stocks && product.stocks.length > 1 && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                              {product.stocks.map(s => `${s.branch.name}: ${s.quantity}`).join(" · ")}
+                            </p>
+                          )}
                         </div>
 
                         {/* Prices */}

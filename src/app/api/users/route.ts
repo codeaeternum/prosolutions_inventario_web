@@ -40,6 +40,8 @@ export async function GET(req: Request) {
       role: true,
       creditLimit: true,
       creditBalance: true,
+      homeBranchId: true,
+      homeBranch: { select: { id: true, name: true } },
       createdAt: true,
       _count: { select: { reservations: true } },
     }
@@ -81,13 +83,20 @@ export async function POST(req: Request) {
     if (result.error) return result.error
 
     const body = await req.json()
-    const { name, email, password, role, customerType } = body
+    const { name, email, password, role, customerType, homeBranchId } = body
 
     if (!name || !email || !password || !role) {
       return NextResponse.json(
         { error: "Faltan campos requeridos" },
         { status: 400 }
       )
+    }
+
+    if (homeBranchId) {
+      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId } })
+      if (!branch || !branch.isActive) {
+        return NextResponse.json({ error: "Sucursal inválida" }, { status: 400 })
+      }
     }
 
     // Check if user exists
@@ -111,6 +120,7 @@ export async function POST(req: Request) {
         password: hashedPassword,
         role: role as UserRole,
         customerType: customerType || "NORMAL",
+        homeBranchId: homeBranchId || null,
         status: "APPROVED", // Admin created users are auto-approved
       },
     })

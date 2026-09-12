@@ -66,6 +66,8 @@ interface Movement {
         id: string
         name: string
     } | null
+    branch?: { id: string; name: string } | null
+    toBranch?: { id: string; name: string } | null
 }
 
 const movementTypes = [
@@ -74,6 +76,7 @@ const movementTypes = [
     { value: "CANCELLED", label: "Reservas canceladas" },
     { value: "IN", label: "Entradas" },
     { value: "OUT", label: "Salidas" },
+    { value: "TRANSFER", label: "Traspasos" },
     { value: "ADJUSTMENT_IN", label: "Ajuste (+)" },
     { value: "ADJUSTMENT_OUT", label: "Ajuste (-)" },
     { value: "RETURN", label: "Devoluciones" },
@@ -90,6 +93,8 @@ export default function MovimientosPage() {
 
     // Filters
     const [typeFilter, setTypeFilter] = useState<string>("ALL")
+    const [branchFilter, setBranchFilter] = useState<string>("ALL")
+    const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
 
     // Delete dialog
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -116,6 +121,9 @@ export default function MovimientosPage() {
             if (typeFilter !== "ALL") {
                 params.set("type", typeFilter)
             }
+            if (branchFilter !== "ALL") {
+                params.set("branchId", branchFilter)
+            }
 
             const res = await fetch(`/api/inventory?${params.toString()}`)
             const data = await res.json()
@@ -133,7 +141,13 @@ export default function MovimientosPage() {
 
     useEffect(() => {
         fetchMovements()
-    }, [page, typeFilter])
+    }, [page, typeFilter, branchFilter])
+
+    useEffect(() => {
+        fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
+            setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive))
+        }).catch(() => {})
+    }, [])
 
     const getTypeConfig = (type: string) => {
         switch (type) {
@@ -145,6 +159,7 @@ export default function MovimientosPage() {
             case "ADJUSTMENT_IN": return { label: "Ajuste (+)", color: "bg-blue-50 text-blue-600" }
             case "ADJUSTMENT_OUT": return { label: "Ajuste (-)", color: "bg-red-50 text-red-600" }
             case "RETURN": return { label: "Devolución", color: "bg-yellow-100 text-yellow-800" }
+            case "TRANSFER": return { label: "Traspaso", color: "bg-blue-100 text-blue-800" }
             case "DAMAGED": return { label: "Dañado", color: "bg-orange-100 text-orange-800" }
             case "LOST": return { label: "Perdido", color: "bg-muted text-muted-foreground" }
             default: return { label: type, color: "bg-muted text-foreground" }
@@ -234,6 +249,19 @@ export default function MovimientosPage() {
                         ))}
                     </SelectContent>
                 </Select>
+                {branches.length > 0 && (
+                    <Select value={branchFilter} onValueChange={setBranchFilter}>
+                        <SelectTrigger className="w-full sm:w-44">
+                            <SelectValue placeholder="Sucursal" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="ALL">Todas las sucursales</SelectItem>
+                            {branches.map(b => (
+                                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                )}
                 </div>
             </div>
 
@@ -253,19 +281,20 @@ export default function MovimientosPage() {
                                     <TableHead className="text-right hidden md:table-cell">Precio Unit.</TableHead>
                                     <TableHead className="text-right">Total</TableHead>
                                     <TableHead className="hidden md:table-cell">Usuario</TableHead>
+                                    <TableHead className="hidden md:table-cell">Sucursal</TableHead>
                                     <TableHead className="w-[50px] md:w-[120px] text-right">Acciones</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {loading && movements.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="h-24 text-center">
+                                        <TableCell colSpan={9} className="h-24 text-center">
                                             <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                                         </TableCell>
                                     </TableRow>
                                 ) : movements.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                                             No hay movimientos registrados
                                         </TableCell>
                                     </TableRow>
@@ -300,6 +329,11 @@ export default function MovimientosPage() {
                                                 </TableCell>
                                                 <TableCell className="hidden md:table-cell">
                                                     {mov.user?.name || "Sistema"}
+                                                </TableCell>
+                                                <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                                                    {mov.type === "TRANSFER" && mov.toBranch
+                                                        ? `${mov.branch?.name ?? "—"} → ${mov.toBranch.name}`
+                                                        : mov.branch?.name ?? "—"}
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="relative inline-block">

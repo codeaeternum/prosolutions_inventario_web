@@ -48,6 +48,12 @@ interface BatchItem {
     product: Product
     type: string
     quantity: number
+    toBranchId?: string
+}
+
+interface Branch {
+    id: string
+    name: string
 }
 
 const movementTypes = [
@@ -57,6 +63,7 @@ const movementTypes = [
     { value: "ADJUSTMENT_OUT", label: "Ajuste (-)", icon: Minus, color: "text-red-600", help: "Resta stock por descuadre de inventario físico." },
     { value: "DAMAGED", label: "Dañado / Merma", icon: ArrowUpCircle, color: "text-orange-600", help: "Resta stock porque el producto se echó a perder o rompió." },
     { value: "LOST", label: "Perdido", icon: ArrowUpCircle, color: "text-muted-foreground", help: "Resta stock por robo o pérdida desconocida." },
+    { value: "TRANSFER", label: "Traspaso", icon: ArrowDownCircle, color: "text-blue-600", help: "Mueve existencias de esta sucursal a otra." },
 ]
 
 export default function MovimientosInventario() {
@@ -68,6 +75,16 @@ export default function MovimientosInventario() {
     const [batchItems, setBatchItems] = useState<BatchItem[]>([])
     const [globalReason, setGlobalReason] = useState("")
     const [globalNotes, setGlobalNotes] = useState("")
+    const [branches, setBranches] = useState<Branch[]>([])
+    const [branchId, setBranchId] = useState("")
+
+    useEffect(() => {
+        fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
+            const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
+            setBranches(list)
+            if (list.length && !branchId) setBranchId(list[0].id)
+        }).catch(() => {})
+    }, [])
 
     const searchProductsApi = useCallback(async (query: string) => {
         if (query.length < 2) {
@@ -75,13 +92,13 @@ export default function MovimientosInventario() {
             return
         }
         try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(query)}`)
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(query)}${branchId ? `&branchId=${branchId}` : ""}`)
             const data = await res.json()
             setProducts(data.products || [])
         } catch (error) {
             console.error("Error searching products:", error)
         }
-    }, [])
+    }, [branchId])
 
     useEffect(() => {
         const debounce = setTimeout(() => {
@@ -110,7 +127,7 @@ export default function MovimientosInventario() {
 
     const handleScan = async (code: string) => {
         setShowScanner(false)
-        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}`)
+        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}${branchId ? `&branchId=${branchId}` : ""}`)
         const data = await res.json()
         if (data.products && data.products.length > 0) {
             const exact = data.products.find((product: Product) => product.barcode === code || product.id === code)
@@ -134,13 +151,15 @@ export default function MovimientosInventario() {
     const handleSaveBatch = async () => {
         if (batchItems.length === 0) return toast.error("El lote está vacío")
         if (!globalReason.trim()) return toast.error("Ingresa un motivo global para el lote")
+        if (batchItems.some(i => i.type === "TRANSFER" && !i.toBranchId)) return toast.error("Selecciona la sucursal destino de cada traspaso")
 
         if (batchInFlight.current) return
         batchInFlight.current = true
         setSaving(true)
         try {
-            const payload = { items: batchItems.map(item => ({ productId: item.product.id, type: item.type,
-                quantity: item.quantity, reason: globalReason.trim(), notes: globalNotes.trim() || undefined })) }
+            const payload = { branchId: branchId || undefined, items: batchItems.map(item => ({ productId: item.product.id, type: item.type,
+                quantity: item.quantity, reason: globalReason.trim(), notes: globalNotes.trim() || undefined,
+                ...(item.type === "TRANSFER" ? { toBranchId: item.toBranchId } : {}) })) }
             pendingBatch.current = getClientOperationKey(pendingBatch.current, payload)
             const res = await fetch("/api/inventory", { method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ...payload, idempotencyKey: pendingBatch.current.key }) })
@@ -169,10 +188,24 @@ export default function MovimientosInventario() {
                             <CardTitle>Recepción y Ajustes (Lote)</CardTitle>
                             <CardDescription>Escanea o busca productos para agregarlos a la lista de trabajo y guárdalos todos a la vez.</CardDescription>
                         </div>
-                        <Button variant="outline" onClick={() => setShowScanner(true)} title="Abre la cámara para escanear código de barras o QR y agregar el producto al lote">
-                            <ScanBarcode className="w-4 h-4 mr-2" />
-                            Escanear
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            {branches.length > 1 && (
+                                <Select value={branchId} onValueChange={setBranchId}>
+                                    <SelectTrigger className="w-[170px]">
+                                        <SelectValue placeholder="Sucursal" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {branches.map(b => (
+                                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
+                            <Button variant="outline" onClick={() => setShowScanner(true)} title="Abre la cámara para escanear código de barras o QR y agregar el producto al lote">
+                                <ScanBarcode className="w-4 h-4 mr-2" />
+                                Escanear
+                            </Button>
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -246,6 +279,20 @@ export default function MovimientosInventario() {
                                             <Input type="number" min={1} value={item.quantity} onChange={e => updateItem(item.id, { quantity: parseInt(e.target.value) || 1 })} className="h-9 text-center" />
                                             <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => updateItem(item.id, { quantity: item.quantity + 1 })}>+</Button>
                                         </div>
+                                        {item.type === "TRANSFER" && (
+                                            <div className="sm:col-span-12 -mt-1">
+                                                <Select value={item.toBranchId ?? ""} onValueChange={v => updateItem(item.id, { toBranchId: v })}>
+                                                    <SelectTrigger className="h-9 max-w-xs">
+                                                        <SelectValue placeholder="Sucursal destino…" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {branches.filter(b => b.id !== branchId).map(b => (
+                                                            <SelectItem key={b.id} value={b.id}>→ {b.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        )}
                                         <div className="sm:col-span-1 flex justify-end">
                                             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500" onClick={() => removeItem(item.id)}>
                                                 <Trash2 className="h-4 w-4" />

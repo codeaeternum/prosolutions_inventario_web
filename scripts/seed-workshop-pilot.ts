@@ -11,10 +11,10 @@ async function main() {
   if (url.pathname !== "/prosolutions_pilot" || process.env.PILOT_SEED_ACK !== "fictional-data-only" || password.length < 20) throw new Error("Dedicated pilot database, acknowledgement and a 20+ character password are required")
   const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url.toString() })) })
   try {
-    if (await db.user.count() || await db.product.count() || await db.workshopBranch.count()) throw new Error("Pilot database is not empty; refusing to seed or overwrite existing data")
+    if (await db.user.count() || await db.product.count() || await db.branch.count()) throw new Error("Pilot database is not empty; refusing to seed or overwrite existing data")
     const admin = await db.user.create({ data: { email: "piloto@prosolutions.local", name: "Dueño · Demo", role: "ADMIN", status: "APPROVED", password: await bcrypt.hash(password, 12) } })
     const techs = await Promise.all(["Técnico A · Demo", "Técnico B · Demo"].map(name => db.user.create({ data: { name, role: "EMPLOYEE", status: "APPROVED" } })))
-    const branches = await Promise.all(["Local Centro · Demo", "Local Norte · Demo"].map(name => db.workshopBranch.create({ data: { name } })))
+    const branches = await Promise.all(["Local Centro · Demo", "Local Norte · Demo"].map(name => db.branch.create({ data: { name } })))
     const fixtures = [
       { customer: "Cliente de prueba 01", type: "Consola", brand: "Nintendo", model: "Switch", issue: "No carga; se apaga al desconectarla", stage: "DIAGNOSIS", branch: 0 },
       { customer: "Cliente de prueba 02", type: "Laptop", brand: "Lenovo", model: "IdeaPad", issue: "Ventilador ruidoso y temperatura alta", stage: "WAITING_APPROVAL", branch: 1 },

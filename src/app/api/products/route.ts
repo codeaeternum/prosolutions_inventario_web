@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { releaseStock, transaction } from "@/lib/domain/operations"
 
 const createProductSchema = z
   .object({
@@ -19,6 +20,7 @@ const createProductSchema = z
     isUniversal: z.boolean().optional().default(false),
     categoryId: z.string().min(1, "La categoría es requerida"),
     modelIds: z.array(z.string().min(1)).optional().default([]),
+    stockBranchId: z.string().min(1).optional(),
   })
   .refine((data) => data.isUniversal || (data.modelIds && data.modelIds.length > 0), {
     message: "Selecciona al menos un modelo o marca como universal",
@@ -71,6 +73,8 @@ export async function GET(req: Request) {
       },
       category: true,
       _count: { select: { reservations: true } },
+      // Existencias por sucursal (productDto las expone sólo a staff).
+      ...(isCatalogStaff(viewer) ? { stocks: { include: { branch: { select: { id: true, name: true } } } } } : {}),
     }
 
     if (lowStock) {
@@ -151,6 +155,7 @@ export async function POST(req: Request) {
       isUniversal,
       categoryId,
       modelIds,
+      stockBranchId,
     } = parseResult.data
 
     // Check if barcode already exists
@@ -166,53 +171,60 @@ export async function POST(req: Request) {
       }
     }
 
-    const product = await prisma.product.create({
-      data: {
-        name,
-        description: description || null,
-        barcode: barcode || null,
-        retailPrice,
-        wholesalePrice,
-        costPrice: costPrice ?? null,
-        stock,
-        minStock,
-        images,
-        isUniversal: isUniversal || false,
-        categoryId,
-        models: isUniversal
-          ? undefined
-          : {
-              create: modelIds.map((modelId: string) => ({
-                modelId,
-              })),
-            },
-      },
-      include: {
-        models: {
-          include: {
-            model: {
-              include: { brand: true },
+    const creator = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
+    const product = await transaction(prisma, async tx => {
+      const created = await tx.product.create({
+        data: {
+          name,
+          description: description || null,
+          barcode: barcode || null,
+          retailPrice,
+          wholesalePrice,
+          costPrice: costPrice ?? null,
+          stock: 0,
+          minStock,
+          images,
+          isUniversal: isUniversal || false,
+          categoryId,
+          models: isUniversal
+            ? undefined
+            : {
+                create: modelIds.map((modelId: string) => ({
+                  modelId,
+                })),
+              },
+        },
+        include: {
+          models: {
+            include: {
+              model: {
+                include: { brand: true },
+              },
             },
           },
-        },
-        category: true,
-      },
-    })
-
-    // Create initial inventory movement
-    if (product.stock > 0) {
-      await prisma.inventoryMovement.create({
-        data: {
-          productId: product.id,
-          type: "IN",
-          quantity: product.stock,
-          previousStock: 0,
-          newStock: product.stock,
-          reason: "Stock inicial",
-          userId: session.user.id,
+          category: true,
         },
       })
-    }
+
+      // La existencia inicial entra a UNA sucursal vía el dominio.
+      if (stock > 0) {
+        const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: stockBranchId ?? creator?.homeBranchId })
+        await tx.inventoryMovement.create({
+          data: {
+            productId: created.id,
+            type: "IN",
+            quantity: stock,
+            previousStock: 0,
+            newStock: stock,
+            reason: "Stock inicial",
+            userId: session.user.id,
+            branchId: branch.id,
+            businessVersion: 1,
+          },
+        })
+      }
+      return created
+    })
 
     return NextResponse.json(product)
   } catch (error) {

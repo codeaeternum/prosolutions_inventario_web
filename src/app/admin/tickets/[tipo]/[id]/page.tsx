@@ -24,31 +24,62 @@ export default async function TicketPage({
   } | null = null
 
   if (tipo === "venta") {
-    // Buscar venta (InventoryMovement tipo SALE)
-    const sale = await prisma.inventoryMovement.findUnique({
+    // Documento de venta nuevo (Sale con líneas y pagos); fallback al movimiento heredado.
+    const saleDoc = await prisma.sale.findUnique({
       where: { id },
       include: {
-        product: true,
-        user: true, // admin que la hizo
+        items: { include: { product: true } },
+        payments: { orderBy: { createdAt: "asc" } },
+        seller: true,
+        customer: true,
+        branch: true,
       }
     })
-    
-    if (sale) {
+
+    if (saleDoc) {
+      const METHOD_LABEL: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
       ticketData = {
-        title: "TICKET DE VENTA",
-        folio: sale.id.slice(-8).toUpperCase(),
-        date: sale.createdAt.toISOString(),
-        items: [
-          {
-            name: sale.product.name,
-            qty: Math.abs(sale.quantity),
-            price: sale.unitPrice || 0,
-            total: Math.abs(sale.quantity) * (sale.unitPrice || 0)
-          }
-        ],
-        total: Math.abs(sale.quantity) * (sale.unitPrice || 0),
-        notes: sale.notes || "Venta en tienda",
-        cashier: sale.user?.name || "Sistema"
+        title: saleDoc.status === "VOIDED" ? "VENTA ANULADA" : "TICKET DE VENTA",
+        folio: `V-${String(saleDoc.number).padStart(6, "0")}`,
+        date: saleDoc.createdAt.toISOString(),
+        client: saleDoc.customer?.name,
+        items: saleDoc.items.map(item => ({
+          name: item.product.name,
+          qty: item.quantity,
+          price: item.unitPrice,
+          total: item.totalPrice,
+        })),
+        total: saleDoc.total,
+        paymentMethod: saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join(" + "),
+        notes: saleDoc.branch.name,
+        cashier: saleDoc.seller.name,
+      }
+    } else {
+      const sale = await prisma.inventoryMovement.findUnique({
+        where: { id },
+        include: {
+          product: true,
+          user: true, // admin que la hizo
+        }
+      })
+
+      if (sale) {
+        ticketData = {
+          title: "TICKET DE VENTA",
+          folio: sale.id.slice(-8).toUpperCase(),
+          date: sale.createdAt.toISOString(),
+          items: [
+            {
+              name: sale.product.name,
+              qty: Math.abs(sale.quantity),
+              price: sale.unitPrice || 0,
+              total: Math.abs(sale.quantity) * (sale.unitPrice || 0)
+            }
+          ],
+          total: Math.abs(sale.quantity) * (sale.unitPrice || 0),
+          notes: sale.notes || "Venta en tienda",
+          cashier: sale.user?.name || "Sistema"
+        }
       }
     }
   } else if (tipo === "reserva") {

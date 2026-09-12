@@ -26,6 +26,7 @@ import {
   CreditCard,
   Wallet,
   Wrench,
+  Building2,
   MoreHorizontal,
 } from "lucide-react"
 
@@ -55,6 +56,7 @@ const navigationGroups = [
   {
     name: "Administración",
     items: [
+      { name: "Sucursales", href: "/admin/sucursales", icon: Building2 },
       { name: "Usuarios", href: "/admin/usuarios", icon: Users },
       { name: "Crédito y Cartera", href: "/admin/credito", icon: CreditCard },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },

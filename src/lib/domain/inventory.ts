@@ -1,23 +1,41 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { amount, BusinessError, cents, openRegister, operation, operationKeySchema } from "./operations"
+import { amount, BusinessError, cents, openRegister, operation, operationKeySchema, releaseStock, takeStock, resolveBranch } from "./operations"
 
 const movementSchema = z.object({
-  productId: z.string().min(1), type: z.enum(["IN", "OUT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "DAMAGED", "LOST", "RETURN"]),
+  productId: z.string().min(1), type: z.enum(["IN", "OUT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "DAMAGED", "LOST", "RETURN", "TRANSFER"]),
   quantity: z.number().int().min(1).max(100000), reason: z.string().trim().min(1).max(500), notes: z.string().max(1000).optional(),
   relatedId: z.string().min(1).optional(), reservationId: z.string().min(1).optional(),
+  branchId: z.string().min(1).optional(), toBranchId: z.string().min(1).optional(),
 })
-const schema = z.object({ idempotencyKey: operationKeySchema, items: z.array(movementSchema).min(1).max(100) })
+const schema = z.object({ idempotencyKey: operationKeySchema, branchId: z.string().min(1).optional(), items: z.array(movementSchema).min(1).max(100) })
 export async function moveInventory(db: PrismaClient, actorId: string, raw: unknown) {
   const input = schema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "INVENTORY", permission: "staff", payload: input.items }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
     const movements = []
     for (const row of input.items) {
       const product = await tx.product.findUnique({ where: { id: row.productId } })
       if (!product) throw new BusinessError("Producto no encontrado.", 404)
+      const branchId = row.branchId ?? input.branchId
       let value: number | undefined
       let method: string | undefined
       let customerId: string | undefined
+      if (row.type === "TRANSFER") {
+        if (!row.toBranchId) throw new BusinessError("Indica la sucursal de destino del traspaso.")
+        const origin = await resolveBranch(tx, branchId)
+        if (row.toBranchId === origin.id) throw new BusinessError("El origen y el destino del traspaso son la misma sucursal.")
+        const destination = await resolveBranch(tx, row.toBranchId)
+        await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId: origin.id })
+        await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId: destination.id })
+        const movement = await tx.inventoryMovement.create({ data: {
+          productId: product.id, userId: actorId, type: "TRANSFER",
+          quantity: row.quantity, previousStock: product.stock, newStock: product.stock,
+          reason: row.reason, notes: `Traspaso ${origin.name} → ${destination.name}${row.notes ? `. ${row.notes}` : ""}`,
+          branchId: origin.id, toBranchId: destination.id, businessVersion: 1,
+        } })
+        movements.push(movement)
+        continue
+      }
       if (row.type === "RETURN") {
         if (Boolean(row.relatedId) === Boolean(row.reservationId)) throw new BusinessError("Selecciona la venta o reserva original de la devolución.")
         const source = row.relatedId
@@ -47,17 +65,18 @@ export async function moveInventory(db: PrismaClient, actorId: string, raw: unkn
         }
       }
       const positive = ["IN", "ADJUSTMENT_IN", "RETURN"].includes(row.type)
-      const delta = positive ? row.quantity : -row.quantity
-      const changed = await tx.product.updateMany({ where: { id: product.id, ...(positive ? {} : { stock: { gte: row.quantity } }) }, data: { stock: { increment: delta } } })
-      if (changed.count !== 1) throw new BusinessError(`Stock insuficiente para ${product.name}. Ningún movimiento del lote fue guardado.`, 409)
+      const branch = positive
+        ? await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId })
+        : (await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId })).branch
+      const updated = await tx.product.findUniqueOrThrow({ where: { id: product.id } })
       const movement = await tx.inventoryMovement.create({ data: {
         productId: product.id, userId: actorId, type: row.type.startsWith("ADJUSTMENT") ? "ADJUSTMENT" : row.type === "RETURN" ? "RETURN" : positive ? "IN" : "OUT",
-        quantity: row.quantity, previousStock: product.stock, newStock: product.stock + delta, reason: row.reason, notes: row.notes,
-        relatedId: row.relatedId, reservationId: row.reservationId, businessVersion: 1,
+        quantity: row.quantity, previousStock: updated.stock - (positive ? row.quantity : -row.quantity), newStock: updated.stock, reason: row.reason, notes: row.notes,
+        relatedId: row.relatedId, reservationId: row.reservationId, businessVersion: 1, branchId: branch.id,
         ...(value !== undefined ? { totalPrice: amount(value), unitPrice: amount(value / row.quantity), paymentMethod: method, customerId } : {}),
       } })
       if (row.type === "RETURN" && method === "EFECTIVO" && value! > 0) {
-        const register = await openRegister(tx)
+        const register = await openRegister(tx, branch.id)
         await tx.cashMovement.create({ data: { registerId: register.id, userId: actorId, type: "OUT", amount: amount(value!), referenceType: "RETURN", referenceId: movement.id, description: `Devolución: ${product.name}` } })
       }
       movements.push(movement)

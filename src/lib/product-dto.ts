@@ -10,7 +10,7 @@ export function productDto<T extends object>(product: T, viewer: Viewer): Record
   const input = product as Record<string, unknown>
   const keys = ["id", "name", "description", "barcode", "retailPrice", "stock", "images", "isUniversal", "categoryId", "category", "models"]
   if (canSeeWholesale(viewer)) keys.push("wholesalePrice")
-  if (isCatalogStaff(viewer)) keys.push("costPrice", "minStock", "isActive", "createdAt", "updatedAt", "_count")
+  if (isCatalogStaff(viewer)) keys.push("costPrice", "minStock", "isActive", "createdAt", "updatedAt", "_count", "stocks")
   return Object.fromEntries(keys.filter(key => key in input).map(key => [key, input[key]]))
 }
 export const catalogResponseHeaders = { "Cache-Control": "private, no-store", Vary: "Cookie" }

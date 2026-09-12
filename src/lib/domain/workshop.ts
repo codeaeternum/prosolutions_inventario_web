@@ -16,7 +16,7 @@ const createSchema = z.object({
 export async function createRepair(db: PrismaClient, actorId: string, raw: unknown) {
   const { idempotencyKey, promisedAt, ...input } = createSchema.parse(raw)
   return operation(db, { key: idempotencyKey, actorId, kind: "REPAIR_CREATE", permission: "admin", payload: { ...input, promisedAt } }, async tx => {
-    const branch = await tx.workshopBranch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
+    const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } })) throw new BusinessError("La persona asignada no está habilitada.")
     const order = await tx.repairOrder.create({ data: { ...input, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null } })
@@ -59,7 +59,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       data.assignedToId = assignee.id
       detail = `Responsable: ${assignee.name}. ${input.detail}`
     } else if (input.action === "TRANSFER") {
-      const branch = input.branchId ? await tx.workshopBranch.findFirst({ where: { id: input.branchId, isActive: true } }) : null
+      const branch = input.branchId ? await tx.branch.findFirst({ where: { id: input.branchId, isActive: true } }) : null
       if (!branch || branch.id === order.currentBranchId) throw new BusinessError("Selecciona una sucursal destino distinta y activa.")
       data.currentBranchId = branch.id
       detail = `Ubicación actualizada a ${branch.name}. ${input.detail}`

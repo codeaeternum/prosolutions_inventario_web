@@ -7,7 +7,8 @@
       "Exec(sed)",
       "Exec(scp)",
       "Exec(git stash)",
-      "Exec(git add)"
+      "Exec(git add)",
+      "Exec(open)"
     ]
   }
 }

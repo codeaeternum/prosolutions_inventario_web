@@ -10,6 +10,7 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url)
         const query = searchParams.get("q")?.trim()
         const publicOnly = searchParams.get("publicOnly") === "true"
+        const branchId = searchParams.get("branchId") || undefined
 
         if (!query || query.length < 2) {
             return NextResponse.json({ products: [] })
@@ -138,7 +139,17 @@ export async function GET(req: Request) {
             }
         }
 
-        return NextResponse.json({ products: products.slice(0, 20).map(p => productDto(p, viewer)) }, { headers: catalogResponseHeaders })
+        // Con sucursal, el stock mostrado es el de ESE local (fuente: BranchStock).
+        let result = products.slice(0, 20)
+        if (branchId && isCatalogStaff(viewer)) {
+            const stocks = await prisma.branchStock.findMany({
+                where: { branchId, productId: { in: result.map(p => p.id) } },
+                select: { productId: true, quantity: true },
+            })
+            const byProduct = new Map(stocks.map(s => [s.productId, s.quantity]))
+            result = result.map(p => ({ ...p, stock: byProduct.get(p.id) ?? 0 }))
+        }
+        return NextResponse.json({ products: result.map(p => productDto(p, viewer)) }, { headers: catalogResponseHeaders })
     } catch (error) {
         console.error("Unified Search error:", error)
         return NextResponse.json({ error: "Error en la búsqueda" }, { status: 500 })

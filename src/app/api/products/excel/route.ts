@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { releaseStock, takeStock, transaction } from "@/lib/domain/operations"
 import * as XLSX from "xlsx"
 
 export async function GET() {
@@ -93,9 +94,12 @@ export async function POST(request: NextRequest) {
     try {
         const result = await requireAdmin()
         if (result.error) return result.error
+        const actorId = getSession(result)!.user.id
+        const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { homeBranchId: true } })
 
         const formData = await request.formData()
         const file = formData.get("file") as File
+        const importBranchId = String(formData.get("branchId") || actor?.homeBranchId || "") || undefined
 
         if (!file) {
             return NextResponse.json({ error: "Archivo requerido" }, { status: 400 })
@@ -158,20 +162,33 @@ export async function POST(request: NextRequest) {
                 }
 
                 if (existingProduct) {
-                    // Update existing product
-                    await prisma.product.update({
-                        where: { id: existingProduct.id },
-                        data: {
-                            name: nombre,
-                            barcode: barcode || undefined,
-                            retailPrice,
-                            wholesalePrice,
-                            stock,
-                            minStock,
-                            isActive,
-                            isUniversal,
-                            categoryId,
-                        },
+                    // Actualizar producto; el stock se ajusta por el dominio en una sucursal.
+                    await transaction(prisma, async tx => {
+                        await tx.product.update({
+                            where: { id: existingProduct.id },
+                            data: {
+                                name: nombre,
+                                barcode: barcode || undefined,
+                                retailPrice,
+                                wholesalePrice,
+                                minStock,
+                                isActive,
+                                isUniversal,
+                                categoryId,
+                            },
+                        })
+                        const diff = stock - existingProduct.stock
+                        if (diff !== 0) {
+                            const branch = diff > 0
+                                ? await releaseStock(tx, { productId: existingProduct.id, quantity: diff, branchId: importBranchId })
+                                : (await takeStock(tx, { productId: existingProduct.id, quantity: -diff, branchId: importBranchId })).branch
+                            const after = await tx.product.findUniqueOrThrow({ where: { id: existingProduct.id }, select: { stock: true } })
+                            await tx.inventoryMovement.create({ data: {
+                                productId: existingProduct.id, userId: actorId, type: "ADJUSTMENT",
+                                quantity: Math.abs(diff), previousStock: after.stock - diff, newStock: after.stock,
+                                reason: "ADJUSTMENT", notes: "Importación Excel", branchId: branch.id, businessVersion: 1,
+                            } })
+                        }
                     })
                     updated++
                 } else {
@@ -185,19 +202,30 @@ export async function POST(request: NextRequest) {
                         }
                         categoryId = defaultCategory.id
                     }
+                    const productCategoryId = categoryId
 
-                    await prisma.product.create({
-                        data: {
-                            name: nombre,
-                            barcode: barcode || undefined,
-                            retailPrice,
-                            wholesalePrice,
-                            stock,
-                            minStock,
-                            isActive,
-                            isUniversal,
-                            categoryId,
-                        },
+                    await transaction(prisma, async tx => {
+                        const created = await tx.product.create({
+                            data: {
+                                name: nombre,
+                                barcode: barcode || undefined,
+                                retailPrice,
+                                wholesalePrice,
+                                stock: 0,
+                                minStock,
+                                isActive,
+                                isUniversal,
+                                categoryId: productCategoryId,
+                            },
+                        })
+                        if (stock > 0) {
+                            const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: importBranchId })
+                            await tx.inventoryMovement.create({ data: {
+                                productId: created.id, userId: actorId, type: "IN",
+                                quantity: stock, previousStock: 0, newStock: stock,
+                                reason: "IMPORT", notes: "Importación Excel", branchId: branch.id, businessVersion: 1,
+                            } })
+                        }
                     })
                     created++
                 }

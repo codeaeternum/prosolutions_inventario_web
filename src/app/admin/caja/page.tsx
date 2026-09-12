@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { 
@@ -41,6 +42,8 @@ export default function CajaPage() {
     const [submitting, setSubmitting] = useState(false)
     const inFlight = useRef(false)
     const operationKeys = useRef<Record<string, ClientOperationKey | null>>({})
+    const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
+    const [branchId, setBranchId] = useState("")
 
     const postCash = async (payload: Record<string, unknown>) => {
         const action = String(payload.action)
@@ -48,7 +51,7 @@ export default function CajaPage() {
         operationKeys.current[action] = operation
         const response = await fetch('/api/caja', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ registerId: register?.id, ...payload, idempotencyKey: operation.key }),
+            body: JSON.stringify({ registerId: register?.id, branchId: branchId || undefined, ...payload, idempotencyKey: operation.key }),
         })
         if (response.ok) operationKeys.current[action] = null
         return response
@@ -65,7 +68,7 @@ export default function CajaPage() {
 
     const fetchRegister = async () => {
         try {
-            const res = await fetch('/api/caja')
+            const res = await fetch(`/api/caja${branchId ? `?branchId=${branchId}` : ""}`)
             const data = await res.json()
             if (data.active) {
                 setRegister(data.register)
@@ -81,8 +84,16 @@ export default function CajaPage() {
     }
 
     useEffect(() => {
-        fetchRegister()
+        fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
+            const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
+            setBranches(list)
+            if (list.length && !branchId) setBranchId(list[0].id)
+        }).catch(() => {})
     }, [])
+
+    useEffect(() => {
+        if (branchId || branches.length === 0) fetchRegister()
+    }, [branchId])
 
     const handleOpen = async () => {
         if (inFlight.current) return
@@ -144,6 +155,19 @@ export default function CajaPage() {
 
     if (loading) return <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
 
+    const branchSelector = branches.length > 1 ? (
+        <Select value={branchId} onValueChange={setBranchId}>
+            <SelectTrigger className="w-full">
+                <SelectValue placeholder="Sucursal" />
+            </SelectTrigger>
+            <SelectContent>
+                {branches.map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                ))}
+            </SelectContent>
+        </Select>
+    ) : null
+
     if (!register) {
         return (
             <div className="max-w-md mx-auto mt-12">
@@ -156,6 +180,7 @@ export default function CajaPage() {
                         <CardDescription>Abre la caja para comenzar a operar hoy.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        {branchSelector}
                         <div className="space-y-2">
                             <Label>Efectivo inicial en caja</Label>
                             <Input 
@@ -177,13 +202,16 @@ export default function CajaPage() {
 
     return (
         <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold flex items-center gap-2">
-                    <Wallet className="h-6 w-6" /> Control de Caja
-                </h1>
-                <p className="text-muted-foreground">
-                    Abierta por {register.openedBy.name} el {formatDate(register.openedAt)}
-                </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                    <h1 className="text-2xl font-bold flex items-center gap-2">
+                        <Wallet className="h-6 w-6" /> Control de Caja
+                    </h1>
+                    <p className="text-muted-foreground">
+                        Abierta por {register.openedBy.name} el {formatDate(register.openedAt)}
+                    </p>
+                </div>
+                {branchSelector && <div className="w-full sm:w-44">{branchSelector}</div>}
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">

@@ -9,6 +9,7 @@ import * as path from 'path'
 import * as https from 'https'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
+import { createProduct } from '../../lib/domain/products'
 import { requireAdmin, requirePrisma } from '../lib/guards'
 import { generateQRCode, normalizePhone } from '../lib/utils'
 
@@ -186,17 +187,15 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                         fileStream.close()
                         adminSession.data.imageUrl = `/uploads/products/${fileName}`
 
-                        const newProduct = await prisma.product.create({
-                            data: {
-                                name: adminSession.data.name!,
-                                categoryId: adminSession.data.categoryId!,
-                                costPrice: adminSession.data.costPrice || null,
-                                retailPrice: adminSession.data.retailPrice!,
-                                wholesalePrice: adminSession.data.wholesalePrice!,
-                                stock: adminSession.data.stock!,
-                                images: [adminSession.data.imageUrl],
-                                isActive: true
-                            }
+                        const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } })
+                        const newProduct = await createProduct(prisma, adminUser!.id, {
+                            name: adminSession.data.name!,
+                            categoryId: adminSession.data.categoryId!,
+                            costPrice: adminSession.data.costPrice || null,
+                            retailPrice: adminSession.data.retailPrice!,
+                            wholesalePrice: adminSession.data.wholesalePrice!,
+                            stock: adminSession.data.stock!,
+                            images: [adminSession.data.imageUrl],
                         })
 
                         delete sessions.adminProduct[telegramId]
@@ -427,16 +426,14 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     return
                 }
                 if (adminSession.step === 'PHOTO' && ctx.message.text.toLowerCase() === 'saltar') {
-                    const newProduct = await prisma.product.create({
-                        data: {
-                            name: adminSession.data.name!,
-                            categoryId: adminSession.data.categoryId!,
-                            costPrice: adminSession.data.costPrice || null,
-                            retailPrice: adminSession.data.retailPrice!,
-                            wholesalePrice: adminSession.data.wholesalePrice!,
-                            stock: adminSession.data.stock!,
-                            isActive: true
-                        }
+                    const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } })
+                    const newProduct = await createProduct(prisma, adminUser!.id, {
+                        name: adminSession.data.name!,
+                        categoryId: adminSession.data.categoryId!,
+                        costPrice: adminSession.data.costPrice || null,
+                        retailPrice: adminSession.data.retailPrice!,
+                        wholesalePrice: adminSession.data.wholesalePrice!,
+                        stock: adminSession.data.stock!,
                     })
                     delete sessions.adminProduct[telegramId]
                     await ctx.reply(`✅ *Producto creado exitosamente!*\n\n📦 *${newProduct.name}*\n💰 Menudeo: $${newProduct.retailPrice}\n💰 Mayoreo: $${newProduct.wholesalePrice}\n📊 Stock: ${newProduct.stock}\n\nID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })

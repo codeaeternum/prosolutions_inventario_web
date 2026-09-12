@@ -81,17 +81,54 @@ export async function operation<T extends object>(
   })
 }
 
-export async function takeStock(tx: Transaction, productId: string, quantity: number) {
-  const product = await tx.product.findUnique({ where: { id: productId } })
-  if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
-  const result = await tx.product.updateMany({ where: { id: productId, isActive: true, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } })
-  if (result.count !== 1) throw new BusinessError(`Stock insuficiente para ${product.name}.`, 409, "INSUFFICIENT_STOCK")
-  return product
+export const PRINCIPAL_BRANCH_ID = "branch-principal"
+
+/** Sucursal por defecto cuando el flujo no especifica una (catálogo público, historiales). */
+export async function resolveBranch(tx: Transaction, branchId?: string | null) {
+  if (branchId) {
+    const branch = await tx.branch.findUnique({ where: { id: branchId } })
+    if (!branch || !branch.isActive) throw new BusinessError("La sucursal seleccionada no está activa.", 409)
+    return branch
+  }
+  const branch = await tx.branch.findUnique({ where: { id: PRINCIPAL_BRANCH_ID } })
+  if (branch) return branch
+  const first = await tx.branch.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } })
+  if (!first) throw new BusinessError("No hay sucursales activas.", 409)
+  return first
 }
 
-export async function openRegister(tx: Transaction) {
-  const registers = await tx.cashRegister.findMany({ where: { status: "OPEN" }, take: 2 })
-  if (registers.length !== 1) throw new BusinessError(registers.length ? "Hay más de una caja abierta; requiere revisión." : "Abre la caja antes de registrar efectivo.", 409, "REGISTER_REQUIRED")
+/** Descuenta existencias de UNA sucursal y del total cacheado, en la misma transacción. */
+export async function takeStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null }) {
+  const product = await tx.product.findUnique({ where: { id: input.productId } })
+  if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
+  const branch = await resolveBranch(tx, input.branchId)
+  const taken = await tx.branchStock.updateMany({
+    where: { productId: product.id, branchId: branch.id, quantity: { gte: input.quantity } },
+    data: { quantity: { decrement: input.quantity } },
+  })
+  if (taken.count !== 1) throw new BusinessError(`Stock insuficiente de ${product.name} en ${branch.name}.`, 409, "INSUFFICIENT_STOCK")
+  const total = await tx.product.updateMany({ where: { id: product.id, stock: { gte: input.quantity } }, data: { stock: { decrement: input.quantity } } })
+  if (total.count !== 1) throw new BusinessError(`El total de existencias de ${product.name} no coincide con las sucursales; requiere conciliación.`, 409, "STOCK_DRIFT")
+  return { product, branch }
+}
+
+/** Devuelve existencias a UNA sucursal y al total cacheado. Crea la fila si no existía. */
+export async function releaseStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null }) {
+  const branch = await resolveBranch(tx, input.branchId)
+  await tx.branchStock.upsert({
+    where: { productId_branchId: { productId: input.productId, branchId: branch.id } },
+    create: { productId: input.productId, branchId: branch.id, quantity: input.quantity },
+    update: { quantity: { increment: input.quantity } },
+  })
+  await tx.product.update({ where: { id: input.productId }, data: { stock: { increment: input.quantity } } })
+  return branch
+}
+
+/** Caja abierta de UNA sucursal (una por local; restricción única parcial en BD). */
+export async function openRegister(tx: Transaction, branchId?: string | null) {
+  const branch = await resolveBranch(tx, branchId)
+  const registers = await tx.cashRegister.findMany({ where: { status: "OPEN", branchId: branch.id }, take: 2 })
+  if (registers.length !== 1) throw new BusinessError(registers.length ? `Hay más de una caja abierta en ${branch.name}; requiere revisión.` : `Abre la caja de ${branch.name} antes de registrar efectivo.`, 409, "REGISTER_REQUIRED")
   const locked = await tx.cashRegister.updateMany({ where: { id: registers[0].id, status: "OPEN" }, data: { status: "OPEN" } })
   if (locked.count !== 1) throw new BusinessError("La caja acaba de cerrarse.", 409)
   return registers[0]

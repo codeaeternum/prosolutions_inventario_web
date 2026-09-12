@@ -57,8 +57,16 @@ interface User {
   status: "PENDING" | "APPROVED" | "REJECTED"
   creditLimit?: number | null
   creditBalance?: number
+  homeBranchId?: string | null
+  homeBranch?: { id: string; name: string } | null
   createdAt: string
   _count: { reservations: number }
+}
+
+interface Branch {
+  id: string
+  name: string
+  isActive: boolean
 }
 
 const DEFAULT_LIMIT = 20
@@ -83,7 +91,9 @@ export default function UsersPage() {
     password: "",
     role: "CUSTOMER",
     customerType: "NORMAL",
+    homeBranchId: "",
   })
+  const [branches, setBranches] = useState<Branch[]>([])
 
   // Credit management dialog
   const [creditOpen, setCreditOpen] = useState(false)
@@ -140,7 +150,14 @@ export default function UsersPage() {
     fetchUsers()
   }, [fetchUsers])
 
-  const updateUser = async (id: string, data: { status?: string; customerType?: string; role?: string }) => {
+  useEffect(() => {
+    fetch("/api/branches")
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setBranches(data?.branches ?? []))
+      .catch(() => setBranches([]))
+  }, [])
+
+  const updateUser = async (id: string, data: { status?: string; customerType?: string; role?: string; homeBranchId?: string }) => {
     setUpdating(id)
     try {
       const res = await fetch(`/api/users/${id}`, {
@@ -163,6 +180,8 @@ export default function UsersPage() {
           toast.success("Usuario promovido a Administrador 👑")
         } else if (data.role === "CUSTOMER") {
           toast.success("Rol de Administrador removido")
+        } else if (data.homeBranchId !== undefined) {
+          toast.success("Sucursal asignada")
         }
       } else {
         toast.error(result.error || "Error al actualizar usuario")
@@ -197,6 +216,7 @@ export default function UsersPage() {
           password: "",
           role: "CUSTOMER",
           customerType: "NORMAL",
+          homeBranchId: "",
         })
         fetchUsers()
       } else {
@@ -398,6 +418,24 @@ export default function UsersPage() {
                   </Select>
                 </div>
               </div>
+              {(newUser.role === "EMPLOYEE" || newUser.role === "ADMIN") && branches.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="homeBranch">Sucursal</Label>
+                  <Select
+                    value={newUser.homeBranchId}
+                    onValueChange={(value) => setNewUser({ ...newUser, homeBranchId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sin sucursal asignada" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {branches.filter(b => b.isActive).map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                   Cancelar
@@ -629,6 +667,24 @@ export default function UsersPage() {
                               <CreditCard className="h-3.5 w-3.5" />
                               Crédito
                             </Button>
+                          )}
+                          {(user.role === "EMPLOYEE" || user.role === "ADMIN") && branches.length > 0 && (
+                            <Select
+                              value={user.homeBranchId ?? "none"}
+                              onValueChange={(value) =>
+                                updateUser(user.id, { homeBranchId: value === "none" ? "" : value })
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-[160px]" disabled={updating === user.id}>
+                                <span>{user.homeBranch?.name ?? "Sin sucursal"}</span>
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Sin sucursal</SelectItem>
+                                {branches.filter(b => b.isActive).map(b => (
+                                  <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           )}
                         </>
                       )}

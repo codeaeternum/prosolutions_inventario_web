@@ -13,7 +13,14 @@ export async function PATCH(
 
     const { id } = await params
     const body = await req.json()
-    const { status, customerType, role } = body
+    const { status, customerType, role, homeBranchId } = body
+
+    if (homeBranchId) {
+      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId } })
+      if (!branch || !branch.isActive) {
+        return NextResponse.json({ error: "Sucursal inválida" }, { status: 400 })
+      }
+    }
 
     // Prevent admin from demoting themselves
     if (role && role !== "ADMIN" && session.user.id === id) {
@@ -37,6 +44,7 @@ export async function PATCH(
         ...(status && { status }),
         ...(customerType && { customerType }),
         ...(role && { role }),
+        ...(homeBranchId !== undefined && { homeBranchId: homeBranchId || null }),
       },
       select: {
         id: true,
@@ -45,6 +53,7 @@ export async function PATCH(
         status: true,
         customerType: true,
         role: true,
+        homeBranchId: true,
       },
     })
 

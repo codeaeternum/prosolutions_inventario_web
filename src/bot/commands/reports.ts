@@ -1,4 +1,6 @@
 import { changeReservation } from "../../lib/domain/reservations"
+import { moveInventory } from "../../lib/domain/inventory"
+import { randomUUID } from "crypto"
 import { Markup } from 'telegraf'
 import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
@@ -30,13 +32,37 @@ export function registerReports({ bot, prisma }: BotContext) {
         }
 
         try {
-            const product = await prisma.product.update({
-                where: { id: productId },
-                data: { stock: newStock }
+            const adminUser = await prisma.user.findUnique({
+                where: { telegramId: ctx.from!.id.toString() },
+                select: { id: true, homeBranchId: true }
             })
-            await ctx.reply(`✅ Stock actualizado:\n📦 ${product.name}\n📊 Nuevo stock: ${newStock} unidades`)
-        } catch {
-            await ctx.reply('❌ Producto no encontrado.')
+            if (!adminUser) return ctx.reply('Cuenta no disponible.')
+
+            // El stock ahora vive por sucursal: /stock fija la existencia de la
+            // sucursal del administrador (o la principal) mediante un ajuste.
+            const branchId = adminUser.homeBranchId ?? 'branch-principal'
+            const branch = await prisma.branch.findUnique({ where: { id: branchId } })
+            if (!branch) return ctx.reply('❌ Sucursal no disponible.')
+            const current = await prisma.branchStock.findUnique({
+                where: { productId_branchId: { productId, branchId: branch.id } }
+            })
+            const product = await prisma.product.findUnique({ where: { id: productId }, select: { id: true, name: true, stock: true } })
+            if (!product) return ctx.reply('❌ Producto no encontrado.')
+            const diff = newStock - (current?.quantity ?? 0)
+            if (diff === 0) return ctx.reply(`ℹ️ ${product.name} ya tiene ${newStock} en ${branch.name}.`)
+            const result = await moveInventory(prisma, adminUser.id, {
+                idempotencyKey: `bot-stock-${ctx.from!.id}-${Date.now()}-${randomUUID()}`,
+                items: [{
+                    productId, type: diff > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
+                    quantity: Math.abs(diff), branchId: branch.id,
+                    reason: `Ajuste desde bot: ${branch.name} → ${newStock} unidades`,
+                }],
+            })
+            const movement = result.movements[0]
+            await ctx.reply(`✅ Stock actualizado en *${branch.name}*:\n📦 ${product.name}\n📊 ${current?.quantity ?? 0} → ${newStock} unidades (total: ${movement?.newStock ?? '—'})`, { parse_mode: 'Markdown' })
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Error desconocido'
+            await ctx.reply(`❌ No se pudo ajustar: ${msg}`)
         }
     })
 

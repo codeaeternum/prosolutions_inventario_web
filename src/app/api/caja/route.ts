@@ -4,14 +4,17 @@ import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const result = await requireAdminOrEmployee()
     if (result.error) return result.error
 
+    const branchId = new URL(req.url).searchParams.get("branchId") || undefined
     const activeRegister = await prisma.cashRegister.findFirst({
-      where: { status: "OPEN" },
+      where: { status: "OPEN", ...(branchId ? { branchId } : {}) },
+      orderBy: { openedAt: "desc" },
       include: {
+        branch: { select: { id: true, name: true } },
         openedBy: { select: { name: true } },
         movements: {
           orderBy: { createdAt: 'desc' },

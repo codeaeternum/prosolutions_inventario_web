@@ -83,9 +83,22 @@ export default function VentasPage() {
     // Cash register state
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
 
+    // Sucursal activa del mostrador (stock, caja y venta se ligan a ella)
+    const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
+    const [branchId, setBranchId] = useState("")
+
     useEffect(() => {
-        fetch('/api/caja').then(r => r.json()).then(d => setCajaOpen(!!d.active)).catch(() => {})
+        fetch('/api/branches').then(r => r.ok ? r.json() : null).then(d => {
+            const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
+            setBranches(list)
+            if (list.length && !branchId) setBranchId(list[0].id)
+        }).catch(() => {})
     }, [])
+
+    useEffect(() => {
+        if (!branchId) return
+        fetch(`/api/caja?branchId=${branchId}`).then(r => r.json()).then(d => setCajaOpen(!!d.active)).catch(() => {})
+    }, [branchId])
 
     const handleScan = async (code: string) => {
         const cleanCode = code.trim()
@@ -94,7 +107,7 @@ export default function VentasPage() {
         setShowScanner(false)
         setSearching(true)
         try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanCode)}`)
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanCode)}${branchId ? `&branchId=${branchId}` : ""}`)
             if (!res.ok) throw new Error("No se pudo consultar el producto")
             const data = await res.json()
             const matches = (data.products as Product[] | undefined)?.filter((product) => product.barcode?.trim() === cleanCode || product.id === cleanCode) ?? []
@@ -115,7 +128,7 @@ export default function VentasPage() {
         }
         setSearching(true)
         try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanQuery)}`)
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanQuery)}${branchId ? `&branchId=${branchId}` : ""}`)
             const data = await res.json()
             setProducts(data.products || [])
         } catch (error) {
@@ -123,7 +136,7 @@ export default function VentasPage() {
         } finally {
             setSearching(false)
         }
-    }, [])
+    }, [branchId])
 
     // Debounce search
     useEffect(() => {
@@ -207,6 +220,7 @@ export default function VentasPage() {
             items: cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
             paymentMethod,
             customerId: paymentMethod === "CREDITO" ? creditCustomer?.id : undefined,
+            branchId: branchId || undefined,
         }
         pendingOperation.current = getClientOperationKey(pendingOperation.current, payload)
         submitting.current = true
@@ -220,14 +234,14 @@ export default function VentasPage() {
             const data = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudo registrar la venta. El carrito se conserva.")
             pendingOperation.current = null
-            const ticketUrl = data.movements?.length === 1 ? `/admin/tickets/venta/${data.movements[0].id}` : undefined
+            const ticketUrl = data.sale?.id ? `/admin/tickets/venta/${data.sale.id}` : undefined
             setLastSale({
                 product: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
                 quantity: data.quantity,
                 total: data.total,
                 ticketUrl,
             })
-            toast.success(`Venta registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
+            toast.success(`Venta V-${String(data.sale?.number ?? "").padStart(6, "0")} registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
             setCart([])
             setCreditCustomer(null)
             setCreditSearch("")
@@ -274,10 +288,24 @@ export default function VentasPage() {
                         </p>
                     )}
                 </div>
-                <Button onClick={() => setShowScanner(true)} disabled={processing} size="lg" variant="outline">
-                    <ScanBarcode className="h-5 w-5 mr-2" />
-                    Escanear
-                </Button>
+                <div className="flex items-center gap-2">
+                    {branches.length > 1 && (
+                        <Select value={branchId} onValueChange={setBranchId}>
+                            <SelectTrigger className="w-[180px]">
+                                <SelectValue placeholder="Sucursal" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {branches.map(b => (
+                                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    )}
+                    <Button onClick={() => setShowScanner(true)} disabled={processing} size="lg" variant="outline">
+                        <ScanBarcode className="h-5 w-5 mr-2" />
+                        Escanear
+                    </Button>
+                </div>
             </div>
 
             {/* Search */}

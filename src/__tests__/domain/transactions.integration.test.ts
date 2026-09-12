@@ -3,12 +3,13 @@ import { PrismaClient } from "@prisma/client"
 import { PrismaPg } from "@prisma/adapter-pg"
 import { Pool } from "pg"
 import { randomUUID } from "node:crypto"
-import { sell } from "@/lib/domain/sales"
+import { sell, returnSaleItems, voidSale } from "@/lib/domain/sales"
 import { createReservations, changeReservation, expireReservations } from "@/lib/domain/reservations"
 import { changeCash } from "@/lib/domain/cash"
 import { changeCredit } from "@/lib/domain/credit"
 import { createRepair, updateRepair } from "@/lib/domain/workshop"
 import { moveInventory } from "@/lib/domain/inventory"
+import { PRINCIPAL_BRANCH_ID } from "@/lib/domain/operations"
 
 const enabled = process.env.RUN_DATABASE_TESTS === "1"
 const url = process.env.DATABASE_URL ?? "postgresql://audit:audit-isolated-only@127.0.0.1:55433/hardening"
@@ -18,19 +19,28 @@ if (enabled) {
 }
 const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
 const prefix = `test-${randomUUID()}`
-let admin: string, customer: string, category: string, register: string
+let admin: string, customer: string, category: string, register: string, branchB: string
 const key = () => `${prefix}:${randomUUID()}`
-async function product(stock = 5, price = 100) {
-  return db.product.create({ data: { name: `${prefix}-product`, categoryId: category, stock, retailPrice: price, wholesalePrice: price, images: [] } })
+
+/** Producto con existencias en una sucursal; el total cacheado siempre iguala la suma de sucursales. */
+async function product(stock = 5, price = 100, branchId = PRINCIPAL_BRANCH_ID) {
+  const row = await db.product.create({ data: { name: `${prefix}-product`, categoryId: category, stock: 0, retailPrice: price, wholesalePrice: price, images: [] } })
+  if (stock > 0) await db.branchStock.create({ data: { productId: row.id, branchId, quantity: stock } })
+  return db.product.update({ where: { id: row.id }, data: { stock } })
 }
+const stockAt = async (productId: string, branchId = PRINCIPAL_BRANCH_ID) =>
+  (await db.branchStock.findUnique({ where: { productId_branchId: { productId, branchId } } }))?.quantity ?? 0
+
 describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   beforeAll(async () => {
     admin = (await db.user.create({ data: { name: prefix, role: "ADMIN", status: "APPROVED" } })).id
     customer = (await db.user.create({ data: { name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000 } })).id
     category = (await db.category.create({ data: { name: prefix, slug: prefix } })).id
-    // Fixture database may retain an open register from a previous interrupted test run.
+    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, name: "Local principal" }, update: { isActive: true } })
+    branchB = (await db.branch.create({ data: { name: `${prefix}-B` } })).id
+    // Fixture database may retain open registers from a previous interrupted test run.
     await db.cashRegister.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED", closedAt: new Date() } })
-    register = (await changeCash(db, admin, { action: "OPEN", amount: 0, idempotencyKey: key() })).id
+    register = (await changeCash(db, admin, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).id
   })
   afterAll(async () => { await db.$disconnect() })
 
@@ -38,28 +48,94 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     const p = await product(1)
     const results = await Promise.allSettled(Array.from({ length: 3 }, () => createReservations(db, customer, { productId: p.id, quantity: 1, idempotencyKey: key() })))
     expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1)
+    expect(await stockAt(p.id)).toBe(0)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(0)
     expect(await db.reservation.count({ where: { productId: p.id } })).toBe(1)
+    expect((await db.reservation.findFirstOrThrow({ where: { productId: p.id } })).branchId).toBe(PRINCIPAL_BRANCH_ID)
   })
   it("rolls back all cart lines when one is out of stock", async () => {
     const p = await product(2), empty = await product(0)
-    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }, { productId: empty.id, quantity: 1 }], paymentMethod: "EFECTIVO", idempotencyKey: key() })).rejects.toThrow()
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
+    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }, { productId: empty.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toThrow()
+    expect(await stockAt(p.id)).toBe(2)
+    expect(await db.sale.count({ where: { sellerId: admin } })).toBe(0)
     expect(await db.inventoryMovement.count({ where: { productId: p.id } })).toBe(0)
   })
-  it("simultaneous retry commits one sale and one cash entry", async () => {
+  it("a sale is a numbered document and simultaneous retry commits it once", async () => {
     const p = await product(3)
-    const input = { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", idempotencyKey: key() }
+    const input = { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() }
     const [first, second] = await Promise.all([sell(db, admin, input), sell(db, admin, input)])
     expect(first.operationId).toBe(second.operationId)
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
-    expect(await db.cashMovement.count({ where: { referenceId: first.movements[0].id } })).toBe(1)
+    expect(first.sale.id).toBe(second.sale.id)
+    expect(first.sale.number).toBeGreaterThan(0)
+    expect(first.sale.branchId).toBe(PRINCIPAL_BRANCH_ID)
+    expect(first.payments).toHaveLength(1)
+    expect(await stockAt(p.id)).toBe(2)
+    expect(await db.cashMovement.count({ where: { referenceId: first.sale.id } })).toBe(1)
     await expect(sell(db, admin, { ...input, paymentMethod: "TARJETA" })).rejects.toMatchObject({ status: 409 })
   })
   it("card sales never enter the physical cash drawer", async () => {
     const p = await product()
-    const result = await sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", idempotencyKey: key() })
-    expect(await db.cashMovement.count({ where: { referenceId: result.movements[0].id } })).toBe(0)
+    const result = await sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    expect(await db.cashMovement.count({ where: { referenceId: result.sale.id } })).toBe(0)
+  })
+  it("stock is isolated per branch: branch B cannot sell branch A's units", async () => {
+    const p = await product(2)
+    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
+    expect(await stockAt(p.id)).toBe(2)
+    expect(await stockAt(p.id, branchB)).toBe(0)
+    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
+  })
+  it("each branch has its own register: B opens while principal is open", async () => {
+    const other = await changeCash(db, admin, { action: "OPEN", amount: 100, branchId: branchB, idempotencyKey: key() })
+    expect((await db.cashRegister.findUniqueOrThrow({ where: { id: other.id } })).branchId).toBe(branchB)
+    await expect(changeCash(db, admin, { action: "OPEN", amount: 0, branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await changeCash(db, admin, { action: "CLOSE", registerId: other.id, amount: 100, branchId: branchB, idempotencyKey: key() })
+  })
+  it("transfers move stock between branches atomically and audit both ends", async () => {
+    const p = await product(4)
+    await moveInventory(db, admin, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "TRANSFER", quantity: 3, reason: "Fixture", toBranchId: branchB }] })
+    expect(await stockAt(p.id)).toBe(1)
+    expect(await stockAt(p.id, branchB)).toBe(3)
+    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(4)
+    const movement = await db.inventoryMovement.findFirstOrThrow({ where: { productId: p.id, type: "TRANSFER" } })
+    expect(movement.toBranchId).toBe(branchB)
+    await expect(moveInventory(db, admin, { idempotencyKey: key(), items: [{ productId: p.id, type: "TRANSFER", quantity: 9, reason: "Fixture", branchId: PRINCIPAL_BRANCH_ID, toBranchId: branchB }] })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
+  })
+  it("a split cash+credit sale charges debt only for the credit part", async () => {
+    const p = await product(2, 200)
+    const before = (await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance
+    const result = await sell(db, admin, {
+      items: [{ productId: p.id, quantity: 2 }], branchId: PRINCIPAL_BRANCH_ID, customerId: customer,
+      payments: [{ method: "EFECTIVO", amount: 150 }, { method: "CREDITO", amount: 250 }], idempotencyKey: key(),
+    })
+    expect(result.sale.total).toBe(400)
+    expect(result.payments).toHaveLength(2)
+    expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(before + 250)
+    expect(await db.cashMovement.count({ where: { referenceId: result.sale.id, type: "IN" } })).toBe(1)
+  })
+  it("sale returns restore branch stock, cap at sold units and refund once", async () => {
+    const p = await product(3)
+    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const line = { saleItemId: sale.items[0].id, quantity: 2 }
+    const input = { saleId: sale.sale.id, items: [line], refundMethod: "EFECTIVO", reason: "Fixture return", idempotencyKey: key() }
+    const returned = await returnSaleItems(db, admin, input)
+    await returnSaleItems(db, admin, input)
+    await expect(returnSaleItems(db, admin, { saleId: sale.sale.id, items: [{ ...line, quantity: 1 }], refundMethod: "EFECTIVO", reason: "Extra", idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    expect(await stockAt(p.id)).toBe(3)
+    expect(returned.refund.method).toBe("CASH")
+    expect(await db.cashMovement.count({ where: { referenceId: sale.sale.id, type: "OUT" } })).toBe(1)
+    expect((await db.saleItem.findUniqueOrThrow({ where: { id: sale.items[0].id } })).returnedQuantity).toBe(2)
+  })
+  it("voiding a sale keeps the document, restocks the branch and voids payments", async () => {
+    const p = await product(2)
+    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const input = { saleId: sale.sale.id, reason: "Venta capturada por error", idempotencyKey: key() }
+    await voidSale(db, admin, input)
+    await expect(voidSale(db, admin, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    expect((await db.sale.findUniqueOrThrow({ where: { id: sale.sale.id } })).status).toBe("VOIDED")
+    expect(await stockAt(p.id)).toBe(2)
+    expect(await db.payment.count({ where: { saleId: sale.sale.id, status: "VOIDED" } })).toBe(1)
+    expect(await db.cashMovement.count({ where: { referenceId: sale.sale.id, type: "OUT" } })).toBe(1)
   })
   it("owner cancellation reverses debt and stock once, never creates cash", async () => {
     const p = await product(3)
@@ -69,7 +145,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(initial + 100)
     const results = await Promise.all([changeReservation(db, customer, id, { action: "cancel" }), changeReservation(db, customer, id, { action: "cancel" })])
     expect(results.filter(r => r.changed)).toHaveLength(1)
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(3)
+    expect(await stockAt(p.id)).toBe(3)
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(initial)
     expect(await db.cashMovement.count({ where: { referenceId: id } })).toBe(0)
     await expect(changeReservation(db, admin, id, { action: "deliver", finalPaymentMethod: "EFECTIVO" })).rejects.toMatchObject({ status: 409 })
@@ -79,23 +155,13 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     const result = await createReservations(db, customer, { productId: p.id, idempotencyKey: key() })
     await db.reservation.update({ where: { id: result.reservations[0].id }, data: { expiresAt: new Date(0) } })
     await expireReservations(db)
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
+    expect(await stockAt(p.id)).toBe(2)
     expect((await db.reservation.findUniqueOrThrow({ where: { id: result.reservations[0].id } })).status).toBe("EXPIRED")
-  })
-  it("returns link the original sale and cannot exceed sold units", async () => {
-    const p = await product(3)
-    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", idempotencyKey: key() })
-    const row = { productId: p.id, type: "RETURN", quantity: 2, reason: "Fixture return", relatedId: sale.movements[0].id }
-    const input = { items: [row], idempotencyKey: key() }
-    const returned = await moveInventory(db, admin, input)
-    await moveInventory(db, admin, input)
-    await expect(moveInventory(db, admin, { items: [{ ...row, quantity: 1 }], idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(3)
-    expect(await db.cashMovement.count({ where: { referenceId: returned.movements[0].id, type: "OUT" } })).toBe(1)
   })
   it("inventory batch rolls back rather than losing failed rows", async () => {
     const p = await product(2)
-    await expect(moveInventory(db, admin, { idempotencyKey: key(), items: [{ productId: p.id, type: "IN", quantity: 1, reason: "fixture" }, { productId: p.id, type: "OUT", quantity: 10, reason: "fixture" }] })).rejects.toThrow()
+    await expect(moveInventory(db, admin, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "IN", quantity: 1, reason: "fixture" }, { productId: p.id, type: "OUT", quantity: 10, reason: "fixture" }] })).rejects.toThrow()
+    expect(await stockAt(p.id)).toBe(2)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
   })
   it("rejects overpayment and excessive fractional precision without changing balances", async () => {
@@ -118,28 +184,25 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     await db.user.update({ where: { id: customer }, data: { status: "APPROVED" } })
   })
   it("close targets a specific register and cash writes cannot survive its closure", async () => {
-    await expect(changeCash(db, admin, { action: "CLOSE", registerId: "wrong", amount: 0, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    await changeCash(db, admin, { action: "CLOSE", registerId: register, amount: 0, idempotencyKey: key() })
+    await expect(changeCash(db, admin, { action: "CLOSE", registerId: "wrong", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await changeCash(db, admin, { action: "CLOSE", registerId: register, amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
     const p = await product(1)
-    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(1)
+    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    expect(await stockAt(p.id)).toBe(1)
   })
   it("workshop preserves intake, tracks location and rejects stale edits", async () => {
-    const first = await db.workshopBranch.create({ data: { name: `${prefix}-A` } })
-    const second = await db.workshopBranch.create({ data: { name: `${prefix}-B` } })
-    const input = { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000000", equipmentType: "Consola", reportedIssue: "No enciende", intakeBranchId: first.id }
+    const input = { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000000", equipmentType: "Consola", reportedIssue: "No enciende", intakeBranchId: PRINCIPAL_BRANCH_ID }
     const { order } = await createRepair(db, admin, input)
     expect((await createRepair(db, admin, input)).order.id).toBe(order.id)
     await expect(createRepair(db, customer, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
-    const moved = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "TRANSFER", branchId: second.id, detail: "Recepción por técnico de prueba" })
-    expect(moved.order.currentBranchId).toBe(second.id)
-    expect(moved.order.intakeBranchId).toBe(first.id)
+    const moved = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "TRANSFER", branchId: branchB, detail: "Recepción por técnico de prueba" })
+    expect(moved.order.currentBranchId).toBe(branchB)
+    expect(moved.order.intakeBranchId).toBe(PRINCIPAL_BRANCH_ID)
     await expect(updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "NOTE", detail: "Texto obsoleto" })).rejects.toMatchObject({ status: 409 })
     expect(await db.repairEvent.count({ where: { orderId: order.id } })).toBe(2)
   })
   it("workshop requires diagnosis, approval and quality review before delivery", async () => {
-    const branch = await db.workshopBranch.findFirstOrThrow({ where: { name: `${prefix}-A` } })
-    const { order } = await createRepair(db, admin, { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000001", equipmentType: "Audio", reportedIssue: "Sin sonido", intakeBranchId: branch.id })
+    const { order } = await createRepair(db, admin, { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000001", equipmentType: "Audio", reportedIssue: "Sin sonido", intakeBranchId: PRINCIPAL_BRANCH_ID })
     let version = order.version
     const update = async (payload: Record<string, unknown>) => {
       const result = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })

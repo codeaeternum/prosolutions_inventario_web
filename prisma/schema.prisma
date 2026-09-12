@@ -53,6 +53,7 @@ enum MovementType {
   OUT
   ADJUSTMENT
   RETURN
+  TRANSFER  // salida en una sucursal + entrada espejo en otra (mismo movimiento con toBranchId)
 }
 
 model InventoryMovement {
@@ -60,6 +61,7 @@ model InventoryMovement {
   paymentMethod String?
   customerId String?
   reservationId String?
+  saleId       String?
   id            String       @id @default(cuid())
 
   type          MovementType
@@ -74,7 +76,13 @@ model InventoryMovement {
 
   productId     String
   userId        String?
-  
+
+  // Sucursal donde ocurrió el movimiento; en TRANSFER, toBranchId es el destino.
+  branchId      String?
+  branch        Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  toBranchId    String?
+  toBranch      Branch?      @relation("TransferDestination", fields: [toBranchId], references: [id], onDelete: SetNull)
+
   relatedId     String?      // ID de movimiento relacionado (ej: devolución de una venta)
   related       InventoryMovement? @relation("RelatedMovement", fields: [relatedId], references: [id])
   relatedTo     InventoryMovement[] @relation("RelatedMovement")
@@ -87,6 +95,8 @@ model InventoryMovement {
   @@index([productId])
   @@index([createdAt])
   @@index([relatedId])
+  @@index([branchId, createdAt])
+  @@index([saleId])
 }
 
 model User {
@@ -102,6 +112,10 @@ model User {
   customerType          CustomerType @default(NORMAL)
   requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse
   status                UserStatus   @default(PENDING)
+
+  // Sucursal base del empleado (ventas/caja operan sobre ella); null en clientes.
+  homeBranchId String?
+  homeBranch   Branch? @relation("HomeBranch", fields: [homeBranchId], references: [id], onDelete: SetNull)
   
   // Metas de compra
   monthlyPurchaseGoal   Float?       // Meta mensual de compra en pesos
@@ -124,6 +138,9 @@ model User {
   cashRegistersOpened CashRegister[] @relation("RegisterOpenedBy")
   cashRegistersClosed CashRegister[] @relation("RegisterClosedBy")
   cashMovements       CashMovement[]
+  salesMade      Sale[]       @relation("SaleSeller")
+  salesAsCustomer Sale[]      @relation("SaleCustomer")
+  paymentsMade   Payment[]    @relation("PaymentCreatedBy")
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -198,6 +215,8 @@ model Product {
   reservations   Reservation[]
   movements      InventoryMovement[]
   priceHistory   PriceHistory[]
+  stocks         BranchStock[]
+  saleItems      SaleItem[]
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -262,6 +281,10 @@ model Reservation {
 
   userId          String
   productId       String
+
+  // Sucursal que reserva/entrega la pieza. Las históricas quedan en null hasta conciliar.
+  branchId        String?
+  branch          Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -340,21 +363,27 @@ model CashRegister {
   id              String   @id @default(cuid())
   openedAt        DateTime @default(now())
   closedAt        DateTime?
-  
+
   initialAmount   Float    @default(0) // Dinero en caja al abrir
   finalAmount     Float?               // Dinero físico contado al cerrar
-  
+
   status          String   @default("OPEN") // OPEN, CLOSED
-  
+
+  // Una caja por sucursal; las históricas quedan null hasta conciliar.
+  branchId        String?
+  branch          Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
   openedById      String
   openedBy        User     @relation("RegisterOpenedBy", fields: [openedById], references: [id])
-  
+
   closedById      String?
   closedBy        User?    @relation("RegisterClosedBy", fields: [closedById], references: [id])
-  
+
   notes           String?
-  
+
   movements       CashMovement[]
+
+  @@index([branchId, status])
 }
 
 enum CashMovementType {
@@ -374,10 +403,12 @@ model CashMovement {
   
   registerId      String
   register        CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
-  
+
+  payment         Payment?   // vínculo al pago documentado cuando aplica
+
   userId          String
   user            User     @relation(fields: [userId], references: [id])
-  
+
   createdAt       DateTime @default(now())
 }
 
@@ -417,13 +448,118 @@ enum RepairStatus {
   CANCELLED
 }
 
-model WorkshopBranch {
+// Sucursal física del negocio (locales). El nombre de tabla se conserva por
+// compatibilidad con el piloto de taller ya desplegado.
+model Branch {
   id String @id @default(cuid())
   name String @unique
   isActive Boolean @default(true)
   receivedOrders RepairOrder[] @relation("IntakeBranch")
   heldOrders RepairOrder[] @relation("CurrentBranch")
+  stocks BranchStock[]
+  cashRegisters CashRegister[]
+  sales Sale[]
+  homeStaff User[] @relation("HomeBranch")
+  reservations Reservation[]
+  movements InventoryMovement[]
+  transfersReceived InventoryMovement[] @relation("TransferDestination")
   createdAt DateTime @default(now())
+
+  @@map("WorkshopBranch")
+}
+
+// Existencias por sucursal. Product.stock queda como total cacheado para el
+// catálogo; BranchStock es la fuente de verdad por local.
+model BranchStock {
+  id        String  @id @default(cuid())
+  productId String
+  branchId  String
+  quantity  Int     @default(0)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branch    Branch  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, branchId])
+  @@index([branchId, quantity])
+}
+
+// ==================== DOCUMENTO DE VENTA ====================
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED // anulada mediante contramovimientos; el documento se conserva
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  CREDIT
+}
+
+enum PaymentStatus {
+  CONFIRMED
+  PENDING_REVIEW // transferencia/depósito aún sin verificar
+  REFUNDED
+  VOIDED
+}
+
+model Sale {
+  id         String     @id @default(cuid())
+  number     Int        @unique @default(autoincrement())
+  version    Int        @default(1)
+  status     SaleStatus @default(COMPLETED)
+  total      Float
+  branchId   String
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sellerId   String
+  seller     User       @relation("SaleSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  customerId String?
+  customer   User?      @relation("SaleCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  items      SaleItem[]
+  payments   Payment[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([branchId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+}
+
+model SaleItem {
+  id               String  @id @default(cuid())
+  saleId           String
+  sale             Sale    @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  productId        String
+  product          Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity         Int
+  returnedQuantity Int     @default(0)
+  unitPrice        Float
+  totalPrice       Float
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+// Pago cobrado: una venta puede pagarse en varios medios (p. ej. parte efectivo
+// y parte tarjeta). CREDIT no genera efectivo: crea cuenta por cobrar.
+model Payment {
+  id             String         @id @default(cuid())
+  saleId         String?
+  sale           Sale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  method         PaymentMethod
+  amount         Float
+  status         PaymentStatus  @default(CONFIRMED)
+  proofUrl       String?        // comprobante privado cuando aplica
+  reference      String?        // folio/autorización de la terminal o SPEI
+  cashMovementId String?        @unique // asiento de caja cuando method = CASH
+  cashMovement   CashMovement?  @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
+  createdById    String
+  createdBy      User           @relation("PaymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  notes          String?
+  createdAt      DateTime       @default(now())
+
+  @@index([saleId])
+  @@index([method, createdAt])
 }
 
 model RepairOrder {
@@ -449,8 +585,8 @@ model RepairOrder {
   promisedAt DateTime?
   intakeBranchId String
   currentBranchId String
-  intakeBranch WorkshopBranch @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
-  currentBranch WorkshopBranch @relation("CurrentBranch", fields: [currentBranchId], references: [id], onDelete: Restrict)
+  intakeBranch Branch @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
+  currentBranch Branch @relation("CurrentBranch", fields: [currentBranchId], references: [id], onDelete: Restrict)
   assignedToId String?
   assignedTo User? @relation("RepairAssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
   createdById String

@@ -1,7 +1,7 @@
 import type { PrismaClient, Reservation } from "@prisma/client"
 import { z } from "zod"
 import { isOwnedPaymentProof } from "../payment-proofs"
-import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, takeStock, transaction, type Transaction } from "./operations"
+import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, takeStock, transaction, type Transaction } from "./operations"
 
 export const ACTIVE_RESERVATIONS = ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"] as const
 export const TERMINAL_RESERVATIONS = ["COMPLETED", "CANCELLED", "REJECTED", "EXPIRED"] as const
@@ -15,6 +15,7 @@ export const reservationRequestSchema = z.object({
   type: z.enum(["TEMPORARY", "DEPOSIT"]).default("TEMPORARY"),
   paymentMethod: z.enum(["STORE", "TRANSFER", "CREDIT"]).optional(),
   paymentProofUrl: z.string().max(2000).optional(),
+  branchId: z.string().min(1).optional(),
 }).refine(value => Boolean(value.items) !== Boolean(value.productId), "Envía items o productId.")
 
 async function settings(tx: Transaction) {
@@ -44,17 +45,17 @@ export async function createReservations(db: PrismaClient, userId: string, raw: 
     const reservations = []
     let totalCents = 0
     for (const item of items) {
-      const product = await takeStock(tx, item.productId, item.quantity)
+      const { product, branch } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: input.branchId })
       const lineCents = cents(user.customerType === "STORE" ? product.wholesalePrice : product.retailPrice) * item.quantity
       cents(amount(lineCents))
       const reservation = await tx.reservation.create({ data: {
         userId, productId: item.productId, quantity: item.quantity, totalPrice: amount(lineCents),
         depositAmount: type === "DEPOSIT" ? amount(Math.round(lineCents * config.depositPercentage / 100)) : null,
         type, paymentMethod: method, paymentProofUrl: payload.proof, status: type === "DEPOSIT" ? "PENDING_PAYMENT" : "PENDING",
-        expiresAt, businessVersion: 1,
+        expiresAt, businessVersion: 1, branchId: branch.id,
       } })
       await tx.inventoryMovement.create({ data: {
-        productId: item.productId, userId, type: "OUT", quantity: item.quantity,
+        productId: item.productId, userId, type: "OUT", quantity: item.quantity, branchId: branch.id,
         previousStock: product.stock, newStock: product.stock - item.quantity,
         reason: `Reserva #${reservation.id}`, notes: "Compromiso de existencias; todavía no es una entrega.",
       } })
@@ -110,8 +111,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
 
     if (["CANCELLED", "REJECTED", "EXPIRED"].includes(target)) {
       await reverseReservationDebt(tx, reservation)
-      const product = await tx.product.update({ where: { id: reservation.productId }, data: { stock: { increment: reservation.quantity } } })
-      await tx.inventoryMovement.create({ data: { productId: product.id, userId: actorId, type: "IN", quantity: reservation.quantity, previousStock: product.stock - reservation.quantity, newStock: product.stock, reason: `Liberación de reserva #${id}: ${target}` } })
+      const branch = await releaseStock(tx, { productId: reservation.productId, quantity: reservation.quantity, branchId: reservation.branchId })
+      const product = await tx.product.findUniqueOrThrow({ where: { id: reservation.productId } })
+      await tx.inventoryMovement.create({ data: { productId: product.id, userId: actorId, type: "IN", quantity: reservation.quantity, branchId: branch.id, previousStock: product.stock - reservation.quantity, newStock: product.stock, reason: `Liberación de reserva #${id}: ${target}` } })
       requiresRefund = reservation.depositPaid && (reservation.depositAmount ?? 0) > 0
       if (requiresRefund) data.adminNotes = [notes ?? reservation.adminNotes, "Anticipo pendiente de devolución o conciliación; esta acción no reembolsó dinero."].filter(Boolean).join("\n")
     } else if (target === "DEPOSIT_VERIFIED") {
@@ -132,7 +134,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
         if (reservation.businessVersion < 1) throw new BusinessError("Revisa manualmente el historial antes de convertir esta reserva a crédito.", 409)
         await addDebt(tx, reservation.userId, dueCents, { type: "RESERVATION", id, notes: `Saldo a crédito al entregar reserva #${id}` })
       } else if (method === "EFECTIVO" && dueCents > 0) {
-        const register = await openRegister(tx)
+        const register = await openRegister(tx, reservation.branchId)
         await tx.cashMovement.create({ data: { registerId: register.id, userId: actorId!, type: "IN", amount: amount(dueCents), referenceType: "RESERVATION", referenceId: id, description: `Saldo en efectivo de reserva #${id}` } })
       }
       if (method) data.paymentMethod = method

@@ -20,6 +20,7 @@ function toPrismaMovementType(uiType: string | null): MovementType | null {
         case "OUT":
         case "ADJUSTMENT":
         case "RETURN":
+        case "TRANSFER":
             return uiType as MovementType
         default:
             return null
@@ -34,11 +35,13 @@ export async function GET(request: NextRequest) {
         const { searchParams } = new URL(request.url)
         const productId = searchParams.get("productId")
         const typeParam = searchParams.get("type")
+        const branchId = searchParams.get("branchId")
         const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50") || 50))
         const offset = Math.min(20000, Math.max(0, parseInt(searchParams.get("offset") || "0") || 0))
 
         const movementWhere: Record<string, unknown> = {}
         if (productId) movementWhere.productId = productId
+        if (branchId) movementWhere.branchId = branchId
 
         let reservationWhere: { status: { in: ("COMPLETED" | "CANCELLED")[] } } | { status: "COMPLETED" } | { status: "CANCELLED" } = { status: { in: ["COMPLETED", "CANCELLED"] } }
         let movementTypeFilter: MovementType | null = null
@@ -66,6 +69,8 @@ export async function GET(request: NextRequest) {
                 include: {
                     product: { select: { id: true, name: true, barcode: true } },
                     user: { select: { id: true, name: true } },
+                    branch: { select: { id: true, name: true } },
+                    toBranch: { select: { id: true, name: true } },
                 },
                 orderBy: { createdAt: "desc" },
                 take: offset + limit,
@@ -130,7 +135,7 @@ export async function POST(request: NextRequest) {
         const auth = await requireAdminOrEmployee()
         if (auth.error) return auth.error
         const body = await request.json()
-        const result = await moveInventory(prisma, getSession(auth)!.user.id, { idempotencyKey: body.idempotencyKey, items: body.items ?? [body] })
+        const result = await moveInventory(prisma, getSession(auth)!.user.id, { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
         return NextResponse.json(body.items ? result : { ...result.movements[0], operationId: result.operationId }, { status: 201 })
     } catch (error) { return businessFailure(error) }
 }

@@ -3,11 +3,10 @@ import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/produc
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { releaseStock, takeStock } from "@/lib/domain/operations"
+import type { Prisma } from "@prisma/client"
 
-type TransactionClient = Omit<
-  typeof prisma,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
->
+type TransactionClient = Prisma.TransactionClient
 
 // GET /api/products/[id] - Get single product
 export async function GET(
@@ -95,6 +94,7 @@ export async function PUT(
       isActive,
       categoryId,
       modelIds,
+      stockBranchId,
     } = body
 
     if (!name || !retailPrice || !wholesalePrice || !categoryId) {
@@ -139,8 +139,11 @@ export async function PUT(
       }
     }
 
-    // Calcular diferencia de stock para movimiento de inventario
+    // Calcular diferencia de stock para movimiento de inventario.
+    // La existencia se ajusta en UNA sucursal (stockBranchId o la del usuario);
+    // nunca como valor absoluto sobre el total.
     const stockDiff = parseInt(stock) - existingProduct.stock
+    const editor = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
 
     // Actualizar producto y modelos en transacción
     const product = await prisma.$transaction(async (tx: TransactionClient) => {
@@ -180,7 +183,6 @@ export async function PUT(
           retailPrice: parseFloat(retailPrice),
           wholesalePrice: parseFloat(wholesalePrice),
           costPrice: parsedCostPrice,
-          stock: parseInt(stock),
           minStock: parseInt(minStock),
           images: images || [],
           isUniversal: isUniversal ?? false,
@@ -206,18 +208,24 @@ export async function PUT(
         },
       })
 
-      // Crear movimiento de inventario si hubo cambio de stock
+      // Ajuste de existencias siempre por el dominio: sucursal + total coherentes.
       if (stockDiff !== 0) {
+        const branch = stockDiff > 0
+          ? await releaseStock(tx, { productId: id, quantity: stockDiff, branchId: stockBranchId ?? editor?.homeBranchId })
+          : (await takeStock(tx, { productId: id, quantity: -stockDiff, branchId: stockBranchId ?? editor?.homeBranchId })).branch
+        const after = await tx.product.findUniqueOrThrow({ where: { id }, select: { stock: true } })
         await tx.inventoryMovement.create({
           data: {
             productId: id,
-            type: stockDiff > 0 ? "IN" : "OUT",
+            type: "ADJUSTMENT",
             quantity: Math.abs(stockDiff),
-            previousStock: existingProduct.stock,
-            newStock: parseInt(stock),
+            previousStock: after.stock - stockDiff,
+            newStock: after.stock,
             reason: "ADJUSTMENT",
             notes: "Ajuste manual de stock desde edición de producto",
             userId: session.user.id,
+            branchId: branch.id,
+            businessVersion: 1,
           },
         })
       }
