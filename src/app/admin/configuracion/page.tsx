@@ -12,8 +12,10 @@ import {
   AlertCircle,
   Settings2,
   Printer,
+  Building2,
 } from "lucide-react"
 import { toast } from "sonner"
+import { refreshBusinessName } from "@/components/admin/business-name"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -62,6 +64,7 @@ export default function ConfiguracionPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [savingBusiness, setSavingBusiness] = useState(false)
   const [fetchError, setFetchError] = useState(false)
   const isFirstLoad = useRef(true)
 
@@ -120,6 +123,7 @@ export default function ConfiguracionPage() {
         setSettings((prev) => ({ ...prev, updatedAt: data.updatedAt }))
         setInitialSettings((prev) => (prev ? { ...prev, ...settings, updatedAt: data.updatedAt } : null))
         setSaved(true)
+        refreshBusinessName()
         toast.success("Configuración guardada correctamente")
         setTimeout(() => setSaved(false), 3000)
       } else {
@@ -130,6 +134,39 @@ export default function ConfiguracionPage() {
       toast.error("Error de conexión")
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSaveBusinessName() {
+    const name = (settings.ticketBusinessName || "").trim()
+    if (name.length < 2 || name.length > 80) {
+      toast.error("El nombre del negocio debe tener entre 2 y 80 caracteres")
+      return
+    }
+    setSavingBusiness(true)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticketBusinessName: name }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setSettings((prev) => ({ ...prev, ticketBusinessName: name, updatedAt: data.updatedAt }))
+        setInitialSettings((prev) =>
+          prev ? { ...prev, ticketBusinessName: name, updatedAt: data.updatedAt } : null
+        )
+        refreshBusinessName()
+        toast.success("Nombre del negocio guardado")
+      } else {
+        toast.error("No se pudo guardar el nombre del negocio")
+      }
+    } catch (error) {
+      console.error("Error saving business name:", error)
+      toast.error("Error de conexión")
+    } finally {
+      setSavingBusiness(false)
     }
   }
 
@@ -222,6 +259,44 @@ export default function ConfiguracionPage() {
           <span>No se pudo cargar la configuración. Revisa la conexión y pulsa «Recargar».</span>
         </div>
       )}
+
+      {/* Bloque: Identidad del negocio */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5" />
+            Identidad del negocio
+          </CardTitle>
+          <CardDescription>
+            Nombre del taller que se muestra en el panel, la barra lateral y los tickets térmicos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div className="space-y-2 flex-1 max-w-sm">
+              <Label htmlFor="businessName">Nombre del negocio</Label>
+              <Input
+                id="businessName"
+                value={settings.ticketBusinessName || ""}
+                onChange={(e) => setSettings(prev => ({ ...prev, ticketBusinessName: e.target.value }))}
+                placeholder="ProSolutions"
+                maxLength={80}
+              />
+              <p className="text-xs text-muted-foreground">
+                Entre 2 y 80 caracteres. Es el mismo nombre que aparece en los tickets.
+              </p>
+            </div>
+            <Button onClick={handleSaveBusinessName} disabled={savingBusiness}>
+              {savingBusiness ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              Guardar nombre
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Bloque: Reservas */}
       <Card>
@@ -400,32 +475,20 @@ export default function ConfiguracionPage() {
             Personalización de Ticket
           </CardTitle>
           <CardDescription>
-            Cambia el nombre de tu negocio, subtítulo y pie de página que aparecen en los tickets térmicos.
+            Cambia el subtítulo y pie de página que aparecen en los tickets térmicos. El nombre del negocio se edita en «Identidad del negocio».
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="ticketBusinessName">Nombre del Negocio</Label>
-              <Input
-                id="ticketBusinessName"
-                value={settings.ticketBusinessName || ""}
-                onChange={(e) => setSettings(prev => ({ ...prev, ticketBusinessName: e.target.value }))}
-                placeholder="PROSOLUTIONS"
-              />
-              <p className="text-xs text-muted-foreground">Aparece como título principal en el ticket.</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ticketSubtitle">Subtítulo / Giro</Label>
-              <Textarea
-                id="ticketSubtitle"
-                value={settings.ticketSubtitle || ""}
-                onChange={(e) => setSettings(prev => ({ ...prev, ticketSubtitle: e.target.value }))}
-                placeholder={"Venta de refacciones y\nReparación profesional"}
-                className="resize-none h-16"
-              />
-              <p className="text-xs text-muted-foreground">Aparece debajo del nombre. Usa saltos de línea para varias líneas.</p>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="ticketSubtitle">Subtítulo / Giro</Label>
+            <Textarea
+              id="ticketSubtitle"
+              value={settings.ticketSubtitle || ""}
+              onChange={(e) => setSettings(prev => ({ ...prev, ticketSubtitle: e.target.value }))}
+              placeholder={"Venta de refacciones y\nReparación profesional"}
+              className="resize-none h-16"
+            />
+            <p className="text-xs text-muted-foreground">Aparece debajo del nombre. Usa saltos de línea para varias líneas.</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="ticketFooter">Mensaje de Pie de Página</Label>

@@ -1,8 +1,10 @@
 import { notFound, redirect } from "next/navigation"
 import { requireAdmin } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
-import { formatPrice, formatDate } from "@/lib/utils"
+import { formatPrice } from "@/lib/utils"
+import { repairFolio } from "@/lib/workshop-labels"
 import { TicketPrintView } from "./ticket-print-view"
+import { RepairTicketView, type RepairTicketData } from "./repair-ticket-view"
 
 export const dynamic = "force-dynamic"
 
@@ -22,6 +24,7 @@ export default async function TicketPage({
     total: number; paymentMethod?: string; notes?: string; newBalance?: number;
     qrCode?: string; businessName?: string; subtitle?: string; footer?: string;
   } | null = null
+  let repairData: RepairTicketData | null = null
 
   if (tipo === "venta") {
     // Documento de venta nuevo (Sale con líneas y pagos); fallback al movimiento heredado.
@@ -139,9 +142,46 @@ export default async function TicketPage({
         newBalance: mov.user.creditBalance || 0
       }
     }
+  } else if (tipo === "reparacion") {
+    // Comprobante de recepción de taller: no lleva importes ni datos de
+    // desbloqueo (deviceAccessType/Value son sensibles y nunca se imprimen).
+    const order = await prisma.repairOrder.findUnique({
+      where: { id },
+      include: {
+        intakeBranch: true,
+        currentBranch: true,
+        assignedTo: { select: { name: true } },
+        createdBy: { select: { name: true } },
+      }
+    })
+
+    if (order) {
+      const folio = repairFolio(order.number)
+      const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
+      repairData = {
+        title: "COMPROBANTE DE RECEPCIÓN",
+        folio,
+        date: order.createdAt.toISOString(),
+        client: order.customerName,
+        branch: order.intakeBranch.name,
+        receivedBy: order.createdBy.name,
+        promisedAt: order.promisedAt?.toISOString(),
+        equipment: [
+          { label: "Tipo", value: order.equipmentType },
+          { label: "Marca / Modelo", value: [order.brand, order.model].filter(Boolean).join(" ") },
+          { label: "Serie / IMEI", value: order.serialNumber ?? "" },
+          { label: "Color", value: order.equipmentColor ?? "" },
+          { label: "Accesorios", value: order.accessories ?? "" },
+          { label: "Estado físico", value: order.intakeCondition ?? "" },
+        ].filter(row => row.value !== ""),
+        issue: order.reportedIssue,
+        qrCode: `${base}/seguimiento?folio=${folio}`,
+        trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
+      }
+    }
   }
 
-  if (!ticketData) {
+  if (!ticketData && !repairData) {
     return <div className="p-8 text-center text-red-500">Ticket no encontrado</div>
   }
 
@@ -152,9 +192,18 @@ export default async function TicketPage({
     prisma.systemSettings.findUnique({ where: { key: "ticket_footer" } }),
   ])
 
-  ticketData.businessName = ticketBusinessName?.value || "PROSOLUTIONS"
-  ticketData.subtitle = ticketSubtitle?.value || "Venta de refacciones y\nReparación profesional"
-  ticketData.footer = ticketFooter?.value || "¡Gracias por tu preferencia!"
+  const businessName = ticketBusinessName?.value || "PROSOLUTIONS"
+  const subtitle = ticketSubtitle?.value || "Venta de refacciones y\nReparación profesional"
+  const footer = ticketFooter?.value || "¡Gracias por tu preferencia!"
 
-  return <TicketPrintView data={ticketData} />
+  if (repairData) {
+    return <RepairTicketView data={{ ...repairData, businessName, subtitle, footer }} />
+  }
+
+  if (ticketData) {
+    ticketData.businessName = businessName
+    ticketData.subtitle = subtitle
+    ticketData.footer = footer
+    return <TicketPrintView data={ticketData} />
+  }
 }

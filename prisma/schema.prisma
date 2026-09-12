@@ -129,6 +129,7 @@ model User {
 
   assignedRepairs RepairOrder[] @relation("RepairAssignedTo")
   createdRepairs RepairOrder[] @relation("RepairCreatedBy")
+  repairParts RepairPart[] @relation("RepairPartCreatedBy")
   repairEvents RepairEvent[]
   businessOperations BusinessOperation[]
   reservations     Reservation[]
@@ -217,6 +218,7 @@ model Product {
   priceHistory   PriceHistory[]
   stocks         BranchStock[]
   saleItems      SaleItem[]
+  repairParts    RepairPart[]
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -573,7 +575,11 @@ model RepairOrder {
   brand String?
   model String?
   serialNumber String?
+  equipmentColor String?
   accessories String?
+  // NONE | PATTERN | PIN | PASSWORD — deviceAccessValue se considera dato sensible
+  deviceAccessType String?
+  deviceAccessValue String?
   intakeCondition String?
   reportedIssue String
   diagnosis String?
@@ -592,11 +598,30 @@ model RepairOrder {
   createdById String
   createdBy User @relation("RepairCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   events RepairEvent[]
+  parts  RepairPart[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([currentBranchId, status, createdAt])
   @@index([assignedToId, status])
   @@index([customerPhone])
+}
+
+// Refacción o insumo registrado contra una orden de reparación.
+model RepairPart {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          RepairOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  productId      String?
+  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  description    String
+  qty            Int      @default(1)
+  unitCostCents  Int      @default(0)
+  unitPriceCents Int      @default(0)
+  createdById    String
+  createdBy      User     @relation("RepairPartCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime @default(now())
+
+  @@index([orderId])
 }
 
 model RepairEvent {

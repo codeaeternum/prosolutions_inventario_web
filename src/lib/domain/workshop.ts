@@ -9,6 +9,9 @@ const createSchema = z.object({
   idempotencyKey: operationKeySchema, customerName: text,
   customerPhone: z.string().trim().min(7).max(30).regex(/^[+\d\s()-]+$/),
   equipmentType: text, brand: optionalText, model: optionalText, serialNumber: optionalText,
+  equipmentColor: optionalText,
+  deviceAccessType: z.enum(["NONE", "PATTERN", "PIN", "PASSWORD"]).optional(),
+  deviceAccessValue: z.string().trim().max(100).optional(),
   accessories: optionalText, intakeCondition: optionalText, reportedIssue: text,
   intakeBranchId: z.string().min(1), assignedToId: z.string().min(1).optional(),
   promisedAt: z.iso.datetime().optional(),
@@ -26,19 +29,26 @@ export async function createRepair(db: PrismaClient, actorId: string, raw: unkno
 }
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
-  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN"]),
-  detail: z.string().trim().min(1).max(2000), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
+  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_ADD", "PART_REMOVE"]),
+  detail: z.string().trim().min(1).max(2000).optional(), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
   quoteCents: z.number().int().min(0).max(100000000).optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
+  partId: z.string().min(1).optional(), partDescription: z.string().trim().min(1).max(200).optional(),
+  partQty: z.number().int().min(1).max(999).default(1),
+  partCostCents: z.number().int().min(0).max(100000000).default(0), partPriceCents: z.number().int().min(0).max(100000000).default(0),
+  partProductId: z.string().min(1).optional(),
 })
+const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN"]
 export async function updateRepair(db: PrismaClient, actorId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
+  if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
   return operation(db, { key: input.idempotencyKey, actorId, kind: "REPAIR_UPDATE", permission: "admin", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
     if (["DELIVERED", "CANCELLED"].includes(order.status)) throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
     const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
-    let detail = input.detail
+    let detail = input.detail ?? ""
+    let eventType: string = input.action
     if (input.action === "QUOTE") {
       if (!["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) || input.quoteCents === undefined) throw new BusinessError("Registra el diagnóstico e importe antes de solicitar autorización.", 409)
       Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL" })
@@ -63,10 +73,22 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       if (!branch || branch.id === order.currentBranchId) throw new BusinessError("Selecciona una sucursal destino distinta y activa.")
       data.currentBranchId = branch.id
       detail = `Ubicación actualizada a ${branch.name}. ${input.detail}`
+    } else if (input.action === "PART_ADD") {
+      if (!input.partDescription) throw new BusinessError("Describe la refacción.")
+      if (input.partProductId && !await tx.product.findUnique({ where: { id: input.partProductId } })) throw new BusinessError("El producto seleccionado no existe.")
+      const part = await tx.repairPart.create({ data: { orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId } })
+      eventType = "PART"
+      detail = `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+    } else if (input.action === "PART_REMOVE") {
+      const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
+      if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
+      await tx.repairPart.delete({ where: { id: part.id } })
+      eventType = "PART"
+      detail = `Refacción retirada: ${part.description}`
     }
     const result = await tx.repairOrder.updateMany({ where: { id, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
-    await tx.repairEvent.create({ data: { actorId, orderId: id, type: input.action, detail } })
+    await tx.repairEvent.create({ data: { actorId, orderId: id, type: eventType, detail } })
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
 }

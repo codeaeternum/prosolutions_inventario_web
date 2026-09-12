@@ -3,13 +3,14 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Input } from "@/components/ui/input"
-import { Search, Loader2, Package, Smartphone, X } from "lucide-react"
+import { Search, Loader2, Package, Smartphone, Wrench, X } from "lucide-react"
 
 interface SearchResult {
-  type: "product" | "model"
+  type: "product" | "model" | "order"
   id: string
   name: string
   subtitle: string
+  folio?: string
 }
 
 export function SearchBar({ className }: { className?: string }) {
@@ -39,15 +40,24 @@ export function SearchBar({ className }: { className?: string }) {
 
       setLoading(true)
       try {
-        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(query)}`)
-        const data = await res.json()
-        const mappedResults = (data.products || []).map((p: any) => ({
+        const [productsRes, ordersRes] = await Promise.all([
+          fetch(`/api/search/pos?q=${encodeURIComponent(query)}`).then(r => r.json()).catch(() => ({})),
+          fetch(`/api/workshop?q=${encodeURIComponent(query)}&page=1`).then(r => r.json()).catch(() => ({})),
+        ])
+        const productResults = (productsRes.products || []).map((p: { id: string; name: string; barcode?: string | null; category?: { name: string } | null }) => ({
           type: "product" as const,
           id: p.id,
           name: p.name,
           subtitle: `${p.category?.name || ""} - ${p.barcode || "Sin código"}`,
         }))
-        setResults(mappedResults)
+        const orderResults = (ordersRes.orders || []).slice(0, 4).map((o: { id: string; number: number; customerName: string; equipmentType: string; brand?: string | null; model?: string | null }) => ({
+          type: "order" as const,
+          id: o.id,
+          folio: `OT-${String(o.number).padStart(6, "0")}`,
+          name: `OT-${String(o.number).padStart(6, "0")} · ${o.customerName}`,
+          subtitle: [o.equipmentType, o.brand, o.model].filter(Boolean).join(" · "),
+        }))
+        setResults([...orderResults, ...productResults])
         setShowResults(true)
       } catch (error) {
         console.error("Search error:", error)
@@ -61,7 +71,9 @@ export function SearchBar({ className }: { className?: string }) {
   }, [query])
 
   const handleSelect = (result: SearchResult) => {
-    if (result.type === "product") {
+    if (result.type === "order") {
+      router.push(`/admin/taller?q=${encodeURIComponent(result.folio || "")}`)
+    } else if (result.type === "product") {
       router.push(`/admin/productos/${result.id}`)
     } else {
       router.push(`/admin/modelos?selected=${result.id}`)
@@ -78,7 +90,7 @@ export function SearchBar({ className }: { className?: string }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => query.length >= 2 && setShowResults(true)}
-          placeholder="Buscar producto, modelo o SKU..."
+          placeholder="Buscar producto, folio OT-000001, cliente..."
           className="pl-9 pr-9"
         />
         {loading && (
@@ -105,7 +117,9 @@ export function SearchBar({ className }: { className?: string }) {
               onClick={() => handleSelect(result)}
               className="w-full flex items-center gap-3 p-3 hover:bg-accent text-left"
             >
-              {result.type === "product" ? (
+              {result.type === "order" ? (
+                <Wrench className="h-5 w-5 text-muted-foreground shrink-0" />
+              ) : result.type === "product" ? (
                 <Package className="h-5 w-5 text-muted-foreground shrink-0" />
               ) : (
                 <Smartphone className="h-5 w-5 text-muted-foreground shrink-0" />

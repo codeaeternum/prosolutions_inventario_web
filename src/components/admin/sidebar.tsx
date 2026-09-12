@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { BusinessName } from "@/components/admin/business-name"
 import {
   LayoutDashboard,
   Users,
@@ -136,7 +137,10 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Wrench className="h-5 w-5" />
             </div>
-            <span className="font-bold text-lg">Reficio</span>
+            <div className="flex flex-col">
+              <span className="font-bold text-lg leading-tight">Reficio</span>
+              <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
+            </div>
           </div>
           <Button
             variant="ghost"
@@ -229,7 +233,7 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
             </div>
             <div className="flex flex-col">
               <span className="font-bold text-lg leading-tight">Reficio</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">ProSolutions</span>
+              <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
             </div>
           </div>
           <nav className="flex flex-1 flex-col">

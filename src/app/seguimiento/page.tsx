@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import {
   Wrench, Search, Check, Loader2, MapPin, CalendarClock,
   PackageSearch, FileText, History, AlertCircle,
@@ -90,8 +91,61 @@ function buildTimeline(order: PublicOrder): { stages: RepairStage[]; current: nu
   return { stages, current, doneThrough: current }
 }
 
+// Folios válidos: "OT-000001", "000001" o "1" (ver /api/seguimiento).
+const sanitizeFolio = (value: string | null) =>
+  (value ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 12)
+
 export default function SeguimientoPage() {
-  const [folio, setFolio] = useState("")
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
+      {/* Header — mismo estilo que la landing */}
+      <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 safe-area-sticky z-50">
+        <div className="container mx-auto max-w-6xl flex h-14 items-center justify-between px-4">
+          <Link href="/" className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
+              <Wrench className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <span className="font-bold text-lg tracking-tight">Reficio</span>
+          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/">Inicio</Link>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main id="main-content" className="flex-1" role="main">
+        <Suspense fallback={
+          <div className="container mx-auto max-w-2xl px-4 pt-14 pb-20">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+          </div>
+        }>
+          <SeguimientoContent />
+        </Suspense>
+      </main>
+
+      {/* Footer — mismo estilo que la landing */}
+      <footer className="border-t py-8">
+        <div className="container mx-auto max-w-6xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-md bg-primary flex items-center justify-center">
+              <Wrench className="h-3.5 w-3.5 text-primary-foreground" />
+            </div>
+            <span className="font-semibold text-foreground">Reficio</span>
+            <span>· reficio.app</span>
+          </div>
+          <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+function SeguimientoContent() {
+  const searchParams = useSearchParams()
+  const [folio, setFolio] = useState(() => sanitizeFolio(searchParams.get("folio")))
   const [phone, setPhone] = useState("")
   const [result, setResult] = useState<Result>({ kind: "idle" })
 
@@ -120,27 +174,7 @@ export default function SeguimientoPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
-      {/* Header — mismo estilo que la landing */}
-      <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 safe-area-sticky z-50">
-        <div className="container mx-auto max-w-6xl flex h-14 items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
-              <Wrench className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-lg tracking-tight">Reficio</span>
-          </Link>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/">Inicio</Link>
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main id="main-content" className="flex-1" role="main">
-        <section className="container mx-auto max-w-2xl px-4 pt-14 pb-20">
+    <section className="container mx-auto max-w-2xl px-4 pt-14 pb-20">
           {/* Hero compacto */}
           <div className="text-center space-y-4 mb-10">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium">
@@ -221,23 +255,7 @@ export default function SeguimientoPage() {
 
           {/* Resultado */}
           {result.kind === "found" && <OrderCard order={result.order} />}
-        </section>
-      </main>
-
-      {/* Footer — mismo estilo que la landing */}
-      <footer className="border-t py-8">
-        <div className="container mx-auto max-w-6xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-primary flex items-center justify-center">
-              <Wrench className="h-3.5 w-3.5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold text-foreground">Reficio</span>
-            <span>· reficio.app</span>
-          </div>
-          <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
-        </div>
-      </footer>
-    </div>
+    </section>
   )
 }
 

@@ -37,7 +37,9 @@ async function getDashboardStats() {
       totalBrands,
       recentReservations,
       todaysSales,
-      activeRegister
+      activeRegister,
+      activeRepairs,
+      readyRepairs
     ] = await Promise.all([
       prisma.product.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: "CUSTOMER" } }),
@@ -70,7 +72,9 @@ async function getDashboardStats() {
       prisma.cashRegister.findFirst({
         where: { status: "OPEN" },
         include: { movements: true }
-      })
+      }),
+      prisma.repairOrder.count({ where: { status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
+      prisma.repairOrder.count({ where: { status: "READY" } })
     ])
 
     // Contar productos con stock bajo en JS
@@ -94,7 +98,9 @@ async function getDashboardStats() {
       recentReservations,
       todaysSales: todaysSales._sum.totalPrice || 0,
       cashTotal,
-      isRegisterOpen: !!activeRegister
+      isRegisterOpen: !!activeRegister,
+      activeRepairs,
+      readyRepairs
     }
   } catch (error) {
     console.error("Error fetching dashboard stats:", error)
@@ -108,7 +114,9 @@ async function getDashboardStats() {
       recentReservations: [],
       todaysSales: 0,
       cashTotal: 0,
-      isRegisterOpen: false
+      isRegisterOpen: false,
+      activeRepairs: 0,
+      readyRepairs: 0
     }
   }
 }
@@ -171,6 +179,15 @@ export default async function AdminDashboard() {
       href: "/admin/reservas",
       alert: stats.pendingReservations > 0 ? "Requiere atención" : null,
       alertClass: "text-amber-500",
+    },
+    {
+      title: "Órdenes en taller",
+      value: stats.activeRepairs,
+      description: stats.readyRepairs > 0 ? `${stats.readyRepairs} listas para entregar` : "Equipos en proceso",
+      icon: Wrench,
+      href: "/admin/taller",
+      alert: stats.readyRepairs > 0 ? "Entregas pendientes" : null,
+      alertClass: "text-green-500",
     },
     {
       title: "Usuarios Nuevos",
