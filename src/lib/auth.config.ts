@@ -83,7 +83,6 @@ export function getAuthRedirect(
   const role = auth?.user?.role
   const status = auth?.user?.status
   const isAdmin = role === "ADMIN"
-  const isEmployee = role === "EMPLOYEE"
   const isApproved = status === "APPROVED"
   const isPending = status === "PENDING"
 

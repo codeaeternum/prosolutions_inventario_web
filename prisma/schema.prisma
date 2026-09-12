@@ -111,6 +111,7 @@ model User {
   phone                 String?      @unique  // Único si se proporciona
   role                  UserRole     @default(CUSTOMER)
   jobTitle              String?      // Puesto visible del staff: "Técnico", "Recepción", "Dueño"…
+  publicSlug            String?      @unique // Slug público del taller aliado: /t/<slug> y /<slug>/order-status
   quickPin              String?      // Hash bcrypt del PIN de 4-6 dígitos para cambio rápido de usuario
   customerType          CustomerType @default(NORMAL)
   requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse

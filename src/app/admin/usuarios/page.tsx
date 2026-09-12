@@ -26,6 +26,7 @@ import {
   Send,
   Phone,
   Pencil,
+  ExternalLink,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
@@ -48,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Pagination } from "@/components/ui/pagination"
+import { SlugField, normalizeSlugInput, slugFieldError } from "@/components/admin/slug-input"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -58,6 +60,7 @@ interface User {
   phone: string | null
   telegramId: string | null
   jobTitle?: string | null
+  publicSlug?: string | null
   role: "ADMIN" | "CUSTOMER" | "EMPLOYEE" | "WORKSHOP"
   customerType: "TECHNICIAN" | "STORE" | "NORMAL"
   status: "PENDING" | "APPROVED" | "REJECTED"
@@ -100,6 +103,7 @@ export default function UsersPage() {
     homeBranchId: "",
     jobTitle: "",
     quickPin: "",
+    publicSlug: "",
   })
   const [branches, setBranches] = useState<Branch[]>([])
 
@@ -107,6 +111,7 @@ export default function UsersPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editUser, setEditUser] = useState<User | null>(null)
   const [editJobTitle, setEditJobTitle] = useState("")
+  const [editPublicSlug, setEditPublicSlug] = useState("")
   const [editPin, setEditPin] = useState("")
   const [editPinClear, setEditPinClear] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
@@ -222,13 +227,21 @@ export default function UsersPage() {
       return
     }
 
+    if (newUser.role === "WORKSHOP") {
+      const slugError = slugFieldError(newUser.publicSlug)
+      if (slugError) {
+        toast.error(slugError)
+        return
+      }
+    }
+
     setCreating(true)
 
     try {
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newUser),
+        body: JSON.stringify({ ...newUser, publicSlug: normalizeSlugInput(newUser.publicSlug) }),
       })
 
       const data = await res.json()
@@ -245,6 +258,7 @@ export default function UsersPage() {
           homeBranchId: "",
           jobTitle: "",
           quickPin: "",
+          publicSlug: "",
         })
         fetchUsers()
       } else {
@@ -261,6 +275,7 @@ export default function UsersPage() {
   const openEditDialog = (user: User) => {
     setEditUser(user)
     setEditJobTitle(user.jobTitle ?? "")
+    setEditPublicSlug(user.publicSlug ?? "")
     setEditPin("")
     setEditPinClear(false)
     setEditOpen(true)
@@ -272,9 +287,19 @@ export default function UsersPage() {
       toast.error("El PIN rápido debe tener de 4 a 6 dígitos")
       return
     }
+    if (editUser.role === "WORKSHOP") {
+      const slugError = slugFieldError(editPublicSlug)
+      if (slugError) {
+        toast.error(slugError)
+        return
+      }
+    }
     setEditSaving(true)
     try {
-      const payload: { jobTitle: string; quickPin?: string } = { jobTitle: editJobTitle.trim() }
+      const payload: { jobTitle: string; quickPin?: string; publicSlug?: string } = { jobTitle: editJobTitle.trim() }
+      if (editUser.role === "WORKSHOP") {
+        payload.publicSlug = normalizeSlugInput(editPublicSlug)
+      }
       if (editPinClear) {
         payload.quickPin = "CLEAR"
       } else if (editPin) {
@@ -558,6 +583,17 @@ export default function UsersPage() {
                   )}
                 </div>
               )}
+              {newUser.role === "WORKSHOP" && (
+                <SlugField
+                  id="newUser-publicSlug"
+                  label="Link público (slug)"
+                  value={newUser.publicSlug}
+                  onChange={(value) => setNewUser({ ...newUser, publicSlug: value })}
+                  placeholder="taller-hermanos"
+                  hint="Sus clientes rastrearán órdenes en /<slug>/order-status. Opcional: déjalo vacío si el taller no tendrá vitrina."
+                  disabled={creating}
+                />
+              )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                   Cancelar
@@ -671,6 +707,18 @@ export default function UsersPage() {
                           <span className="italic">Sin contacto</span>
                         )}
                       </div>
+                      {user.role === "WORKSHOP" && user.publicSlug && (
+                        <a
+                          href={`/${user.publicSlug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1.5 inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-primary transition hover:bg-muted hover:underline"
+                          title="Abrir la vitrina pública del taller"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          /{user.publicSlug}
+                        </a>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Badge variant={statusColors[user.status]}>
@@ -1014,6 +1062,17 @@ export default function UsersPage() {
                   </datalist>
                 )}
               </div>
+              {editUser.role === "WORKSHOP" && (
+                <SlugField
+                  id="edit-publicSlug"
+                  label="Link público (slug)"
+                  value={editPublicSlug}
+                  onChange={setEditPublicSlug}
+                  placeholder="taller-hermanos"
+                  hint="Sus clientes rastrearán órdenes en /<slug>/order-status. Vacío = sin vitrina pública."
+                  disabled={editSaving}
+                />
+              )}
               {editUser.role !== "WORKSHOP" && (
               <div className="space-y-2">
                 <Label htmlFor="edit-pin">PIN rápido</Label>

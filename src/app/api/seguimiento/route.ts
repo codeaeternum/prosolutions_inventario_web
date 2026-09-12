@@ -32,6 +32,16 @@ function publicDetail(detail: string): string {
     .trim()
 }
 
+// reportedIssue puede arrastrar "presupuesto estimado: $X" capturado en
+// recepción (mismo caso que /api/cotizacion/[token]): el estimado no es un
+// monto autorizado y no debe mostrarse al cliente.
+function publicIssue(raw: string): string {
+  return raw
+    .replace(/presupuesto\s+estimado\s*:?\s*\$?\s*[\d.,]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+}
+
 export async function GET(req: Request) {
   try {
     if (!checkAndRecord("seguimiento", getClientIp(req), WINDOW_MS, MAX_ATTEMPTS)) {
@@ -52,33 +62,52 @@ export async function GET(req: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
-    const order = await prisma.repairOrder.findUnique({
-      where: { number },
-      include: {
-        currentBranch: { select: { name: true } },
-        events: {
-          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-          take: 100,
-          select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
+    const [order, settings] = await Promise.all([
+      prisma.repairOrder.findUnique({
+        where: { number },
+        include: {
+          currentBranch: { select: { name: true } },
+          events: {
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: 100,
+            select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
+          },
+          // Evidencias: se sirven por /api/evidence?id= (cuid no adivinable).
+          photos: {
+            orderBy: { createdAt: "asc" },
+            select: { id: true, label: true, createdAt: true },
+          },
+          // Abonos confirmados: el cliente conoce lo que ha pagado; sirve
+          // para mostrar el saldo que restaría al recoger el equipo.
+          payments: {
+            where: { status: "CONFIRMED" },
+            select: { amount: true },
+          },
         },
-        // Evidencias: se sirven por /api/evidence?id= (cuid no adivinable).
-        photos: {
-          orderBy: { createdAt: "asc" },
-          select: { id: true, label: true, createdAt: true },
-        },
-      },
-    })
+      }),
+      // Branding del negocio para el encabezado y el CTA de WhatsApp.
+      prisma.systemSettings.findMany({
+        where: { key: { in: ["ticket_business_name", "public_phone"] } },
+        select: { key: true, value: true },
+      }),
+    ])
 
     // Respuesta genérica: no revelar si falló el folio o el teléfono.
     if (!order || !onlyDigits(order.customerPhone).endsWith(phone4)) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
+    const businessName = settings.find(s => s.key === "ticket_business_name")?.value?.trim() || null
+    const whatsappPhone = settings.find(s => s.key === "public_phone")?.value?.trim() || null
+    const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
+
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
-    // Nunca: nombre/teléfono completo, presupuesto (quoteCents), IDs internos,
-    // location, aesthetics ni functionalConditions (custodia interna).
-    // Las notas type=NOTE solo salen si el taller las marcó isPublic: las
-    // privadas son bitácora interna (pueden traer locación o datos de plan).
+    // Nunca: nombre/teléfono completo, presupuesto sin autorizar (quoteCents),
+    // IDs internos, location, aesthetics ni functionalConditions (custodia
+    // interna). Las notas type=NOTE solo salen si el taller las marcó
+    // isPublic: las privadas son bitácora interna (pueden traer locación o
+    // datos de plan). quoteToken solo se expone mientras la orden espera la
+    // autorización del cliente — es justo cuando el enlace le sirve.
     return NextResponse.json(
       {
         order: {
@@ -87,10 +116,15 @@ export async function GET(req: Request) {
           equipmentType: order.equipmentType,
           brand: order.brand,
           model: order.model,
-          reportedIssue: order.reportedIssue,
+          reportedIssue: publicIssue(order.reportedIssue),
           promisedAt: order.promisedAt,
           createdAt: order.createdAt,
           branch: order.currentBranch.name,
+          // Monto que el cliente YA autorizó (no el estimado) y lo que ha
+          // abonado: con ambos puede saber cuánto pagaría al recoger.
+          authorizedCents: order.approvedQuoteCents,
+          paidCents,
+          quoteToken: order.status === "WAITING_APPROVAL" ? order.quoteToken : null,
           photos: order.photos,
           events: order.events
             .filter(e => e.type !== "NOTE" || e.isPublic)
@@ -101,6 +135,7 @@ export async function GET(req: Request) {
               kind: e.type === "NOTE" ? ("MESSAGE" as const) : ("EVENT" as const),
             })),
         },
+        business: { name: businessName, phone: whatsappPhone },
       },
       { headers: NO_STORE },
     )

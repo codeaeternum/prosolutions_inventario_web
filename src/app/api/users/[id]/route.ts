@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { resolveWorkshopSlug } from "../slug-utils"
 import bcrypt from "bcryptjs"
 
 export async function PATCH(
@@ -14,7 +15,15 @@ export async function PATCH(
 
     const { id } = await params
     const body = await req.json()
-    const { status, customerType, role, homeBranchId, jobTitle, quickPin } = body
+    const { status, customerType, role, homeBranchId, jobTitle, quickPin, publicSlug } = body
+
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, role: true },
+    })
+    if (!existingUser) {
+      return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
+    }
 
     // Puesto del staff: string de hasta 60 caracteres; vacío/null lo limpia.
     let jobTitleUpdate: string | null | undefined
@@ -53,11 +62,25 @@ export async function PATCH(
     }
 
     // Validate role if provided
-    if (role && !["ADMIN", "CUSTOMER"].includes(role)) {
+    if (role && !["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"].includes(role)) {
       return NextResponse.json(
         { error: "Rol inválido" },
         { status: 400 }
       )
+    }
+
+    // Link público: solo aplica al rol efectivo WORKSHOP. Si el rol cambia a
+    // otro o el campo llega vacío, el slug se limpia a null.
+    const targetRole = role ?? existingUser.role
+    let publicSlugUpdate: string | null | undefined
+    if (targetRole === "WORKSHOP") {
+      if (publicSlug !== undefined) {
+        const resolved = await resolveWorkshopSlug(publicSlug, id)
+        if (resolved instanceof NextResponse) return resolved
+        publicSlugUpdate = resolved
+      }
+    } else {
+      publicSlugUpdate = null
     }
 
     const user = await prisma.user.update({
@@ -69,6 +92,7 @@ export async function PATCH(
         ...(homeBranchId !== undefined && { homeBranchId: homeBranchId || null }),
         ...(jobTitleUpdate !== undefined && { jobTitle: jobTitleUpdate }),
         ...(quickPinUpdate !== undefined && { quickPin: quickPinUpdate }),
+        ...(publicSlugUpdate !== undefined && { publicSlug: publicSlugUpdate }),
       },
       select: {
         id: true,
@@ -78,6 +102,7 @@ export async function PATCH(
         customerType: true,
         role: true,
         jobTitle: true,
+        publicSlug: true,
         homeBranchId: true,
       },
     })

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { resolveWorkshopSlug } from "./slug-utils"
 import bcrypt from "bcryptjs"
 import { UserRole } from "@prisma/client"
 
@@ -39,6 +40,7 @@ export async function GET(req: Request) {
       status: true,
       role: true,
       jobTitle: true,
+      publicSlug: true,
       creditLimit: true,
       creditBalance: true,
       homeBranchId: true,
@@ -84,7 +86,7 @@ export async function POST(req: Request) {
     if (result.error) return result.error
 
     const body = await req.json()
-    const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin } = body
+    const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin, publicSlug } = body
 
     if (!name || !email || !password || !role) {
       return NextResponse.json(
@@ -127,6 +129,14 @@ export async function POST(req: Request) {
       )
     }
 
+    // Link público del taller aliado: solo aplica a role WORKSHOP; vacío = sin vitrina.
+    let cleanPublicSlug: string | null = null
+    if (role === "WORKSHOP") {
+      const resolved = await resolveWorkshopSlug(publicSlug)
+      if (resolved instanceof NextResponse) return resolved
+      cleanPublicSlug = resolved
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12)
 
     const user = await prisma.user.create({
@@ -138,6 +148,7 @@ export async function POST(req: Request) {
         customerType: customerType || "NORMAL",
         homeBranchId: homeBranchId || null,
         jobTitle: cleanJobTitle || null,
+        publicSlug: cleanPublicSlug,
         quickPin: hashedPin,
         status: "APPROVED", // Admin created users are auto-approved
       },
@@ -152,6 +163,7 @@ export async function POST(req: Request) {
       customerType: user.customerType,
       status: user.status,
       jobTitle: user.jobTitle,
+      publicSlug: user.publicSlug,
       homeBranchId: user.homeBranchId,
       createdAt: user.createdAt,
     })

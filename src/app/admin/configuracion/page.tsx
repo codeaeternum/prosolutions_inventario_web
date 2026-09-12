@@ -24,6 +24,7 @@ import {
   type NumericField,
   type TextField,
 } from "@/components/admin/configuracion/settings-sections"
+import { PublicProfileCard } from "@/components/admin/configuracion/public-profile"
 
 const DEFAULTS: GeneralSettings = {
   tempReservationMinutes: 30,
@@ -259,6 +260,8 @@ export default function ConfiguracionPage() {
         onChange={(value) => handleText("ticketBusinessName", value)}
         onSave={handleSaveBusinessName}
       />
+
+      <PublicProfileCard />
 
       <WorkshopCard />
 
