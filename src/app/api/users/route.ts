@@ -38,6 +38,7 @@ export async function GET(req: Request) {
       customerType: true,
       status: true,
       role: true,
+      jobTitle: true,
       creditLimit: true,
       creditBalance: true,
       homeBranchId: true,
@@ -83,13 +84,28 @@ export async function POST(req: Request) {
     if (result.error) return result.error
 
     const body = await req.json()
-    const { name, email, password, role, customerType, homeBranchId } = body
+    const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin } = body
 
     if (!name || !email || !password || !role) {
       return NextResponse.json(
         { error: "Faltan campos requeridos" },
         { status: 400 }
       )
+    }
+
+    // Puesto visible del staff (opcional, texto libre de hasta 60 caracteres)
+    const cleanJobTitle = typeof jobTitle === "string" ? jobTitle.trim() : ""
+    if (cleanJobTitle.length > 60) {
+      return NextResponse.json({ error: "El puesto no puede exceder 60 caracteres" }, { status: 400 })
+    }
+
+    // PIN rápido para cambio de usuario (opcional, 4-6 dígitos; se guarda hasheado)
+    let hashedPin: string | null = null
+    if (quickPin !== undefined && quickPin !== null && quickPin !== "") {
+      if (typeof quickPin !== "string" || !/^\d{4,6}$/.test(quickPin)) {
+        return NextResponse.json({ error: "El PIN rápido debe tener de 4 a 6 dígitos" }, { status: 400 })
+      }
+      hashedPin = await bcrypt.hash(quickPin, 12)
     }
 
     if (homeBranchId) {
@@ -121,13 +137,24 @@ export async function POST(req: Request) {
         role: role as UserRole,
         customerType: customerType || "NORMAL",
         homeBranchId: homeBranchId || null,
+        jobTitle: cleanJobTitle || null,
+        quickPin: hashedPin,
         status: "APPROVED", // Admin created users are auto-approved
       },
     })
 
-    const { password: _, ...userWithoutPassword } = user
-
-    return NextResponse.json(userWithoutPassword)
+    // Respuesta whitelist: nunca exponemos password ni el hash del PIN rápido.
+    return NextResponse.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      customerType: user.customerType,
+      status: user.status,
+      jobTitle: user.jobTitle,
+      homeBranchId: user.homeBranchId,
+      createdAt: user.createdAt,
+    })
   } catch (error) {
     console.error("Error creating user:", error)
     return NextResponse.json({ error: "Error al crear usuario" }, { status: 500 })

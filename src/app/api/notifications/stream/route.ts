@@ -20,6 +20,7 @@ export type NotificationType =
   | "deposit_received"
   | "user_registered"
   | "low_stock"
+  | "repair_ready"
 
 export interface NotificationPayload {
   type: NotificationType

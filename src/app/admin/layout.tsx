@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth"
-import { AdminSidebar } from "@/components/admin/sidebar"
-import { AdminHeader } from "@/components/admin/header"
+import { prisma } from "@/lib/prisma"
+import { AdminShell } from "@/components/admin/admin-shell"
 
 export default async function AdminLayout({
   children,
@@ -14,15 +14,15 @@ export default async function AdminLayout({
     redirect("/login")
   }
 
+  // Sucursal base del usuario: fallback inicial del selector de sucursal.
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { homeBranchId: true },
+  })
+
   return (
-    <div className="min-h-screen bg-background">
-      <AdminSidebar user={{ role: session.user.role }} />
-      <div className="lg:pl-64">
-        <AdminHeader user={session.user} />
-        <main id="main-content" className="p-4 lg:p-8" role="main">
-          {children}
-        </main>
-      </div>
-    </div>
+    <AdminShell user={session.user} homeBranchId={dbUser?.homeBranchId}>
+      {children}
+    </AdminShell>
   )
 }

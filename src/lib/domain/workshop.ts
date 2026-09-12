@@ -22,6 +22,8 @@ const createSchema = z.object({
   intakeBranchId: z.string().min(1), assignedToId: z.string().min(1).optional(),
   promisedAt: z.iso.datetime().optional(),
   scheduledAt: z.iso.datetime().optional(),
+  // Firma del cliente en PNG base64 (data URL), capturada en recepción.
+  signatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
   // Anticipo cobrado en recepción; con caja abierta genera su asiento de caja.
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
@@ -42,7 +44,7 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
 }
 export async function createRepair(db: PrismaClient, actorId: string, raw: unknown) {
   const { idempotencyKey, promisedAt, scheduledAt, functionalConditions, advance, ...input } = createSchema.parse(raw)
-  return operation(db, { key: idempotencyKey, actorId, kind: "REPAIR_CREATE", permission: "admin", payload: { ...input, promisedAt, scheduledAt, functionalConditions, advance } }, async tx => {
+  return operation(db, { key: idempotencyKey, actorId, kind: "REPAIR_CREATE", permission: "staff", payload: { ...input, promisedAt, scheduledAt, functionalConditions, advance } }, async tx => {
     const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } })) throw new BusinessError("La persona asignada no está habilitada.")
@@ -57,10 +59,13 @@ export async function createRepair(db: PrismaClient, actorId: string, raw: unkno
 }
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
-  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_ADD", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN"]),
+  // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
+  // con flujo de autorización (PART_REQUEST).
+  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_REQUEST", "PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN"]),
   detail: z.string().trim().min(1).max(2000).optional(), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
   quoteCents: moneyCents.optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
   partId: z.string().min(1).optional(), partDescription: z.string().trim().min(1).max(200).optional(),
+  approve: z.boolean().optional(),
   partQty: z.number().int().min(1).max(999).default(1),
   partCostCents: moneyCents.default(0), partPriceCents: moneyCents.default(0),
   partProductId: z.string().min(1).optional(),
@@ -72,7 +77,7 @@ const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "S
 export async function updateRepair(db: PrismaClient, actorId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "REPAIR_UPDATE", permission: "admin", payload: { id, ...input } }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, kind: "REPAIR_UPDATE", permission: "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
@@ -132,15 +137,42 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       } else detail = `Sin saldo pendiente. Entrega a: ${input.detail}`
       Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail })
       eventType = "PAYMENT"
-    } else if (input.action === "PART_ADD") {
+    } else if (input.action === "PART_REQUEST" || input.action === "PART_ADD") {
       if (!input.partDescription) throw new BusinessError("Describe la refacción.")
       if (input.partProductId && !await tx.product.findUnique({ where: { id: input.partProductId } })) throw new BusinessError("El producto seleccionado no existe.")
-      const part = await tx.repairPart.create({ data: { orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId } })
+      const actorUser = await tx.user.findUnique({ where: { id: actorId } })
+      const needsApproval = actorUser?.role === "EMPLOYEE"
+      const part = await tx.repairPart.create({ data: { orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
       eventType = "PART"
-      detail = `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+      detail = needsApproval
+        ? `Refacción solicitada: ${part.qty} × ${part.description} — pendiente de autorización`
+        : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+    } else if (input.action === "PART_DECIDE") {
+      const actorUser = await tx.user.findUnique({ where: { id: actorId } })
+      if (actorUser?.role !== "ADMIN") throw new BusinessError("Solo el administrador autoriza refacciones.", 403)
+      if (input.approve === undefined) throw new BusinessError("Indica si autorizas o rechazas la refacción.")
+      const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
+      if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
+      const decided = await tx.repairPart.updateMany({
+        where: { id: part.id, status: "REQUESTED" },
+        data: input.approve
+          ? { status: "APPROVED", decidedById: actorId, decidedAt: new Date() }
+          : { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: input.detail ?? null },
+      })
+      if (decided.count !== 1) throw new BusinessError("La refacción ya fue autorizada o rechazada.", 409)
+      eventType = "PART"
+      detail = input.approve
+        ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+        : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
     } else if (input.action === "PART_REMOVE") {
       const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
       if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
+      const actorUser = await tx.user.findUnique({ where: { id: actorId } })
+      const isAdmin = actorUser?.role === "ADMIN"
+      // REQUESTED solo la retira quien la pidió (el admin la resuelve con PART_DECIDE);
+      // APPROVED/REJECTED solo las elimina el administrador.
+      const allowed = part.status === "REQUESTED" ? part.createdById === actorId : isAdmin
+      if (!allowed) throw new BusinessError(part.status === "REQUESTED" ? "Solo quien la solicitó puede retirarla; el administrador la autoriza o rechaza." : "Solo el administrador puede retirar una refacción autorizada o rechazada.", 403)
       await tx.repairPart.delete({ where: { id: part.id } })
       eventType = "PART"
       detail = `Refacción retirada: ${part.description}`
@@ -152,4 +184,17 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
     await tx.repairEvent.create({ data: { actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
+}
+type PartLike = { qty: number; unitCostCents: number; unitPriceCents: number; status?: string | null }
+/** Solo las refacciones autorizadas suman a costo/precio; REQUESTED y REJECTED son bitácora.
+ *  `status` ausente se trata como APPROVED (registros anteriores al flujo de autorización). */
+export function approvedParts<T extends { status?: string | null }>(parts: readonly T[]): T[] {
+  return parts.filter(part => part.status === undefined || part.status === null || part.status === "APPROVED")
+}
+/** Totales en centavos de las refacciones autorizadas: costo, precio y margen. */
+export function approvedPartsTotal(parts: readonly PartLike[]) {
+  const list = approvedParts(parts)
+  const costCents = list.reduce((sum, part) => sum + part.unitCostCents * part.qty, 0)
+  const priceCents = list.reduce((sum, part) => sum + part.unitPriceCents * part.qty, 0)
+  return { costCents, priceCents, marginCents: priceCents - costCents }
 }

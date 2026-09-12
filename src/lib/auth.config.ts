@@ -24,6 +24,9 @@ declare module "next-auth" {
       role: UserRole
       customerType: CustomerType
       status: UserStatus
+      jobTitle?: string | null
+      // Id del staff que inició esta sesión vía cambio rápido de usuario.
+      impersonator?: string | null
     }
   }
 }
@@ -35,11 +38,13 @@ declare module "@auth/core/jwt" {
     role: UserRole
     customerType: CustomerType
     status: UserStatus
+    jobTitle?: string | null
+    impersonator?: string | null
   }
 }
 
 // Rutas públicas (no requieren login)
-const PUBLIC_PATHS = ["/", "/login", "/register", "/api/auth", "/catalogo"]
+const PUBLIC_PATHS = ["/", "/login", "/register", "/api/auth", "/catalogo", "/seguimiento", "/evidencia"]
 // Rutas legacy que sin login redirigen a /?redirect=bot
 const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)
@@ -158,6 +163,8 @@ export const authConfig: NextAuthConfig = {
         session.user.role = token.role
         session.user.customerType = token.customerType
         session.user.status = token.status
+        session.user.jobTitle = token.jobTitle ?? null
+        session.user.impersonator = token.impersonator ?? null
       }
       return session
     }

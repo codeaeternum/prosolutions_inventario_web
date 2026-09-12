@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import {
   Wrench, Search, Check, Loader2, MapPin, CalendarClock,
-  PackageSearch, FileText, History, AlertCircle, MessageSquare,
+  PackageSearch, FileText, History, AlertCircle, MessageSquare, Images,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,12 @@ interface PublicEvent {
   kind: "EVENT" | "MESSAGE"
 }
 
+interface PublicPhoto {
+  id: string
+  label: string | null
+  createdAt: string
+}
+
 interface PublicOrder {
   folio: string
   status: RepairStage
@@ -32,6 +38,7 @@ interface PublicOrder {
   promisedAt: string | null
   createdAt: string
   branch: string | null
+  photos: PublicPhoto[]
   events: PublicEvent[]
 }
 
@@ -312,6 +319,37 @@ function OrderCard({ order }: { order: PublicOrder }) {
           <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Falla reportada</h3>
           <p className="text-sm leading-relaxed">{order.reportedIssue}</p>
         </div>
+
+        {/* Evidencias del taller */}
+        {order.photos.length > 0 && (
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-1.5">
+              <Images className="h-3.5 w-3.5" />
+              Fotos de tu equipo
+            </h3>
+            <ul className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              {order.photos.map(photo => (
+                <li key={photo.id} className="space-y-1">
+                  <a
+                    href={`/api/evidence?id=${encodeURIComponent(photo.id)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block aspect-square overflow-hidden rounded-lg border bg-muted hover:opacity-90 transition-opacity"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/evidence?id=${encodeURIComponent(photo.id)}`}
+                      alt={photo.label ?? "Evidencia del equipo"}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                  </a>
+                  {photo.label && <p className="text-[11px] text-muted-foreground truncate">{photo.label}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Línea de tiempo */}
         <div>

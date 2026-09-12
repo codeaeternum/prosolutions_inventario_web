@@ -8,7 +8,8 @@ import { BusinessError } from "@/lib/domain/operations"
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   description: z.string().trim().max(300).nullable().optional(),
-  priceCents: z.number().int().min(0).max(100000000).optional(),
+  // null explícito = quitar el precio fijo (pasa a "según dispositivo").
+  priceCents: z.number().int().min(0).max(100000000).nullable().optional(),
   equipmentType: z.string().trim().max(80).nullable().optional(),
   isActive: z.boolean().optional(),
 })

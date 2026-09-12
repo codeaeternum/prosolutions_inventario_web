@@ -109,6 +109,8 @@ model User {
   businessName          String?      // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
   phone                 String?      @unique  // Único si se proporciona
   role                  UserRole     @default(CUSTOMER)
+  jobTitle              String?      // Puesto visible del staff: "Técnico", "Recepción", "Dueño"…
+  quickPin              String?      // Hash bcrypt del PIN de 4-6 dígitos para cambio rápido de usuario
   customerType          CustomerType @default(NORMAL)
   requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse
   status                UserStatus   @default(PENDING)
@@ -138,6 +140,10 @@ model User {
   priceChanges     PriceHistory[]  @relation("PriceChanges")
   cashRegistersOpened CashRegister[] @relation("RegisterOpenedBy")
   cashRegistersClosed CashRegister[] @relation("RegisterClosedBy")
+  cashRequestsRequested CashRequest[] @relation("CashRequestRequestedBy")
+  cashRequestsDecided   CashRequest[] @relation("CashRequestDecidedBy")
+  repairPhotos          RepairPhoto[]
+  repairPartsDecided    RepairPart[]  @relation("RepairPartDecidedBy")
   cashMovements       CashMovement[]
   salesMade      Sale[]       @relation("SaleSeller")
   salesAsCustomer Sale[]      @relation("SaleCustomer")
@@ -407,6 +413,7 @@ model CashMovement {
   register        CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
 
   payment         Payment?   // vínculo al pago documentado cuando aplica
+  cashRequest     CashRequest? // solicitud de gasto autorizada que originó este movimiento
 
   userId          String
   user            User     @relation(fields: [userId], references: [id])
@@ -469,6 +476,7 @@ model Branch {
   reservations Reservation[]
   movements InventoryMovement[]
   transfersReceived InventoryMovement[] @relation("TransferDestination")
+  cashRequests CashRequest[]
   createdAt DateTime @default(now())
 
   @@map("WorkshopBranch")
@@ -606,6 +614,11 @@ model RepairOrder {
   qualityCheck String?
   deliveredTo String?
   promisedAt DateTime?
+  // Firma del cliente al recibir (PNG base64). Autorización de condiciones.
+  signatureData String?
+  // Token público para subir evidencias por QR sin login (se puede rotar).
+  uploadToken String @unique @default(cuid())
+  photos RepairPhoto[]
   intakeBranchId String
   currentBranchId String
   intakeBranch Branch @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
@@ -637,9 +650,16 @@ model RepairPart {
   unitPriceCents Int      @default(0)
   createdById    String
   createdBy      User     @relation("RepairPartCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  // REQUESTED = pedida por técnico pendiente de autorización; APPROVED/REJECTED.
+  status         PartStatus @default(APPROVED)
+  decidedById    String?
+  decidedBy      User?    @relation("RepairPartDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt      DateTime?
+  decisionNote   String?
   createdAt      DateTime @default(now())
 
   @@index([orderId])
+  @@index([status])
 }
 
 model RepairEvent {
@@ -656,13 +676,74 @@ model RepairEvent {
   @@index([orderId, createdAt])
 }
 
+enum PartStatus {
+  REQUESTED  // Técnico la pidió; pendiente de autorización del admin
+  APPROVED
+  REJECTED
+}
+
+enum CashRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Gasto o salida de caja pedida por un empleado; al aprobarse genera su
+// CashMovement OUT. El admin decide; el solicitante nunca se auto-aprueba.
+model CashRequest {
+  id             String            @id @default(cuid())
+  branchId       String
+  branch         Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  amountCents    Int
+  concept        String
+  status         CashRequestStatus @default(PENDING)
+  requestedById  String
+  requestedBy    User              @relation("CashRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedById    String?
+  decidedBy      User?             @relation("CashRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt      DateTime?
+  decisionNote   String?
+  cashMovementId String?           @unique
+  cashMovement   CashMovement?     @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+  @@index([branchId, status])
+}
+
+// Evidencia fotográfica de una orden (estado al recibir, avance, resultado).
+// filePath es relativo al almacenamiento local; se sirve por /api/evidence.
+model RepairPhoto {
+  id           String      @id @default(cuid())
+  orderId      String
+  order        RepairOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  filePath     String
+  label        String?
+  uploadedById String?
+  uploadedBy   User?       @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  @@index([orderId])
+}
+
+// Catálogo de modelos de equipo para autocompletar al recibir
+// (ej. brand=Samsung, model=Galaxy A21, code=SM-A245M).
+model DeviceModel {
+  id        String   @id @default(cuid())
+  brand     String
+  model     String
+  code      String?
+  type      String   @default("SMARTPHONE")
+  createdAt DateTime @default(now())
+  @@unique([brand, model])
+  @@index([brand])
+}
+
 // Catálogo de servicios del taller (cambio de pantalla, liberación, etc.) con
 // precio sugerido; se usa como autocomplete al recibir equipos.
 model WorkshopService {
   id String @id @default(cuid())
   name String
   description String?
-  priceCents Int @default(0)
+  // null = el precio depende del dispositivo; se cotiza al recibir.
+  priceCents Int?
   equipmentType String?
   isActive Boolean @default(true)
   createdAt DateTime @default(now())

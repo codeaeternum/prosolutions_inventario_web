@@ -15,7 +15,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut, Home, Search, X } from "lucide-react"
+import { BranchSwitcher } from "@/components/admin/branch-switcher"
+import { UserSwitcher } from "@/components/admin/user-switcher"
+import { LogOut, Home, Search, X, PanelLeft, PanelLeftClose, UserCog } from "lucide-react"
 import type { UserRole, CustomerType, UserStatus } from "@prisma/client"
 
 interface AdminHeaderProps {
@@ -26,11 +28,17 @@ interface AdminHeaderProps {
     role: UserRole
     customerType: CustomerType
     status: UserStatus
+    jobTitle?: string | null
+    impersonator?: string | null
   }
+  homeBranchId?: string | null
+  sidebarCollapsed?: boolean
+  onToggleSidebar?: () => void
 }
 
-export function AdminHeader({ user }: AdminHeaderProps) {
+export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSidebar }: AdminHeaderProps) {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   const initials = user.name
     .split(" ")
@@ -42,9 +50,26 @@ export function AdminHeader({ user }: AdminHeaderProps) {
   return (
     <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-16 items-center justify-between px-4 lg:px-8">
-        <div className="flex items-center gap-4 flex-1 pl-12 lg:pl-0">
+        <div className="flex items-center gap-2 sm:gap-4 flex-1 pl-12 lg:pl-0">
+          {/* Sidebar collapse toggle (desktop) */}
+          {onToggleSidebar && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden lg:inline-flex"
+              onClick={onToggleSidebar}
+              title={sidebarCollapsed ? "Expandir menú" : "Contraer menú"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeft className="h-5 w-5" />
+              ) : (
+                <PanelLeftClose className="h-5 w-5" />
+              )}
+            </Button>
+          )}
           {/* Desktop search */}
           <SearchBar className="hidden sm:block max-w-md flex-1" />
+          <BranchSwitcher homeBranchId={homeBranchId} />
           {/* Mobile search toggle */}
           <Button
             variant="ghost"
@@ -81,6 +106,13 @@ export function AdminHeader({ user }: AdminHeaderProps) {
                   Ir al inicio
                 </Link>
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setSwitcherOpen(true)}
+                className="flex items-center gap-2"
+              >
+                <UserCog className="h-4 w-4" />
+                Cambiar de usuario
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => signOut({ callbackUrl: "/login" })}
@@ -100,6 +132,13 @@ export function AdminHeader({ user }: AdminHeaderProps) {
           <SearchBar className="w-full" />
         </div>
       )}
+
+      <UserSwitcher
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+        currentUserId={user.id}
+        isAdmin={user.role === "ADMIN"}
+      />
     </header>
   )
 }

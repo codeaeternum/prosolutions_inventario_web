@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, BookOpen, Loader2, Pencil, Plus, Power, Search, X } from "lucide-react"
+import { ArrowLeft, BookOpen, Loader2, Pencil, Plus, Power, Search, Smartphone, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,10 +14,15 @@ import { BusinessName } from "@/components/admin/business-name"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 
 type Service = {
-  id: string; name: string; description: string | null; priceCents: number
+  id: string; name: string; description: string | null; priceCents: number | null
   equipmentType: string | null; isActive: boolean
 }
 type ServiceForm = { name: string; price: string; equipmentType: string; description: string }
+type DeviceModelRow = { id: string; brand: string; model: string; code: string | null; type: string }
+type DeviceModelForm = { brand: string; model: string; code: string; type: string }
+
+const emptyModelForm: DeviceModelForm = { brand: "", model: "", code: "", type: "" }
+const DEVICE_MODEL_TYPES = ["SMARTPHONE", "TABLET", "LAPTOP", "CONSOLA", "SMARTWATCH", "PANTALLA", "OTRO"]
 
 const emptyForm: ServiceForm = { name: "", price: "", equipmentType: "", description: "" }
 const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
@@ -69,9 +74,15 @@ export default function WorkshopCatalogPage() {
   const [locationDraft, setLocationDraft] = useState("")
   const [configDirty, setConfigDirty] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
+  const [deviceModels, setDeviceModels] = useState<DeviceModelRow[]>([])
+  const [modelsLoading, setModelsLoading] = useState(true)
+  const [modelSearch, setModelSearch] = useState("")
+  const [modelForm, setModelForm] = useState<DeviceModelForm>(emptyModelForm)
+  const [toDeleteModel, setToDeleteModel] = useState<DeviceModelRow | null>(null)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const requestVersion = useRef(0)
+  const modelRequestVersion = useRef(0)
 
   const loadServices = useCallback(async () => {
     const version = ++requestVersion.current
@@ -90,6 +101,25 @@ export default function WorkshopCatalogPage() {
     }
   }, [search, showInactive])
   useEffect(() => { const timer = setTimeout(() => { void loadServices() }, 200); return () => clearTimeout(timer) }, [loadServices])
+
+  const loadModels = useCallback(async () => {
+    const version = ++modelRequestVersion.current
+    setModelsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (modelSearch.trim()) params.set("q", modelSearch.trim())
+      const response = await fetch(`/api/device-models?${params}`)
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || "No se pudieron cargar los modelos")
+      if (version !== modelRequestVersion.current) return
+      setDeviceModels(data.models ?? [])
+    } catch (cause) {
+      if (version === modelRequestVersion.current) toast.error(cause instanceof Error ? cause.message : "Error de conexión")
+    } finally {
+      if (version === modelRequestVersion.current) setModelsLoading(false)
+    }
+  }, [modelSearch])
+  useEffect(() => { const timer = setTimeout(() => { void loadModels() }, 200); return () => clearTimeout(timer) }, [loadModels])
 
   useEffect(() => {
     let cancelled = false
@@ -115,7 +145,7 @@ export default function WorkshopCatalogPage() {
 
   function startEdit(service: Service) {
     setEditing(service)
-    setForm({ name: service.name, price: (service.priceCents / 100).toFixed(2), equipmentType: service.equipmentType ?? "", description: service.description ?? "" })
+    setForm({ name: service.name, price: service.priceCents === null ? "" : (service.priceCents / 100).toFixed(2), equipmentType: service.equipmentType ?? "", description: service.description ?? "" })
   }
   function cancelEdit() { setEditing(null); setForm(emptyForm) }
 
@@ -125,24 +155,55 @@ export default function WorkshopCatalogPage() {
     const name = form.name.trim()
     const description = form.description.trim()
     const equipmentType = form.equipmentType.trim()
-    const price = form.price === "" ? 0 : Number(form.price)
+    const price = form.price === "" ? null : Number(form.price)
     if (name.length < 2) { toast.error("El nombre debe tener al menos 2 caracteres."); return }
-    if (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 0.000001) { toast.error("El precio admite hasta dos decimales."); return }
+    if (price !== null && (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 0.000001)) { toast.error("El precio admite hasta dos decimales."); return }
     inFlight.current = true; setSaving(true)
     try {
       if (editing) {
-        const response = await fetch(`/api/workshop-services/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, equipmentType, priceCents: Math.round(price * 100) }) })
+        const response = await fetch(`/api/workshop-services/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100) }) })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || "No se pudo actualizar el servicio")
         toast.success("Servicio actualizado")
       } else {
-        await post("/api/workshop-services", { name, description, equipmentType, priceCents: Math.round(price * 100) })
+        await post("/api/workshop-services", { name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100) })
         toast.success("Servicio creado")
       }
       cancelEdit()
       await loadServices()
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
+  }
+
+  async function submitModel(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (inFlight.current) return
+    const brand = modelForm.brand.trim()
+    const model = modelForm.model.trim()
+    const code = modelForm.code.trim()
+    const type = modelForm.type.trim()
+    if (!brand || !model) { toast.error("Marca y modelo son obligatorios."); return }
+    inFlight.current = true; setSaving(true)
+    try {
+      await post("/api/device-models", { brand, model, code, type })
+      toast.success("Modelo de equipo guardado")
+      setModelForm(emptyModelForm)
+      await loadModels()
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
+
+  async function deleteModel(item: DeviceModelRow) {
+    if (inFlight.current) return
+    inFlight.current = true; setSaving(true)
+    try {
+      const response = await fetch(`/api/device-models/${item.id}`, { method: "DELETE" })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || "No se pudo eliminar el modelo")
+      toast.success("Modelo eliminado")
+      await loadModels()
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio.") }
+    finally { inFlight.current = false; setSaving(false); setToDeleteModel(null) }
   }
 
   async function toggleService(service: Service) {
@@ -204,6 +265,7 @@ export default function WorkshopCatalogPage() {
       <Tabs defaultValue="servicios">
         <TabsList>
           <TabsTrigger value="servicios">Servicios</TabsTrigger>
+          <TabsTrigger value="modelos">Modelos de equipo</TabsTrigger>
           <TabsTrigger value="configuracion">Tipos de equipo y locaciones</TabsTrigger>
         </TabsList>
 
@@ -214,8 +276,8 @@ export default function WorkshopCatalogPage() {
               <label className="block space-y-2 text-sm">Nombre *
                 <Input value={form.name} onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))} maxLength={120} placeholder="Ej. Cambio de pantalla" autoComplete="off" required />
               </label>
-              <label className="block space-y-2 text-sm">Precio sugerido (MXN)
-                <Input type="number" min="0" step="0.01" inputMode="decimal" value={form.price} onChange={event => setForm(previous => ({ ...previous, price: event.target.value }))} placeholder="0.00" />
+              <label className="block space-y-2 text-sm">Precio sugerido (MXN) — opcional
+                <Input type="number" min="0" step="0.01" inputMode="decimal" value={form.price} onChange={event => setForm(previous => ({ ...previous, price: event.target.value }))} placeholder="Variable / según dispositivo" />
               </label>
               <label className="block space-y-2 text-sm">Tipo de equipo
                 <Input list="service-equipment-types" value={form.equipmentType} onChange={event => setForm(previous => ({ ...previous, equipmentType: event.target.value }))} maxLength={80} placeholder="Ej. Celular (opcional)" autoComplete="off" />
@@ -271,7 +333,7 @@ export default function WorkshopCatalogPage() {
                     <TableRow key={service.id} className={service.isActive ? "" : "opacity-60"}>
                       <TableCell className="font-medium">{service.name}</TableCell>
                       <TableCell className="hidden max-w-64 truncate text-muted-foreground md:table-cell">{service.description || "—"}</TableCell>
-                      <TableCell>{money(service.priceCents)}</TableCell>
+                      <TableCell>{service.priceCents === null ? "Variable" : money(service.priceCents)}</TableCell>
                       <TableCell className="hidden sm:table-cell">{service.equipmentType || "Cualquiera"}</TableCell>
                       <TableCell><Badge variant={service.isActive ? "success" : "secondary"}>{service.isActive ? "Activo" : "Inactivo"}</Badge></TableCell>
                       <TableCell className="text-right">
@@ -289,6 +351,78 @@ export default function WorkshopCatalogPage() {
                 </TableBody>
               </Table>
             )}
+          </section>
+        </TabsContent>
+
+        <TabsContent value="modelos" className="space-y-6 pt-4">
+          <section className="rounded-xl border bg-card p-5 sm:p-6">
+            <h2 className="mb-1 font-semibold">Nuevo modelo de equipo</h2>
+            <p className="mb-4 text-xs text-muted-foreground">Alimentan el autocompletado de marca y modelo al recibir equipos. Si marca + modelo ya existen, se actualiza su código y tipo.</p>
+            <form onSubmit={submitModel} className="grid gap-4 sm:grid-cols-2">
+              <label className="block space-y-2 text-sm">Marca *
+                <Input value={modelForm.brand} onChange={event => setModelForm(previous => ({ ...previous, brand: event.target.value }))} maxLength={60} placeholder="Ej. Samsung" autoComplete="off" required />
+              </label>
+              <label className="block space-y-2 text-sm">Modelo *
+                <Input value={modelForm.model} onChange={event => setModelForm(previous => ({ ...previous, model: event.target.value }))} maxLength={120} placeholder="Ej. Galaxy A21" autoComplete="off" required />
+              </label>
+              <label className="block space-y-2 text-sm">Código
+                <Input value={modelForm.code} onChange={event => setModelForm(previous => ({ ...previous, code: event.target.value }))} maxLength={60} placeholder="Ej. SM-A245M (opcional)" autoComplete="off" />
+              </label>
+              <label className="block space-y-2 text-sm">Tipo
+                <Input list="device-model-types" value={modelForm.type} onChange={event => setModelForm(previous => ({ ...previous, type: event.target.value }))} maxLength={40} placeholder="SMARTPHONE" autoComplete="off" />
+                <datalist id="device-model-types">{DEVICE_MODEL_TYPES.map(type => <option key={type} value={type} />)}</datalist>
+              </label>
+              <div className="flex flex-wrap gap-2 sm:col-span-2">
+                <Button type="submit" disabled={saving}>
+                  {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar modelo
+                </Button>
+              </div>
+            </form>
+          </section>
+
+          <div className="relative min-w-56 flex-1 sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
+          </div>
+
+          <section className="rounded-xl border bg-card">
+            {modelsLoading ? (
+              <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : deviceModels.length === 0 ? (
+              <div className="p-12 text-center">
+                <Smartphone className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+                <h2 className="text-lg font-semibold">{modelSearch ? "Sin resultados" : "Aún no hay modelos"}</h2>
+                <p className="mt-2 text-sm text-muted-foreground">{modelSearch ? "Prueba con otra marca o código." : "Registra el primero con el formulario de arriba."}</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Marca</TableHead>
+                    <TableHead>Modelo</TableHead>
+                    <TableHead className="hidden sm:table-cell">Código</TableHead>
+                    <TableHead className="hidden md:table-cell">Tipo</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deviceModels.map(item => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium">{item.brand}</TableCell>
+                      <TableCell>{item.model}</TableCell>
+                      <TableCell className="hidden sm:table-cell">{item.code || "—"}</TableCell>
+                      <TableCell className="hidden md:table-cell">{item.type}</TableCell>
+                      <TableCell className="text-right">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
+                          <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            <p className="border-t px-4 py-2 text-xs text-muted-foreground">Se muestran hasta 15 resultados; usa la búsqueda para encontrar un modelo específico.</p>
           </section>
         </TabsContent>
 
@@ -340,6 +474,21 @@ export default function WorkshopCatalogPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={() => { if (toDeactivate) void toggleService(toDeactivate) }}>Desactivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={toDeleteModel !== null} onOpenChange={open => { if (!open) setToDeleteModel(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar modelo de equipo</AlertDialogTitle>
+            <AlertDialogDescription>
+              &quot;{toDeleteModel?.brand} {toDeleteModel?.model}&quot; dejará de sugerirse en el autocompletado de recepción. Las órdenes ya registradas no se ven afectadas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (toDeleteModel) void deleteModel(toDeleteModel) }}>Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

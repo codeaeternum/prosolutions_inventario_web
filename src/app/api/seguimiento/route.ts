@@ -61,6 +61,11 @@ export async function GET(req: Request) {
           take: 100,
           select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
         },
+        // Evidencias: se sirven por /api/evidence?id= (cuid no adivinable).
+        photos: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, label: true, createdAt: true },
+        },
       },
     })
 
@@ -86,6 +91,7 @@ export async function GET(req: Request) {
           promisedAt: order.promisedAt,
           createdAt: order.createdAt,
           branch: order.currentBranch.name,
+          photos: order.photos,
           events: order.events
             .filter(e => e.type !== "NOTE" || e.isPublic)
             .map(e => ({

@@ -27,11 +27,13 @@ services:
       AUTH_TRUST_HOST: "true"
       TELEGRAM_BOT_TOKEN: ""
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+      REPAIR_EVIDENCE_DIR: /app/storage/repair-evidence
     ports:
       - "${PILOT_BIND:-127.0.0.1}:3316:3000"
     volumes:
       - pilot_uploads:/app/public/uploads
       - pilot_proofs:/app/storage/payment-proofs
+      - pilot_evidence:/app/storage/repair-evidence
     depends_on:
       db:
         condition: service_healthy
@@ -62,3 +64,5 @@ volumes:
     name: prosolutions_pilot_uploads
   pilot_proofs:
     name: prosolutions_pilot_proofs
+  pilot_evidence:
+    name: prosolutions_pilot_evidence

@@ -25,11 +25,13 @@ import {
   DollarSign,
   Send,
   Phone,
+  Pencil,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -55,6 +57,7 @@ interface User {
   email: string
   phone: string | null
   telegramId: string | null
+  jobTitle?: string | null
   role: "ADMIN" | "CUSTOMER" | "EMPLOYEE"
   customerType: "TECHNICIAN" | "STORE" | "NORMAL"
   status: "PENDING" | "APPROVED" | "REJECTED"
@@ -95,8 +98,18 @@ export default function UsersPage() {
     role: "CUSTOMER",
     customerType: "NORMAL",
     homeBranchId: "",
+    jobTitle: "",
+    quickPin: "",
   })
   const [branches, setBranches] = useState<Branch[]>([])
+
+  // Staff edit dialog (puesto + PIN rápido)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editUser, setEditUser] = useState<User | null>(null)
+  const [editJobTitle, setEditJobTitle] = useState("")
+  const [editPin, setEditPin] = useState("")
+  const [editPinClear, setEditPinClear] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
 
   // Credit management dialog
   const [creditOpen, setCreditOpen] = useState(false)
@@ -199,6 +212,12 @@ export default function UsersPage() {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (newUser.quickPin && !/^\d{4,6}$/.test(newUser.quickPin)) {
+      toast.error("El PIN rápido debe tener de 4 a 6 dígitos")
+      return
+    }
+
     setCreating(true)
 
     try {
@@ -220,6 +239,8 @@ export default function UsersPage() {
           role: "CUSTOMER",
           customerType: "NORMAL",
           homeBranchId: "",
+          jobTitle: "",
+          quickPin: "",
         })
         fetchUsers()
       } else {
@@ -230,6 +251,49 @@ export default function UsersPage() {
       toast.error("Error de conexión")
     } finally {
       setCreating(false)
+    }
+  }
+
+  const openEditDialog = (user: User) => {
+    setEditUser(user)
+    setEditJobTitle(user.jobTitle ?? "")
+    setEditPin("")
+    setEditPinClear(false)
+    setEditOpen(true)
+  }
+
+  const handleSaveStaff = async () => {
+    if (!editUser || editSaving) return
+    if (!editPinClear && editPin && !/^\d{4,6}$/.test(editPin)) {
+      toast.error("El PIN rápido debe tener de 4 a 6 dígitos")
+      return
+    }
+    setEditSaving(true)
+    try {
+      const payload: { jobTitle: string; quickPin?: string } = { jobTitle: editJobTitle.trim() }
+      if (editPinClear) {
+        payload.quickPin = "CLEAR"
+      } else if (editPin) {
+        payload.quickPin = editPin
+      }
+      const res = await fetch(`/api/users/${editUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const result = await res.json()
+      if (res.ok) {
+        toast.success("Datos del empleado actualizados")
+        setEditOpen(false)
+        setEditUser(null)
+        fetchUsers()
+      } else {
+        toast.error(result.error || "Error al actualizar")
+      }
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -443,6 +507,39 @@ export default function UsersPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+              {(newUser.role === "EMPLOYEE" || newUser.role === "ADMIN") && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="jobTitle">Puesto</Label>
+                    <Input
+                      id="jobTitle"
+                      list="puesto-sugerencias"
+                      maxLength={60}
+                      value={newUser.jobTitle}
+                      onChange={(e) => setNewUser({ ...newUser, jobTitle: e.target.value })}
+                      placeholder="Ej: Técnico"
+                    />
+                    <datalist id="puesto-sugerencias">
+                      <option value="Técnico" />
+                      <option value="Recepción" />
+                      <option value="Dueño" />
+                    </datalist>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="quickPin">PIN rápido (opcional)</Label>
+                    <Input
+                      id="quickPin"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={6}
+                      autoComplete="off"
+                      value={newUser.quickPin}
+                      onChange={(e) => setNewUser({ ...newUser, quickPin: e.target.value.replace(/\D/g, "") })}
+                      placeholder="4 a 6 dígitos"
+                    />
+                  </div>
                 </div>
               )}
               <DialogFooter>
@@ -695,6 +792,18 @@ export default function UsersPage() {
                               </SelectContent>
                             </Select>
                           )}
+                          {(user.role === "EMPLOYEE" || user.role === "ADMIN") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 gap-1"
+                              onClick={() => openEditDialog(user)}
+                              disabled={updating === user.id}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Editar
+                            </Button>
+                          )}
                         </>
                       )}
 
@@ -833,6 +942,74 @@ export default function UsersPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreditOpen(false)} disabled={abonoSaving}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Staff edit dialog: puesto + PIN rápido */}
+      <Dialog open={editOpen} onOpenChange={(open) => { if (editSaving) return; setEditOpen(open); if (!open) setEditUser(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar empleado</DialogTitle>
+          </DialogHeader>
+          {editUser && (
+            <div className="space-y-4 py-2">
+              <div className="p-3 bg-muted rounded-lg">
+                <p className="font-semibold">{editUser.name}</p>
+                <p className="text-xs text-muted-foreground">{editUser.email}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-jobTitle">Puesto</Label>
+                <Input
+                  id="edit-jobTitle"
+                  list="puesto-sugerencias-edit"
+                  maxLength={60}
+                  value={editJobTitle}
+                  disabled={editSaving}
+                  onChange={(e) => setEditJobTitle(e.target.value)}
+                  placeholder="Ej: Técnico"
+                />
+                <datalist id="puesto-sugerencias-edit">
+                  <option value="Técnico" />
+                  <option value="Recepción" />
+                  <option value="Dueño" />
+                </datalist>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-pin">PIN rápido</Label>
+                <Input
+                  id="edit-pin"
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  autoComplete="off"
+                  value={editPin}
+                  disabled={editPinClear || editSaving}
+                  onChange={(e) => setEditPin(e.target.value.replace(/\D/g, ""))}
+                  placeholder="4 a 6 dígitos"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Para el cambio rápido de usuario. Vacío = sin cambio.
+                </p>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={editPinClear}
+                    disabled={editSaving}
+                    onCheckedChange={(value) => setEditPinClear(value === true)}
+                  />
+                  Quitar PIN actual
+                </label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={editSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveStaff} disabled={editSaving}>
+              {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Guardar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

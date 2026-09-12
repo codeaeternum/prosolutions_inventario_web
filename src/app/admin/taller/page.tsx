@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, Trash2 } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { useSession } from "next-auth/react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { repairFolio, repairLabels, repairNextStages, type RepairStage } from "@/lib/workshop-labels"
 import { BusinessName } from "@/components/admin/business-name"
@@ -14,11 +15,13 @@ import { ShareRepairOrder } from "@/components/admin/taller/share-order"
 import { OrderHistory, type WorkshopEvent } from "@/components/admin/taller/order-history"
 import { PaymentsPanel, emptyPaymentForm, emptySettleForm, orderBalanceCents, type PaymentForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
 import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller/work-plan"
+import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
+import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { toast } from "sonner"
 
 type Branch = { id: string; name: string }
 type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?: string; assignedToId?: string; noteIsPublic?: boolean }
-type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
+type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; status: "REQUESTED" | "APPROVED" | "REJECTED"; createdById?: string; decisionNote?: string | null; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
 type Order = {
   id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string;
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;
@@ -29,6 +32,8 @@ type Order = {
   payments?: WorkshopPayment[];
   events?: WorkshopEvent[];
   parts?: OrderPart[];
+  uploadToken?: string;
+  photos?: { id: string; label: string | null; createdAt: string; uploadedBy?: { name: string } | null }[];
 }
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
@@ -59,7 +64,6 @@ const stageStyles: Record<RepairStage, { dot: string; badge: string }> = {
 const accessLabels: Record<string, string> = { NONE: "Sin bloqueo", PATTERN: "Patrón", PIN: "PIN", PASSWORD: "Contraseña" }
 const aestheticsLabels: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
 const conditionLabels: Record<string, string> = { ENCENDIDO: "Encendido", APAGADO: "Apagado", MOJADO: "Mojado", MANIPULADO: "Manipulado", ROTO: "Roto", INCOMPLETO: "Incompleto" }
-const emptyPartForm = { description: "", qty: "1", cost: "", price: "" }
 const isOverdue = (order: Order) => order.promisedAt !== null && new Date(order.promisedAt).getTime() < Date.now() && !terminalStages.includes(order.status)
 const isScheduledToday = (order: Order) => {
   if (!order.scheduledAt) return false
@@ -114,11 +118,14 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
 
 export default function WorkshopPage() {
   const router = useRouter()
+  const { data: session } = useSession()
+  const isAdmin = session?.user?.role === "ADMIN"
+  const currentUserId = session?.user?.id ?? null
   const [orders, setOrders] = useState<Order[]>([])
   const [board, setBoard] = useState<{ orders: Record<RepairStage, Order[]>; totals: Record<RepairStage, number> } | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
   const [staff, setStaff] = useState<Branch[]>([])
-  const [branch, setBranch] = useState("")
+  const [branch, setBranch] = useState(() => typeof window === "undefined" ? "" : localStorage.getItem("reficio-branch") ?? "")
   const [stage, setStage] = useState("")
   const [view, setView] = useState<BoardView>("board")
   const [search, setSearch] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("q")?.slice(0, 100) ?? "")
@@ -131,12 +138,10 @@ export default function WorkshopPage() {
   const [saving, setSaving] = useState(false)
   const [action, setAction] = useState("NOTE")
   const [drafts, setDrafts] = useState<Record<string, ActionDraft>>({})
-  const [partForm, setPartForm] = useState(emptyPartForm)
   const [paymentForm, setPaymentForm] = useState<PaymentForm>(emptyPaymentForm)
   const [settleForm, setSettleForm] = useState<SettleForm>(emptySettleForm)
   const [settleOpen, setSettleOpen] = useState(false)
   const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", location: "" })
-  const [partToRemove, setPartToRemove] = useState<OrderPart | null>(null)
   const [showAccess, setShowAccess] = useState(false)
   const [discardDialog, setDiscardDialog] = useState(false)
   const [opening, setOpening] = useState(false)
@@ -148,14 +153,10 @@ export default function WorkshopPage() {
   const draft = drafts[action] ?? {}
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
-  const partsCost = selectedParts.reduce((sum, part) => sum + part.unitCostCents * part.qty, 0)
-  const partsPrice = selectedParts.reduce((sum, part) => sum + part.unitPriceCents * part.qty, 0)
-  const partsMargin = partsPrice - partsCost
-  const partFormDirty = partForm.description !== "" || partForm.cost !== "" || partForm.price !== ""
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
   const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.receivedBy !== "")
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
-  const hasUnsavedChanges = partFormDirty || paymentFormDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
+  const hasUnsavedChanges = paymentFormDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
 
   useEffect(() => () => {
@@ -174,9 +175,9 @@ export default function WorkshopPage() {
     detailRequest.current?.abort()
     detailRequest.current = null
     setOpening(false); setSelected(null); setAction("NOTE")
-    setDrafts({}); setPartForm(emptyPartForm); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm)
+    setDrafts({}); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
-    setPartToRemove(null); setShowAccess(false); setDiscardDialog(false)
+    setShowAccess(false); setDiscardDialog(false)
   }
   const load = useCallback(async () => {
     const version = ++requestVersion.current
@@ -233,7 +234,7 @@ export default function WorkshopPage() {
         const available = ["NOTE", "ASSIGN", "TRANSFER", ...(repairNextStages[order.status].length ? ["STATUS"] : []), ...(["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) ? ["QUOTE"] : []), ...(order.status === "WAITING_APPROVAL" ? ["APPROVE"] : [])]
         if (!available.includes(action)) setAction("NOTE")
       }
-      setSelected(order); setPartForm(emptyPartForm); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm); setSettleOpen(false)
+      setSelected(order); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm); setSettleOpen(false)
       setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false)
     } catch {
       if (!controller.signal.aborted && version === detailVersion.current) toast.error("No se pudo abrir la orden. Intenta de nuevo.")
@@ -261,7 +262,7 @@ export default function WorkshopPage() {
       } else if (selected) {
         const quote = fields.quote === undefined ? undefined : Number(fields.quote)
         if (quote !== undefined && (!Number.isFinite(quote) || quote < 0 || Math.abs(quote * 100 - Math.round(quote * 100)) > 0.000001)) throw new Error("El presupuesto admite hasta dos decimales")
-        await post(`/api/workshop/${selected.id}`, { action: fields.action ?? action, expectedVersion: selected.version, detail: fields.detail, status: fields.status, branchId: fields.branchId, assignedToId: fields.assignedToId, quoteCents: quote === undefined ? undefined : Math.round(quote * 100), noteIsPublic: fields.noteIsPublic === "on" })
+        const result = await post(`/api/workshop/${selected.id}`, { action: fields.action ?? action, expectedVersion: selected.version, detail: fields.detail, status: fields.status, branchId: fields.branchId, assignedToId: fields.assignedToId, quoteCents: quote === undefined ? undefined : Math.round(quote * 100), noteIsPublic: fields.noteIsPublic === "on" })
         setDrafts(previous => {
           const next = { ...previous }
           delete next[action]
@@ -269,39 +270,20 @@ export default function WorkshopPage() {
           return next
         })
         form.reset(); await openOrder(selected.id, true); await load()
+        if (result?.notifyWhatsApp) toast.success("Orden lista", { action: { label: "Avisar por WhatsApp", onClick: () => window.open(result.notifyWhatsApp, "_blank", "noopener") }, duration: 10000 })
       }
       toast.success("Cambio guardado")
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
   }
-  async function submitPart(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function handlePartAction(payload: PartActionPayload) {
     if (inFlight.current || opening || !selected) return
-    const qty = Number(partForm.qty)
-    const cost = partForm.cost === "" ? 0 : Number(partForm.cost)
-    const price = partForm.price === "" ? 0 : Number(partForm.price)
     inFlight.current = true; setSaving(true)
     try {
-      if (!Number.isInteger(qty) || qty < 1 || qty > 999) throw new Error("La cantidad debe ser un entero entre 1 y 999")
-      for (const [label, value] of [["costo", cost], ["precio", price]] as const) {
-        if (!Number.isFinite(value) || value < 0 || Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) throw new Error(`El ${label} admite hasta dos decimales`)
-      }
-      await post(`/api/workshop/${selected.id}`, { action: "PART_ADD", expectedVersion: selected.version, partDescription: partForm.description.trim(), partQty: qty, partCostCents: Math.round(cost * 100), partPriceCents: Math.round(price * 100) })
-      setPartForm(emptyPartForm)
+      await post(`/api/workshop/${selected.id}`, payload)
       await openOrder(selected.id, true); await load()
-      toast.success("Refacción agregada")
-    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
-    finally { inFlight.current = false; setSaving(false) }
-  }
-  async function removePart(part: OrderPart) {
-    if (inFlight.current || !selected) return
-    inFlight.current = true; setSaving(true)
-    try {
-      await post(`/api/workshop/${selected.id}`, { action: "PART_REMOVE", expectedVersion: selected.version, partId: part.id })
-      setPartToRemove(null)
-      await openOrder(selected.id, true); await load()
-      toast.success("Refacción retirada")
-    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+      toast.success(payload.action === "PART_DECIDE" ? "Decisión registrada" : payload.action === "PART_REMOVE" ? "Refacción retirada" : "Refacción registrada")
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos."); throw cause }
     finally { inFlight.current = false; setSaving(false) }
   }
   async function submitPayment(event: React.FormEvent<HTMLFormElement>) {
@@ -379,19 +361,10 @@ export default function WorkshopPage() {
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
     </>}
     {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex justify-between"><h2 className="font-semibold">Equipo y recepción</h2><span className="text-sm text-primary">{repairLabels[selected.status]}</span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p><dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null]].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{selected.deviceAccessValue && <><button type="button" onClick={() => setShowAccess(value => !value)} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline">{showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{selected.deviceAccessValue}</code>}{showAccess && selected.deviceAccessType === "PATTERN" && <PatternDots value={selected.deviceAccessValue} />}</>}</dd></div></dl></section>
-      <section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex justify-between"><h2 className="font-semibold">Refacciones</h2><span className="text-sm text-muted-foreground">{selectedParts.length} registradas</span></div>
-        {selectedParts.length === 0 ? <p className="text-sm text-muted-foreground">Sin refacciones registradas.</p> : <ul className="space-y-2">{selectedParts.map(part => <li key={part.id} className="flex items-start justify-between gap-3 rounded-lg border p-3 text-sm">
-          <div><p className="font-medium">{part.qty} × {part.description}</p><p className="mt-1 text-xs text-muted-foreground">{part.product ? `${part.product.name}${part.product.barcode ? ` · ${part.product.barcode}` : ""} · ` : ""}{part.createdBy.name} · {date(part.createdAt)}</p></div>
-          <div className="shrink-0 text-right"><p>{money(part.unitPriceCents)} c/u{part.qty > 1 ? ` · ${money(part.unitPriceCents * part.qty)}` : ""}</p><p className="text-xs text-muted-foreground">Costo {money(part.unitCostCents)}</p>{!terminalStages.includes(selected.status) && <button type="button" disabled={saving || opening} onClick={() => setPartToRemove(part)} className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"><Trash2 size={12} />Quitar</button>}</div>
-        </li>)}</ul>}
-        {selectedParts.length > 0 && <dl className="flex flex-wrap gap-x-6 gap-y-2 border-t pt-3 text-sm"><div><dt className="text-xs text-muted-foreground">Costo total</dt><dd className="font-medium">{money(partsCost)}</dd></div><div><dt className="text-xs text-muted-foreground">Precio total</dt><dd className="font-medium">{money(partsPrice)}</dd></div><div><dt className="text-xs text-muted-foreground">Margen</dt><dd className={`font-medium ${partsMargin > 0 ? "text-emerald-600 dark:text-emerald-400" : partsMargin < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}>{money(partsMargin)}</dd></div></dl>}
-        {!terminalStages.includes(selected.status) && <form onSubmit={e => void submitPart(e)} className="space-y-3 rounded-lg border border-dashed p-3"><fieldset disabled={saving || opening} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_0.7fr_1fr_1fr]">
-          <label className="text-xs">Descripción *<Input required maxLength={200} value={partForm.description} onChange={e => setPartForm(previous => ({ ...previous, description: e.target.value }))} placeholder="Pantalla, batería, flex…" className="mt-1" /></label>
-          <label className="text-xs">Cantidad<Input type="number" min={1} max={999} step={1} required value={partForm.qty} onChange={e => setPartForm(previous => ({ ...previous, qty: e.target.value }))} className="mt-1" /></label>
-          <label className="text-xs">Costo unitario MXN<Input type="number" min={0} step="0.01" value={partForm.cost} onChange={e => setPartForm(previous => ({ ...previous, cost: e.target.value }))} placeholder="0.00" className="mt-1" /></label>
-          <label className="text-xs">Precio unitario MXN<Input type="number" min={0} step="0.01" value={partForm.price} onChange={e => setPartForm(previous => ({ ...previous, price: e.target.value }))} placeholder="0.00" className="mt-1" /></label>
-        </fieldset><Button size="sm" disabled={saving || opening || !partForm.description.trim()}>{saving ? "Guardando…" : "Agregar refacción"}</Button></form>}
-      </section>
+      <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
+        canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening}
+        readOnly={terminalStages.includes(selected.status)}
+        onAction={async payload => { await handlePartAction(payload) }} />
       <section className="space-y-3 rounded-xl border bg-card p-5"><h2 className="font-semibold">Diagnóstico y presupuesto</h2><p className="whitespace-pre-wrap text-sm">{selected.diagnosis || "Pendiente de diagnóstico"}</p><p className="text-2xl font-semibold">{selected.quoteCents === null ? "Sin cotizar" : money(selected.quoteCents)}</p><p className="text-sm text-muted-foreground">{selected.approvedQuoteCents === null ? "Sin autorización registrada" : `Autorizado: ${money(selected.approvedQuoteCents)}`}</p></section>
       <PaymentsPanel quoteCents={selected.quoteCents} approvedQuoteCents={selected.approvedQuoteCents} payments={selected.payments}
         canCharge={!terminalStages.includes(selected.status)} canDeliver={repairNextStages[selected.status].includes("DELIVERED")} disabled={saving || opening}
@@ -399,6 +372,8 @@ export default function WorkshopPage() {
         settleOpen={settleOpen} onSettleOpenChange={setSettleOpen} settleForm={settleForm} onSettleChange={setSettleForm} onSettleSubmit={e => void submitSettle(e)} />
       <WorkPlan scheduledAt={selected.scheduledAt} location={selected.location} editable={!terminalStages.includes(selected.status)} disabled={saving || opening}
         form={planForm} onChange={setPlanForm} onSubmit={e => void submitPlan(e)} />
+      <EvidenceSection order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
+        onChanged={() => void openOrder(selected.id, true)} />
       {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5"><h2 className="font-semibold">{selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}</h2><fieldset disabled={saving || opening} className="space-y-4">{selected.status === "DELIVERED" && <><input type="hidden" name="action" value="STATUS" /><input type="hidden" name="status" value="WARRANTY" /> </>}{selected.status !== "DELIVERED" && <label className="block text-sm">Acción<select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}><option value="NOTE">Agregar nota interna</option>{repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}{['DIAGNOSIS', 'WAITING_APPROVAL'].includes(selected.status) && <option value="QUOTE">Registrar diagnóstico y presupuesto</option>}{selected.status === 'WAITING_APPROVAL' && <option value="APPROVE">Registrar autorización del cliente</option>}<option value="ASSIGN">Asignar responsable</option><option value="TRANSFER">Registrar llegada a otra sucursal</option></select></label>}
       {selected.status !== "DELIVERED" && action === "STATUS" && <label className="block text-sm">Nueva etapa<select name="status" value={draft.status ?? repairNextStages[selected.status][0] ?? ""} onChange={e => updateDraft({ status: e.target.value })} className={`${inputClass} mt-2`}>{repairNextStages[selected.status].map(value => <option key={value} value={value}>{repairLabels[value]}</option>)}</select></label>}      {action === "QUOTE" && <label className="block text-sm">Importe total en MXN<Input name="quote" type="number" min={0} max={1000000} step="0.01" required value={draft.quote ?? (selected.quoteCents === null ? "" : String(selected.quoteCents / 100))} onChange={e => updateDraft({ quote: e.target.value })} /></label>}
       {action === "ASSIGN" && <label className="block text-sm">Responsable técnico<select name="assignedToId" required value={draft.assignedToId ?? ""} onChange={e => updateDraft({ assignedToId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona una persona</option>{staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>}
@@ -409,12 +384,6 @@ export default function WorkshopPage() {
       <AlertDialogContent>
         <AlertDialogHeader><AlertDialogTitle>¿Descartar los cambios sin guardar?</AlertDialogTitle><AlertDialogDescription>Los borradores de acciones y de refacciones que no guardaste se perderán al volver a la lista.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel>Seguir editando</AlertDialogCancel><AlertDialogAction onClick={backToOrders}>Descartar y volver</AlertDialogAction></AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-    <AlertDialog open={partToRemove !== null} onOpenChange={open => { if (!open) setPartToRemove(null) }}>
-      <AlertDialogContent>
-        <AlertDialogHeader><AlertDialogTitle>¿Retirar la refacción?</AlertDialogTitle><AlertDialogDescription>Se quitará “{partToRemove?.description}” de la orden y el retiro quedará asentado en el historial.</AlertDialogDescription></AlertDialogHeader>
-        <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction disabled={saving} onClick={() => { if (partToRemove) void removePart(partToRemove) }}>Retirar</AlertDialogAction></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   </div>

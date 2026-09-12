@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import bcrypt from "bcryptjs"
 
 export async function PATCH(
   req: Request,
@@ -13,7 +14,28 @@ export async function PATCH(
 
     const { id } = await params
     const body = await req.json()
-    const { status, customerType, role, homeBranchId } = body
+    const { status, customerType, role, homeBranchId, jobTitle, quickPin } = body
+
+    // Puesto del staff: string de hasta 60 caracteres; vacío/null lo limpia.
+    let jobTitleUpdate: string | null | undefined
+    if (jobTitle !== undefined) {
+      const clean = typeof jobTitle === "string" ? jobTitle.trim() : ""
+      if (clean.length > 60) {
+        return NextResponse.json({ error: "El puesto no puede exceder 60 caracteres" }, { status: 400 })
+      }
+      jobTitleUpdate = clean || null
+    }
+
+    // PIN rápido: "" o null -> conservar; "CLEAR" -> quitar; 4-6 dígitos -> reemplazar.
+    let quickPinUpdate: string | null | undefined
+    if (quickPin === "CLEAR") {
+      quickPinUpdate = null
+    } else if (typeof quickPin === "string" && quickPin !== "") {
+      if (!/^\d{4,6}$/.test(quickPin)) {
+        return NextResponse.json({ error: "El PIN rápido debe tener de 4 a 6 dígitos" }, { status: 400 })
+      }
+      quickPinUpdate = await bcrypt.hash(quickPin, 12)
+    }
 
     if (homeBranchId) {
       const branch = await prisma.branch.findUnique({ where: { id: homeBranchId } })
@@ -45,6 +67,8 @@ export async function PATCH(
         ...(customerType && { customerType }),
         ...(role && { role }),
         ...(homeBranchId !== undefined && { homeBranchId: homeBranchId || null }),
+        ...(jobTitleUpdate !== undefined && { jobTitle: jobTitleUpdate }),
+        ...(quickPinUpdate !== undefined && { quickPin: quickPinUpdate }),
       },
       select: {
         id: true,
@@ -53,6 +77,7 @@ export async function PATCH(
         status: true,
         customerType: true,
         role: true,
+        jobTitle: true,
         homeBranchId: true,
       },
     })

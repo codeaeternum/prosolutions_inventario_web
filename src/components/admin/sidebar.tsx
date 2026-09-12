@@ -93,16 +93,17 @@ interface AdminSidebarProps {
   user: {
     role: "ADMIN" | "EMPLOYEE" | "CUSTOMER"
   }
+  collapsed?: boolean
 }
 
-export function AdminSidebar({ user }: AdminSidebarProps) {
+export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const filteredNavigation = navigationGroups.filter(group => {
-    // Hide "Administración" and "Taller" if user is EMPLOYEE
+    // Hide "Administración" if user is EMPLOYEE (los empleados sí usan el taller)
     if (user.role === "EMPLOYEE") {
-      return group.name !== "Administración" && group.name !== "Taller"
+      return group.name !== "Administración"
     }
     return true
   })
@@ -227,25 +228,36 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-64 lg:flex-col">
-        <div className="flex grow flex-col gap-y-5 overflow-y-auto border-r bg-card px-6">
-          <div className="flex h-16 shrink-0 items-center gap-2 border-b">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+      <div
+        className={cn(
+          "hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:flex-col transition-all duration-300",
+          collapsed ? "lg:w-20" : "lg:w-64"
+        )}
+      >
+        <div className={cn("flex grow flex-col gap-y-5 overflow-y-auto border-r bg-card", collapsed ? "px-3" : "px-6")}>
+          <div className={cn("flex h-16 shrink-0 items-center gap-2 border-b", collapsed && "justify-center")}>
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <Wrench className="h-5 w-5" />
             </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-lg leading-tight">Reficio</span>
-              <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
-            </div>
+            {!collapsed && (
+              <div className="flex flex-col min-w-0">
+                <span className="font-bold text-lg leading-tight">Reficio</span>
+                <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
+              </div>
+            )}
           </div>
           <nav className="flex flex-1 flex-col">
             <ul role="list" className="flex flex-1 flex-col gap-y-7 pt-4">
-              {filteredNavigation.map((group) => (
+              {filteredNavigation.map((group, groupIndex) => (
                 <li key={group.name}>
-                  <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2">
-                    {group.name}
-                  </div>
-                  <ul role="list" className="-mx-2 space-y-1">
+                  {collapsed ? (
+                    groupIndex > 0 && <div className="border-t border-border mb-3 -mx-1" aria-hidden="true" />
+                  ) : (
+                    <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2">
+                      {group.name}
+                    </div>
+                  )}
+                  <ul role="list" className={cn("space-y-1", collapsed ? "" : "-mx-2")}>
                     {group.items.map((item) => {
                       const isActive = pathname === item.href ||
                         (item.href !== "/admin" && pathname.startsWith(item.href))
@@ -253,11 +265,13 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
                         <li key={item.name}>
                           <Link
                             href={item.href}
+                            title={collapsed ? item.name : undefined}
                             className={cn(
                               isActive
                                 ? "bg-primary/10 text-primary"
                                 : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                              "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150"
+                              "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150",
+                              collapsed && "justify-center px-0"
                             )}
                           >
                             <item.icon
@@ -267,7 +281,8 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
                               )}
                               aria-hidden="true"
                             />
-                            {item.name}
+                            {!collapsed && item.name}
+                            {collapsed && <span className="sr-only">{item.name}</span>}
                           </Link>
                         </li>
                       )

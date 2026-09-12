@@ -45,6 +45,7 @@ next-env.d.ts
 
 # datos de ejecución y respaldos (no versionar)
 /storage/
+/data/
 /backups/
 /backup/
 /public/uploads/

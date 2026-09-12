@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { createRepair } from "@/lib/domain/workshop"
 import { businessFailure } from "@/lib/domain/http"
@@ -10,7 +10,7 @@ import { repairLabels } from "@/lib/workshop-labels"
 // Internal pilot. Open staff access only after branch/technician permissions are implemented.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     const query = new URL(req.url).searchParams
     const page = Math.max(1, Math.min(1000, Number(query.get("page")) || 1))
@@ -45,7 +45,7 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     const actorId = getSession(auth)!.user.id
     const body = await req.json()

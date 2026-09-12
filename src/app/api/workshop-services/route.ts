@@ -8,7 +8,8 @@ import { operation, operationKeySchema } from "@/lib/domain/operations"
 const createSchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(300).optional(),
-  priceCents: z.number().int().min(0).max(100000000),
+  // null/omitido = el precio depende del dispositivo; se cotiza al recibir.
+  priceCents: z.number().int().min(0).max(100000000).nullable().optional(),
   equipmentType: z.string().trim().max(80).optional(),
   idempotencyKey: operationKeySchema,
 })
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
         data: {
           name: input.name,
           description: input.description || null,
-          priceCents: input.priceCents,
+          priceCents: input.priceCents ?? null,
           equipmentType: input.equipmentType || null,
         },
       })

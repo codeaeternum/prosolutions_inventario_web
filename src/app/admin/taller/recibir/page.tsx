@@ -1,14 +1,15 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, Zap, type LucideIcon } from "lucide-react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { BusinessName } from "@/components/admin/business-name"
 import { IntakeStepper } from "@/components/admin/taller/intake-stepper"
 import { PatternPad } from "@/components/admin/taller/pattern-pad"
+import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { repairFolio } from "@/lib/workshop-labels"
 
@@ -22,6 +23,7 @@ type AdvanceMethod = "CASH" | "CARD" | "TRANSFER"
 type CreatedOrder = { id: string; number: number; customerName: string }
 type LookupField = "customerName" | "customerPhone"
 type WorkshopService = { id: string; name: string; description: string | null; priceCents: number | null; equipmentType: string | null }
+type DeviceModel = { id: string; brand: string; model: string; code: string | null; type: string }
 
 const STEPS = ["Cliente", "Equipo", "Acceso y estado", "Entrega y cobro", "Resumen"]
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
@@ -51,7 +53,12 @@ const ADVANCE_METHODS: { value: AdvanceMethod; label: string; icon: LucideIcon }
   { value: "CARD", label: "Tarjeta", icon: CreditCard },
   { value: "TRANSFER", label: "Transferencia", icon: ArrowLeftRight },
 ]
-const BRANDS = ["Samsung", "Apple", "Xiaomi", "Motorola", "LG", "Sony", "HP", "Lenovo", "Dell", "Huawei", "Nintendo", "Otra"]
+const EQUIPMENT_COLORS: { label: string; hex: string }[] = [
+  { label: "Negro", hex: "#1c1c1e" }, { label: "Blanco", hex: "#f5f5f4" }, { label: "Azul", hex: "#2563eb" },
+  { label: "Rojo", hex: "#dc2626" }, { label: "Rosa", hex: "#ec4899" }, { label: "Dorado", hex: "#c9a227" },
+  { label: "Plata", hex: "#c0c0c0" }, { label: "Gris", hex: "#6b7280" }, { label: "Verde", hex: "#16a34a" },
+  { label: "Morado", hex: "#9333ea" }, { label: "Naranja", hex: "#ea580c" }, { label: "Amarillo", hex: "#eab308" },
+]
 const ACCESS_OPTIONS: { value: AccessType; label: string; icon: LucideIcon }[] = [
   { value: "NONE", label: "Sin bloqueo", icon: LockOpen },
   { value: "PATTERN", label: "Patrón", icon: Grid3x3 },
@@ -62,8 +69,8 @@ const ACCESSORY_OPTIONS = ["Cargador", "Cable", "Funda", "Mica", "SIM", "MicroSD
 
 const emptyForm = {
   customerName: "", customerPhone: "", intakeBranchId: "", assignedToId: "",
-  equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", serialNumber: "",
-  serviceName: "", servicePriceCents: null as number | null, otherService: "",
+  equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", equipmentColorCustom: false, serialNumber: "",
+  serviceName: "", servicePriceCents: null as number | null, otherService: "", budgetAmount: "", signatureData: "",
   accessType: "NONE" as AccessType, pattern: [] as number[], accessValue: "",
   accessories: [] as string[], accessoryOther: "",
   functionalConditions: [] as FunctionalCondition[], aesthetics: "" as Aesthetics | "",
@@ -130,12 +137,29 @@ export default function ReceiveEquipmentPage() {
   const [serviceSearching, setServiceSearching] = useState(false)
   const [serviceSearched, setServiceSearched] = useState("")
   const [serviceCatalogDown, setServiceCatalogDown] = useState(false)
+  const [brandTerm, setBrandTerm] = useState("")
+  const [brandHits, setBrandHits] = useState<DeviceModel[]>([])
+  const [brandSearching, setBrandSearching] = useState(false)
+  const [modelTerm, setModelTerm] = useState("")
+  const [modelHits, setModelHits] = useState<DeviceModel[]>([])
+  const [modelSearching, setModelSearching] = useState(false)
+  const [pickedModel, setPickedModel] = useState<DeviceModel | null>(null)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const searchVersion = useRef(0)
   const serviceVersion = useRef(0)
+  const brandVersion = useRef(0)
+  const modelVersion = useRef(0)
 
   const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setForm(previous => ({ ...previous, ...changes })) }
+
+  // SignaturePad emite onChange tras cada render si el handler cambia; el handler
+  // memoizado + el bail-out por valor evitan un ciclo de render infinito.
+  const handleSignature = useCallback((dataUrl: string | null) => {
+    const next = dataUrl ?? ""
+    setDirty(true)
+    setForm(previous => previous.signatureData === next ? previous : { ...previous, signatureData: next })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -180,6 +204,57 @@ export default function ReceiveEquipmentPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [serviceQuery])
+
+  useEffect(() => {
+    const term = brandTerm.trim()
+    if (term.length < 1) {
+      brandVersion.current += 1
+      const timer = setTimeout(() => { setBrandHits([]); setBrandSearching(false) }, 0)
+      return () => clearTimeout(timer)
+    }
+    const timer = setTimeout(async () => {
+      const version = ++brandVersion.current
+      setBrandSearching(true)
+      try {
+        const response = await fetch(`/api/device-models?q=${encodeURIComponent(term)}`)
+        const data = await response.json().catch(() => ({}))
+        if (version !== brandVersion.current) return
+        setBrandHits(response.ok ? data.models ?? [] : [])
+      } catch {
+        if (version === brandVersion.current) setBrandHits([])
+      } finally {
+        if (version === brandVersion.current) setBrandSearching(false)
+      }
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [brandTerm])
+
+  useEffect(() => {
+    const term = modelTerm.trim()
+    if (term.length < 1) {
+      modelVersion.current += 1
+      const timer = setTimeout(() => { setModelHits([]); setModelSearching(false) }, 0)
+      return () => clearTimeout(timer)
+    }
+    const brand = form.brand.trim()
+    const timer = setTimeout(async () => {
+      const version = ++modelVersion.current
+      setModelSearching(true)
+      try {
+        const params = new URLSearchParams({ q: term })
+        if (brand) params.set("brand", brand)
+        const response = await fetch(`/api/device-models?${params}`)
+        const data = await response.json().catch(() => ({}))
+        if (version !== modelVersion.current) return
+        setModelHits(response.ok ? data.models ?? [] : [])
+      } catch {
+        if (version === modelVersion.current) setModelHits([])
+      } finally {
+        if (version === modelVersion.current) setModelSearching(false)
+      }
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [modelTerm, form.brand])
 
   useEffect(() => {
     if (!dirty || created) return
@@ -231,15 +306,33 @@ export default function ReceiveEquipmentPage() {
 
   const pickService = (service: WorkshopService) => {
     serviceVersion.current += 1
-    const current = form.reportedIssue.trim()
     update({
       serviceName: service.name,
       servicePriceCents: typeof service.priceCents === "number" ? service.priceCents : null,
-      reportedIssue: current ? `${service.name} · ${current}` : service.name,
+      // Con precio fijo se propone como presupuesto; sin precio el campo queda editable y sin autollenar.
+      ...(typeof service.priceCents === "number" ? { budgetAmount: (service.priceCents / 100).toFixed(2) } : {}),
     })
     setServiceQuery("")
     setServiceResults([])
     setServiceSearched("")
+  }
+
+  const clearService = () => update({ serviceName: "", servicePriceCents: null })
+
+  const pickBrand = (brand: string) => {
+    brandVersion.current += 1
+    update({ brand })
+    setBrandTerm("")
+    setBrandHits([])
+  }
+
+  const pickDeviceModel = (device: DeviceModel) => {
+    modelVersion.current += 1
+    // Se guarda el nombre del modelo; el código (SM-XXXX) queda como referencia visible.
+    update({ brand: device.brand, model: device.model })
+    setModelTerm("")
+    setModelHits([])
+    setPickedModel(device)
   }
 
   const toggleCondition = (value: FunctionalCondition) => {
@@ -256,6 +349,8 @@ export default function ReceiveEquipmentPage() {
     if (index === 1) {
       if (!form.equipmentType) return "Selecciona el tipo de equipo."
       if (form.equipmentType === "Otro" && !form.equipmentTypeOther.trim()) return "Describe qué tipo de equipo es."
+      const budget = Number.parseFloat(form.budgetAmount)
+      if (form.budgetAmount.trim() && (!Number.isFinite(budget) || budget < 0 || budget > 1000000)) return "Revisa el presupuesto estimado: debe ser un importe positivo."
     }
     if (index === 2) {
       if (form.accessType === "PATTERN" && form.pattern.length < 4) return "Dibuja el patrón con al menos 4 puntos, o elige otro tipo de bloqueo."
@@ -290,10 +385,13 @@ export default function ReceiveEquipmentPage() {
 
   const accessoryText = form.accessories.map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item).join(" · ")
   const equipmentLabel = form.equipmentType === "Otro" ? form.equipmentTypeOther.trim() : form.equipmentType
-  const reportedIssueText = [form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
+  const reportedIssueText = [form.serviceName, form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
   const advanceAmountNumber = Number.parseFloat(form.advanceAmount)
   const advanceCents = form.advanceEnabled && Number.isFinite(advanceAmountNumber) ? Math.round(advanceAmountNumber * 100) : 0
   const advanceMethodLabel = ADVANCE_METHODS.find(method => method.value === form.advanceMethod)?.label ?? ""
+  const budgetNumber = Number.parseFloat(form.budgetAmount)
+  const budgetCents = form.budgetAmount.trim() !== "" && Number.isFinite(budgetNumber) && budgetNumber >= 0 ? Math.round(budgetNumber * 100) : 0
+  const budgetLabel = budgetCents > 0 ? money(budgetCents) : ""
 
   function buildPayload() {
     const accessValue = form.accessType === "PATTERN" ? form.pattern.join("-") : form.accessType === "NONE" ? "" : form.accessValue.trim()
@@ -311,7 +409,8 @@ export default function ReceiveEquipmentPage() {
       deviceAccessValue: accessValue,
       accessories: accessoryText,
       intakeCondition: form.intakeCondition.trim(),
-      reportedIssue: reportedIssueText,
+      reportedIssue: [reportedIssueText, budgetLabel ? `Presupuesto estimado: ${budgetLabel}` : ""].filter(Boolean).join(" · "),
+      signatureData: form.signatureData,
       functionalConditions: form.functionalConditions.length ? form.functionalConditions : "",
       aesthetics: form.aesthetics,
       location: form.location.trim(),
@@ -356,6 +455,11 @@ export default function ReceiveEquipmentPage() {
     setServiceResults([])
     setServiceSearched("")
     setServiceCatalogDown(false)
+    setBrandTerm("")
+    setBrandHits([])
+    setModelTerm("")
+    setModelHits([])
+    setPickedModel(null)
     operationKey.current = null
   }
 
@@ -368,6 +472,7 @@ export default function ReceiveEquipmentPage() {
   const scheduledLabel = form.scheduledAt && !Number.isNaN(Date.parse(form.scheduledAt)) ? new Date(form.scheduledAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }) : ""
   const aestheticsLabel = AESTHETIC_OPTIONS.find(option => option.value === form.aesthetics)?.label ?? ""
   const serviceSummary = [form.serviceName, form.otherService.trim()].filter(Boolean).join(" · ")
+  const brandOptions = [...new Set(brandHits.map(hit => hit.brand))].slice(0, 8)
   const advanceLabel = advanceCents > 0 ? `${money(advanceCents)} · ${advanceMethodLabel}` : ""
   const toLocalInputValue = (date: Date) => { const copy = new Date(date); copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset()); return copy.toISOString().slice(0, 16) }
   const startOfToday = new Date()
@@ -478,45 +583,96 @@ export default function ReceiveEquipmentPage() {
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div className="space-y-2">
                       <p className="text-sm">Servicio del catálogo</p>
-                      <div className="relative">
-                        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                        <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder="Buscar: cambio de pantalla, batería…" className="pl-9" />
-                        {serviceResults.length > 0 && (
-                          <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
-                            {serviceResults.map(service => (
-                              <li key={service.id}>
-                                <button type="button" onClick={() => pickService(service)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
-                                  <span className="flex items-center justify-between gap-3">
-                                    <span className="font-medium">{service.name}</span>
-                                    {typeof service.priceCents === "number" && <span className="shrink-0 text-xs text-muted-foreground">{money(service.priceCents)}</span>}
-                                  </span>
-                                  {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                      {serviceSearching && <p className="text-xs text-muted-foreground">Buscando servicios…</p>}
-                      {!serviceSearching && serviceCatalogDown && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Catálogo no disponible; usa el campo Otro servicio.</p>}
-                      {!serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
-                      {form.servicePriceCents !== null && <p className="text-xs font-medium text-primary">Precio sugerido: {money(form.servicePriceCents)}</p>}
+                      {form.serviceName ? (
+                        <p className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
+                          <Wrench size={14} aria-hidden />
+                          <span className="truncate">{form.serviceName}</span>
+                          <span className="text-xs font-normal text-primary/80">{form.servicePriceCents !== null ? money(form.servicePriceCents) : "Precio según dispositivo"}</span>
+                          <button type="button" aria-label={`Quitar ${form.serviceName}`} onClick={clearService} className="rounded-full p-0.5 transition hover:bg-primary/15">
+                            <X size={13} />
+                          </button>
+                        </p>
+                      ) : (
+                        <div className="relative">
+                          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                          <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder="Buscar: cambio de pantalla, batería…" className="pl-9" />
+                          {serviceResults.length > 0 && (
+                            <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
+                              {serviceResults.map(service => (
+                                <li key={service.id}>
+                                  <button type="button" onClick={() => pickService(service)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
+                                    <span className="flex items-center justify-between gap-3">
+                                      <span className="font-medium">{service.name}</span>
+                                      <span className="shrink-0 text-xs text-muted-foreground">{typeof service.priceCents === "number" ? money(service.priceCents) : "Precio según dispositivo"}</span>
+                                    </span>
+                                    {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                      {!form.serviceName && serviceSearching && <p className="text-xs text-muted-foreground">Buscando servicios…</p>}
+                      {!form.serviceName && !serviceSearching && serviceCatalogDown && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Catálogo no disponible; usa el campo Otro servicio.</p>}
+                      {!form.serviceName && !serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
                     </div>
                     <label className="block space-y-2 text-sm">Otro servicio
                       <Input value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio que no está en el catálogo" />
                     </label>
+                    <label className="block space-y-2 text-sm">Presupuesto estimado (MXN)
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                        <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.budgetAmount} onChange={event => update({ budgetAmount: event.target.value })} placeholder="Según diagnóstico" className="pl-7" />
+                      </div>
+                      <span className="block text-xs text-muted-foreground">Se propone al elegir un servicio con precio fijo; puedes ajustarlo o dejarlo vacío.</span>
+                    </label>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
-                    <label className="block space-y-2 text-sm">Marca
-                      <Input list="equipment-brands" value={form.brand} onChange={event => update({ brand: event.target.value })} maxLength={100} placeholder="Samsung, Apple, Xiaomi…" />
-                      <datalist id="equipment-brands">{BRANDS.map(brand => <option key={brand} value={brand} />)}</datalist>
+                    <label className="relative block space-y-2 text-sm">Marca
+                      <Input value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
+                      {brandOptions.length > 0 && (
+                        <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
+                          {brandOptions.map(option => (
+                            <li key={option}>
+                              <button type="button" onMouseDown={event => { event.preventDefault(); pickBrand(option) }} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">{option}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {brandSearching && <span className="block text-xs text-muted-foreground">Buscando marcas…</span>}
                     </label>
-                    <label className="block space-y-2 text-sm">Modelo
-                      <Input value={form.model} onChange={event => update({ model: event.target.value })} maxLength={100} placeholder="Ej. Galaxy A54, iPhone 13…" />
+                    <label className="relative block space-y-2 text-sm">Modelo
+                      <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
+                      {modelHits.length > 0 && (
+                        <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
+                          {modelHits.map(device => (
+                            <li key={device.id}>
+                              <button type="button" onMouseDown={event => { event.preventDefault(); pickDeviceModel(device) }} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
+                                <span className="block font-medium">{device.model}{device.code ? ` · ${device.code}` : ""}</span>
+                                <span className="block text-xs text-muted-foreground">{device.brand}{device.type ? ` · ${device.type}` : ""}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {modelSearching && <span className="block text-xs text-muted-foreground">Buscando modelos…</span>}
+                      {pickedModel?.code && pickedModel.model === form.model && <span className="block text-xs text-muted-foreground">Código de referencia: {pickedModel.code}</span>}
                     </label>
-                    <label className="block space-y-2 text-sm">Color
-                      <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} placeholder="Ej. negro, azul marino…" />
-                    </label>
+                    <div className="space-y-2 sm:col-span-2">
+                      <p className="text-sm">Color</p>
+                      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Color del equipo">
+                        {EQUIPMENT_COLORS.map(({ label, hex }) => (
+                          <button key={label} type="button" role="radio" aria-checked={!form.equipmentColorCustom && form.equipmentColor === label} onClick={() => update({ equipmentColor: label, equipmentColorCustom: false })} className={chipClass(!form.equipmentColorCustom && form.equipmentColor === label)}>
+                            <span aria-hidden className="h-3 w-3 rounded-full border border-black/25" style={{ backgroundColor: hex }} />{label}
+                          </button>
+                        ))}
+                        <button type="button" role="radio" aria-checked={form.equipmentColorCustom} onClick={() => update({ equipmentColorCustom: true, equipmentColor: "" })} className={chipClass(form.equipmentColorCustom)}>Otro</button>
+                      </div>
+                      {form.equipmentColorCustom && (
+                        <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
+                      )}
+                    </div>
                     <label className="block space-y-2 text-sm">Serie o IMEI
                       <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={100} placeholder="15 dígitos para celulares" />
                     </label>
@@ -590,6 +746,9 @@ export default function ReceiveEquipmentPage() {
                     <label className="block space-y-2 text-sm">Falla que reporta el cliente *
                       <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
                     </label>
+                  </div>
+                  <div className="rounded-lg border p-4">
+                    <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
                   </div>
                 </div>
               )}
@@ -679,7 +838,9 @@ export default function ReceiveEquipmentPage() {
                       ["Fecha promesa", promisedLabel],
                       ["Reparación programada", scheduledLabel],
                       ["Locación", form.location.trim()],
+                      ["Presupuesto estimado", budgetLabel],
                       ["Anticipo", advanceLabel],
+                      ["Firma capturada", form.signatureData ? <img src={form.signatureData} alt="Firma capturada del cliente" className="h-16 rounded border bg-white object-contain" /> : ""],
                     ]} />
                   </div>
                 </div>

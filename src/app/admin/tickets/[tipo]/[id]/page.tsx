@@ -205,6 +205,10 @@ export default async function TicketPage({
         balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
         qrCode: `${base}/seguimiento?folio=${folio}`,
         trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
+        // Firma capturada en recepción (PNG base64) y QR para que el técnico
+        // suba evidencias desde su celular sin login.
+        signatureData: order.signatureData ?? undefined,
+        evidenceUrl: `${base}/evidencia/${order.uploadToken}`,
       }
     }
   }

@@ -22,6 +22,11 @@ export interface RepairTicketData {
   balance?: number
   qrCode?: string
   trackingHint?: string
+  // URL pública /evidencia/<uploadToken> — el técnico la escanea para subir
+  // fotos del equipo desde su celular sin login.
+  evidenceUrl?: string
+  // Firma del cliente capturada en recepción (PNG base64 data URL).
+  signatureData?: string
   businessName?: string
   subtitle?: string
   footer?: string
@@ -32,6 +37,7 @@ const CONDITIONS =
 
 export function RepairTicketView({ data }: { data: RepairTicketData }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [evidenceQrDataUrl, setEvidenceQrDataUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (data.qrCode) {
@@ -39,7 +45,12 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
         .then(url => setQrDataUrl(url))
         .catch(() => {})
     }
-  }, [data.qrCode])
+    if (data.evidenceUrl) {
+      QRCode.toDataURL(data.evidenceUrl, { width: 110, margin: 1 })
+        .then(url => setEvidenceQrDataUrl(url))
+        .catch(() => {})
+    }
+  }, [data.qrCode, data.evidenceUrl])
 
   return (
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
@@ -125,10 +136,31 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
           </div>
         )}
 
+        {/* QR de evidencias: lo usa el técnico para subir fotos del equipo */}
+        {evidenceQrDataUrl && (
+          <div className="text-center mb-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={evidenceQrDataUrl} alt="QR para subir fotos del equipo" className="w-20 h-20 mx-auto" />
+            <p className="text-[10px] text-gray-600 mt-1 leading-snug">Subir fotos del equipo</p>
+          </div>
+        )}
+
         {/* Firmas */}
-        <div className="grid grid-cols-2 gap-6 mt-10 mb-4 text-center text-[10px]">
+        <div className="grid grid-cols-2 gap-6 mt-14 mb-4 text-center text-[10px]">
           <div className="border-t border-gray-400 pt-1">Recibió</div>
-          <div className="border-t border-gray-400 pt-1">Cliente</div>
+          <div className="relative border-t border-gray-400 pt-1">
+            {data.signatureData && (
+              // El trazo del canvas es claro (#e4e4e7): brightness(0) lo imprime negro.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={data.signatureData}
+                alt="Firma del cliente"
+                style={{ filter: "brightness(0)" }}
+                className="pointer-events-none absolute bottom-full left-1/2 mb-0.5 h-14 w-auto max-w-[95%] -translate-x-1/2 object-contain"
+              />
+            )}
+            Cliente
+          </div>
         </div>
 
         {/* Condiciones */}
