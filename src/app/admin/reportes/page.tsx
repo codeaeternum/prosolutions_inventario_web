@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label"
 import {
   BarChart3,
   TrendingUp,
-  TrendingDown,
   Package,
   Users,
   DollarSign,
@@ -20,7 +19,18 @@ import {
   Calendar,
   Loader2,
   RefreshCw,
+  Store,
+  Wrench,
 } from "lucide-react"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { EmptyState } from "@/components/admin/empty-state"
 import { formatDate } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
 
@@ -83,6 +93,52 @@ interface ReportStats {
   }>
 }
 
+// Respuesta de /api/reports/marketplace-demand — todos los números los
+// calcula el servidor.
+interface MarketplaceDemandReport {
+  generatedAt: string
+  summary: {
+    totalRequests: number
+    pending: number
+    approved: number
+    rejected: number
+    fulfilled: number
+    distinctTalleres: number
+    unmetProducts: number
+    unmetQty: number
+  }
+  topProducts: Array<{
+    productId: string
+    name: string
+    category: string | null
+    stock: number
+    minStock: number
+    wholesalePrice: number | null
+    totalQty: number
+    requestCount: number
+    tallerCount: number
+    unmetQty: number
+    estimatedValue: number | null
+  }>
+  byTaller: Array<{
+    tallerName: string
+    requestCount: number
+    totalQty: number
+    pending: number
+    approved: number
+    rejected: number
+    fulfilled: number
+    estimatedTotal: number
+    purchasesCount: number
+    purchasesTotal: number
+  }>
+  weekly: Array<{
+    weekStart: string
+    requests: number
+    qty: number
+  }>
+}
+
 export default function ReportsPage() {
   const { formatPrice } = useCurrency()
   const [stats, setStats] = useState<ReportStats | null>(null)
@@ -90,6 +146,9 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null)
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
+  const [demand, setDemand] = useState<MarketplaceDemandReport | null>(null)
+  const [demandLoading, setDemandLoading] = useState(true)
+  const [demandError, setDemandError] = useState<string | null>(null)
 
   const fetchStats = async () => {
     try {
@@ -111,8 +170,27 @@ export default function ReportsPage() {
     }
   }
 
+  // Demanda del marketplace: fetch independiente para que un fallo aquí
+  // no tumbe el reporte general.
+  const fetchDemand = async () => {
+    try {
+      setDemandLoading(true)
+      setDemandError(null)
+      const response = await fetch("/api/reports/marketplace-demand")
+      if (!response.ok) throw new Error("Error al cargar demanda")
+      setDemand(await response.json())
+    } catch {
+      setDemandError("No se pudo cargar la demanda del mercado")
+    } finally {
+      setDemandLoading(false)
+    }
+  }
+
   useEffect(() => {
-    fetchStats()
+    queueMicrotask(() => {
+      void fetchStats()
+      void fetchDemand()
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -171,6 +249,10 @@ export default function ReportsPage() {
       </div>
     )
   }
+
+  const maxWeekQty = demand
+    ? Math.max(1, ...demand.weekly.map((w) => w.qty))
+    : 1
 
   return (
     <div className="space-y-6">
@@ -556,6 +638,271 @@ export default function ReportsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Demanda del Mercado — qué refacciones piden los talleres aliados */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Store className="h-5 w-5" />
+            Demanda del Mercado
+          </CardTitle>
+          <CardDescription>
+            Refacciones que solicitan los talleres aliados en el marketplace
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {demandLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : demandError || !demand ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-8">
+              <p className="text-sm text-destructive">
+                {demandError || "Error desconocido"}
+              </p>
+              <Button onClick={fetchDemand} variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Reintentar
+              </Button>
+            </div>
+          ) : demand.summary.totalRequests === 0 ? (
+            <EmptyState
+              icon={Store}
+              title="Aún no hay solicitudes de talleres aliados"
+              description="Cuando un taller pida refacciones del marketplace, la demanda aparecerá aquí."
+            />
+          ) : (
+            <div className="space-y-6">
+              {/* Resumen */}
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">
+                  {demand.summary.totalRequests} solicitudes
+                </Badge>
+                <Badge variant="secondary">
+                  {demand.summary.distinctTalleres}{" "}
+                  {demand.summary.distinctTalleres === 1 ? "taller" : "talleres"}
+                </Badge>
+                {demand.summary.pending > 0 && (
+                  <Badge variant="warning">
+                    {demand.summary.pending} pendientes
+                  </Badge>
+                )}
+                {demand.summary.unmetQty > 0 && (
+                  <Badge variant="destructive">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    {demand.summary.unmetQty} pzs sin stock suficiente (
+                    {demand.summary.unmetProducts}{" "}
+                    {demand.summary.unmetProducts === 1 ? "producto" : "productos"})
+                  </Badge>
+                )}
+              </div>
+
+              {/* Tendencia: piezas pedidas por semana (últimas 8) */}
+              <div>
+                <p className="text-sm font-medium mb-3">
+                  Piezas pedidas por semana
+                </p>
+                <div className="flex items-end gap-1.5 h-28">
+                  {demand.weekly.map((w) => (
+                    <div
+                      key={w.weekStart}
+                      className="flex-1 h-full min-w-0 flex flex-col items-center justify-end gap-1"
+                      title={`${w.requests} solicitudes · ${w.qty} piezas`}
+                    >
+                      <span className="text-[10px] font-medium text-muted-foreground">
+                        {w.qty > 0 ? w.qty : ""}
+                      </span>
+                      <div
+                        className={`w-full max-w-10 rounded-t ${w.qty > 0 ? "bg-primary/80" : "bg-muted"}`}
+                        style={{
+                          height: `${Math.max((w.qty / maxWeekQty) * 100, w.qty > 0 ? 6 : 2)}%`,
+                        }}
+                      />
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        {new Date(`${w.weekStart}T12:00:00`).toLocaleDateString(
+                          "es-MX",
+                          { day: "2-digit", month: "short" }
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Top refacciones más pedidas */}
+              <div>
+                <p className="text-sm font-medium mb-3">
+                  Refacciones más pedidas
+                  {demand.topProducts.length > 15 && " (top 15)"}
+                </p>
+                <div className="rounded-lg border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">#</TableHead>
+                        <TableHead>Refacción</TableHead>
+                        <TableHead className="text-center">Pedidas</TableHead>
+                        <TableHead className="text-center">Solicitudes</TableHead>
+                        <TableHead className="text-center">Talleres</TableHead>
+                        <TableHead className="text-center">Tienes</TableHead>
+                        <TableHead className="text-right">Valor est.</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {demand.topProducts.slice(0, 15).map((p, index) => (
+                        <TableRow key={p.productId}>
+                          <TableCell className="text-muted-foreground">
+                            {index + 1}
+                          </TableCell>
+                          <TableCell className="min-w-[160px]">
+                            <p className="font-medium leading-snug">{p.name}</p>
+                            {p.category && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {p.category}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center font-semibold">
+                            {p.totalQty.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {p.requestCount}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {p.tallerCount}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <span
+                                className={
+                                  p.stock === 0
+                                    ? "font-semibold text-destructive"
+                                    : "font-medium"
+                                }
+                              >
+                                {p.stock}
+                              </span>
+                              {p.stock === 0 ? (
+                                <Badge variant="destructive">Agotado</Badge>
+                              ) : p.unmetQty > 0 ? (
+                                <Badge variant="warning">
+                                  Faltan {p.unmetQty}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            {p.estimatedValue !== null
+                              ? formatPrice(p.estimatedValue)
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Solicitudes por taller aliado */}
+      {demand && demand.byTaller.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Wrench className="h-5 w-5" />
+              Solicitudes por Taller Aliado
+            </CardTitle>
+            <CardDescription>
+              Actividad de cada taller: estados, valor estimado y compras surtidas
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-lg border overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Taller</TableHead>
+                    <TableHead className="text-center">Solicitudes</TableHead>
+                    <TableHead className="text-center">Piezas</TableHead>
+                    <TableHead>Estados</TableHead>
+                    <TableHead className="text-right">Total estimado</TableHead>
+                    <TableHead className="text-right">Compras surtidas</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {demand.byTaller.map((t) => (
+                    <TableRow key={t.tallerName}>
+                      <TableCell className="font-medium min-w-[140px]">
+                        {t.tallerName}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {t.requestCount}
+                      </TableCell>
+                      <TableCell className="text-center font-semibold">
+                        {t.totalQty.toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {t.pending > 0 && (
+                            <Badge
+                              variant="warning"
+                              className="px-1.5 text-[10px]"
+                            >
+                              {t.pending} pend.
+                            </Badge>
+                          )}
+                          {t.approved > 0 && (
+                            <Badge
+                              variant="success"
+                              className="px-1.5 text-[10px]"
+                            >
+                              {t.approved} aprob.
+                            </Badge>
+                          )}
+                          {t.fulfilled > 0 && (
+                            <Badge className="px-1.5 text-[10px] border-transparent bg-violet-600 text-white">
+                              {t.fulfilled} surt.
+                            </Badge>
+                          )}
+                          {t.rejected > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="px-1.5 text-[10px]"
+                            >
+                              {t.rejected} rech.
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        {formatPrice(t.estimatedTotal)}
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        {t.purchasesCount > 0 ? (
+                          <>
+                            <span className="font-medium">
+                              {t.purchasesCount}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {" "}
+                              · {formatPrice(t.purchasesTotal)}
+                            </span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

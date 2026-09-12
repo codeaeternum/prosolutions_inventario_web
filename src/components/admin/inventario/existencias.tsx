@@ -22,7 +22,8 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
-import { AlertTriangle, Loader2, Package, Search, Warehouse } from "lucide-react"
+import { TraspasoDialog } from "@/components/admin/inventario/traspaso-dialog"
+import { AlertTriangle, ArrowLeftRight, Loader2, Package, Search, Warehouse } from "lucide-react"
 
 interface BranchColumn {
     id: string
@@ -73,6 +74,14 @@ export function ExistenciasPanel() {
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const [debouncedSearch, setDebouncedSearch] = useState("")
 
+    // Traspaso directo entre sucursales
+    const [transferProduct, setTransferProduct] = useState<StockProduct | null>(null)
+    const [transferOpen, setTransferOpen] = useState(false)
+    const openTransfer = (p: StockProduct) => {
+        setTransferProduct(p)
+        setTransferOpen(true)
+    }
+
     useEffect(() => {
         debounceRef.current = setTimeout(() => setDebouncedSearch(search.trim()), 300)
         return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -107,6 +116,8 @@ export function ExistenciasPanel() {
     const products = data?.products ?? []
     const branches = data?.branches ?? []
     const categories = data?.categories ?? []
+    // El traspaso solo aplica con 2+ sucursales activas.
+    const canTransfer = branches.length >= 2
     const quantityByBranch = (p: StockProduct, branchId: string) =>
         p.branches.find((b) => b.branchId === branchId)?.quantity ?? 0
 
@@ -200,6 +211,11 @@ export function ExistenciasPanel() {
                                         <TableHead className="text-center">Total</TableHead>
                                         <TableHead className="text-center hidden md:table-cell">Mín.</TableHead>
                                         <TableHead className="text-right">Estado</TableHead>
+                                        {canTransfer && (
+                                            <TableHead className="w-12 text-right">
+                                                <span className="sr-only">Acciones</span>
+                                            </TableHead>
+                                        )}
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -246,6 +262,22 @@ export function ExistenciasPanel() {
                                                         {config.label}
                                                     </Badge>
                                                 </TableCell>
+                                                {canTransfer && (
+                                                    <TableCell className="text-right">
+                                                        {p.branches.some((b) => b.quantity > 0) && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-8 w-8"
+                                                                onClick={() => openTransfer(p)}
+                                                                title={`Mover ${p.name} entre sucursales`}
+                                                                aria-label={`Mover ${p.name} entre sucursales`}
+                                                            >
+                                                                <ArrowLeftRight className="h-4 w-4" />
+                                                            </Button>
+                                                        )}
+                                                    </TableCell>
+                                                )}
                                             </TableRow>
                                         )
                                     })}
@@ -255,6 +287,14 @@ export function ExistenciasPanel() {
                     </CardContent>
                 </Card>
             )}
+
+            <TraspasoDialog
+                product={transferProduct}
+                branches={branches}
+                open={transferOpen}
+                onOpenChange={setTransferOpen}
+                onSaved={() => void fetchStock()}
+            />
         </div>
     )
 }
