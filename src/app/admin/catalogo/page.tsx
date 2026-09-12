@@ -1,22 +1,28 @@
 "use client"
 
 import { Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CategoriesPanel } from "../categorias/page"
-import { BrandsPanel } from "../marcas/page"
-import { ModelsPanel } from "../modelos/page"
+import { CategoriesPanel } from "../categorias/panel"
+import { BrandsPanel } from "../marcas/panel"
+import { ModelsPanel } from "../modelos/panel"
 
 const TABS = ["categorias", "marcas", "modelos"] as const
 type Tab = (typeof TABS)[number]
 
 function CatalogoTabs() {
   const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
   const param = searchParams.get("tab")
-  const initial: Tab = (TABS as readonly string[]).includes(param ?? "") ? (param as Tab) : "categorias"
+  const tab: Tab = (TABS as readonly string[]).includes(param ?? "") ? (param as Tab) : "categorias"
+
+  const handleTabChange = (value: string) => {
+    router.replace(`${pathname}?tab=${value}`, { scroll: false })
+  }
 
   return (
-    <Tabs defaultValue={initial} className="space-y-6">
+    <Tabs value={tab} onValueChange={handleTabChange} className="space-y-6">
       <TabsList>
         <TabsTrigger value="categorias">Categorías</TabsTrigger>
         <TabsTrigger value="marcas">Marcas</TabsTrigger>

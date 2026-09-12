@@ -1,20 +1,58 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link2, MessageCircle, Share2, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export function ShareRepairOrder({ folio, phone, className, quote }: {
+// El link de cotización se arma brandeado (/<slug>/cotizacion/<token>) cuando
+// el negocio tiene business_slug; si no, se usa la ruta global /cotizacion/<token>
+// (siempre funcional — es el fallback público). El slug llega por la prop
+// publicSlug o se pide una vez por sesión a /api/settings/public-profile (solo
+// ADMIN: si el rol no lo puede leer, o la red falla, se comparte el global).
+let publicSlugRequest: Promise<string | undefined> | null = null
+function fetchPublicSlug(): Promise<string | undefined> {
+  if (!publicSlugRequest) {
+    publicSlugRequest = fetch("/api/settings/public-profile")
+      .then(res => (res.ok ? res.json() : null))
+      .then((data: { slug?: unknown } | null) =>
+        typeof data?.slug === "string" && data.slug.trim() ? data.slug.trim() : undefined
+      )
+      .catch(() => {
+        // Error de red/transitorio: reintentar en el próximo uso.
+        publicSlugRequest = null
+        return undefined
+      })
+  }
+  return publicSlugRequest
+}
+
+export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }: {
   folio: string
   phone?: string
   className?: string
+  /** Slug público del negocio, si la página ya lo conoce; sin él se resuelve solo. */
+  publicSlug?: string
   quote?: { equipment: string; token?: string; lines: { label: string; amount: number }[]; total: number }
 }) {
   const [open, setOpen] = useState(false)
+  const [fetchedSlug, setFetchedSlug] = useState<string | undefined>(undefined)
+  const slug = publicSlug || fetchedSlug
+
+  // Prefetch al montar (no al abrir el menú): así el slug ya llegó cuando el
+  // usuario toca "Enviar cotización". Solo hace falta cuando hay quote.token.
+  useEffect(() => {
+    if (publicSlug || !quote?.token) return
+    let active = true
+    void fetchPublicSlug().then(value => { if (active) setFetchedSlug(value) })
+    return () => { active = false }
+  }, [publicSlug, quote?.token])
 
   const trackingUrl = () => `${window.location.origin}/seguimiento?folio=${encodeURIComponent(folio)}`
+
+  const quoteUrl = (token: string) =>
+    `${window.location.origin}${slug ? `/${slug}/cotizacion/${token}` : `/cotizacion/${token}`}`
 
   const message = () =>
     `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en ${window.location.origin}/seguimiento con tu folio y los últimos 4 dígitos de tu teléfono.`
@@ -24,7 +62,7 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
   const quoteMessage = () => {
     if (!quote) return ""
     const lines = quote.lines.map(l => `• ${l.label}: ${mxn(l.amount)}`).join("\n")
-    const link = quote.token ? `\n\nRevisa y autoriza aquí: ${window.location.origin}/cotizacion/${quote.token}` : ""
+    const link = quote.token ? `\n\nRevisa y autoriza aquí: ${quoteUrl(quote.token)}` : ""
     return `Cotización de reparación — ${folio}\nEquipo: ${quote.equipment}\n\n${lines}\n\nTotal estimado: ${mxn(quote.total)}\nVálida por 15 días. Si aparecen daños adicionales te avisamos antes de proceder.${link}`
   }
 
@@ -48,8 +86,9 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
   }
 
   async function copyQuoteLink() {
+    if (!quote?.token) return
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/cotizacion/${quote?.token}`)
+      await navigator.clipboard.writeText(quoteUrl(quote.token))
       toast.success("Link de cotización copiado")
     } catch {
       toast.error("No se pudo copiar el enlace")

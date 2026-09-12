@@ -77,7 +77,7 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
       desc: "Consulta el estado de tu equipo con el folio de tu ticket.",
     },
     {
-      href: "#servicios",
+      href: `/${target.slug}/servicios`,
       icon: Wrench,
       title: "Servicios",
       desc: "Cambio de pantalla, batería, software y diagnóstico profesional.",
@@ -88,6 +88,7 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
     <PublicShell
       brandName={target.name}
       homeHref={`/${target.slug}`}
+      logoUrl={target.logo}
       headerRight={
         <Button variant="ghost" size="sm" asChild>
           <Link href={`/${target.slug}/order-status`}>Rastrea tu reparación</Link>
@@ -97,6 +98,15 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
       {/* Hero */}
       <section className="container mx-auto max-w-4xl px-4 pt-14 pb-12 text-center">
         <div className="space-y-6">
+          {target.logo && (
+            // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
+            <img
+              src={target.logo}
+              alt={`Logo de ${target.name}`}
+              className="mx-auto h-20 w-auto max-w-64 rounded-xl object-contain"
+            />
+          )}
+
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium">
             <Sparkles className="h-4 w-4" />
             Refacciones y servicio técnico
@@ -175,6 +185,11 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
                 </li>
               ))}
             </ul>
+            <Button variant="link" asChild className="mt-4 px-0">
+              <Link href={`/${target.slug}/servicios`}>
+                Ver todos los servicios y cotizar por WhatsApp →
+              </Link>
+            </Button>
           </div>
         </section>
       )}
@@ -193,6 +208,7 @@ async function WorkshopLanding({ target }: { target: WorkshopTarget }) {
     <PublicShell
       brandName={target.name}
       homeHref={`/${target.slug}`}
+      logoUrl={target.logo}
       headerRight={
         <Button variant="ghost" size="sm" asChild>
           <Link href={`/${target.slug}/order-status`}>Rastrear</Link>

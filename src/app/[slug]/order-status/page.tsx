@@ -37,6 +37,7 @@ export default async function PublicOrderStatusPage({ params }: PageProps) {
   return (
     <PublicShell
       brandName={target.name}
+      logoUrl={target.logo}
       homeHref={`/${target.slug}`}
       headerRight={
         <Link

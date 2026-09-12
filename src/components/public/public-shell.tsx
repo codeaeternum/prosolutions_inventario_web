@@ -7,6 +7,8 @@ interface PublicShellProps {
   brandName: string
   /** Portada del namespace, normalmente `/${slug}`. */
   homeHref: string
+  /** Logo de marca blanca (/uploads/logo-*); sin él se usa el tile con inicial. */
+  logoUrl?: string | null
   /** Contenido extra a la derecha del header (links de sección, etc.). */
   headerRight?: ReactNode
   children: ReactNode
@@ -17,7 +19,7 @@ interface PublicShellProps {
  * negocio/taller y footer discreto "Powered by Reficio". Mismo lenguaje que
  * la landing principal (gradiente sutil, tokens del tema, sticky header).
  */
-export function PublicShell({ brandName, homeHref, headerRight, children }: PublicShellProps) {
+export function PublicShell({ brandName, homeHref, logoUrl, headerRight, children }: PublicShellProps) {
   const initial = brandName.trim().charAt(0).toUpperCase() || "R"
 
   return (
@@ -25,12 +27,21 @@ export function PublicShell({ brandName, homeHref, headerRight, children }: Publ
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 safe-area-sticky z-50">
         <div className="container mx-auto max-w-4xl flex h-14 items-center justify-between gap-3 px-4">
           <Link href={homeHref} className="flex items-center gap-2 min-w-0">
-            <div
-              aria-hidden
-              className="h-9 w-9 shrink-0 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold"
-            >
-              {initial}
-            </div>
+            {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
+              <img
+                src={logoUrl}
+                alt=""
+                className="h-9 w-auto max-w-36 shrink-0 rounded-lg object-contain"
+              />
+            ) : (
+              <div
+                aria-hidden
+                className="h-9 w-9 shrink-0 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold"
+              >
+                {initial}
+              </div>
+            )}
             <span className="font-bold text-lg tracking-tight truncate">{brandName}</span>
           </Link>
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">

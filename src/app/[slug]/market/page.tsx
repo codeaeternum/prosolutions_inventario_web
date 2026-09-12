@@ -98,6 +98,7 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
   return (
     <PublicShell
       brandName={target.name}
+      logoUrl={target.logo}
       homeHref={`/${target.slug}`}
       headerRight={
         <Button variant="ghost" size="sm" asChild>

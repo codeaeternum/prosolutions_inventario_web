@@ -22,6 +22,8 @@ export type SlugTarget =
       kind: "business"
       slug: string
       name: string
+      /** Path del logo subido (/uploads/logo-*) o null si no hay. */
+      logo: string | null
       phone?: string
       description?: string
       address?: string
@@ -31,6 +33,8 @@ export type SlugTarget =
       slug: string
       name: string
       userId: string
+      /** Talleres aliados no tienen logo propio por ahora: siempre null. */
+      logo: string | null
       phone?: string
     }
   | null
@@ -41,11 +45,18 @@ const BUSINESS_KEYS = [
   "public_phone",
   "public_description",
   "public_address",
+  "public_logo",
 ] as const
 
 const clean = (value: string | undefined | null): string | undefined => {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+/** Logo público: solo paths locales de uploads (nada de URLs externas). */
+const cleanLogo = (value: string | undefined | null): string | null => {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.startsWith("/uploads/") ? trimmed : null
 }
 
 /**
@@ -76,6 +87,7 @@ export const resolveSlug = cache(async (rawSlug: string): Promise<SlugTarget> =>
         kind: "business",
         slug,
         name: clean(settings.get("ticket_business_name")) ?? "El negocio",
+        logo: cleanLogo(settings.get("public_logo")),
         phone: clean(settings.get("public_phone")),
         description: clean(settings.get("public_description")),
         address: clean(settings.get("public_address")),
@@ -93,6 +105,7 @@ export const resolveSlug = cache(async (rawSlug: string): Promise<SlugTarget> =>
       slug,
       name: user.jobTitle ?? user.businessName ?? user.name,
       userId: user.id,
+      logo: null,
       phone: clean(user.phone),
     }
   } catch (error) {

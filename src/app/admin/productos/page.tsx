@@ -110,7 +110,7 @@ export default function ProductsPage() {
         setTotal(Array.isArray(data) ? data.length : 0)
         setTotalPages(1)
       }
-    } catch (error) {
+    } catch {
       if (!signal?.aborted) setLoadError("No se pudieron cargar los productos. Revisa tu conexión y vuelve a intentar.")
     } finally {
       if (!signal?.aborted) setLoading(false)
@@ -119,7 +119,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchProducts(controller.signal)
+    void Promise.resolve().then(() => fetchProducts(controller.signal))
     return () => controller.abort()
   }, [fetchProducts])
 
@@ -219,7 +219,7 @@ export default function ProductsPage() {
     <div className="space-y-6 pb-20 lg:pb-0">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Productos</h2>
+          <h1 className="text-3xl font-bold tracking-tight">Productos</h1>
           <p className="text-muted-foreground">
             Gestiona las refacciones del inventario
           </p>

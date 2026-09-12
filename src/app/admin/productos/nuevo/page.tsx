@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -50,7 +50,6 @@ export default function NewProductPage() {
   const [categories, setCategories] = useState<Category[]>([])
 
   const [selectedBrand, setSelectedBrand] = useState("")
-  const [filteredModels, setFilteredModels] = useState<Model[]>([])
   const [selectedModels, setSelectedModels] = useState<Model[]>([])
   const [images, setImages] = useState<string[]>([])
 
@@ -155,7 +154,7 @@ export default function NewProductPage() {
     setFormData(prev => ({ ...prev, name: `${catName} ${modelNames}${suffix}` }))
   }
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [brandsRes, modelsRes, categoriesRes] = await Promise.all([
         fetch("/api/brands"),
@@ -175,11 +174,11 @@ export default function NewProductPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    fetchData()
-  }, [])
+    void Promise.resolve().then(fetchData)
+  }, [fetchData])
 
   async function handleAddCategory() {
     if (!newCategoryName.trim()) {
@@ -274,13 +273,10 @@ export default function NewProductPage() {
     }
   }
 
-  useEffect(() => {
-    if (selectedBrand) {
-      setFilteredModels(models.filter((m) => m.brand.name === selectedBrand))
-    } else {
-      setFilteredModels([])
-    }
-  }, [selectedBrand, models])
+  // Derivado del estado — no hace falta useEffect.
+  const filteredModels = selectedBrand
+    ? models.filter((m) => m.brand.name === selectedBrand)
+    : []
 
   const handleAddModel = (model: Model) => {
     if (!selectedModels.find((m) => m.id === model.id)) {
@@ -785,7 +781,7 @@ export default function NewProductPage() {
         {/* Submit */}
         <div className="flex justify-end gap-2 pb-20 pt-4">
           <Button type="button" variant="outline" asChild>
-            <Link href="/admin/inventario">Cancelar</Link>
+            <Link href="/admin/productos">Cancelar</Link>
           </Button>
           <Button type="submit" disabled={saving}>
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

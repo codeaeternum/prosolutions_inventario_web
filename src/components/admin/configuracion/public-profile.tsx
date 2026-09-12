@@ -1,7 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { Copy, ExternalLink, Globe, Info, Loader2, Save } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import QRCode from "qrcode"
+import {
+  Copy, Download, ExternalLink, Globe, ImagePlus, Info, Loader2, Printer,
+  QrCode, Save, Trash2, Upload,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,6 +25,7 @@ interface PublicProfile {
   description: string
   address: string
   businessName: string
+  logo: string
 }
 
 const EMPTY_PROFILE: PublicProfile = {
@@ -29,6 +34,26 @@ const EMPTY_PROFILE: PublicProfile = {
   description: "",
   address: "",
   businessName: "",
+  logo: "",
+}
+
+// QRs del mostrador: violeta oscuro sobre blanco — contraste que imprime bien.
+const QR_OPTIONS = {
+  width: 256,
+  margin: 2,
+  errorCorrectionLevel: "M" as const,
+  color: { dark: "#4c1d95", light: "#ffffff" },
+}
+
+const LOGO_MAX_BYTES = 2 * 1024 * 1024
+const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"]
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -62,9 +87,14 @@ export function PublicProfileCard() {
   const [initial, setInitial] = useState<PublicProfile>(EMPTY_PROFILE)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [logoDrag, setLogoDrag] = useState(false)
+  // Data URLs de los QR por path público (/{slug}, /{slug}/market, …).
+  const [qrCodes, setQrCodes] = useState<Record<string, string>>({})
   // Último slug confirmado por el servidor: de él salen los chips de links.
   const [savedSlug, setSavedSlug] = useState("")
   const inFlight = useRef(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
   const host = usePublicHost()
 
   useEffect(() => {
@@ -79,6 +109,7 @@ export function PublicProfileCard() {
           description: data.description ?? "",
           address: data.address ?? "",
           businessName: data.businessName ?? "",
+          logo: data.logo ?? "",
         }
         setProfile(next)
         setInitial(next)
@@ -133,6 +164,7 @@ export function PublicProfileCard() {
         description: data.description ?? profile.description.trim(),
         address: data.address ?? profile.address.trim(),
         businessName: data.businessName ?? profile.businessName,
+        logo: data.logo ?? profile.logo,
       }
       setProfile(next)
       setInitial(next)
@@ -155,13 +187,130 @@ export function PublicProfileCard() {
     }
   }
 
-  const links = savedSlug
-    ? [
-        { path: `/${savedSlug}`, label: "Vitrina" },
-        { path: `/${savedSlug}/market`, label: "Mercado" },
-        { path: `/${savedSlug}/order-status`, label: "Rastreo de órdenes" },
-      ]
-    : []
+  // Guarda solo el logo (upsert de una sola key): no pisa cambios sin guardar
+  // del resto del formulario.
+  async function persistLogo(logoPath: string): Promise<boolean> {
+    try {
+      const res = await fetch("/api/settings/public-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logo: logoPath }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || "No se pudo guardar el logo")
+        return false
+      }
+      const next = typeof data.logo === "string" ? data.logo : logoPath
+      setProfile(prev => ({ ...prev, logo: next }))
+      setInitial(prev => ({ ...prev, logo: next }))
+      return true
+    } catch {
+      toast.error("Error de conexión")
+      return false
+    }
+  }
+
+  async function uploadLogo(file: File) {
+    if (!LOGO_TYPES.includes(file.type)) {
+      toast.error("Usa una imagen PNG, JPG o WebP")
+      return
+    }
+    if (file.size > LOGO_MAX_BYTES) {
+      toast.error("El logo no debe superar 2 MB")
+      return
+    }
+    setUploadingLogo(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch("/api/upload/logo", { method: "POST", body: formData })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || typeof data.path !== "string") {
+        toast.error(data.error || "No se pudo subir el logo")
+        return
+      }
+      if (await persistLogo(data.path)) {
+        toast.success("Logo actualizado")
+      }
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setUploadingLogo(false)
+      if (logoInputRef.current) logoInputRef.current.value = ""
+    }
+  }
+
+  const links = useMemo(
+    () =>
+      savedSlug
+        ? [
+            { path: `/${savedSlug}`, label: "Vitrina", file: "vitrina" },
+            { path: `/${savedSlug}/market`, label: "Mercado", file: "mercado" },
+            { path: `/${savedSlug}/order-status`, label: "Rastreo de órdenes", file: "rastreo" },
+          ]
+        : [],
+    [savedSlug]
+  )
+
+  // Genera los PNGs de los QR en cliente apuntando al host actual.
+  // Si no hay links no se renderiza la sección, así que no hace falta limpiar.
+  useEffect(() => {
+    if (links.length === 0) return
+    let cancelled = false
+    const origin = `${window.location.protocol}//${host}`
+    void Promise.all(
+      links.map(async link => {
+        const dataUrl = await QRCode.toDataURL(`${origin}${link.path}`, QR_OPTIONS)
+        return [link.path, dataUrl] as const
+      })
+    )
+      .then(entries => {
+        if (!cancelled) setQrCodes(Object.fromEntries(entries))
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("No se pudieron generar los códigos QR")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [links, host])
+
+  // Ventana imprimible: logo de impresora con nombre del negocio + URL legible.
+  function printQr(link: { path: string; label: string }, dataUrl: string) {
+    const url = `${window.location.protocol}//${host}${link.path}`
+    const win = window.open("", "_blank", "width=480,height=640")
+    if (!win) {
+      toast.error("El navegador bloqueó la ventana de impresión")
+      return
+    }
+    const name = escapeHtml(profile.businessName || "Reficio")
+    const label = escapeHtml(link.label)
+    win.document.write(`<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>${name} — ${label}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 95vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1e1b2e; text-align: center; }
+  h1 { font-size: 24px; margin: 0; }
+  .label { font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #6d28d9; margin: 0; }
+  img { width: 280px; height: 280px; }
+  code { font-size: 13px; color: #444; word-break: break-all; }
+  .hint { font-size: 12px; color: #777; margin: 0; }
+</style>
+</head>
+<body>
+  <h1>${name}</h1>
+  <p class="label">${label}</p>
+  <img src="${dataUrl}" alt="Código QR — ${label}" onload="setTimeout(function(){window.print()},60)">
+  <code>${escapeHtml(url)}</code>
+  <p class="hint">Escanea con la cámara de tu teléfono</p>
+</body>
+</html>`)
+    win.document.close()
+  }
 
   return (
     <Card>
@@ -232,6 +381,93 @@ export function PublicProfileCard() {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label>Logo del negocio</Label>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  aria-label={profile.logo ? "Cambiar logo" : "Subir logo"}
+                  disabled={uploadingLogo || saving}
+                  onClick={() => logoInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setLogoDrag(true)
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault()
+                    setLogoDrag(false)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setLogoDrag(false)
+                    const file = e.dataTransfer.files?.[0]
+                    if (file) void uploadLogo(file)
+                  }}
+                  className={`flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 transition-colors ${
+                    logoDrag
+                      ? "border-primary bg-primary/5"
+                      : "border-dashed border-muted-foreground/30 bg-muted/30 hover:border-primary/50"
+                  }`}
+                >
+                  {uploadingLogo ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  ) : profile.logo ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
+                    <img
+                      src={profile.logo}
+                      alt="Logo del negocio"
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <ImagePlus className="h-6 w-6 text-muted-foreground" />
+                  )}
+                </button>
+                <div className="min-w-48 flex-1 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={uploadingLogo || saving}
+                      onClick={() => logoInputRef.current?.click()}
+                    >
+                      {uploadingLogo ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 h-4 w-4" />
+                      )}
+                      {profile.logo ? "Cambiar logo" : "Subir logo"}
+                    </Button>
+                    {profile.logo && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={uploadingLogo || saving}
+                        onClick={() => void persistLogo("")}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Quitar
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    PNG, JPG o WebP, máx. 2 MB. Aparece en tu vitrina y los encabezados públicos.
+                  </p>
+                </div>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void uploadLogo(file)
+                  }}
+                />
+              </div>
+            </div>
+
             <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
               <span>
@@ -289,6 +525,71 @@ export function PublicProfileCard() {
                   Copiar guarda el link completo ({host}
                   {links[0].path}…).
                 </p>
+              </div>
+            )}
+
+            {links.length > 0 && (
+              <div className="space-y-3 border-t pt-5">
+                <div className="space-y-1">
+                  <h4 className="flex items-center gap-2 text-sm font-medium">
+                    <QrCode className="h-4 w-4" />
+                    QR para tu mostrador
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    Descarga o imprime un QR por link: tu cliente lo escanea y entra directo.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {links.map(link => {
+                    const dataUrl = qrCodes[link.path]
+                    return (
+                      <div
+                        key={link.path}
+                        className="flex flex-col items-center gap-3 rounded-xl border bg-card p-4"
+                      >
+                        <div className="flex h-32 w-32 items-center justify-center rounded-lg bg-white p-1">
+                          {dataUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- data URL generada en cliente
+                            <img
+                              src={dataUrl}
+                              alt={`QR — ${link.label}`}
+                              className="h-full w-full"
+                            />
+                          ) : (
+                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="space-y-0.5 text-center">
+                          <p className="text-sm font-medium">{link.label}</p>
+                          <p className="break-all font-mono text-[11px] text-muted-foreground">
+                            {host}
+                            {link.path}
+                          </p>
+                        </div>
+                        <div className="mt-auto flex gap-2">
+                          <Button variant="outline" size="sm" asChild disabled={!dataUrl}>
+                            <a
+                              href={dataUrl || "#"}
+                              download={`qr-${savedSlug}-${link.file}.png`}
+                            >
+                              <Download className="mr-1.5 h-3.5 w-3.5" />
+                              PNG
+                            </a>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!dataUrl}
+                            onClick={() => dataUrl && printQr(link, dataUrl)}
+                          >
+                            <Printer className="mr-1.5 h-3.5 w-3.5" />
+                            Imprimir
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
           </>

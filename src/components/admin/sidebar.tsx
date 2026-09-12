@@ -17,7 +17,6 @@ import {
   Bell,
   Boxes,
   ShoppingCart,
-  ArrowLeftRight,
   CreditCard,
   Wallet,
   Wrench,
@@ -56,19 +55,13 @@ const navigationGroups = [
     ]
   },
   {
-    name: "Catálogo",
+    name: "Catálogo e inventario",
     items: [
       { name: "Mercado", href: "/admin/mercado", icon: Store },
       { name: "Productos", href: "/admin/productos", icon: Package },
+      { name: "Inventario", href: "/admin/inventario", icon: Warehouse },
       { name: "Clasificación", href: "/admin/catalogo", icon: FolderTree },
       { name: "Etiquetas", href: "/admin/etiquetas", icon: Tag },
-    ]
-  },
-  {
-    name: "Inventario",
-    items: [
-      { name: "Stock por sucursal", href: "/admin/inventario", icon: Warehouse },
-      { name: "Movimientos", href: "/admin/movimientos", icon: ArrowLeftRight },
     ]
   },
   {
@@ -90,6 +83,24 @@ const bottomBarItems = [
   { name: "Inventario", href: "/admin/inventario", icon: Boxes },
   { name: "Caja", href: "/admin/caja", icon: Wallet },
 ]
+
+const ALL_NAV_HREFS = [
+  ...navigationGroups.flatMap(g => g.items.map(i => i.href)),
+  ...bottomBarItems.map(i => i.href),
+]
+
+// Un ítem está activo solo si su href es el prefijo MÁS LARGO del menú que
+// coincide con la ruta — así /admin/taller/catalogo marca "Catálogo de
+// servicios" y no también "Órdenes de servicio".
+function isNavItemActive(pathname: string, href: string): boolean {
+  if (pathname === href) return true
+  if (href === "/admin") return false
+  if (!pathname.startsWith(`${href}/`)) return false
+  return !ALL_NAV_HREFS.some(other =>
+    other !== href && other.length > href.length &&
+    (pathname === other || pathname.startsWith(`${other}/`))
+  )
+}
 
 interface AdminSidebarProps {
   user: {
@@ -179,8 +190,7 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
                 </div>
                 <ul role="list" className="-mx-2 space-y-1">
                   {group.items.map((item) => {
-                    const isActive = pathname === item.href ||
-                      (item.href !== "/admin" && pathname.startsWith(item.href))
+                    const isActive = isNavItemActive(pathname, item.href)
                     return (
                       <li key={item.name}>
                         <Link
@@ -216,8 +226,7 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
       <div className="fixed bottom-0 left-0 right-0 z-[90] lg:hidden bg-background border-t safe-area-bottom">
         <nav className="flex items-center justify-around h-16 px-2">
           {visibleBottomBarItems.map((item) => {
-            const isActive = pathname === item.href ||
-              (item.href !== "/admin" && pathname.startsWith(item.href))
+            const isActive = isNavItemActive(pathname, item.href)
             return (
               <Link
                 key={item.name}
@@ -276,8 +285,7 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
                   )}
                   <ul role="list" className={cn("space-y-1", collapsed ? "" : "-mx-2")}>
                     {group.items.map((item) => {
-                      const isActive = pathname === item.href ||
-                        (item.href !== "/admin" && pathname.startsWith(item.href))
+                      const isActive = isNavItemActive(pathname, item.href)
                       return (
                         <li key={item.name}>
                           <Link

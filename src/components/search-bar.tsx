@@ -76,7 +76,7 @@ export function SearchBar({ className }: { className?: string }) {
     } else if (result.type === "product") {
       router.push(`/admin/productos/${result.id}`)
     } else {
-      router.push(`/admin/modelos?selected=${result.id}`)
+      router.push(`/admin/catalogo?tab=modelos`)
     }
     setShowResults(false)
     setQuery("")

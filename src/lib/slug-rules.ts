@@ -32,6 +32,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // Subrutas del namespace público (evitan /<slug> ambiguas como /market)
   "market",
   "order-status",
+  "servicios",
   // Convenciones de Next.js y archivos públicos
   "_next",
   "icons",

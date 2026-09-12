@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
+import * as fs from "fs"
+import * as path from "path"
 
 // Perfil público del negocio en SystemSettings. "business_slug" define el
 // namespace reficio.app/<slug>; los demás datos alimentan la vitrina pública
@@ -11,6 +13,7 @@ const KEY_PHONE = "public_phone"
 const KEY_DESCRIPTION = "public_description"
 const KEY_ADDRESS = "public_address"
 const KEY_BUSINESS_NAME = "ticket_business_name"
+const KEY_LOGO = "public_logo"
 
 const PROFILE_KEYS = [
   KEY_SLUG,
@@ -18,11 +21,26 @@ const PROFILE_KEYS = [
   KEY_DESCRIPTION,
   KEY_ADDRESS,
   KEY_BUSINESS_NAME,
+  KEY_LOGO,
 ] as const
 
 const MAX_PHONE = 30
 const MAX_DESCRIPTION = 500
 const MAX_ADDRESS = 200
+
+// Solo paths generados por /api/upload/logo: /uploads/logo-<ts>-<rand>.<ext>
+const LOGO_PATH_RE = /^\/uploads\/logo-[\w-]+\.(?:png|jpe?g|webp)$/i
+
+/** Borra el archivo de un logo reemplazado/eliminado (best effort). */
+function removeLogoFile(logoPath: string) {
+  try {
+    if (!LOGO_PATH_RE.test(logoPath)) return
+    const abs = path.join(process.cwd(), "public", logoPath.replace(/^\/+/, ""))
+    fs.unlink(abs, () => {})
+  } catch {
+    // El archivo puede no existir ya; no bloquea el guardado.
+  }
+}
 
 /** URLs públicas relativas del negocio; null mientras no haya slug. */
 function publicUrls(slug: string) {
@@ -41,12 +59,14 @@ async function readProfile() {
   })
   const map = new Map(rows.map(row => [row.key, row.value]))
   const slug = normalizeSlug(map.get(KEY_SLUG) ?? "")
+  const logo = map.get(KEY_LOGO) ?? ""
   return {
     slug,
     phone: map.get(KEY_PHONE) ?? "",
     description: map.get(KEY_DESCRIPTION) ?? "",
     address: map.get(KEY_ADDRESS) ?? "",
     businessName: map.get(KEY_BUSINESS_NAME) ?? "",
+    logo: LOGO_PATH_RE.test(logo) ? logo : "",
     urls: publicUrls(slug),
   }
 }
@@ -69,7 +89,8 @@ export async function GET() {
 }
 
 // POST - Guardar perfil público (solo admin)
-// body: { slug?, phone?, description?, address? } — slug vacío quita el link.
+// body: { slug?, phone?, description?, address?, logo? } — slug vacío quita el
+// link, logo vacío quita el logo. `logo` es el path devuelto por /api/upload/logo.
 export async function POST(req: Request) {
   try {
     const auth = await requireAdmin()
@@ -79,9 +100,10 @@ export async function POST(req: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Cuerpo de la solicitud inválido" }, { status: 400 })
     }
-    const { slug, phone, description, address } = body as Record<string, unknown>
+    const { slug, phone, description, address, logo } = body as Record<string, unknown>
 
     const upserts: { key: string; value: string }[] = []
+    let newLogo: string | null = null
 
     if (slug !== undefined) {
       if (typeof slug !== "string") {
@@ -136,8 +158,33 @@ export async function POST(req: Request) {
       upserts.push({ key, value })
     }
 
+    if (logo !== undefined) {
+      if (logo !== null && typeof logo !== "string") {
+        return NextResponse.json({ error: "El logo debe ser texto o null" }, { status: 400 })
+      }
+      const value = (logo ?? "").trim()
+      if (value && !LOGO_PATH_RE.test(value)) {
+        return NextResponse.json(
+          { error: "Ruta de logo inválida: sube el archivo desde esta pantalla" },
+          { status: 400 }
+        )
+      }
+      newLogo = value
+      upserts.push({ key: KEY_LOGO, value })
+    }
+
     if (upserts.length === 0) {
       return NextResponse.json({ error: "No hay cambios por guardar" }, { status: 400 })
+    }
+
+    // Logo anterior para borrar el archivo huérfano tras el upsert.
+    let oldLogo = ""
+    if (logo !== undefined) {
+      const row = await prisma.systemSettings.findUnique({
+        where: { key: KEY_LOGO },
+        select: { value: true },
+      })
+      oldLogo = row?.value ?? ""
     }
 
     for (const { key, value } of upserts) {
@@ -146,6 +193,10 @@ export async function POST(req: Request) {
         create: { key, value },
         update: { value },
       })
+    }
+
+    if (logo !== undefined && oldLogo && oldLogo !== newLogo) {
+      removeLogoFile(oldLogo)
     }
 
     return NextResponse.json(await readProfile())
