@@ -10,7 +10,7 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
   folio: string
   phone?: string
   className?: string
-  quote?: { equipment: string; lines: { label: string; amount: number }[]; total: number }
+  quote?: { equipment: string; token?: string; lines: { label: string; amount: number }[]; total: number }
 }) {
   const [open, setOpen] = useState(false)
 
@@ -24,7 +24,8 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
   const quoteMessage = () => {
     if (!quote) return ""
     const lines = quote.lines.map(l => `• ${l.label}: ${mxn(l.amount)}`).join("\n")
-    return `Cotización de reparación — ${folio}\nEquipo: ${quote.equipment}\n\n${lines}\n\nTotal estimado: ${mxn(quote.total)}\nVálida por 15 días. Si aparecen daños adicionales te avisamos antes de proceder.`
+    const link = quote.token ? `\n\nRevisa y autoriza aquí: ${window.location.origin}/cotizacion/${quote.token}` : ""
+    return `Cotización de reparación — ${folio}\nEquipo: ${quote.equipment}\n\n${lines}\n\nTotal estimado: ${mxn(quote.total)}\nVálida por 15 días. Si aparecen daños adicionales te avisamos antes de proceder.${link}`
   }
 
   function shareWhatsApp(text: string) {
@@ -40,6 +41,16 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
     try {
       await navigator.clipboard.writeText(trackingUrl())
       toast.success("Enlace copiado")
+    } catch {
+      toast.error("No se pudo copiar el enlace")
+    }
+    setOpen(false)
+  }
+
+  async function copyQuoteLink() {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/cotizacion/${quote?.token}`)
+      toast.success("Link de cotización copiado")
     } catch {
       toast.error("No se pudo copiar el enlace")
     }
@@ -83,6 +94,12 @@ export function ShareRepairOrder({ folio, phone, className, quote }: {
               <Link2 className="h-4 w-4" />
               Copiar enlace
             </button>
+            {quote?.token && (
+              <button type="button" role="menuitem" className={itemClass} onClick={() => void copyQuoteLink()}>
+                <FileText className="h-4 w-4" />
+                Link cotización
+              </button>
+            )}
           </div>
         </>
       )}

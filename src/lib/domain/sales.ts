@@ -18,6 +18,10 @@ const saleSchema = z.object({
   paymentMethod: METHODS.optional(),
   customerId: z.string().min(1).optional(),
   branchId: z.string().min(1).optional(),
+  // Lista de precios: "auto" (default) cobra mayoreo solo si el cliente es STORE;
+  // "wholesale"/"retail" fuerzan la lista sin importar el tipo de cliente
+  // (p. ej. el surtido de una solicitud del mercado B2B siempre va a mayoreo).
+  priceTier: z.enum(["auto", "wholesale", "retail"]).optional(),
 }).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
 
 export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
@@ -32,11 +36,16 @@ export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
     const customer = input.customerId ? await actor(tx, input.customerId) : null
 
     // Precios del servidor; stock por sucursal con decremento condicional.
+    const tier = input.priceTier ?? "auto"
     const lines = []
     let totalCents = 0
     for (const item of items) {
       const { product } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id })
-      const unitCents = cents(customer?.customerType === "STORE" ? product.wholesalePrice : product.retailPrice)
+      const unitCents = cents(
+        tier === "wholesale" ? product.wholesalePrice
+          : tier === "retail" ? product.retailPrice
+            : (customer?.customerType === "STORE" ? product.wholesalePrice : product.retailPrice)
+      )
       const lineCents = unitCents * item.quantity
       cents(amount(lineCents))
       lines.push({ item, product, unitCents, lineCents })

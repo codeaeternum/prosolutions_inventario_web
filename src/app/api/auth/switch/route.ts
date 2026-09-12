@@ -21,7 +21,7 @@ function passwordVersion(password: string | null) {
 
 async function mintSession(req: NextRequest, user: {
   id: string; name: string; email: string | null; phone: string | null;
-  role: "ADMIN" | "EMPLOYEE" | "CUSTOMER"; status: string;
+  role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"; status: string;
   customerType: "NORMAL" | "STORE" | "TECHNICIAN"; password: string | null;
   jobTitle: string | null
 }, impersonator: string | null) {

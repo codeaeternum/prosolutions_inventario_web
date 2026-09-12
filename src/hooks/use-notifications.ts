@@ -11,6 +11,7 @@ export type NotificationType =
   | "user_registered"
   | "low_stock"
   | "repair_ready"
+  | "marketplace_request"
   | "connected"
 
 export interface Notification {

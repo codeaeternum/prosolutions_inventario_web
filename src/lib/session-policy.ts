@@ -3,7 +3,7 @@ import type { JWT } from "@auth/core/jwt"
 
 export type CurrentUser = {
   id: string; email: string | null; phone: string | null; name: string;
-  role: "ADMIN" | "EMPLOYEE" | "CUSTOMER";
+  role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP";
   status: "PENDING" | "APPROVED" | "REJECTED";
   customerType: "NORMAL" | "STORE" | "TECHNICIAN"; password: string | null;
   jobTitle: string | null

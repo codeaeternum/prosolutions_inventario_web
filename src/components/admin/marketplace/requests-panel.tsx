@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Loader2,
   PackageCheck,
+  Printer,
   X,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -31,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
+import { MarketplaceFulfillDialog } from "./fulfill-dialog"
 import { cn } from "@/lib/utils"
 
 export interface MarketplaceRequest {
@@ -49,8 +51,9 @@ export interface MarketplaceRequest {
     wholesalePrice: number
     retailPrice: number
   }
-  requestedBy: { name: string } | null
+  requestedBy: { id: string; name: string; role: string } | null
   decidedBy: { name: string } | null
+  sale: { id: string; number: number } | null
 }
 
 type BadgeVariant = "warning" | "success" | "destructive" | "secondary"
@@ -102,6 +105,8 @@ export function MarketplaceRequestsPanel({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [decidingId, setDecidingId] = useState<string | null>(null)
+  const [fulfillTarget, setFulfillTarget] = useState<MarketplaceRequest | null>(null)
+  const [fulfillOpen, setFulfillOpen] = useState(false)
 
   const fetchRequests = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -143,14 +148,14 @@ export function MarketplaceRequestsPanel({
 
   const decide = async (
     request: MarketplaceRequest,
-    action: "APPROVE" | "REJECT" | "FULFILL"
+    action: "APPROVE" | "REJECT"
   ) => {
     setDecidingId(request.id)
     try {
-      const res = await fetch("/api/marketplace/requests", {
+      const res = await fetch(`/api/marketplace/requests/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: request.id, action }),
+        body: JSON.stringify({ action }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "No se pudo actualizar")
@@ -158,17 +163,23 @@ export function MarketplaceRequestsPanel({
         prev.map((r) => (r.id === request.id ? data.request : r))
       )
       toast.success(
-        action === "APPROVE"
-          ? "Solicitud aprobada"
-          : action === "REJECT"
-            ? "Solicitud rechazada"
-            : "Solicitud marcada como surtida"
+        action === "APPROVE" ? "Solicitud aprobada" : "Solicitud rechazada"
       )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo actualizar")
     } finally {
       setDecidingId(null)
     }
+  }
+
+  const openFulfill = (request: MarketplaceRequest) => {
+    setFulfillTarget(request)
+    setFulfillOpen(true)
+  }
+
+  // Tras surtir, el dialog devuelve la solicitud ya ligada a su venta.
+  const handleFulfilled = (updated: MarketplaceRequest) => {
+    setRequests((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
   }
 
   const statusBadge = (request: MarketplaceRequest) => {
@@ -258,7 +269,7 @@ export function MarketplaceRequestsPanel({
           variant="outline"
           className="h-8 text-violet-600 border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-300"
           disabled={busy}
-          onClick={() => void decide(request, "FULFILL")}
+          onClick={() => openFulfill(request)}
         >
           {busy ? (
             <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
@@ -267,6 +278,21 @@ export function MarketplaceRequestsPanel({
           )}
           Marcar surtida
         </Button>
+      )
+    }
+
+    // Surtida: enlace directo al ticket de la venta generada.
+    if (request.status === "FULFILLED" && request.sale) {
+      return (
+        <a
+          href={`/admin/tickets/venta/${request.sale.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          <Printer className="h-3.5 w-3.5" />
+          Ticket V-{String(request.sale.number).padStart(6, "0")}
+        </a>
       )
     }
 
@@ -396,6 +422,17 @@ export function MarketplaceRequestsPanel({
               ? "Cuando un taller aliado pida piezas del catálogo, aparecerán aquí para su revisión."
               : "Prueba con otro filtro de estado."
           }
+        />
+      )}
+
+      {/* Surtido: genera la venta a precio de taller y liga saleId. */}
+      {isAdmin && (
+        <MarketplaceFulfillDialog
+          request={fulfillTarget}
+          open={fulfillOpen}
+          onOpenChange={setFulfillOpen}
+          onFulfilled={handleFulfilled}
+          formatPrice={formatPrice}
         />
       )}
     </div>

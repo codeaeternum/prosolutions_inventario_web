@@ -21,3 +21,4 @@ async function requireRoles(roles: string[]): Promise<AuthResult> {
 }
 export async function requireAdmin(): Promise<AuthResult> { return requireRoles(["ADMIN"]) }
 export async function requireAdminOrEmployee(): Promise<AuthResult> { return requireRoles(["ADMIN", "EMPLOYEE"]) }
+export async function requireMarketplaceViewer(): Promise<AuthResult> { return requireRoles(["ADMIN", "EMPLOYEE", "WORKSHOP"]) }

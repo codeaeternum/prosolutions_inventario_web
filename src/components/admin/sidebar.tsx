@@ -93,7 +93,7 @@ const bottomBarItems = [
 
 interface AdminSidebarProps {
   user: {
-    role: "ADMIN" | "EMPLOYEE" | "CUSTOMER"
+    role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"
   }
   collapsed?: boolean
 }
@@ -102,13 +102,28 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-  const filteredNavigation = navigationGroups.filter(group => {
-    // Hide "Administración" if user is EMPLOYEE (los empleados sí usan el taller)
-    if (user.role === "EMPLOYEE") {
-      return group.name !== "Administración"
-    }
-    return true
-  })
+  const filteredNavigation = navigationGroups
+    .map(group => {
+      // WORKSHOP (taller aliado): solo ve la entrada "Mercado"
+      if (user.role === "WORKSHOP") {
+        return { ...group, items: group.items.filter(item => item.href === "/admin/mercado") }
+      }
+      return group
+    })
+    .filter(group => {
+      // Grupos vacíos no muestran header
+      if (group.items.length === 0) return false
+      // Hide "Administración" if user is EMPLOYEE (los empleados sí usan el taller)
+      if (user.role === "EMPLOYEE") {
+        return group.name !== "Administración"
+      }
+      return true
+    })
+
+  // Bottom bar móvil: el taller aliado solo necesita el Mercado
+  const visibleBottomBarItems = user.role === "WORKSHOP"
+    ? [{ name: "Mercado", href: "/admin/mercado", icon: Store }]
+    : bottomBarItems
 
   return (
     <>
@@ -200,7 +215,7 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
       {/* Mobile Bottom Navigation Bar */}
       <div className="fixed bottom-0 left-0 right-0 z-[90] lg:hidden bg-background border-t safe-area-bottom">
         <nav className="flex items-center justify-around h-16 px-2">
-          {bottomBarItems.map((item) => {
+          {visibleBottomBarItems.map((item) => {
             const isActive = pathname === item.href ||
               (item.href !== "/admin" && pathname.startsWith(item.href))
             return (

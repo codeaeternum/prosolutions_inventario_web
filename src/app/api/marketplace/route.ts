@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdmin, requireMarketplaceViewer } from "@/lib/api-auth"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
 
@@ -10,11 +10,12 @@ const toggleVisibilitySchema = z.object({
 })
 
 // GET /api/marketplace?search=&category=&hidden=1
-// Catálogo B2B: lo que los talleres aliados ven del inventario.
-// `hidden=1` (solo ADMIN) incluye también los productos ocultos del mercado.
+// Catálogo B2B: lo que los talleres aliados (WORKSHOP) ven del inventario.
+// `hidden=1` (solo ADMIN) incluye también los productos ocultos del mercado;
+// WORKSHOP y EMPLOYEE siempre ven únicamente los productos visibles.
 export async function GET(req: Request) {
   try {
-    const result = await requireAdminOrEmployee()
+    const result = await requireMarketplaceViewer()
     if (result.error) return result.error
     const session = getSession(result)!
     const isAdmin = session.user.role === "ADMIN"

@@ -24,7 +24,7 @@ type Branch = { id: string; name: string }
 type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?: string; assignedToId?: string; noteIsPublic?: boolean }
 type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; status: "REQUESTED" | "APPROVED" | "REJECTED"; createdById?: string; decisionNote?: string | null; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
 type Order = {
-  id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string;
+  id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string; quoteToken?: string;
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;
   equipmentColor: string | null; deviceAccessType: string | null; deviceAccessValue: string | null;
   intakeCondition: string | null; reportedIssue: string; diagnosis: string | null; quoteCents: number | null;
@@ -161,6 +161,7 @@ export default function WorkshopPage() {
     const approved = (o.parts ?? []).filter(p => p.status === "APPROVED")
     return {
       equipment: [o.equipmentType, o.brand, o.model].filter(Boolean).join(" "),
+      token: o.quoteToken,
       lines: [
         { label: "Mano de obra / diagnóstico", amount: labor / 100 },
         ...approved.map(p => ({ label: `${p.description} ×${p.qty}`, amount: (p.unitPriceCents * p.qty) / 100 })),

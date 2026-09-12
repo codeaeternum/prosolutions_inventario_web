@@ -2,7 +2,7 @@ import { safeRedirectPath } from "./safe-redirect"
 import type { NextAuthConfig } from "next-auth"
 
 // Definimos los tipos localmente para evitar problemas con Edge runtime
-type UserRole = "ADMIN" | "CUSTOMER" | "EMPLOYEE"
+type UserRole = "ADMIN" | "CUSTOMER" | "EMPLOYEE" | "WORKSHOP"
 type CustomerType = "TECHNICIAN" | "STORE" | "NORMAL"
 type UserStatus = "PENDING" | "APPROVED" | "REJECTED"
 
@@ -44,7 +44,7 @@ declare module "@auth/core/jwt" {
 }
 
 // Rutas públicas (no requieren login)
-const PUBLIC_PATHS = ["/", "/login", "/register", "/api/auth", "/catalogo", "/seguimiento", "/evidencia"]
+const PUBLIC_PATHS = ["/", "/login", "/register", "/api/auth", "/catalogo", "/seguimiento", "/evidencia", "/cotizacion"]
 // Rutas legacy que sin login redirigen a /?redirect=bot
 const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)
@@ -94,17 +94,25 @@ export function getAuthRedirect(
     return Response.redirect(url)
   }
 
-  // 2) /admin: sin login -> /login; con login pero rol distinto de ADMIN/EMPLOYEE -> /
+  // 2) /admin: sin login -> /login; con login pero rol distinto de ADMIN/EMPLOYEE/WORKSHOP -> /
   if (pathname.startsWith("/admin")) {
     if (!isLoggedIn) {
       return Response.redirect(new URL("/login", nextUrl))
     }
     if (status !== "APPROVED") return Response.redirect(new URL("/pending", nextUrl))
-    if (role !== "ADMIN" && role !== "EMPLOYEE") {
+    if (role !== "ADMIN" && role !== "EMPLOYEE" && role !== "WORKSHOP") {
       return Response.redirect(new URL("/", nextUrl))
     }
-    
-    // 2.1) EMPLOYEE restrictions
+
+    // 2.1) WORKSHOP: taller aliado externo; solo puede ver el Mercado B2B.
+    if (role === "WORKSHOP") {
+      if (!pathname.startsWith("/admin/mercado")) {
+        return Response.redirect(new URL("/admin/mercado", nextUrl))
+      }
+      return null
+    }
+
+    // 2.2) EMPLOYEE restrictions
     if (role === "EMPLOYEE") {
       const restrictedForEmployee = ["/admin/usuarios", "/admin/credito", "/admin/reportes", "/admin/notificaciones", "/admin/configuracion"]
       if (restrictedForEmployee.some(path => pathname.startsWith(path))) {
@@ -120,9 +128,10 @@ export function getAuthRedirect(
     return Response.redirect(new URL("/pending", nextUrl))
   }
 
-  // 4) /login o /register con auth: ADMIN -> /admin, APPROVED -> /catalogo, sino -> /pending
+  // 4) /login o /register con auth: ADMIN -> /admin, WORKSHOP -> /admin/mercado, APPROVED -> /catalogo, sino -> /pending
   if ((pathname === "/login" || pathname === "/register") && isLoggedIn) {
     if (isAdmin && isApproved) return Response.redirect(new URL("/admin", nextUrl))
+    if (role === "WORKSHOP" && isApproved) return Response.redirect(new URL("/admin/mercado", nextUrl))
     if (isApproved) return Response.redirect(new URL("/catalogo", nextUrl))
     return Response.redirect(new URL("/pending", nextUrl))
   }

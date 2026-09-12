@@ -18,6 +18,7 @@ enum UserRole {
   ADMIN
   EMPLOYEE
   CUSTOMER
+  WORKSHOP  // Taller aliado: solo ve el mercado B2B y sus solicitudes
 }
 
 enum CustomerType {
@@ -536,6 +537,7 @@ model Sale {
   customer   User?      @relation("SaleCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   items      SaleItem[]
   payments   Payment[]
+  marketplaceRequest MarketplaceRequest?
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 
@@ -625,6 +627,7 @@ model RepairOrder {
   signatureData String?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken String @unique @default(cuid())
+  quoteToken  String @unique @default(cuid()) // Token público para ver/aprobar la cotización
   photos RepairPhoto[]
   intakeBranchId String
   currentBranchId String
@@ -776,6 +779,8 @@ model MarketplaceRequest {
   decidedBy    User?    @relation("MarketplaceDecidedBy", fields: [decidedById], references: [id])
   decidedAt    DateTime?
   decisionNote String?
+  saleId       String?  @unique // Venta generada al surtir la solicitud
+  sale         Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
 
   @@index([status])

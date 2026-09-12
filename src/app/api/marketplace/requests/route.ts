@@ -1,41 +1,41 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
-import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
+import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
 const statuses = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"] as const
 
 const createSchema = z.object({
   productId: z.string().min(1),
   qty: z.coerce.number().int().min(1, "La cantidad debe ser al menos 1").max(100000),
-  tallerName: z.string().trim().min(2, "Ingresa el nombre del taller").max(120),
+  // Opcional: para cuentas WORKSHOP el nombre del taller se deriva de su perfil
+  // (businessName ?? name) y se ignora lo que venga en el body.
+  tallerName: z.string().trim().max(120).optional(),
   contactName: z.string().trim().max(120).optional(),
   contactPhone: z.string().trim().max(30).optional(),
   note: z.string().trim().max(500).optional(),
-})
-
-const decideSchema = z.object({
-  id: z.string().min(1),
-  action: z.enum(["APPROVE", "REJECT", "FULFILL"]),
-  decisionNote: z.string().trim().max(500).optional(),
 })
 
 const requestInclude = {
   product: {
     select: { name: true, barcode: true, wholesalePrice: true, retailPrice: true },
   },
-  requestedBy: { select: { name: true } },
+  requestedBy: { select: { id: true, name: true, role: true } },
   decidedBy: { select: { name: true } },
+  sale: { select: { id: true, number: true } },
 } satisfies Prisma.MarketplaceRequestInclude
 
 // GET /api/marketplace/requests?status=
 // Solicitudes de piezas de talleres aliados. PENDING primero, luego recientes.
+// Una cuenta WORKSHOP solo ve las solicitudes que ella misma registró.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireMarketplaceViewer()
     if (auth.error) return auth.error
+    const session = getSession(auth)!
 
     const status = new URL(req.url).searchParams.get("status")
     if (status && !(statuses as readonly string[]).includes(status)) {
@@ -43,7 +43,10 @@ export async function GET(req: Request) {
     }
 
     const requests = await prisma.marketplaceRequest.findMany({
-      where: status ? { status } : {},
+      where: {
+        ...(status ? { status } : {}),
+        ...(session.user.role === "WORKSHOP" ? { requestedById: session.user.id } : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 200,
       include: requestInclude,
@@ -63,13 +66,17 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/marketplace/requests  { productId, qty, tallerName, contactName?, contactPhone?, note? }
-// Un usuario interno registra la solicitud de un taller aliado sobre una pieza del catálogo.
+// POST /api/marketplace/requests  { productId, qty, tallerName?, contactName?, contactPhone?, note? }
+// Staff: registra a mano la solicitud de un taller aliado (tallerName requerido).
+// WORKSHOP: el taller pide directamente; tallerName sale de su cuenta
+// (businessName ?? name) y requestedById queda ligado a su usuario.
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireMarketplaceViewer()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const isWorkshop = session.user.role === "WORKSHOP"
 
     const parseResult = createSchema.safeParse(await req.json().catch(() => null))
     if (!parseResult.success) {
@@ -81,9 +88,24 @@ export async function POST(req: Request) {
     }
     const input = parseResult.data
 
+    let tallerName = input.tallerName?.trim() ?? ""
+    if (isWorkshop) {
+      const account = await prisma.user.findUnique({
+        where: { id: actorId },
+        select: { businessName: true, jobTitle: true, name: true },
+      })
+      tallerName = account?.businessName?.trim() || account?.jobTitle?.trim() || account?.name || session.user.name || ""
+    }
+    if (tallerName.length < 2) {
+      return NextResponse.json(
+        { error: "Ingresa el nombre del taller" },
+        { status: 400 }
+      )
+    }
+
     const product = await prisma.product.findFirst({
       where: { id: input.productId, isActive: true, marketplaceVisible: true },
-      select: { id: true },
+      select: { id: true, name: true },
     })
     if (!product) {
       return NextResponse.json(
@@ -96,7 +118,7 @@ export async function POST(req: Request) {
       data: {
         productId: product.id,
         qty: input.qty,
-        tallerName: input.tallerName,
+        tallerName,
         contactName: input.contactName || null,
         contactPhone: input.contactPhone || null,
         note: input.note || null,
@@ -105,70 +127,17 @@ export async function POST(req: Request) {
       include: requestInclude,
     })
 
+    // Aviso en vivo al staff conectado; un fallo aquí no debe tumbar el registro.
+    void sendNotificationToStaff({
+      type: "marketplace_request",
+      title: "Nueva solicitud de refacción",
+      message: `${request.tallerName} solicita ${request.qty}× ${product.name}`,
+      data: { requestId: request.id },
+    }).catch(() => {})
+
     return NextResponse.json({ request }, { status: 201 })
   } catch (error) {
     console.error("Error creating marketplace request:", error)
     return NextResponse.json({ error: "Error al registrar la solicitud" }, { status: 500 })
-  }
-}
-
-// PATCH /api/marketplace/requests  { id, action: "APPROVE"|"REJECT"|"FULFILL", decisionNote? }
-// Solo ADMIN. La aprobación es un acuerdo comercial: NO descuenta inventario ni
-// genera venta. El surtido (entrega física, salida de stock y cobro al taller)
-// es un paso manual posterior — por eso existe el estado FULFILLED aparte.
-export async function PATCH(req: Request) {
-  try {
-    const auth = await requireAdmin()
-    if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
-
-    const parseResult = decideSchema.safeParse(await req.json().catch(() => null))
-    if (!parseResult.success) {
-      return NextResponse.json({ error: "Datos inválidos" }, { status: 400 })
-    }
-    const { id, action, decisionNote } = parseResult.data
-
-    const existing = await prisma.marketplaceRequest.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    })
-    if (!existing) {
-      return NextResponse.json({ error: "Solicitud no encontrada" }, { status: 404 })
-    }
-
-    // Transiciones válidas: PENDING -> APPROVED/REJECTED, APPROVED -> FULFILLED.
-    const nextStatus =
-      action === "APPROVE" ? "APPROVED" : action === "REJECT" ? "REJECTED" : "FULFILLED"
-    const expectedCurrent = action === "FULFILL" ? "APPROVED" : "PENDING"
-
-    const updated = await prisma.marketplaceRequest.updateMany({
-      where: { id, status: expectedCurrent },
-      data: {
-        status: nextStatus,
-        decidedById: actorId,
-        decidedAt: new Date(),
-        decisionNote: decisionNote || null,
-      },
-    })
-    if (updated.count !== 1) {
-      return NextResponse.json(
-        {
-          error:
-            action === "FULFILL"
-              ? "Solo puedes marcar como surtida una solicitud aprobada."
-              : "La solicitud ya fue decidida.",
-        },
-        { status: 409 }
-      )
-    }
-
-    const request = await prisma.marketplaceRequest.findUniqueOrThrow({
-      where: { id },
-      include: requestInclude,
-    })
-    return NextResponse.json({ request })
-  } catch (error) {
-    console.error("Error deciding marketplace request:", error)
-    return NextResponse.json({ error: "Error al actualizar la solicitud" }, { status: 500 })
   }
 }

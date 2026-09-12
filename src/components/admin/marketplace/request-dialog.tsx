@@ -23,6 +23,8 @@ interface MarketplaceRequestDialogProps {
   onOpenChange: (open: boolean) => void
   onSuccess?: () => void
   formatPrice: (price: number) => string
+  // Cuenta WORKSHOP: el nombre del taller sale de su perfil, no se captura.
+  isWorkshop?: boolean
 }
 
 export function MarketplaceRequestDialog({
@@ -31,6 +33,7 @@ export function MarketplaceRequestDialog({
   onOpenChange,
   onSuccess,
   formatPrice,
+  isWorkshop = false,
 }: MarketplaceRequestDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,8 +44,9 @@ export function MarketplaceRequestDialog({
             Solicitar pieza
           </DialogTitle>
           <DialogDescription>
-            Registra la solicitud de un taller aliado. El proveedor la revisará
-            para aprobarla.
+            {isWorkshop
+              ? "Envía la solicitud a nombre de tu taller. El proveedor la revisará para aprobarla."
+              : "Registra la solicitud de un taller aliado. El proveedor la revisará para aprobarla."}
           </DialogDescription>
         </DialogHeader>
 
@@ -53,6 +57,7 @@ export function MarketplaceRequestDialog({
             onClose={() => onOpenChange(false)}
             onSuccess={onSuccess}
             formatPrice={formatPrice}
+            isWorkshop={isWorkshop}
           />
         )}
       </DialogContent>
@@ -65,9 +70,10 @@ interface RequestFormProps {
   onClose: () => void
   onSuccess?: () => void
   formatPrice: (price: number) => string
+  isWorkshop: boolean
 }
 
-function RequestForm({ product, onClose, onSuccess, formatPrice }: RequestFormProps) {
+function RequestForm({ product, onClose, onSuccess, formatPrice, isWorkshop }: RequestFormProps) {
   const [qty, setQty] = useState(1)
   const [tallerName, setTallerName] = useState("")
   const [contactName, setContactName] = useState("")
@@ -76,7 +82,7 @@ function RequestForm({ product, onClose, onSuccess, formatPrice }: RequestFormPr
   const [sending, setSending] = useState(false)
 
   const total = product.wholesalePrice * Math.max(1, qty)
-  const canSubmit = tallerName.trim().length >= 2 && qty >= 1 && !sending
+  const canSubmit = (isWorkshop || tallerName.trim().length >= 2) && qty >= 1 && !sending
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -89,7 +95,8 @@ function RequestForm({ product, onClose, onSuccess, formatPrice }: RequestFormPr
         body: JSON.stringify({
           productId: product.id,
           qty,
-          tallerName: tallerName.trim(),
+          // Para cuentas WORKSHOP el servidor deriva tallerName del perfil.
+          tallerName: isWorkshop ? undefined : tallerName.trim(),
           contactName: contactName.trim() || undefined,
           contactPhone: contactPhone.trim() || undefined,
           note: note.trim() || undefined,
@@ -141,17 +148,20 @@ function RequestForm({ product, onClose, onSuccess, formatPrice }: RequestFormPr
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="mreq-taller">Nombre del taller *</Label>
-        <Input
-          id="mreq-taller"
-          value={tallerName}
-          onChange={(e) => setTallerName(e.target.value)}
-          placeholder="Ej. Taller Rodríguez"
-          maxLength={120}
-          required
-        />
-      </div>
+      {/* Para cuentas WORKSHOP el nombre del taller se deriva del perfil. */}
+      {!isWorkshop && (
+        <div className="space-y-1.5">
+          <Label htmlFor="mreq-taller">Nombre del taller *</Label>
+          <Input
+            id="mreq-taller"
+            value={tallerName}
+            onChange={(e) => setTallerName(e.target.value)}
+            placeholder="Ej. Taller Rodríguez"
+            maxLength={120}
+            required
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1.5">

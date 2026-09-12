@@ -28,6 +28,8 @@ export default function MercadoPage() {
   const { data: session } = useSession()
   const { formatPrice } = useCurrency()
   const isAdmin = session?.user?.role === "ADMIN"
+  // Taller aliado externo: ve el catálogo y solo sus propias solicitudes.
+  const isWorkshop = session?.user?.role === "WORKSHOP"
 
   const [products, setProducts] = useState<MarketplaceProduct[]>([])
   const [visibleCount, setVisibleCount] = useState(0)
@@ -167,7 +169,7 @@ export default function MercadoPage() {
           </TabsTrigger>
           <TabsTrigger value="solicitudes" className="px-4">
             <ClipboardList className="h-4 w-4" />
-            Solicitudes
+            {isWorkshop ? "Mis solicitudes" : "Solicitudes"}
             {pendingCount > 0 && (
               <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
                 {pendingCount}
@@ -316,6 +318,7 @@ export default function MercadoPage() {
         onOpenChange={setRequestDialogOpen}
         onSuccess={() => setRequestsRefreshKey((k) => k + 1)}
         formatPrice={formatPrice}
+        isWorkshop={isWorkshop}
       />
     </div>
   )

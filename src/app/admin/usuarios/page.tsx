@@ -58,7 +58,7 @@ interface User {
   phone: string | null
   telegramId: string | null
   jobTitle?: string | null
-  role: "ADMIN" | "CUSTOMER" | "EMPLOYEE"
+  role: "ADMIN" | "CUSTOMER" | "EMPLOYEE" | "WORKSHOP"
   customerType: "TECHNICIAN" | "STORE" | "NORMAL"
   status: "PENDING" | "APPROVED" | "REJECTED"
   creditLimit?: number | null
@@ -130,6 +130,8 @@ export default function UsersPage() {
       
       if (activeTab === "empleados") {
         params.set("role", "EMPLOYEE")
+      } else if (activeTab === "talleres") {
+        params.set("role", "WORKSHOP")
       } else if (activeTab === "administradores") {
         params.set("role", "ADMIN")
       } else if (activeTab === "pendientes") {
@@ -194,6 +196,8 @@ export default function UsersPage() {
           toast.success(`Tipo de cliente actualizado a ${data.customerType === "STORE" ? "Tienda" : data.customerType === "TECHNICIAN" ? "Técnico" : "Particular"}`)
         } else if (data.role === "ADMIN") {
           toast.success("Usuario promovido a Administrador 👑")
+        } else if (data.role === "WORKSHOP") {
+          toast.success("Usuario marcado como Taller aliado")
         } else if (data.role === "CUSTOMER") {
           toast.success("Rol de Administrador removido")
         } else if (data.homeBranchId !== undefined) {
@@ -283,7 +287,7 @@ export default function UsersPage() {
       })
       const result = await res.json()
       if (res.ok) {
-        toast.success("Datos del empleado actualizados")
+        toast.success(editUser.role === "WORKSHOP" ? "Datos del taller actualizados" : "Datos del empleado actualizados")
         setEditOpen(false)
         setEditUser(null)
         fetchUsers()
@@ -470,6 +474,7 @@ export default function UsersPage() {
                     <SelectContent>
                       <SelectItem value="CUSTOMER">Cliente</SelectItem>
                       <SelectItem value="EMPLOYEE">Empleado / Moderador</SelectItem>
+                      <SelectItem value="WORKSHOP">Taller aliado</SelectItem>
                       <SelectItem value="ADMIN">Administrador</SelectItem>
                     </SelectContent>
                   </Select>
@@ -480,7 +485,7 @@ export default function UsersPage() {
                     value={newUser.customerType}
                     onValueChange={(value) => setNewUser({ ...newUser, customerType: value })}
                   >
-                    <SelectTrigger disabled={newUser.role === "ADMIN"}>
+                    <SelectTrigger disabled={newUser.role === "ADMIN" || newUser.role === "WORKSHOP"}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -509,37 +514,48 @@ export default function UsersPage() {
                   </Select>
                 </div>
               )}
-              {(newUser.role === "EMPLOYEE" || newUser.role === "ADMIN") && (
+              {(newUser.role === "EMPLOYEE" || newUser.role === "ADMIN" || newUser.role === "WORKSHOP") && (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="jobTitle">Puesto</Label>
+                    <Label htmlFor="jobTitle">
+                      {newUser.role === "WORKSHOP" ? "Nombre del taller" : "Puesto"}
+                    </Label>
                     <Input
                       id="jobTitle"
-                      list="puesto-sugerencias"
+                      list={newUser.role === "WORKSHOP" ? undefined : "puesto-sugerencias"}
                       maxLength={60}
                       value={newUser.jobTitle}
                       onChange={(e) => setNewUser({ ...newUser, jobTitle: e.target.value })}
-                      placeholder="Ej: Técnico"
+                      placeholder={newUser.role === "WORKSHOP" ? "Ej: Taller Hermanos Pérez" : "Ej: Técnico"}
+                      required={newUser.role === "WORKSHOP"}
                     />
-                    <datalist id="puesto-sugerencias">
-                      <option value="Técnico" />
-                      <option value="Recepción" />
-                      <option value="Dueño" />
-                    </datalist>
+                    {newUser.role === "WORKSHOP" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Es el nombre que aparecerá en las solicitudes del mercado.
+                      </p>
+                    ) : (
+                      <datalist id="puesto-sugerencias">
+                        <option value="Técnico" />
+                        <option value="Recepción" />
+                        <option value="Dueño" />
+                      </datalist>
+                    )}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="quickPin">PIN rápido (opcional)</Label>
-                    <Input
-                      id="quickPin"
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={6}
-                      autoComplete="off"
-                      value={newUser.quickPin}
-                      onChange={(e) => setNewUser({ ...newUser, quickPin: e.target.value.replace(/\D/g, "") })}
-                      placeholder="4 a 6 dígitos"
-                    />
-                  </div>
+                  {(newUser.role === "EMPLOYEE" || newUser.role === "ADMIN") && (
+                    <div className="space-y-2">
+                      <Label htmlFor="quickPin">PIN rápido (opcional)</Label>
+                      <Input
+                        id="quickPin"
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={6}
+                        autoComplete="off"
+                        value={newUser.quickPin}
+                        onChange={(e) => setNewUser({ ...newUser, quickPin: e.target.value.replace(/\D/g, "") })}
+                        placeholder="4 a 6 dígitos"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
               <DialogFooter>
@@ -566,6 +582,10 @@ export default function UsersPage() {
           <TabsTrigger value="empleados" className="flex items-center gap-2">
             <Wrench className="h-4 w-4" />
             Empleados
+          </TabsTrigger>
+          <TabsTrigger value="talleres" className="flex items-center gap-2">
+            <Store className="h-4 w-4" />
+            Talleres
           </TabsTrigger>
           <TabsTrigger value="administradores" className="flex items-center gap-2">
             <Crown className="h-4 w-4" />
@@ -632,6 +652,12 @@ export default function UsersPage() {
                             Admin
                           </Badge>
                         )}
+                        {user.role === "WORKSHOP" && (
+                          <Badge variant="secondary" className="shrink-0">
+                            <Store className="mr-1 h-3 w-3" />
+                            Taller aliado
+                          </Badge>
+                        )}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground truncate">{user.email}</p>
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-muted-foreground">
@@ -651,6 +677,7 @@ export default function UsersPage() {
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {statusLabels[user.status]}
                       </Badge>
+                      {user.role !== "WORKSHOP" && (
                       <Badge variant="outline">
                         {user.customerType === "STORE" ? (
                           <>
@@ -669,6 +696,7 @@ export default function UsersPage() {
                           </>
                         )}
                       </Badge>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
@@ -719,7 +747,7 @@ export default function UsersPage() {
 
                       {user.status === "APPROVED" && (
                         <>
-                          {user.role !== "ADMIN" && (
+                          {user.role !== "ADMIN" && user.role !== "WORKSHOP" && (
                             <Select
                               value={user.customerType}
                               onValueChange={(value) =>
@@ -754,12 +782,15 @@ export default function UsersPage() {
                                   ? "Administrador"
                                   : user.role === "EMPLOYEE"
                                     ? "Empleado"
-                                    : "Cliente"}
+                                    : user.role === "WORKSHOP"
+                                      ? "Taller aliado"
+                                      : "Cliente"}
                               </span>
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="CUSTOMER">Cliente</SelectItem>
                               <SelectItem value="EMPLOYEE">Empleado</SelectItem>
+                              <SelectItem value="WORKSHOP">Taller aliado</SelectItem>
                               <SelectItem value="ADMIN">Administrador</SelectItem>
                             </SelectContent>
                           </Select>
@@ -792,7 +823,7 @@ export default function UsersPage() {
                               </SelectContent>
                             </Select>
                           )}
-                          {(user.role === "EMPLOYEE" || user.role === "ADMIN") && (
+                          {(user.role === "EMPLOYEE" || user.role === "ADMIN" || user.role === "WORKSHOP") && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -946,11 +977,11 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Staff edit dialog: puesto + PIN rápido */}
+      {/* Staff edit dialog: puesto + PIN rápido (o nombre del taller para WORKSHOP) */}
       <Dialog open={editOpen} onOpenChange={(open) => { if (editSaving) return; setEditOpen(open); if (!open) setEditUser(null) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar empleado</DialogTitle>
+            <DialogTitle>{editUser?.role === "WORKSHOP" ? "Editar taller aliado" : "Editar empleado"}</DialogTitle>
           </DialogHeader>
           {editUser && (
             <div className="space-y-4 py-2">
@@ -959,22 +990,31 @@ export default function UsersPage() {
                 <p className="text-xs text-muted-foreground">{editUser.email}</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-jobTitle">Puesto</Label>
+                <Label htmlFor="edit-jobTitle">
+                  {editUser.role === "WORKSHOP" ? "Nombre del taller" : "Puesto"}
+                </Label>
                 <Input
                   id="edit-jobTitle"
-                  list="puesto-sugerencias-edit"
+                  list={editUser.role === "WORKSHOP" ? undefined : "puesto-sugerencias-edit"}
                   maxLength={60}
                   value={editJobTitle}
                   disabled={editSaving}
                   onChange={(e) => setEditJobTitle(e.target.value)}
-                  placeholder="Ej: Técnico"
+                  placeholder={editUser.role === "WORKSHOP" ? "Ej: Taller Hermanos Pérez" : "Ej: Técnico"}
                 />
-                <datalist id="puesto-sugerencias-edit">
-                  <option value="Técnico" />
-                  <option value="Recepción" />
-                  <option value="Dueño" />
-                </datalist>
+                {editUser.role === "WORKSHOP" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Es el nombre que aparecerá en las solicitudes del mercado.
+                  </p>
+                ) : (
+                  <datalist id="puesto-sugerencias-edit">
+                    <option value="Técnico" />
+                    <option value="Recepción" />
+                    <option value="Dueño" />
+                  </datalist>
+                )}
               </div>
+              {editUser.role !== "WORKSHOP" && (
               <div className="space-y-2">
                 <Label htmlFor="edit-pin">PIN rápido</Label>
                 <Input
@@ -1000,6 +1040,7 @@ export default function UsersPage() {
                   Quitar PIN actual
                 </label>
               </div>
+              )}
             </div>
           )}
           <DialogFooter>

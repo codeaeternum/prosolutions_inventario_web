@@ -21,6 +21,7 @@ export type NotificationType =
   | "user_registered"
   | "low_stock"
   | "repair_ready"
+  | "marketplace_request"
 
 export interface NotificationPayload {
   type: NotificationType
