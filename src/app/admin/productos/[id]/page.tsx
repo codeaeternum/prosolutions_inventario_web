@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, use } from "react"
+import { useState, useEffect, useMemo, use } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,7 +20,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import Link from "next/link"
-import Image from "next/image"
 
 interface Brand {
   id: string
@@ -69,7 +68,10 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
   const [categories, setCategories] = useState<Category[]>([])
 
   const [selectedBrand, setSelectedBrand] = useState("")
-  const [filteredModels, setFilteredModels] = useState<Model[]>([])
+  const filteredModels = useMemo(
+    () => (selectedBrand ? models.filter((m) => m.brand.name === selectedBrand) : []),
+    [selectedBrand, models]
+  )
   const [selectedModels, setSelectedModels] = useState<Model[]>([])
   const [images, setImages] = useState<string[]>([])
 
@@ -179,14 +181,6 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
     }
     fetchData()
   }, [resolvedParams.id])
-
-  useEffect(() => {
-    if (selectedBrand) {
-      setFilteredModels(models.filter((m) => m.brand.name === selectedBrand))
-    } else {
-      setFilteredModels([])
-    }
-  }, [selectedBrand, models])
 
   const handleAddModel = (model: Model) => {
     if (!selectedModels.find((m) => m.id === model.id)) {

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 
-// La gestión de categorías vive en el hub de clasificación del catálogo.
+// La gestión de categorías vive en el hub de Productos, pestaña Clasificación.
 export default function CategoriasPage() {
-  redirect("/admin/catalogo?tab=categorias")
+  redirect("/admin/productos?tab=clasificacion&sub=categorias")
 }

@@ -6,11 +6,13 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-// El link de cotización se arma brandeado (/<slug>/cotizacion/<token>) cuando
-// el negocio tiene business_slug; si no, se usa la ruta global /cotizacion/<token>
-// (siempre funcional — es el fallback público). El slug llega por la prop
-// publicSlug o se pide una vez por sesión a /api/settings/public-profile (solo
-// ADMIN: si el rol no lo puede leer, o la red falla, se comparte el global).
+// Los links públicos se arman brandeados cuando el negocio tiene
+// business_slug: rastreo /<slug>/order-status y cotización
+// /<slug>/cotizacion/<token>; si no, se usan las rutas globales
+// /seguimiento y /cotizacion/<token> (siempre funcionales — fallback
+// público). El slug llega por la prop publicSlug o se pide una vez por
+// sesión a /api/settings/public-profile (solo ADMIN: si el rol no lo puede
+// leer, o la red falla, se comparte el global).
 let publicSlugRequest: Promise<string | undefined> | null = null
 function fetchPublicSlug(): Promise<string | undefined> {
   if (!publicSlugRequest) {
@@ -41,21 +43,29 @@ export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }:
   const slug = publicSlug || fetchedSlug
 
   // Prefetch al montar (no al abrir el menú): así el slug ya llegó cuando el
-  // usuario toca "Enviar cotización". Solo hace falta cuando hay quote.token.
+  // usuario copia el link de rastreo o toca "Enviar cotización".
   useEffect(() => {
-    if (publicSlug || !quote?.token) return
+    if (publicSlug) return
     let active = true
     void fetchPublicSlug().then(value => { if (active) setFetchedSlug(value) })
     return () => { active = false }
-  }, [publicSlug, quote?.token])
+  }, [publicSlug])
 
-  const trackingUrl = () => `${window.location.origin}/seguimiento?folio=${encodeURIComponent(folio)}`
+  // Los últimos 4 dígitos del teléfono viajan en ?t=: quien abre el link (o
+  // escanea el QR del ticket) encuentra el formulario casi listo para
+  // consultar, sin escribir nada.
+  const phone4 = (phone ?? "").replace(/\D/g, "").slice(-4)
+
+  const trackingUrl = () => {
+    const query = `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+    return `${window.location.origin}${slug ? `/${slug}/order-status` : "/seguimiento"}?${query}`
+  }
 
   const quoteUrl = (token: string) =>
     `${window.location.origin}${slug ? `/${slug}/cotizacion/${token}` : `/cotizacion/${token}`}`
 
   const message = () =>
-    `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en ${window.location.origin}/seguimiento con tu folio y los últimos 4 dígitos de tu teléfono.`
+    `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en este link (ya lleva tus datos): ${trackingUrl()}`
 
   const mxn = (n: number) => n.toLocaleString("es-MX", { style: "currency", currency: "MXN" })
 

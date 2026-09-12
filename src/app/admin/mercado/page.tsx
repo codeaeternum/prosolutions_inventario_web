@@ -11,12 +11,21 @@ import {
   MarketplaceProductCard,
   type MarketplaceProduct,
 } from "@/components/admin/marketplace/product-card"
+import { MarketplacePurchasesPanel } from "@/components/admin/marketplace/purchases-panel"
 import { MarketplaceRequestDialog } from "@/components/admin/marketplace/request-dialog"
 import { MarketplaceRequestsPanel } from "@/components/admin/marketplace/requests-panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
-import { ClipboardList, EyeOff, Info, Search, Store } from "lucide-react"
+import {
+  ClipboardList,
+  EyeOff,
+  Handshake,
+  Info,
+  Search,
+  ShoppingBag,
+  Store,
+} from "lucide-react"
 import { toast } from "sonner"
 
 interface Category {
@@ -28,8 +37,11 @@ export default function MercadoPage() {
   const { data: session } = useSession()
   const { formatPrice } = useCurrency()
   const isAdmin = session?.user?.role === "ADMIN"
-  // Taller aliado externo: ve el catálogo y solo sus propias solicitudes.
+  // Taller aliado externo: ve el catálogo, solo sus propias solicitudes y sus compras.
   const isWorkshop = session?.user?.role === "WORKSHOP"
+  // El nombre del taller sale de su perfil (jobTitle) con fallback al nombre de la cuenta.
+  const workshopName =
+    session?.user?.jobTitle?.trim() || session?.user?.name?.trim() || "tu taller"
 
   const [products, setProducts] = useState<MarketplaceProduct[]>([])
   const [visibleCount, setVisibleCount] = useState(0)
@@ -43,8 +55,8 @@ export default function MercadoPage() {
   const [showHidden, setShowHidden] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
-  // Solicitudes de talleres aliados
-  const [tab, setTab] = useState<"catalogo" | "solicitudes">("catalogo")
+  // Solicitudes de talleres aliados ("compras" solo existe para cuentas WORKSHOP)
+  const [tab, setTab] = useState<"catalogo" | "solicitudes" | "compras">("catalogo")
   const [requestTarget, setRequestTarget] = useState<MarketplaceProduct | null>(null)
   const [requestDialogOpen, setRequestDialogOpen] = useState(false)
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0)
@@ -146,20 +158,29 @@ export default function MercadoPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <Store className="h-6 w-6" />
-            Mercado de refacciones
+            {isWorkshop ? "Portal de taller aliado" : "Mercado de refacciones"}
           </h1>
           <p className="text-muted-foreground">
-            Inventario disponible para talleres aliados
+            {isWorkshop
+              ? "Compra refacciones a precio de mayoreo y da seguimiento a tus pedidos"
+              : "Inventario disponible para talleres aliados"}
           </p>
         </div>
         <Badge variant="secondary" className="self-start sm:self-auto text-sm px-3 py-1">
-          {visibleCount} {visibleCount === 1 ? "producto visible" : "productos visibles"}
+          {visibleCount}{" "}
+          {isWorkshop
+            ? visibleCount === 1
+              ? "producto disponible"
+              : "productos disponibles"
+            : visibleCount === 1
+              ? "producto visible"
+              : "productos visibles"}
         </Badge>
       </div>
 
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes")}
+        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes" | "compras")}
         className="gap-6"
       >
         <TabsList>
@@ -176,6 +197,13 @@ export default function MercadoPage() {
               </span>
             )}
           </TabsTrigger>
+          {/* Historial de compras surtidas — solo portal del taller aliado */}
+          {isWorkshop && (
+            <TabsTrigger value="compras" className="px-4">
+              <ShoppingBag className="h-4 w-4" />
+              Mis compras
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="catalogo" className="space-y-6">
@@ -189,6 +217,18 @@ export default function MercadoPage() {
                 para ocultar productos internos y la opción{" "}
                 <span className="font-medium text-foreground">Ver ocultos</span> para
                 volver a mostrarlos.
+              </p>
+            </div>
+          )}
+
+          {/* Banner del portal: nombre del taller + precios de mayoreo */}
+          {isWorkshop && (
+            <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+              <Handshake className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <p className="text-sm text-muted-foreground">
+                Compras para{" "}
+                <span className="font-medium text-foreground">{workshopName}</span>
+                {" · "}precios de mayoreo
               </p>
             </div>
           )}
@@ -304,11 +344,22 @@ export default function MercadoPage() {
         <TabsContent value="solicitudes">
           <MarketplaceRequestsPanel
             isAdmin={isAdmin}
+            isWorkshop={isWorkshop}
             refreshKey={requestsRefreshKey}
             onPendingCount={setPendingCount}
+            onGoToPurchases={() => setTab("compras")}
             formatPrice={formatPrice}
           />
         </TabsContent>
+
+        {isWorkshop && (
+          <TabsContent value="compras">
+            <MarketplacePurchasesPanel
+              isWorkshop={isWorkshop}
+              formatPrice={formatPrice}
+            />
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Dialogo de solicitud de pieza para taller aliado */}

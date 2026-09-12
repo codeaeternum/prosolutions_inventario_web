@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation"
 import { requireAdmin } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
+import { normalizeSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { TicketPrintView } from "./ticket-print-view"
@@ -215,6 +216,21 @@ export default async function TicketPage({
       const evidenceUrl = order.uploadToken ? `${base}/evidencia/${order.uploadToken}` : undefined
 
       if (tipo === "reparacion") {
+        // QR de rastreo brandeado: con business_slug apunta a la vitrina
+        // /<slug>/order-status; sin slug cae al /seguimiento global. En
+        // ambos casos el folio y los últimos 4 dígitos del teléfono van
+        // prellenados (?folio=…&t=…): el cliente solo toca "Consultar".
+        const slugRow = await prisma.systemSettings.findUnique({
+          where: { key: "business_slug" },
+          select: { value: true },
+        })
+        const trackingSlug = normalizeSlug(slugRow?.value ?? "")
+        const phone4 = order.customerPhone.replace(/\D/g, "").slice(-4)
+        const trackingQuery = `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+        const trackingUrl = trackingSlug
+          ? `${base}/${trackingSlug}/order-status?${trackingQuery}`
+          : `${base}/seguimiento?${trackingQuery}`
+
         repairData = {
           title: "COMPROBANTE DE RECEPCIÓN",
           folio,
@@ -247,8 +263,8 @@ export default async function TicketPage({
           estimatedQuote: order.quoteCents != null && order.quoteCents !== quotedCents ? order.quoteCents / 100 : undefined,
           quote: quotedCents != null ? quotedCents / 100 : undefined,
           balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
-          qrCode: `${base}/seguimiento?folio=${folio}`,
-          trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
+          qrCode: trackingUrl,
+          trackingHint: "Escanea para rastrear tu reparación",
           // Firma capturada en recepción (PNG base64).
           signatureData: order.signatureData ?? undefined,
         }

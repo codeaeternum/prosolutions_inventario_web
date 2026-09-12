@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
+  ArrowRight,
   Check,
   ClipboardList,
   Loader2,
@@ -89,15 +90,22 @@ const formatDate = (iso: string) =>
 
 interface MarketplaceRequestsPanelProps {
   isAdmin: boolean
+  // Cuenta WORKSHOP: vista del portal del taller — oculta columnas internas
+  // (Taller, Solicitó, quién decidió) y muestra hints de qué sigue.
+  isWorkshop?: boolean
   refreshKey?: number
   onPendingCount?: (count: number) => void
+  // Lleva al tab "Mis compras" (solo portal WORKSHOP).
+  onGoToPurchases?: () => void
   formatPrice: (price: number) => string
 }
 
 export function MarketplaceRequestsPanel({
   isAdmin,
+  isWorkshop = false,
   refreshKey = 0,
   onPendingCount,
+  onGoToPurchases,
   formatPrice,
 }: MarketplaceRequestsPanelProps) {
   const [requests, setRequests] = useState<MarketplaceRequest[]>([])
@@ -192,10 +200,39 @@ export function MarketplaceRequestsPanel({
         <Badge variant={meta.variant} className={meta.className}>
           {meta.label}
         </Badge>
-        {request.decidedBy && request.status !== "PENDING" && (
+        {/* Staff: quién decidió. Taller: qué sigue, en su idioma. */}
+        {!isWorkshop && request.decidedBy && request.status !== "PENDING" && (
           <p className="text-[11px] text-muted-foreground">
             por {request.decidedBy.name}
           </p>
+        )}
+        {isWorkshop && request.status === "PENDING" && (
+          <p className="text-[11px] text-muted-foreground">
+            En revisión por el proveedor
+          </p>
+        )}
+        {isWorkshop && request.status === "APPROVED" && (
+          <p className="text-[11px] font-medium text-success">
+            El proveedor la surtirá pronto
+          </p>
+        )}
+        {isWorkshop && request.status === "REJECTED" && request.decisionNote && (
+          <p
+            className="text-[11px] text-muted-foreground truncate max-w-[180px]"
+            title={request.decisionNote}
+          >
+            {request.decisionNote}
+          </p>
+        )}
+        {isWorkshop && request.status === "FULFILLED" && onGoToPurchases && (
+          <button
+            type="button"
+            onClick={onGoToPurchases}
+            className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:underline"
+          >
+            Ver en Mis compras
+            <ArrowRight className="h-3 w-3" />
+          </button>
         )}
       </div>
     )
@@ -335,18 +372,18 @@ export function MarketplaceRequestsPanel({
       </div>
 
       {loading ? (
-        <RequestsTableSkeleton isAdmin={isAdmin} />
+        <RequestsTableSkeleton isAdmin={isAdmin} isWorkshop={isWorkshop} />
       ) : displayed.length > 0 ? (
         <div className="rounded-lg border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Producto</TableHead>
-                <TableHead>Taller</TableHead>
+                {!isWorkshop && <TableHead>Taller</TableHead>}
                 <TableHead className="text-center">Cant.</TableHead>
                 <TableHead>Precio taller</TableHead>
                 <TableHead>Fecha</TableHead>
-                <TableHead>Solicitó</TableHead>
+                {!isWorkshop && <TableHead>Solicitó</TableHead>}
                 <TableHead>Estado</TableHead>
                 {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
               </TableRow>
@@ -372,16 +409,18 @@ export function MarketplaceRequestsPanel({
                       </p>
                     )}
                   </TableCell>
-                  <TableCell className="min-w-[140px]">
-                    <p className="font-medium">{request.tallerName}</p>
-                    {(request.contactName || request.contactPhone) && (
-                      <p className="text-[11px] text-muted-foreground">
-                        {[request.contactName, request.contactPhone]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </p>
-                    )}
-                  </TableCell>
+                  {!isWorkshop && (
+                    <TableCell className="min-w-[140px]">
+                      <p className="font-medium">{request.tallerName}</p>
+                      {(request.contactName || request.contactPhone) && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {[request.contactName, request.contactPhone]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="text-center font-semibold">
                     {request.qty}
                   </TableCell>
@@ -397,9 +436,11 @@ export function MarketplaceRequestsPanel({
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     {formatDate(request.createdAt)}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    {request.requestedBy?.name ?? "—"}
-                  </TableCell>
+                  {!isWorkshop && (
+                    <TableCell className="whitespace-nowrap">
+                      {request.requestedBy?.name ?? "—"}
+                    </TableCell>
+                  )}
                   <TableCell>{statusBadge(request)}</TableCell>
                   {isAdmin && (
                     <TableCell className="text-right">{actions(request)}</TableCell>
@@ -414,12 +455,16 @@ export function MarketplaceRequestsPanel({
           icon={ClipboardList}
           title={
             statusFilter === "all"
-              ? "Sin solicitudes de talleres"
+              ? isWorkshop
+                ? "Aún no tienes solicitudes"
+                : "Sin solicitudes de talleres"
               : "Sin solicitudes con este estado"
           }
           description={
             statusFilter === "all"
-              ? "Cuando un taller aliado pida piezas del catálogo, aparecerán aquí para su revisión."
+              ? isWorkshop
+                ? "Pide refacciones desde el catálogo y dales seguimiento aquí."
+                : "Cuando un taller aliado pida piezas del catálogo, aparecerán aquí para su revisión."
               : "Prueba con otro filtro de estado."
           }
         />
@@ -439,8 +484,15 @@ export function MarketplaceRequestsPanel({
   )
 }
 
-function RequestsTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
-  const cols = isAdmin ? 8 : 7
+function RequestsTableSkeleton({
+  isAdmin,
+  isWorkshop,
+}: {
+  isAdmin: boolean
+  isWorkshop: boolean
+}) {
+  // Columnas: Producto [Taller] Cant. Precio Fecha [Solicitó] Estado [Acciones]
+  const cols = (isWorkshop ? 0 : 2) + 5 + (isAdmin ? 1 : 0)
   return (
     <div className="rounded-lg border overflow-hidden animate-pulse">
       <div className="border-b bg-muted/40 px-4 py-3">
@@ -453,11 +505,11 @@ function RequestsTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
           <div className="h-4 w-4/5 rounded bg-muted" />
-          <div className="h-4 w-3/5 rounded bg-muted" />
+          {!isWorkshop && <div className="h-4 w-3/5 rounded bg-muted" />}
           <div className="h-4 w-8 rounded bg-muted justify-self-center" />
           <div className="h-4 w-16 rounded bg-muted" />
           <div className="h-4 w-20 rounded bg-muted" />
-          <div className="h-4 w-20 rounded bg-muted" />
+          {!isWorkshop && <div className="h-4 w-20 rounded bg-muted" />}
           <div className="h-5 w-16 rounded bg-muted" />
           {isAdmin && <div className="h-7 w-24 rounded bg-muted justify-self-end" />}
         </div>

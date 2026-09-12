@@ -156,7 +156,7 @@ export function ModelsPanel({ embedded = false }: { embedded?: boolean }) {
               Primero debes crear al menos una marca
             </p>
             <Button asChild>
-              <Link href="/admin/catalogo?tab=marcas">Ir a Marcas</Link>
+              <Link href="/admin/productos?tab=clasificacion&sub=marcas">Ir a Marcas</Link>
             </Button>
           </CardContent>
         </Card>

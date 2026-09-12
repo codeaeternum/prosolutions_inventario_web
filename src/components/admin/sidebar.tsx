@@ -23,8 +23,6 @@ import {
   Building2,
   MoreHorizontal,
   Package,
-  FolderTree,
-  Tag,
   Warehouse,
   BookOpen,
   Store,
@@ -60,8 +58,6 @@ const navigationGroups = [
       { name: "Mercado", href: "/admin/mercado", icon: Store },
       { name: "Productos", href: "/admin/productos", icon: Package },
       { name: "Inventario", href: "/admin/inventario", icon: Warehouse },
-      { name: "Clasificación", href: "/admin/catalogo", icon: FolderTree },
-      { name: "Etiquetas", href: "/admin/etiquetas", icon: Tag },
     ]
   },
   {

@@ -460,7 +460,7 @@ export default async function AdminDashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.totalBrands}</div>
             <Button variant="link" className="p-0 h-auto" asChild>
-              <Link href="/admin/catalogo?tab=marcas">Gestionar marcas</Link>
+              <Link href="/admin/productos?tab=clasificacion&sub=marcas">Gestionar marcas</Link>
             </Button>
           </CardContent>
         </Card>
