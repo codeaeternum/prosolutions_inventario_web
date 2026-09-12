@@ -35,6 +35,7 @@ import {
     X,
 } from "lucide-react"
 import { BarcodeScanner } from "@/components/barcode-scanner"
+import { ExportButton } from "@/components/admin/export-button"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
 
@@ -324,6 +325,7 @@ export default function VentasPage() {
                             </SelectContent>
                         </Select>
                     )}
+                    <ExportButton type="sales" branchId={branchId || undefined} />
                     <Button onClick={() => setShowScanner(true)} disabled={processing} size="lg" variant="outline">
                         <ScanBarcode className="h-5 w-5 mr-2" />
                         Escanear

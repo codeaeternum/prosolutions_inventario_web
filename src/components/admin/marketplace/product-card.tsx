@@ -1,7 +1,7 @@
 "use client"
 
 import Image from "next/image"
-import { Eye, EyeOff, Loader2, Package } from "lucide-react"
+import { Eye, EyeOff, Handshake, Loader2, Package } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -37,6 +37,7 @@ interface MarketplaceProductCardProps {
   isAdmin: boolean
   toggling?: boolean
   onToggleVisibility?: (product: MarketplaceProduct) => void
+  onRequest?: (product: MarketplaceProduct) => void
   formatPrice: (price: number) => string
 }
 
@@ -45,6 +46,7 @@ export function MarketplaceProductCard({
   isAdmin,
   toggling = false,
   onToggleVisibility,
+  onRequest,
   formatPrice,
 }: MarketplaceProductCardProps) {
   const status = getStockStatus(product)
@@ -164,6 +166,19 @@ export function MarketplaceProductCard({
               </span>
             ))}
           </div>
+        )}
+
+        {/* Solicitar pieza para un taller aliado */}
+        {onRequest && (
+          <Button
+            type="button"
+            size="sm"
+            className="w-full mt-1"
+            onClick={() => onRequest(product)}
+          >
+            <Handshake className="mr-2 h-4 w-4" />
+            Solicitar
+          </Button>
         )}
       </CardContent>
     </Card>

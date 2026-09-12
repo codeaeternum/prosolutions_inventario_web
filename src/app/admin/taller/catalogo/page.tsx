@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { BusinessName } from "@/components/admin/business-name"
+import { DeviceModelsImportDialog } from "@/components/admin/taller/import-models-dialog"
 import { WorkshopConfigEditor } from "@/components/admin/configuracion/taller-config"
 import { DEFAULT_EQUIPMENT_TYPES } from "@/components/admin/configuracion/editable-list"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
@@ -449,6 +450,9 @@ export default function WorkshopCatalogPage() {
               <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
             </div>
             <p className="text-xs text-muted-foreground">{deviceModels.length} {deviceModels.length === 1 ? "modelo" : "modelos"}</p>
+            <div className="ml-auto">
+              <DeviceModelsImportDialog onImported={() => void loadModels()} />
+            </div>
           </div>
 
           <section className="rounded-xl border bg-card">

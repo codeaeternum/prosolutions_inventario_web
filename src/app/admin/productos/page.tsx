@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
 import { EmptyState } from "@/components/admin/empty-state"
+import { ExportButton } from "@/components/admin/export-button"
 import {
   Dialog,
   DialogContent,
@@ -224,6 +225,7 @@ export default function ProductsPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ExportButton type="products" label="CSV" />
           <Button variant="outline" onClick={handleExport} disabled={exporting}>
             {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             Exportar

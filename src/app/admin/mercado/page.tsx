@@ -11,9 +11,12 @@ import {
   MarketplaceProductCard,
   type MarketplaceProduct,
 } from "@/components/admin/marketplace/product-card"
+import { MarketplaceRequestDialog } from "@/components/admin/marketplace/request-dialog"
+import { MarketplaceRequestsPanel } from "@/components/admin/marketplace/requests-panel"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
-import { EyeOff, Info, Search, Store } from "lucide-react"
+import { ClipboardList, EyeOff, Info, Search, Store } from "lucide-react"
 import { toast } from "sonner"
 
 interface Category {
@@ -37,6 +40,18 @@ export default function MercadoPage() {
   const [categoryId, setCategoryId] = useState<string>("all")
   const [showHidden, setShowHidden] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+
+  // Solicitudes de talleres aliados
+  const [tab, setTab] = useState<"catalogo" | "solicitudes">("catalogo")
+  const [requestTarget, setRequestTarget] = useState<MarketplaceProduct | null>(null)
+  const [requestDialogOpen, setRequestDialogOpen] = useState(false)
+  const [requestsRefreshKey, setRequestsRefreshKey] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
+
+  const openRequestDialog = (product: MarketplaceProduct) => {
+    setRequestTarget(product)
+    setRequestDialogOpen(true)
+  }
 
   // Debounce de búsqueda (~300ms)
   useEffect(() => {
@@ -140,125 +155,168 @@ export default function MercadoPage() {
         </Badge>
       </div>
 
-      {/* Banner informativo para admin */}
-      {isAdmin && (
-        <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-          <Info className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-          <p className="text-sm text-muted-foreground">
-            Este catálogo es lo que verán los talleres aliados. Usa el{" "}
-            <span className="font-medium text-foreground">ojo</span> en cada tarjeta
-            para ocultar productos internos y la opción{" "}
-            <span className="font-medium text-foreground">Ver ocultos</span> para
-            volver a mostrarlos.
-          </p>
-        </div>
-      )}
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes")}
+        className="gap-6"
+      >
+        <TabsList>
+          <TabsTrigger value="catalogo" className="px-4">
+            <Store className="h-4 w-4" />
+            Catálogo
+          </TabsTrigger>
+          <TabsTrigger value="solicitudes" className="px-4">
+            <ClipboardList className="h-4 w-4" />
+            Solicitudes
+            {pendingCount > 0 && (
+              <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
+                {pendingCount}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Barra de búsqueda y filtros */}
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar por nombre, código o categoría..."
-              aria-label="Buscar en el mercado"
-              className="pl-9"
-            />
-          </div>
+        <TabsContent value="catalogo" className="space-y-6">
+          {/* Banner informativo para admin */}
           {isAdmin && (
-            <Button
-              type="button"
-              variant={showHidden ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowHidden((v) => !v)}
-              className="shrink-0"
-            >
-              <EyeOff className="mr-2 h-4 w-4" />
-              Ver ocultos
-            </Button>
+            <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+              <Info className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <p className="text-sm text-muted-foreground">
+                Este catálogo es lo que verán los talleres aliados. Usa el{" "}
+                <span className="font-medium text-foreground">ojo</span> en cada tarjeta
+                para ocultar productos internos y la opción{" "}
+                <span className="font-medium text-foreground">Ver ocultos</span> para
+                volver a mostrarlos.
+              </p>
+            </div>
           )}
-        </div>
 
-        {/* Filtro de categorías */}
-        {categories.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            <button
-              type="button"
-              onClick={() => setCategoryId("all")}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                categoryId === "all"
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background text-muted-foreground hover:bg-muted"
+          {/* Barra de búsqueda y filtros */}
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Buscar por nombre, código o categoría..."
+                  aria-label="Buscar en el mercado"
+                  className="pl-9"
+                />
+              </div>
+              {isAdmin && (
+                <Button
+                  type="button"
+                  variant={showHidden ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowHidden((v) => !v)}
+                  className="shrink-0"
+                >
+                  <EyeOff className="mr-2 h-4 w-4" />
+                  Ver ocultos
+                </Button>
               )}
-            >
-              Todas
-            </button>
-            {categories.map((cat) => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => setCategoryId(cat.id)}
-                className={cn(
-                  "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                  categoryId === cat.id
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background text-muted-foreground hover:bg-muted"
-                )}
-              >
-                {cat.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
 
-      {/* Contenido */}
-      {loadError ? (
-        <div role="alert" className="rounded-lg border p-6 space-y-3">
-          <p>{loadError}</p>
-          <Button variant="outline" onClick={() => void fetchProducts()}>
-            Reintentar
-          </Button>
-        </div>
-      ) : loading ? (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <MarketplaceCardSkeleton key={i} />
-          ))}
-        </div>
-      ) : displayedProducts.length > 0 ? (
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {displayedProducts.map((product) => (
-            <MarketplaceProductCard
-              key={product.id}
-              product={product}
-              isAdmin={isAdmin}
-              toggling={togglingId === product.id}
-              onToggleVisibility={isAdmin ? toggleVisibility : undefined}
-              formatPrice={formatPrice}
+            {/* Filtro de categorías */}
+            {categories.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                <button
+                  type="button"
+                  onClick={() => setCategoryId("all")}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    categoryId === "all"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  Todas
+                </button>
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setCategoryId(cat.id)}
+                    className={cn(
+                      "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      categoryId === cat.id
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background text-muted-foreground hover:bg-muted"
+                    )}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Contenido */}
+          {loadError ? (
+            <div role="alert" className="rounded-lg border p-6 space-y-3">
+              <p>{loadError}</p>
+              <Button variant="outline" onClick={() => void fetchProducts()}>
+                Reintentar
+              </Button>
+            </div>
+          ) : loading ? (
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <MarketplaceCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : displayedProducts.length > 0 ? (
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {displayedProducts.map((product) => (
+                <MarketplaceProductCard
+                  key={product.id}
+                  product={product}
+                  isAdmin={isAdmin}
+                  toggling={togglingId === product.id}
+                  onToggleVisibility={isAdmin ? toggleVisibility : undefined}
+                  onRequest={openRequestDialog}
+                  formatPrice={formatPrice}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              icon={Store}
+              title={
+                hasActiveFilters
+                  ? "Sin resultados en el mercado"
+                  : "Sin productos visibles en el mercado"
+              }
+              description={
+                hasActiveFilters
+                  ? "Prueba con otra búsqueda o categoría."
+                  : isAdmin
+                    ? "Los productos activos aparecen aquí automáticamente. Revisa que no estén ocultos."
+                    : "Aún no hay refacciones publicadas para talleres aliados."
+              }
             />
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          icon={Store}
-          title={
-            hasActiveFilters
-              ? "Sin resultados en el mercado"
-              : "Sin productos visibles en el mercado"
-          }
-          description={
-            hasActiveFilters
-              ? "Prueba con otra búsqueda o categoría."
-              : isAdmin
-                ? "Los productos activos aparecen aquí automáticamente. Revisa que no estén ocultos."
-                : "Aún no hay refacciones publicadas para talleres aliados."
-          }
-        />
-      )}
+          )}
+        </TabsContent>
+
+        <TabsContent value="solicitudes">
+          <MarketplaceRequestsPanel
+            isAdmin={isAdmin}
+            refreshKey={requestsRefreshKey}
+            onPendingCount={setPendingCount}
+            formatPrice={formatPrice}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {/* Dialogo de solicitud de pieza para taller aliado */}
+      <MarketplaceRequestDialog
+        product={requestTarget}
+        open={requestDialogOpen}
+        onOpenChange={setRequestDialogOpen}
+        onSuccess={() => setRequestsRefreshKey((k) => k + 1)}
+        formatPrice={formatPrice}
+      />
     </div>
   )
 }

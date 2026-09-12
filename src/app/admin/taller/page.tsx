@@ -16,6 +16,7 @@ import { OrderHistory, type WorkshopEvent } from "@/components/admin/taller/orde
 import { PaymentsPanel, emptyPaymentForm, emptySettleForm, orderBalanceCents, type PaymentForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
 import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller/work-plan"
 import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
+import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { toast } from "sonner"
 
@@ -153,6 +154,20 @@ export default function WorkshopPage() {
   const draft = drafts[action] ?? {}
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
+  // Desglose para "Enviar cotización" por WhatsApp: mano de obra + refacciones aprobadas.
+  const quoteShare = (o: Order) => {
+    const labor = o.approvedQuoteCents ?? o.quoteCents
+    if (labor === null) return undefined
+    const approved = (o.parts ?? []).filter(p => p.status === "APPROVED")
+    return {
+      equipment: [o.equipmentType, o.brand, o.model].filter(Boolean).join(" "),
+      lines: [
+        { label: "Mano de obra / diagnóstico", amount: labor / 100 },
+        ...approved.map(p => ({ label: `${p.description} ×${p.qty}`, amount: (p.unitPriceCents * p.qty) / 100 })),
+      ],
+      total: (labor + approved.reduce((sum, p) => sum + p.unitPriceCents * p.qty, 0)) / 100,
+    }
+  }
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
   const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.receivedBy !== "")
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
@@ -365,10 +380,10 @@ export default function WorkshopPage() {
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? repairFolio(selected.number) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button></>}
+        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} quote={quoteShare(selected)} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button></>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
-        : <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button>}
+        : <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div>}
     </div>
     {opening && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Abriendo orden…</p>}
     {error && <div role="alert" className="rounded-lg border p-4 text-destructive">{error}<Button variant="outline" className="ml-3" onClick={() => void load()}>Reintentar</Button></div>}

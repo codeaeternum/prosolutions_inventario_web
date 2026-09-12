@@ -144,6 +144,8 @@ model User {
   cashRequestsDecided   CashRequest[] @relation("CashRequestDecidedBy")
   repairPhotos          RepairPhoto[]
   repairPartsDecided    RepairPart[]  @relation("RepairPartDecidedBy")
+  marketplaceRequested  MarketplaceRequest[] @relation("MarketplaceRequestedBy")
+  marketplaceDecided    MarketplaceRequest[] @relation("MarketplaceDecidedBy")
   cashMovements       CashMovement[]
   salesMade      Sale[]       @relation("SaleSeller")
   salesAsCustomer Sale[]      @relation("SaleCustomer")
@@ -226,6 +228,7 @@ model Product {
   stocks         BranchStock[]
   saleItems      SaleItem[]
   repairParts    RepairPart[]
+  marketplaceRequests MarketplaceRequest[]
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -233,6 +236,7 @@ model Product {
   @@index([categoryId])
   @@index([barcode])
   @@index([isUniversal])
+  @@index([marketplaceVisible])
 }
 
 // Historial de cambios de precio
@@ -753,4 +757,27 @@ model WorkshopService {
   updatedAt DateTime @updatedAt
 
   @@index([isActive, name])
+}
+
+
+model MarketplaceRequest {
+  id           String   @id @default(cuid())
+  product      Product  @relation(fields: [productId], references: [id])
+  productId    String
+  qty          Int      @default(1)
+  tallerName   String   // Nombre del taller aliado que solicita
+  contactName  String?
+  contactPhone String?
+  note         String?
+  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED, FULFILLED
+  requestedById String?
+  requestedBy  User?    @relation("MarketplaceRequestedBy", fields: [requestedById], references: [id])
+  decidedById  String?
+  decidedBy    User?    @relation("MarketplaceDecidedBy", fields: [decidedById], references: [id])
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime @default(now())
+
+  @@index([status])
+  @@index([productId])
 }
