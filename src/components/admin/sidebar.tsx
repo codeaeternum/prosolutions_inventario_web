@@ -28,6 +28,7 @@ import {
   Tag,
   Warehouse,
   BookOpen,
+  Store,
 } from "lucide-react"
 
 const navigationGroups = [
@@ -57,6 +58,7 @@ const navigationGroups = [
   {
     name: "Catálogo",
     items: [
+      { name: "Mercado", href: "/admin/mercado", icon: Store },
       { name: "Productos", href: "/admin/productos", icon: Package },
       { name: "Clasificación", href: "/admin/catalogo", icon: FolderTree },
       { name: "Etiquetas", href: "/admin/etiquetas", icon: Tag },

@@ -212,6 +212,7 @@ model Product {
 
   isActive       Boolean   @default(true)
   isUniversal    Boolean   @default(false)  // Producto universal (aparece en todos los modelos)
+  marketplaceVisible Boolean @default(true) // Visible en el marketplace B2B para talleres aliados
 
   categoryId     String
 

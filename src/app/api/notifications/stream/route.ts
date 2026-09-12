@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server"
-import { requireAdmin, getSession } from "@/lib/api-auth"
+import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 
 // Almacenar conexiones activas
-type Connection = { controller: ReadableStreamDefaultController; userId: string; password: string | null; close: () => void }
+type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; password: string | null; close: () => void }
 const connections = new Map<string, Connection>()
 
 async function stillAuthorized(connection: Connection): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { id: connection.userId }, select: { role: true, status: true, password: true } })
-  return user?.role === "ADMIN" && user.status === "APPROVED" && user.password === connection.password
+  const user = await prisma.user.findUnique({ where: { id: connection.userId }, select: { status: true, password: true } })
+  return user?.status === "APPROVED" && user.password === connection.password
 }
 
 // Tipos de eventos
@@ -30,25 +30,34 @@ export interface NotificationPayload {
   timestamp: string
 }
 
-// Función para enviar notificación a todos los admins conectados
-export async function sendNotificationToAdmins(notification: Omit<NotificationPayload, "timestamp">) {
+async function broadcast(notification: Omit<NotificationPayload, "timestamp">, roles: Set<string>) {
   const payload: NotificationPayload = { ...notification, timestamp: new Date().toISOString() }
   const bytes = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`)
   await Promise.all([...connections.values()].map(async connection => {
     try {
-      if (!await stillAuthorized(connection)) { connection.close(); return }
+      if (!roles.has(connection.role) || !await stillAuthorized(connection)) { connection.close(); return }
       connection.controller.enqueue(bytes)
     } catch { connection.close() }
   }))
 }
 
+// Eventos administrativos: solo admins conectados
+export async function sendNotificationToAdmins(notification: Omit<NotificationPayload, "timestamp">) {
+  return broadcast(notification, new Set(["ADMIN"]))
+}
+
+// Eventos operativos: todo el staff (admin + empleados)
+export async function sendNotificationToStaff(notification: Omit<NotificationPayload, "timestamp">) {
+  return broadcast(notification, new Set(["ADMIN", "EMPLOYEE"]))
+}
+
 export async function GET(req: NextRequest) {
-  const result = await requireAdmin()
+  const result = await requireAdminOrEmployee()
   if (result.error) return result.error
 
   const userId = getSession(result)!.user.id
   const current = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true, password: true } })
-  if (current?.role !== "ADMIN" || current.status !== "APPROVED") return new Response(null, { status: 403 })
+  if (!current || (current.role !== "ADMIN" && current.role !== "EMPLOYEE") || current.status !== "APPROVED") return new Response(null, { status: 403 })
   const connectionId = crypto.randomUUID()
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let controllerRef: ReadableStreamDefaultController | undefined
@@ -61,7 +70,7 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       controllerRef = controller
-      const connection = { controller, userId, password: current.password, close }
+      const connection = { controller, userId, role: current.role, password: current.password, close }
       connections.set(connectionId, connection)
       controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`))
       heartbeat = setInterval(async () => {

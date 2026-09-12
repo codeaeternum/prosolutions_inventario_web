@@ -10,6 +10,8 @@
    ========================================== */
 
 :root {
+  color-scheme: light;
+
   /* Superficies */
   --background: 0 0% 100%;
   --foreground: 0 0% 14.5%;
@@ -24,21 +26,26 @@
   --secondary: 0 0% 97%;
   --secondary-foreground: 0 0% 20.5%;
   --muted: 0 0% 97%;
-  --muted-foreground: 0 0% 55.6%;
+  /* 55.6% → 40%: antes ~3.3:1 sobre blanco/muted; ahora ~5.7:1 sobre blanco y ~5:1 sobre muted/accent (>= 4.5:1) */
+  --muted-foreground: 0 0% 40%;
   --accent: 262 60% 96%;
   --accent-foreground: 262 60% 30%;
 
   /* Estados semánticos */
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --success: 142 76% 36%;
+  /* 36% → 29%: text-success legible sobre claro (~5:1) y badge blanco-sobre-verde ~5:1 */
+  --success: 142 72% 29%;
   --success-foreground: 0 0% 100%;
-  --warning: 38 92% 50%;
+  /* 50% → 46%: badge sigue ámbar con texto oscuro; para texto sobre claro usar warning-strong */
+  --warning: 38 92% 46%;
   --warning-foreground: 0 0% 10%;
+  /* Variante oscura para text-warning-strong / iconos sobre fondos claros (~5.4:1); el ámbar base nunca llega a 4.5:1 */
+  --warning-strong: 30 95% 33%;
 
-  /* Bordes e inputs */
-  --border: 0 0% 92.2%;
-  --input: 0 0% 92.2%;
+  /* Bordes e inputs: 92.2% era casi invisible sobre cards blancas */
+  --border: 0 0% 89.8%;
+  --input: 0 0% 89.8%;
   --ring: 262 83% 58%;
 
   /* Radius (único token base) */
@@ -51,7 +58,7 @@
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 0 0% 97%;
   --sidebar-accent-foreground: 0 0% 20.5%;
-  --sidebar-border: 0 0% 92.2%;
+  --sidebar-border: 0 0% 89.8%;
   --sidebar-ring: 262 83% 58%;
   --sidebar: 0 0% 98.5%;
 
@@ -110,6 +117,8 @@
 }
 
 .dark {
+  color-scheme: dark;
+
   --background: 0 0% 11%;
   --foreground: 0 0% 98.5%;
   --card: 0 0% 16.5%;
@@ -128,6 +137,15 @@
 
   --destructive: 0 63% 55%;
   --destructive-foreground: 0 0% 100%;
+
+  /* Pines explícitos: evitan que los ajustes de :root se filtren al oscuro.
+     Success más brillante con texto oscuro: legible como texto sobre fondo oscuro (~6:1)
+     y como badge (~7:1), algo que blanco-sobre-verde-oscuro no lograba (~3.3:1). */
+  --success: 142 65% 45%;
+  --success-foreground: 150 70% 8%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 10%;
+  --warning-strong: 38 95% 62%;
 
   --border: 0 0% 100% / 10%;
   --input: 0 0% 100% / 15%;
@@ -171,6 +189,7 @@
   --color-success-foreground: hsl(var(--success-foreground));
   --color-warning: hsl(var(--warning));
   --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-strong: hsl(var(--warning-strong));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
@@ -247,25 +266,30 @@ a > .hover\:shadow-md {
   background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* Select/Dropdown: forzar contraste en dark para que el texto no se pierda */
-.dark [data-select-content] {
+/* Select/Dropdown: forzar contraste en ambos temas (los tokens se adaptan) */
+[data-select-content] {
   background: hsl(var(--popover)) !important;
   color: hsl(var(--popover-foreground)) !important;
   border-color: hsl(var(--border));
 }
-.dark [data-select-content] [data-select-item] {
+[data-select-content] [data-select-item] {
   color: inherit;
 }
 
-/* Select nativo: contraste en dark para que el control se vea */
-.dark select {
+/* Select nativo: contraste según el tema para que el control se vea */
+select {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   border-color: hsl(var(--border));
 }
-.dark select option {
+select option {
   background: hsl(var(--popover));
   color: hsl(var(--popover-foreground));
+}
+
+/* Selección de texto legible en ambos temas */
+::selection {
+  background: hsl(var(--primary) / 0.25);
 }
 
 @layer base {

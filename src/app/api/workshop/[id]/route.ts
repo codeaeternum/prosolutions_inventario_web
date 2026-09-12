@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { updateRepair } from "@/lib/domain/workshop"
 import { businessFailure } from "@/lib/domain/http"
 import { repairFolio } from "@/lib/workshop-labels"
-import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
+import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
 const READY_PUBLIC_MESSAGE = "Tu equipo está listo para recoger."
 
@@ -22,7 +22,7 @@ async function readySideEffects(order: { id: string; number: number; status: str
     await prisma.repairEvent.create({
       data: { actorId, orderId: order.id, type: "NOTE", detail: READY_PUBLIC_MESSAGE, isPublic: true },
     })
-    void sendNotificationToAdmins({
+    void sendNotificationToStaff({
       type: "repair_ready",
       title: "Orden lista para entregar",
       message: `${folio} está lista para que el cliente la recoja.`,

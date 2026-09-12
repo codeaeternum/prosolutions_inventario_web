@@ -279,7 +279,7 @@ export default async function AdminDashboard() {
             <Button asChild variant="outline" size="sm" className="gap-2">
               <Link href="/admin/taller">
                 <ClipboardList className="h-4 w-4" />
-                Recibir equipo
+                Tablero del taller
               </Link>
             </Button>
           </div>

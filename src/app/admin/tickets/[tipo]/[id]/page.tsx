@@ -6,6 +6,7 @@ import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labe
 import { TicketPrintView } from "./ticket-print-view"
 import { RepairTicketView, type RepairTicketData } from "./repair-ticket-view"
 import { WorkshopSheetView, type WorkshopSheetData } from "./workshop-sheet-view"
+import { QuoteTicketView, type QuoteTicketData } from "./quote-ticket-view"
 
 export const dynamic = "force-dynamic"
 
@@ -71,6 +72,7 @@ export default async function TicketPage({
   } | null = null
   let repairData: RepairTicketData | null = null
   let workshopData: WorkshopSheetData | null = null
+  let quoteData: QuoteTicketData | null = null
 
   if (tipo === "venta") {
     // Documento de venta nuevo (Sale con líneas y pagos); fallback al movimiento heredado.
@@ -188,11 +190,13 @@ export default async function TicketPage({
         newBalance: mov.user.creditBalance || 0
       }
     }
-  } else if (tipo === "reparacion" || tipo === "taller") {
+  } else if (tipo === "reparacion" || tipo === "taller" || tipo === "cotizacion") {
     // reparacion = comprobante del cliente: NUNCA imprime deviceAccessType ni
     // deviceAccessValue (datos de desbloqueo del cliente).
     // taller = hoja de servicio interna: sí los imprime, junto con costos,
     // refacciones e historial; es el documento de trabajo del técnico.
+    // cotizacion = documento formal para el cliente con el desglose del
+    // presupuesto y las refacciones autorizadas.
     const order = await loadRepairOrder(id)
 
     if (order) {
@@ -204,9 +208,13 @@ export default async function TicketPage({
       const quotedCents = order.approvedQuoteCents ?? order.quoteCents
       const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
       const folio = repairFolio(order.number)
+      const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
+      // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
+      // fotos; solo va en documentos internos (hoja de taller / etiqueta),
+      // nunca en el ticket ni la cotización que recibe el cliente.
+      const evidenceUrl = order.uploadToken ? `${base}/evidencia/${order.uploadToken}` : undefined
 
       if (tipo === "reparacion") {
-        const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
         repairData = {
           title: "COMPROBANTE DE RECEPCIÓN",
           folio,
@@ -241,10 +249,36 @@ export default async function TicketPage({
           balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
           qrCode: `${base}/seguimiento?folio=${folio}`,
           trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
-          // Firma capturada en recepción (PNG base64) y QR para que el técnico
-          // suba evidencias desde su celular sin login.
+          // Firma capturada en recepción (PNG base64).
           signatureData: order.signatureData ?? undefined,
-          evidenceUrl: `${base}/evidencia/${order.uploadToken}`,
+        }
+      } else if (tipo === "cotizacion") {
+        quoteData = {
+          folio,
+          issuedAt: (order.quoteApprovedAt ?? order.createdAt).toISOString(),
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          customerPhoneAlt: order.customerPhoneAlt ?? undefined,
+          equipment: [
+            { label: "Tipo", value: order.equipmentType },
+            { label: "Marca", value: order.brand ?? "" },
+            { label: "Modelo", value: order.model ?? "" },
+            { label: "Color", value: order.equipmentColor ?? "" },
+          ].filter(row => row.value !== ""),
+          issue: order.reportedIssue,
+          diagnosis: order.diagnosis ?? undefined,
+          serviceAmount: quotedCents != null ? quotedCents / 100 : undefined,
+          // Solo refacciones autorizadas: las solicitadas/rechazadas no se
+          // cotizan al cliente.
+          parts: order.parts
+            .filter(part => part.status === "APPROVED")
+            .map(part => ({
+              description: part.description,
+              qty: part.qty,
+              unitPrice: part.unitPriceCents / 100,
+              subtotal: (part.qty * part.unitPriceCents) / 100,
+            })),
+          elaboratedBy: order.createdBy.name,
         }
       } else {
         workshopData = {
@@ -307,12 +341,14 @@ export default async function TicketPage({
             detail: event.detail,
             actor: event.actor.name,
           })),
+          // QR de evidencias: va en la hoja interna y en la etiqueta del equipo.
+          evidenceUrl,
         }
       }
     }
   }
 
-  if (!ticketData && !repairData && !workshopData) {
+  if (!ticketData && !repairData && !workshopData && !quoteData) {
     return <div className="p-8 text-center text-red-500">Ticket no encontrado</div>
   }
 
@@ -329,6 +365,10 @@ export default async function TicketPage({
 
   if (workshopData) {
     return <WorkshopSheetView data={{ ...workshopData, businessName }} />
+  }
+
+  if (quoteData) {
+    return <QuoteTicketView data={{ ...quoteData, businessName }} />
   }
 
   if (repairData) {

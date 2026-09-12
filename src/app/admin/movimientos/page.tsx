@@ -164,10 +164,10 @@ export default function MovimientosPage() {
     const getTypeConfig = (type: string) => {
         switch (type) {
             case "SALE": return { label: "Venta", color: "bg-green-100 text-green-800" }
-            case "CANCELLED": return { label: "Reserva cancelada", color: "bg-gray-100 text-gray-700" }
+            case "CANCELLED": return { label: "Reserva cancelada", color: "bg-muted text-muted-foreground" }
             case "IN": return { label: "Entrada", color: "bg-blue-100 text-blue-800" }
             case "OUT": return { label: "Salida", color: "bg-red-100 text-red-800" }
-            case "ADJUSTMENT": return { label: "Ajuste", color: "bg-slate-100 text-slate-700" }
+            case "ADJUSTMENT": return { label: "Ajuste", color: "bg-muted text-muted-foreground" }
             case "ADJUSTMENT_IN": return { label: "Ajuste (+)", color: "bg-blue-50 text-blue-600" }
             case "ADJUSTMENT_OUT": return { label: "Ajuste (-)", color: "bg-red-50 text-red-600" }
             case "RETURN": return { label: "Devolución", color: "bg-yellow-100 text-yellow-800" }

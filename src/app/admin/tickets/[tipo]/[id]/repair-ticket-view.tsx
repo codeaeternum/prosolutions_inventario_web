@@ -27,9 +27,6 @@ export interface RepairTicketData {
   balance?: number
   qrCode?: string
   trackingHint?: string
-  // URL pública /evidencia/<uploadToken> — el técnico la escanea para subir
-  // fotos del equipo desde su celular sin login.
-  evidenceUrl?: string
   // Firma del cliente capturada en recepción (PNG base64 data URL).
   signatureData?: string
   businessName?: string
@@ -42,7 +39,6 @@ const CONDITIONS =
 
 export function RepairTicketView({ data }: { data: RepairTicketData }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
-  const [evidenceQrDataUrl, setEvidenceQrDataUrl] = useState<string | null>(null)
 
   // El ticket suele abrirse en pestaña nueva (target="_blank"): ahí
   // history.back() es un callejón sin salida, así que cerramos la pestaña.
@@ -63,12 +59,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
         .then(url => setQrDataUrl(url))
         .catch(() => {})
     }
-    if (data.evidenceUrl) {
-      QRCode.toDataURL(data.evidenceUrl, { width: 110, margin: 1 })
-        .then(url => setEvidenceQrDataUrl(url))
-        .catch(() => {})
-    }
-  }, [data.qrCode, data.evidenceUrl])
+  }, [data.qrCode])
 
   return (
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
@@ -154,15 +145,6 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
             {data.trackingHint && (
               <p className="text-[10px] text-gray-600 mt-1 leading-snug">{data.trackingHint}</p>
             )}
-          </div>
-        )}
-
-        {/* QR de evidencias: lo usa el técnico para subir fotos del equipo */}
-        {evidenceQrDataUrl && (
-          <div className="text-center mb-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={evidenceQrDataUrl} alt="QR para subir fotos del equipo" className="w-20 h-20 mx-auto" />
-            <p className="text-[10px] text-gray-600 mt-1 leading-snug">Subir fotos del equipo</p>
           </div>
         )}
 

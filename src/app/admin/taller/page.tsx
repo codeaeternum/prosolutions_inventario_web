@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -365,7 +365,7 @@ export default function WorkshopPage() {
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? repairFolio(selected.number) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button></>}
+        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button></>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
         : <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button>}
