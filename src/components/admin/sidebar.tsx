@@ -47,6 +47,7 @@ const navigationGroups = [
       { name: "Punto de Venta", href: "/admin/ventas", icon: ShoppingCart },
       { name: "Caja", href: "/admin/caja", icon: Wallet },
       { name: "Reservas", href: "/admin/reservas", icon: CalendarCheck },
+      { name: "Clientes", href: "/admin/clientes", icon: Users },
       { name: "Crédito y Cartera", href: "/admin/credito", icon: CreditCard },
     ]
   },

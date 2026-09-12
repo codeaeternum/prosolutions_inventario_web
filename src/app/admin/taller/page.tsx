@@ -22,8 +22,46 @@ const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
 const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
 
+const boardStages: RepairStage[] = ["RECEIVED", "DIAGNOSIS", "WAITING_APPROVAL", "WAITING_PARTS", "IN_REPAIR", "QUALITY_CHECK", "READY", "DELIVERED", "CANCELLED"]
+const closedStages: readonly RepairStage[] = ["DELIVERED", "CANCELLED"]
+const stageStyles: Record<RepairStage, { dot: string; badge: string }> = {
+  RECEIVED: { dot: "bg-sky-500", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+  DIAGNOSIS: { dot: "bg-violet-500", badge: "bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+  WAITING_APPROVAL: { dot: "bg-amber-500", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  WAITING_PARTS: { dot: "bg-orange-500", badge: "bg-orange-500/10 text-orange-700 dark:text-orange-300" },
+  IN_REPAIR: { dot: "bg-blue-600", badge: "bg-blue-600/10 text-blue-700 dark:text-blue-300" },
+  QUALITY_CHECK: { dot: "bg-teal-500", badge: "bg-teal-500/10 text-teal-700 dark:text-teal-300" },
+  READY: { dot: "bg-emerald-500", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  DELIVERED: { dot: "bg-zinc-400", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
+  CANCELLED: { dot: "bg-rose-400", badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+}
+
+function BoardColumn({ stage, orders, total, onOpen }: { stage: RepairStage; orders: Order[]; total: number; onOpen: (id: string) => void }) {
+  return <section aria-label={repairLabels[stage]} className={`flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3 ${closedStages.includes(stage) ? "opacity-70" : ""}`}>
+    <header className="mb-3 flex items-center gap-2 px-1">
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stageStyles[stage].dot}`} />
+      <h2 className="truncate text-sm font-semibold">{repairLabels[stage]}</h2>
+      <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles[stage].badge}`}>{total}</span>
+    </header>
+    <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
+      {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
+        : orders.map(order => <button key={order.id} onClick={() => onOpen(order.id)} className="w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
+          <strong className="text-xs text-muted-foreground">{repairFolio(order.number)}</strong>
+          <p className="font-medium leading-snug">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</p>
+          <p className="text-xs text-muted-foreground">{order.customerName}</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1"><MapPin size={12} />{order.currentBranch.name}</span>
+            <span className="flex items-center gap-1"><Wrench size={12} />{order.assignedTo?.name ?? "Sin asignar"}</span>
+          </div>
+        </button>)}
+      {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
+    </div>
+  </section>
+}
+
 export default function WorkshopPage() {
   const [orders, setOrders] = useState<Order[]>([])
+  const [board, setBoard] = useState<{ orders: Record<RepairStage, Order[]>; totals: Record<RepairStage, number> } | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
   const [staff, setStaff] = useState<Branch[]>([])
   const [branch, setBranch] = useState("")
@@ -48,6 +86,7 @@ export default function WorkshopPage() {
   const detailVersion = useRef(0)
   const detailRequest = useRef<AbortController | null>(null)
   const draft = drafts[action] ?? {}
+  const kanbanMode = !stage && !search
   const hasUnsavedChanges = intakeDirty || Object.values(drafts).some(value => Object.values(value).some(field => typeof field === "string" && field !== ""))
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
 
@@ -73,12 +112,29 @@ export default function WorkshopPage() {
     const version = ++requestVersion.current
     setLoading(true); setError("")
     try {
-      const params = new URLSearchParams({ q: search, branchId: branch, status: stage, page: String(page) })
-      const response = await fetch(`/api/workshop?${params}`)
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
-      if (version !== requestVersion.current) return
-      setOrders(data.orders); setBranches(data.branches); setStaff(data.staff); setPages(data.totalPages); setTotal(data.total)
+      if (!stage && !search) {
+        const results = await Promise.all(boardStages.map(async status => {
+          const params = new URLSearchParams({ branchId: branch, status, page: "1" })
+          const response = await fetch(`/api/workshop?${params}`)
+          const data = await response.json()
+          if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
+          return data
+        }))
+        if (version !== requestVersion.current) return
+        const boardOrders = {} as Record<RepairStage, Order[]>
+        const boardTotals = {} as Record<RepairStage, number>
+        boardStages.forEach((status, index) => { boardOrders[status] = results[index].orders; boardTotals[status] = results[index].total })
+        setBoard({ orders: boardOrders, totals: boardTotals })
+        setBranches(results[0].branches); setStaff(results[0].staff)
+        setTotal(results.reduce((sum, data) => sum + data.total, 0))
+      } else {
+        const params = new URLSearchParams({ q: search, branchId: branch, status: stage, page: String(page) })
+        const response = await fetch(`/api/workshop?${params}`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
+        if (version !== requestVersion.current) return
+        setOrders(data.orders); setBranches(data.branches); setStaff(data.staff); setPages(data.totalPages); setTotal(data.total)
+      }
     } catch (cause) { if (version === requestVersion.current) setError(cause instanceof Error ? cause.message : "Error de conexión") }
     finally { if (version === requestVersion.current) setLoading(false) }
   }, [branch, page, search, stage])
@@ -150,6 +206,8 @@ export default function WorkshopPage() {
     finally { inFlight.current = false; setSaving(false) }
   }
 
+  const emptyList = <div className="rounded-xl border border-dashed p-12 text-center"><ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">{total === 0 && !search && !stage && !branch ? "Todo listo para la primera recepción" : "No hay órdenes con estos filtros"}</h2><p className="mt-2 text-muted-foreground">{branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}</p></div>
+
   return <div className="mx-auto max-w-6xl space-y-6 pb-20">
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary">ProSolutions · Taller</p><h1 className="mt-1 text-3xl font-bold">{creating ? "Recibir equipo" : selected ? repairFolio(selected.number) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
@@ -165,8 +223,11 @@ export default function WorkshopPage() {
         <label className="text-sm">Ubicación actual<select className={`${inputClass} mt-2`} value={branch} onChange={e => { setBranch(e.target.value); setPage(1) }}><option value="">Todas las sucursales</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
         <label className="text-sm">Etapa<select className={`${inputClass} mt-2`} value={stage} onChange={e => { setStage(e.target.value); setPage(1) }}><option value="">Todas las etapas</option>{Object.entries(repairLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       </div>
-      {loading ? <p role="status">Cargando órdenes…</p> : orders.length === 0 ? <div className="rounded-xl border border-dashed p-12 text-center"><ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">{total === 0 && !search && !stage && !branch ? "Todo listo para la primera recepción" : "No hay órdenes con estos filtros"}</h2><p className="mt-2 text-muted-foreground">{branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}</p></div> : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{repairFolio(order.number)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span></div></button>)}</div>}
-      <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>
+      {loading ? <p role="status">Cargando órdenes…</p> : kanbanMode ? (total === 0 ? emptyList : <div className="space-y-3">
+        <div className="flex items-start gap-3 overflow-x-auto pb-2">{boardStages.map(value => <BoardColumn key={value} stage={value} orders={board?.orders[value] ?? []} total={board?.totals[value] ?? 0} onOpen={id => void openOrder(id)} />)}</div>
+        <p className="text-xs text-muted-foreground">{total} órdenes{board && boardStages.some(value => board.totals[value] > board.orders[value].length) ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto." : ""}</p>
+      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{repairFolio(order.number)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span></div></button>)}</div>}
+      {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
     </>}
     {creating && <form onChange={() => setIntakeDirty(true)} onSubmit={e => void submit(e, "order")} className="space-y-6 rounded-xl border bg-card p-6"><fieldset disabled={saving} className="grid gap-5 sm:grid-cols-2">

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -340,6 +341,12 @@ export default function UsersPage() {
           <p className="text-muted-foreground">
             Gestiona las cuentas de clientes y administradores
           </p>
+          <Link
+            href="/admin/clientes"
+            className="text-sm text-primary hover:underline inline-flex items-center gap-1 mt-1"
+          >
+            Ver solo clientes →
+          </Link>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>

@@ -150,9 +150,13 @@ export default function BranchesPage() {
                   <Wrench className="h-4 w-4" />
                   {branch._count.receivedOrders} órdenes recibidas
                 </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Wallet className="h-4 w-4" />
-                  {branch.cashRegisters.length > 0 ? "Caja abierta" : "Caja cerrada"}
+                <div className="flex items-center gap-2">
+                  <Wallet className="h-4 w-4 text-muted-foreground" />
+                  {branch.cashRegisters.length > 0 ? (
+                    <Badge variant="outline" className="text-success border-success/40 font-normal">Caja abierta</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">Caja cerrada</span>
+                  )}
                 </div>
               </div>
             </CardContent>

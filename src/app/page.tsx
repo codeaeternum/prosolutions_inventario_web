@@ -75,6 +75,9 @@ export default async function HomePage() {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
+              <Link href="/seguimiento">Rastrea tu reparación</Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
               <Link href="/catalogo">Ver demo</Link>
             </Button>
             {isLoggedIn && canAccessAdmin && (
@@ -265,7 +268,10 @@ export default async function HomePage() {
             <span className="font-semibold text-foreground">Reficio</span>
             <span>· reficio.app</span>
           </div>
-          <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
+          <div className="flex items-center gap-4">
+            <Link href="/seguimiento" className="hover:text-foreground transition-colors">Rastrea tu reparación</Link>
+            <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
+          </div>
         </div>
       </footer>
     </div>

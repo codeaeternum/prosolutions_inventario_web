@@ -9,17 +9,16 @@ import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import {
   Package,
-  Users,
   ShoppingCart,
   AlertTriangle,
   UserPlus,
   Clock,
   TrendingUp,
   Boxes,
-  ScanBarcode,
   Plus,
   ArrowRightLeft,
   Wrench,
+  Wallet,
 } from "lucide-react"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
@@ -227,7 +226,7 @@ export default async function AdminDashboard() {
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
               <Link href="/admin/caja">
-                <ShoppingCart className="h-4 w-4" />
+                <Wallet className="h-4 w-4" />
                 Caja
               </Link>
             </Button>
