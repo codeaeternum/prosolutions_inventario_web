@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Check, PackagePlus, Trash2, X } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Check, Package, PackagePlus, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,7 +20,17 @@ export type WorkshopPart = {
     createdById?: string
     createdAt?: string
     createdBy?: { name: string } | null
-    product?: { id: string; name: string; barcode: string | null } | null
+    product?: { id: string; name: string; barcode: string | null; retailPrice?: number | null } | null
+}
+
+// Subconjunto del DTO de GET /api/products que usa el buscador de vínculo.
+type ProductOption = {
+    id: string
+    name: string
+    barcode: string | null
+    /** Precios en MXN (Float); se convierten a centavos al enviar. */
+    retailPrice?: number | null
+    costPrice?: number | null
 }
 
 // Payload que el padre reenvía a POST /api/workshop/{order.id} (agregando idempotencyKey).
@@ -52,12 +62,53 @@ export function PartsSection(props: {
     const [form, setForm] = useState(emptyForm)
     const [rejectingId, setRejectingId] = useState<string | null>(null)
     const [rejectNote, setRejectNote] = useState("")
+    const [productQuery, setProductQuery] = useState("")
+    const [productOptions, setProductOptions] = useState<ProductOption[]>([])
+    const [linkedProduct, setLinkedProduct] = useState<ProductOption | null>(null)
     const parts = props.order.parts ?? []
     const approved = parts.filter(part => (part.status ?? "APPROVED") === "APPROVED")
     const totals = approved.reduce(
         (acc, part) => ({ cost: acc.cost + part.unitCostCents * part.qty, price: acc.price + part.unitPriceCents * part.qty }),
         { cost: 0, price: 0 },
     )
+
+    // Búsqueda con debounce del catálogo para vincular la refacción a inventario.
+    useEffect(() => {
+        const query = productQuery.trim()
+        if (linkedProduct || query.length < 2) return
+        const controller = new AbortController()
+        const timer = setTimeout(() => {
+            void fetch(`/api/products?search=${encodeURIComponent(query)}&limit=8`, { signal: controller.signal })
+                .then(res => (res.ok ? res.json() : { products: [] }))
+                .then((data: { products?: ProductOption[] }) => setProductOptions(Array.isArray(data.products) ? data.products : []))
+                .catch(() => { /* abortada o sin red: se reintenta al seguir escribiendo */ })
+        }, 300)
+        return () => { controller.abort(); clearTimeout(timer) }
+    }, [productQuery, linkedProduct])
+
+    function pickProduct(product: ProductOption) {
+        setLinkedProduct(product)
+        setProductQuery("")
+        setProductOptions([])
+        // Prellena descripción y precios del catálogo; la descripción sigue editable.
+        setForm(previous => ({
+            ...previous,
+            description: product.name,
+            cost: product.costPrice != null ? String(product.costPrice) : previous.cost,
+            price: product.retailPrice != null ? String(product.retailPrice) : previous.price,
+        }))
+    }
+
+    function unlinkProduct() {
+        setLinkedProduct(null)
+    }
+
+    function resetForm() {
+        setForm(emptyForm)
+        setLinkedProduct(null)
+        setProductQuery("")
+        setProductOptions([])
+    }
 
     async function submit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -80,8 +131,9 @@ export function PartsSection(props: {
                 partQty: qty,
                 partCostCents: Math.round(cost * 100),
                 partPriceCents: Math.round(price * 100),
+                ...(linkedProduct ? { partProductId: linkedProduct.id } : {}),
             })
-            setForm(emptyForm)
+            resetForm()
         } catch {
             // el padre muestra el error; conserva el borrador para reintentar
         }
@@ -132,9 +184,15 @@ export function PartsSection(props: {
                                             {part.qty} × {part.description}
                                             <Badge variant={meta.variant}>{meta.label}</Badge>
                                         </p>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {part.product ? `${part.product.name}${part.product.barcode ? ` · ${part.product.barcode}` : ""} · ` : ""}
-                                            {part.createdBy?.name ?? ""}{part.createdAt ? ` · ${date(part.createdAt)}` : ""}
+                                        <p className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+                                            {part.product && (
+                                                <span className="inline-flex items-center gap-1">
+                                                    <Package size={12} className="shrink-0" />
+                                                    {part.product.name}{part.product.barcode ? ` · ${part.product.barcode}` : ""}
+                                                    {part.createdBy?.name || part.createdAt ? " ·" : ""}
+                                                </span>
+                                            )}
+                                            <span>{part.createdBy?.name ?? ""}{part.createdBy?.name && part.createdAt ? " · " : ""}{part.createdAt ? date(part.createdAt) : ""}</span>
                                         </p>
                                         {status === "REJECTED" && part.decisionNote && (
                                             <p className="mt-1 text-xs text-destructive">Motivo: {part.decisionNote}</p>
@@ -203,6 +261,45 @@ export function PartsSection(props: {
 
             {!props.readOnly && <form onSubmit={e => void submit(e)} className="space-y-3 rounded-lg border border-dashed p-3">
                 <p className="flex items-center gap-1.5 text-xs font-medium"><PackagePlus size={14} />Agregar refacción{props.canDecide ? "" : " (queda pendiente de autorización)"}</p>
+                <fieldset disabled={props.busy} className="space-y-1">
+                    <label className="text-xs" htmlFor="part-product-search">Vincular a inventario (opcional)</label>
+                    {linkedProduct ? (
+                        <p className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs">
+                            <Package size={14} className="shrink-0 text-muted-foreground" />
+                            <span className="flex-1 truncate">{linkedProduct.name}{linkedProduct.barcode ? ` · ${linkedProduct.barcode}` : ""}</span>
+                            <button type="button" onClick={unlinkProduct} aria-label="Quitar vínculo con el catálogo" className="shrink-0 text-muted-foreground hover:text-destructive">
+                                <X size={14} />
+                            </button>
+                        </p>
+                    ) : (
+                        <div className="relative">
+                            <Input
+                                id="part-product-search"
+                                maxLength={100}
+                                value={productQuery}
+                                onChange={e => { setProductQuery(e.target.value); setProductOptions([]) }}
+                                placeholder="Buscar producto del catálogo por nombre o código…"
+                                autoComplete="off"
+                            />
+                            {productOptions.length > 0 && (
+                                <ul className="absolute inset-x-0 top-full z-10 mt-1 max-h-48 overflow-auto rounded-md border bg-popover shadow-md">
+                                    {productOptions.map(product => (
+                                        <li key={product.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() => pickProduct(product)}
+                                                className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent"
+                                            >
+                                                <span className="truncate">{product.name}{product.barcode ? ` · ${product.barcode}` : ""}</span>
+                                                <span className="shrink-0 text-muted-foreground">{product.retailPrice != null ? money(Math.round(product.retailPrice * 100)) : ""}</span>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+                </fieldset>
                 <fieldset disabled={props.busy} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_0.7fr_1fr_1fr]">
                     <label className="text-xs">Descripción *<Input required maxLength={200} value={form.description} onChange={e => setForm(previous => ({ ...previous, description: e.target.value }))} placeholder="Pantalla, batería, flex…" className="mt-1" /></label>
                     <label className="text-xs">Cantidad<Input type="number" min={1} max={999} step={1} required value={form.qty} onChange={e => setForm(previous => ({ ...previous, qty: e.target.value }))} className="mt-1" /></label>

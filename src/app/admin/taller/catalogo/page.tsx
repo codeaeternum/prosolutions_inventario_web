@@ -1,8 +1,27 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, BookOpen, Loader2, Pencil, Plus, Power, Search, Smartphone, Trash2, X } from "lucide-react"
+import {
+  ArrowLeft,
+  BookOpen,
+  CheckCircle2,
+  DollarSign,
+  Gamepad2,
+  Laptop,
+  Loader2,
+  Monitor,
+  Pencil,
+  Power,
+  Printer,
+  Search,
+  Smartphone,
+  Tablet,
+  Trash2,
+  Watch,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,7 +30,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { BusinessName } from "@/components/admin/business-name"
+import { WorkshopConfigEditor } from "@/components/admin/configuracion/taller-config"
+import { DEFAULT_EQUIPMENT_TYPES } from "@/components/admin/configuracion/editable-list"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { cn } from "@/lib/utils"
 
 type Service = {
   id: string; name: string; description: string | null; priceCents: number | null
@@ -25,55 +47,32 @@ const emptyModelForm: DeviceModelForm = { brand: "", model: "", code: "", type: 
 const DEVICE_MODEL_TYPES = ["SMARTPHONE", "TABLET", "LAPTOP", "CONSOLA", "SMARTWATCH", "PANTALLA", "OTRO"]
 
 const emptyForm: ServiceForm = { name: "", price: "", equipmentType: "", description: "" }
-const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
-const DEFAULT_LOCATIONS = ["Recepción", "Mesa 1", "Mesa 2", "Anaquel A", "Anaquel B"]
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
 
-function EditableList({ title, description, items, draft, onDraft, onAdd, onRemove, placeholder, maxLength, disabled }: {
-  title: string; description: string; items: string[]; draft: string
-  onDraft: (value: string) => void; onAdd: () => void; onRemove: (item: string) => void
-  placeholder: string; maxLength: number; disabled: boolean
-}) {
-  return (
-    <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      </div>
-      <div className="flex min-h-8 flex-wrap items-center gap-2">
-        {items.length === 0 && <p className="text-xs text-muted-foreground">Sin elementos.</p>}
-        {items.map(item => (
-          <span key={item} className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-3 py-1 text-sm">
-            {item}
-            <button type="button" aria-label={`Quitar ${item}`} disabled={disabled} onClick={() => onRemove(item)} className="rounded-full p-0.5 text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-50">
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-      </div>
-      <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); onAdd() }}>
-        <Input value={draft} onChange={event => onDraft(event.target.value)} maxLength={maxLength} placeholder={placeholder} disabled={disabled} className="max-w-xs" />
-        <Button type="submit" variant="outline" disabled={disabled || !draft.trim()}><Plus className="mr-2 h-4 w-4" />Agregar</Button>
-      </form>
-    </div>
-  )
+function equipmentIcon(type: string | null): LucideIcon {
+  const value = (type ?? "").toLowerCase()
+  if (value.includes("celular") || value.includes("smartphone") || value.includes("fono")) return Smartphone
+  if (value.includes("tablet")) return Tablet
+  if (value.includes("laptop") || value.includes("notebook")) return Laptop
+  if (value.includes("computadora") || value.includes("pc") || value.includes("escritorio")) return Monitor
+  if (value.includes("consola") || value.includes("game")) return Gamepad2
+  if (value.includes("watch") || value.includes("reloj")) return Watch
+  if (value.includes("pantalla") || value.includes("monitor") || value.includes("tv")) return Monitor
+  if (value.includes("impresora") || value.includes("printer")) return Printer
+  return Wrench
 }
 
 export default function WorkshopCatalogPage() {
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [typeFilter, setTypeFilter] = useState("")
   const [showInactive, setShowInactive] = useState(false)
   const [form, setForm] = useState<ServiceForm>(emptyForm)
   const [editing, setEditing] = useState<Service | null>(null)
   const [saving, setSaving] = useState(false)
   const [toDeactivate, setToDeactivate] = useState<Service | null>(null)
   const [equipmentTypes, setEquipmentTypes] = useState<string[]>(DEFAULT_EQUIPMENT_TYPES)
-  const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS)
-  const [equipmentDraft, setEquipmentDraft] = useState("")
-  const [locationDraft, setLocationDraft] = useState("")
-  const [configDirty, setConfigDirty] = useState(false)
-  const [configSaving, setConfigSaving] = useState(false)
   const [deviceModels, setDeviceModels] = useState<DeviceModelRow[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
   const [modelSearch, setModelSearch] = useState("")
@@ -84,12 +83,13 @@ export default function WorkshopCatalogPage() {
   const requestVersion = useRef(0)
   const modelRequestVersion = useRef(0)
 
+  // Se cargan todos los servicios (activos e inactivos) una sola vez; la búsqueda,
+  // el filtro por tipo y "mostrar inactivos" se aplican del lado del cliente.
   const loadServices = useCallback(async () => {
     const version = ++requestVersion.current
     setLoading(true)
     try {
-      const params = new URLSearchParams({ q: search, ...(showInactive ? { all: "1" } : {}) })
-      const response = await fetch(`/api/workshop-services?${params}`)
+      const response = await fetch("/api/workshop-services?all=1")
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "No se pudieron cargar los servicios")
       if (version !== requestVersion.current) return
@@ -99,8 +99,8 @@ export default function WorkshopCatalogPage() {
     } finally {
       if (version === requestVersion.current) setLoading(false)
     }
-  }, [search, showInactive])
-  useEffect(() => { const timer = setTimeout(() => { void loadServices() }, 200); return () => clearTimeout(timer) }, [loadServices])
+  }, [])
+  useEffect(() => { const timer = setTimeout(() => { void loadServices() }, 0); return () => clearTimeout(timer) }, [loadServices])
 
   const loadModels = useCallback(async () => {
     const version = ++modelRequestVersion.current
@@ -128,11 +128,35 @@ export default function WorkshopCatalogPage() {
       .then(data => {
         if (cancelled) return
         if (Array.isArray(data.equipmentTypes)) setEquipmentTypes(data.equipmentTypes)
-        if (Array.isArray(data.locations)) setLocations(data.locations)
       })
       .catch(() => { if (!cancelled) toast.error("No se pudo cargar la configuración. Se muestran los valores por defecto.") })
     return () => { cancelled = true }
   }, [])
+
+  const stats = useMemo(() => ({
+    total: services.length,
+    active: services.filter(service => service.isActive).length,
+    fixedPrice: services.filter(service => service.priceCents !== null).length,
+  }), [services])
+
+  // Tipos configurados + cualquier tipo ya usado por servicios que no esté en la lista.
+  const typeOptions = useMemo(() => {
+    const extras = new Set<string>()
+    for (const service of services) {
+      if (service.equipmentType && !equipmentTypes.includes(service.equipmentType)) extras.add(service.equipmentType)
+    }
+    return [...equipmentTypes, ...extras]
+  }, [equipmentTypes, services])
+
+  const filteredServices = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return services.filter(service => {
+      if (!showInactive && !service.isActive) return false
+      if (typeFilter && service.equipmentType !== typeFilter) return false
+      if (term && !`${service.name} ${service.description ?? ""}`.toLowerCase().includes(term)) return false
+      return true
+    })
+  }, [services, search, typeFilter, showInactive])
 
   async function post(url: string, payload: Record<string, unknown>) {
     operationKey.current = getClientOperationKey(operationKey.current, { url, ...payload })
@@ -220,34 +244,11 @@ export default function WorkshopCatalogPage() {
     finally { inFlight.current = false; setSaving(false); setToDeactivate(null) }
   }
 
-  function addToList(list: string[], value: string, setList: (items: string[]) => void, setDraft: (value: string) => void, limit: number, label: string) {
-    const item = value.trim()
-    if (!item) return
-    if (list.some(existing => existing.toLowerCase() === item.toLowerCase())) { toast.error(`"${item}" ya está en la lista.`); return }
-    if (list.length >= limit) { toast.error(`Máximo ${limit} ${label}.`); return }
-    setList([...list, item]); setDraft(""); setConfigDirty(true)
-  }
-
-  async function saveConfig(nextEquipmentTypes: string[] = equipmentTypes, nextLocations: string[] = locations) {
-    if (inFlight.current) return
-    if (!nextEquipmentTypes.length || !nextLocations.length) { toast.error("Cada lista necesita al menos un elemento."); return }
-    inFlight.current = true; setConfigSaving(true)
-    try {
-      const data = await post("/api/workshop-config", { equipmentTypes: nextEquipmentTypes, locations: nextLocations })
-      if (Array.isArray(data.equipmentTypes)) setEquipmentTypes(data.equipmentTypes)
-      if (Array.isArray(data.locations)) setLocations(data.locations)
-      setConfigDirty(false)
-      toast.success("Configuración guardada")
-    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
-    finally { inFlight.current = false; setConfigSaving(false) }
-  }
-
-  function resetConfig() {
-    if (inFlight.current) return
-    setEquipmentDraft(""); setLocationDraft("")
-    setEquipmentTypes(DEFAULT_EQUIPMENT_TYPES); setLocations(DEFAULT_LOCATIONS)
-    void saveConfig(DEFAULT_EQUIPMENT_TYPES, DEFAULT_LOCATIONS)
-  }
+  const statCards = [
+    { label: "Servicios en catálogo", value: stats.total, icon: BookOpen, tone: "bg-primary/10 text-primary" },
+    { label: "Activos", value: stats.active, icon: CheckCircle2, tone: "bg-success/10 text-success" },
+    { label: "Con precio fijo", value: stats.fixedPrice, icon: DollarSign, tone: "bg-warning/10 text-warning" },
+  ]
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-20">
@@ -255,11 +256,25 @@ export default function WorkshopCatalogPage() {
         <div>
           <p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p>
           <h1 className="mt-1 text-3xl font-bold">Catálogo de servicios</h1>
-          <p className="mt-2 text-muted-foreground">Precios sugeridos por servicio, tipos de equipo y locaciones del taller.</p>
+          <p className="mt-2 text-muted-foreground">Precios sugeridos por servicio, modelos de equipo y listas del taller.</p>
         </div>
         <Button variant="outline" asChild>
           <Link href="/admin/taller"><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Link>
         </Button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {statCards.map(card => (
+          <div key={card.label} className="flex items-center gap-3 rounded-xl border bg-card p-4">
+            <span className={cn("rounded-lg p-2", card.tone)}>
+              <card.icon className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-2xl font-bold tabular-nums">{card.value}</p>
+              <p className="text-xs text-muted-foreground">{card.label}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       <Tabs defaultValue="servicios">
@@ -296,31 +311,58 @@ export default function WorkshopCatalogPage() {
             </form>
           </section>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative min-w-56 flex-1 sm:max-w-xs">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={event => setSearch(event.target.value)} maxLength={100} placeholder="Buscar servicio…" className="pl-9" />
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative min-w-56 flex-1 sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={search} onChange={event => setSearch(event.target.value)} maxLength={100} placeholder="Buscar por nombre o descripción…" className="pl-9" />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} className="h-4 w-4 rounded border" />
+                Mostrar inactivos
+              </label>
             </div>
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} className="h-4 w-4 rounded border" />
-              Mostrar inactivos
-            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setTypeFilter("")}
+                className={cn(
+                  "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
+                  typeFilter === "" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                )}
+              >
+                Todos
+              </button>
+              {typeOptions.map(type => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setTypeFilter(type)}
+                  className={cn(
+                    "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
+                    typeFilter === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                  )}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
           </div>
 
           <section className="rounded-xl border bg-card">
             {loading ? (
               <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-            ) : services.length === 0 ? (
+            ) : filteredServices.length === 0 ? (
               <div className="p-12 text-center">
                 <BookOpen className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">{search ? "Sin resultados" : "Aún no hay servicios"}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{search ? "Prueba con otro nombre." : "Crea el primero con el formulario de arriba."}</p>
+                <h2 className="text-lg font-semibold">{services.length === 0 ? "Aún no hay servicios" : "Sin resultados"}</h2>
+                <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? "Crea el primero con el formulario de arriba." : "Prueba con otro nombre o ajusta los filtros."}</p>
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Nombre</TableHead>
+                    <TableHead>Servicio</TableHead>
                     <TableHead className="hidden md:table-cell">Descripción</TableHead>
                     <TableHead>Precio</TableHead>
                     <TableHead className="hidden sm:table-cell">Tipo de equipo</TableHead>
@@ -329,25 +371,46 @@ export default function WorkshopCatalogPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {services.map(service => (
-                    <TableRow key={service.id} className={service.isActive ? "" : "opacity-60"}>
-                      <TableCell className="font-medium">{service.name}</TableCell>
-                      <TableCell className="hidden max-w-64 truncate text-muted-foreground md:table-cell">{service.description || "—"}</TableCell>
-                      <TableCell>{service.priceCents === null ? "Variable" : money(service.priceCents)}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{service.equipmentType || "Cualquiera"}</TableCell>
-                      <TableCell><Badge variant={service.isActive ? "success" : "secondary"}>{service.isActive ? "Activo" : "Inactivo"}</Badge></TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button type="button" size="sm" variant="outline" onClick={() => startEdit(service)} disabled={saving}>
-                            <Pencil className="mr-1 h-3.5 w-3.5" />Editar
-                          </Button>
-                          <Button type="button" size="sm" variant={service.isActive ? "outline" : "default"} onClick={() => { if (service.isActive) setToDeactivate(service); else void toggleService(service) }} disabled={saving}>
-                            <Power className="mr-1 h-3.5 w-3.5" />{service.isActive ? "Desactivar" : "Activar"}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredServices.map(service => {
+                    const ServiceIcon = equipmentIcon(service.equipmentType)
+                    return (
+                      <TableRow key={service.id} className={service.isActive ? "" : "opacity-60"}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <span className="shrink-0 rounded-lg bg-primary/10 p-2 text-primary">
+                              <ServiceIcon className="h-4 w-4" />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="font-medium">{service.name}</p>
+                              {service.description && <p className="line-clamp-1 text-xs text-muted-foreground md:hidden">{service.description}</p>}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden max-w-64 truncate text-muted-foreground md:table-cell">{service.description || "—"}</TableCell>
+                        <TableCell>
+                          {service.priceCents === null
+                            ? <span className="text-muted-foreground">Según dispositivo</span>
+                            : <span className="font-medium tabular-nums">{money(service.priceCents)}</span>}
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {service.equipmentType
+                            ? <Badge variant="outline" className="font-normal">{service.equipmentType}</Badge>
+                            : <span className="text-muted-foreground">Cualquiera</span>}
+                        </TableCell>
+                        <TableCell><Badge variant={service.isActive ? "success" : "secondary"}>{service.isActive ? "Activo" : "Inactivo"}</Badge></TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" size="sm" variant="outline" onClick={() => startEdit(service)} disabled={saving}>
+                              <Pencil className="mr-1 h-3.5 w-3.5" />Editar
+                            </Button>
+                            <Button type="button" size="sm" variant={service.isActive ? "outline" : "default"} onClick={() => { if (service.isActive) setToDeactivate(service); else void toggleService(service) }} disabled={saving}>
+                              <Power className="mr-1 h-3.5 w-3.5" />{service.isActive ? "Desactivar" : "Activar"}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -380,9 +443,12 @@ export default function WorkshopCatalogPage() {
             </form>
           </section>
 
-          <div className="relative min-w-56 flex-1 sm:max-w-xs">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-56 flex-1 sm:max-w-xs">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
+            </div>
+            <p className="text-xs text-muted-foreground">{deviceModels.length} {deviceModels.length === 1 ? "modelo" : "modelos"}</p>
           </div>
 
           <section className="rounded-xl border bg-card">
@@ -410,8 +476,8 @@ export default function WorkshopCatalogPage() {
                     <TableRow key={item.id}>
                       <TableCell className="font-medium">{item.brand}</TableCell>
                       <TableCell>{item.model}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{item.code || "—"}</TableCell>
-                      <TableCell className="hidden md:table-cell">{item.type}</TableCell>
+                      <TableCell className="hidden font-mono text-xs sm:table-cell">{item.code || "—"}</TableCell>
+                      <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{item.type}</Badge></TableCell>
                       <TableCell className="text-right">
                         <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
                           <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
@@ -427,38 +493,10 @@ export default function WorkshopCatalogPage() {
         </TabsContent>
 
         <TabsContent value="configuracion" className="pt-4">
-          <section className="space-y-8 rounded-xl border bg-card p-5 sm:p-6">
-            <EditableList
-              title="Tipos de equipo"
-              description="Opciones disponibles al catalogar servicios y recibir equipos en el taller."
-              items={equipmentTypes}
-              draft={equipmentDraft}
-              onDraft={setEquipmentDraft}
-              onAdd={() => addToList(equipmentTypes, equipmentDraft, setEquipmentTypes, setEquipmentDraft, 60, "tipos de equipo")}
-              onRemove={item => { setEquipmentTypes(equipmentTypes.filter(type => type !== item)); setConfigDirty(true) }}
-              placeholder="Ej. Drone"
-              maxLength={40}
-              disabled={configSaving}
-            />
-            <EditableList
-              title="Locaciones del taller"
-              description="Ubicaciones físicas donde se resguardan los equipos durante el servicio."
-              items={locations}
-              draft={locationDraft}
-              onDraft={setLocationDraft}
-              onAdd={() => addToList(locations, locationDraft, setLocations, setLocationDraft, 30, "locaciones")}
-              onRemove={item => { setLocations(locations.filter(location => location !== item)); setConfigDirty(true) }}
-              placeholder="Ej. Mesa 3"
-              maxLength={60}
-              disabled={configSaving}
-            />
-            <div className="flex flex-wrap items-center gap-2 border-t pt-5">
-              <Button onClick={() => void saveConfig()} disabled={configSaving || !configDirty}>
-                {configSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar configuración
-              </Button>
-              <Button variant="outline" onClick={resetConfig} disabled={configSaving}>Restablecer valores</Button>
-              {configDirty && <p className="text-xs text-muted-foreground">Hay cambios sin guardar.</p>}
-            </div>
+          <section className="rounded-xl border bg-card p-5 sm:p-6">
+            <h2 className="font-semibold">Tipos de equipo y locaciones</h2>
+            <p className="mb-5 mt-0.5 text-xs text-muted-foreground">Estas listas alimentan el formulario de servicios y la recepción de equipos.</p>
+            <WorkshopConfigEditor onConfigChange={config => setEquipmentTypes(config.equipmentTypes)} />
           </section>
         </TabsContent>
       </Tabs>

@@ -2,11 +2,56 @@ import { notFound, redirect } from "next/navigation"
 import { requireAdmin } from "@/lib/api-auth"
 import prisma from "@/lib/prisma"
 import { formatPrice } from "@/lib/utils"
-import { repairFolio } from "@/lib/workshop-labels"
+import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { TicketPrintView } from "./ticket-print-view"
 import { RepairTicketView, type RepairTicketData } from "./repair-ticket-view"
+import { WorkshopSheetView, type WorkshopSheetData } from "./workshop-sheet-view"
 
 export const dynamic = "force-dynamic"
+
+// Etiquetas compartidas por el ticket del cliente y la hoja interna de taller.
+const CONDITION_LABELS: Record<string, string> = {
+  ENCENDIDO: "Encendido", APAGADO: "Apagado", MOJADO: "Mojado",
+  MANIPULADO: "Manipulado", ROTO: "Roto", INCOMPLETO: "Incompleto",
+}
+const AESTHETICS_LABELS: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
+const METHOD_LABELS: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
+const PURPOSE_LABELS: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación" }
+const ACCESS_LABELS: Record<string, string> = { NONE: "Sin bloqueo", PATTERN: "Patrón", PIN: "PIN", PASSWORD: "Contraseña" }
+const PART_STATUS_LABELS: Record<string, string> = { REQUESTED: "Solicitada", APPROVED: "Autorizada", REJECTED: "Rechazada" }
+const EVENT_LABELS: Record<string, string> = {
+  RECEIVED: "Recepción", NOTE: "Nota", QUOTE: "Presupuesto", APPROVE: "Autorización",
+  STATUS: "Estado", TRANSFER: "Traspaso", ASSIGN: "Asignación", PART: "Refacción",
+  PAYMENT: "Pago", PHOTO: "Evidencia",
+}
+
+// La orden se carga igual para el ticket del cliente que para la hoja interna:
+// incluye refacciones e historial (la hoja los imprime; el ticket los ignora).
+function loadRepairOrder(id: string) {
+  return prisma.repairOrder.findUnique({
+    where: { id },
+    include: {
+      intakeBranch: true,
+      currentBranch: true,
+      assignedTo: { select: { name: true } },
+      createdBy: { select: { name: true } },
+      payments: { where: { status: "CONFIRMED" }, orderBy: { createdAt: "asc" } },
+      parts: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          product: { select: { name: true } },
+          createdBy: { select: { name: true } },
+          decidedBy: { select: { name: true } },
+        },
+      },
+      events: {
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 12,
+        include: { actor: { select: { name: true } } },
+      },
+    },
+  })
+}
 
 export default async function TicketPage({
   params,
@@ -25,6 +70,7 @@ export default async function TicketPage({
     qrCode?: string; businessName?: string; subtitle?: string; footer?: string;
   } | null = null
   let repairData: RepairTicketData | null = null
+  let workshopData: WorkshopSheetData | null = null
 
   if (tipo === "venta") {
     // Documento de venta nuevo (Sale con líneas y pagos); fallback al movimiento heredado.
@@ -142,29 +188,14 @@ export default async function TicketPage({
         newBalance: mov.user.creditBalance || 0
       }
     }
-  } else if (tipo === "reparacion") {
-    // Comprobante de recepción de taller. NUNCA imprimir deviceAccessType ni
-    // deviceAccessValue: son datos de desbloqueo del cliente.
-    const order = await prisma.repairOrder.findUnique({
-      where: { id },
-      include: {
-        intakeBranch: true,
-        currentBranch: true,
-        assignedTo: { select: { name: true } },
-        createdBy: { select: { name: true } },
-        payments: { where: { status: "CONFIRMED" }, orderBy: { createdAt: "asc" } },
-      }
-    })
+  } else if (tipo === "reparacion" || tipo === "taller") {
+    // reparacion = comprobante del cliente: NUNCA imprime deviceAccessType ni
+    // deviceAccessValue (datos de desbloqueo del cliente).
+    // taller = hoja de servicio interna: sí los imprime, junto con costos,
+    // refacciones e historial; es el documento de trabajo del técnico.
+    const order = await loadRepairOrder(id)
 
     if (order) {
-      const CONDITION_LABELS: Record<string, string> = {
-        ENCENDIDO: "Encendido", APAGADO: "Apagado", MOJADO: "Mojado",
-        MANIPULADO: "Manipulado", ROTO: "Roto", INCOMPLETO: "Incompleto",
-      }
-      const AESTHETICS_LABELS: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
-      const METHOD_LABELS: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
-      const PURPOSE_LABELS: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación" }
-
       const conditions = (order.functionalConditions ?? "")
         .split(",")
         .map(c => CONDITION_LABELS[c.trim()] ?? c.trim())
@@ -172,48 +203,116 @@ export default async function TicketPage({
         .join(", ")
       const quotedCents = order.approvedQuoteCents ?? order.quoteCents
       const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
-
       const folio = repairFolio(order.number)
-      const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
-      repairData = {
-        title: "COMPROBANTE DE RECEPCIÓN",
-        folio,
-        date: order.createdAt.toISOString(),
-        client: order.customerName,
-        branch: order.intakeBranch.name,
-        receivedBy: order.createdBy.name,
-        promisedAt: order.promisedAt?.toISOString(),
-        equipment: [
-          { label: "Tipo", value: order.equipmentType },
-          { label: "Marca / Modelo", value: [order.brand, order.model].filter(Boolean).join(" ") },
-          { label: "Serie / IMEI", value: order.serialNumber ?? "" },
-          { label: "Color", value: order.equipmentColor ?? "" },
-          { label: "Accesorios", value: order.accessories ?? "" },
-          { label: "Estado físico", value: order.intakeCondition ?? "" },
-          { label: "Condiciones", value: conditions },
-          { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
-          // Referencia de custodia interna: solo se imprime si existe.
-          { label: "Ubicación", value: order.location ?? "" },
-        ].filter(row => row.value !== ""),
-        issue: order.reportedIssue,
-        payments: order.payments.map(p => ({
-          label: PURPOSE_LABELS[p.purpose ?? ""] ?? "Pago",
-          amount: p.amount,
-          method: METHOD_LABELS[p.method] ?? p.method,
-        })),
-        quote: quotedCents != null ? quotedCents / 100 : undefined,
-        balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
-        qrCode: `${base}/seguimiento?folio=${folio}`,
-        trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
-        // Firma capturada en recepción (PNG base64) y QR para que el técnico
-        // suba evidencias desde su celular sin login.
-        signatureData: order.signatureData ?? undefined,
-        evidenceUrl: `${base}/evidencia/${order.uploadToken}`,
+
+      if (tipo === "reparacion") {
+        const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
+        repairData = {
+          title: "COMPROBANTE DE RECEPCIÓN",
+          folio,
+          date: order.createdAt.toISOString(),
+          client: order.customerName,
+          clientPhoneAlt: order.customerPhoneAlt ?? undefined,
+          branch: order.intakeBranch.name,
+          receivedBy: order.createdBy.name,
+          promisedAt: order.promisedAt?.toISOString(),
+          equipment: [
+            { label: "Tipo", value: order.equipmentType },
+            { label: "Marca / Modelo", value: [order.brand, order.model].filter(Boolean).join(" ") },
+            { label: "Serie / IMEI", value: order.serialNumber ?? "" },
+            { label: "Color", value: order.equipmentColor ?? "" },
+            { label: "Accesorios", value: order.accessories ?? "" },
+            { label: "Estado físico", value: order.intakeCondition ?? "" },
+            { label: "Condiciones", value: conditions },
+            { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
+            // Referencia de custodia interna: solo se imprime si existe.
+            { label: "Ubicación", value: order.location ?? "" },
+          ].filter(row => row.value !== ""),
+          issue: order.reportedIssue,
+          payments: order.payments.map(p => ({
+            label: PURPOSE_LABELS[p.purpose ?? ""] ?? "Pago",
+            amount: p.amount,
+            method: METHOD_LABELS[p.method] ?? p.method,
+          })),
+          // Si un presupuesto autorizado distinto ya reemplazó al estimado, el
+          // estimado original aún se imprime aparte para aclarar el total.
+          estimatedQuote: order.quoteCents != null && order.quoteCents !== quotedCents ? order.quoteCents / 100 : undefined,
+          quote: quotedCents != null ? quotedCents / 100 : undefined,
+          balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
+          qrCode: `${base}/seguimiento?folio=${folio}`,
+          trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
+          // Firma capturada en recepción (PNG base64) y QR para que el técnico
+          // suba evidencias desde su celular sin login.
+          signatureData: order.signatureData ?? undefined,
+          evidenceUrl: `${base}/evidencia/${order.uploadToken}`,
+        }
+      } else {
+        workshopData = {
+          folio,
+          status: repairLabels[order.status as RepairStage] ?? order.status,
+          receivedAt: order.createdAt.toISOString(),
+          scheduledAt: order.scheduledAt?.toISOString(),
+          promisedAt: order.promisedAt?.toISOString(),
+          intakeBranch: order.intakeBranch.name,
+          currentBranch: order.currentBranch.name,
+          assignedTo: order.assignedTo?.name ?? undefined,
+          receivedBy: order.createdBy.name,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          customerPhoneAlt: order.customerPhoneAlt ?? undefined,
+          equipment: [
+            { label: "Tipo", value: order.equipmentType },
+            { label: "Marca", value: order.brand ?? "" },
+            { label: "Modelo", value: order.model ?? "" },
+            { label: "Serie / IMEI", value: order.serialNumber ?? "" },
+            { label: "Color", value: order.equipmentColor ?? "" },
+            { label: "Accesorios", value: order.accessories ?? "" },
+            { label: "Estado físico", value: order.intakeCondition ?? "" },
+            { label: "Condiciones", value: conditions },
+            { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
+            { label: "Ubicación física", value: order.location ?? "" },
+          ].filter(row => row.value !== ""),
+          accessType: order.deviceAccessType ?? undefined,
+          accessTypeLabel: order.deviceAccessType ? (ACCESS_LABELS[order.deviceAccessType] ?? order.deviceAccessType) : undefined,
+          accessValue: order.deviceAccessValue ?? undefined,
+          issue: order.reportedIssue,
+          diagnosis: order.diagnosis ?? undefined,
+          qualityCheck: order.qualityCheck ?? undefined,
+          deliveredTo: order.deliveredTo ?? undefined,
+          quote: order.quoteCents != null ? order.quoteCents / 100 : undefined,
+          approvedQuote: order.approvedQuoteCents != null ? order.approvedQuoteCents / 100 : undefined,
+          quoteApprovedAt: order.quoteApprovedAt?.toISOString(),
+          parts: order.parts.map(part => ({
+            description: part.description,
+            productName: part.product?.name ?? undefined,
+            qty: part.qty,
+            cost: part.unitCostCents / 100,
+            price: part.unitPriceCents / 100,
+            statusLabel: PART_STATUS_LABELS[part.status] ?? part.status,
+            requestedBy: part.createdBy.name,
+            decidedBy: part.decidedBy?.name ?? undefined,
+            decisionNote: part.decisionNote ?? undefined,
+          })),
+          payments: order.payments.map(p => ({
+            label: PURPOSE_LABELS[p.purpose ?? ""] ?? "Pago",
+            amount: p.amount,
+            method: METHOD_LABELS[p.method] ?? p.method,
+            date: p.createdAt.toISOString(),
+          })),
+          paidTotal: paidCents / 100,
+          balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
+          events: order.events.map(event => ({
+            date: event.createdAt.toISOString(),
+            typeLabel: EVENT_LABELS[event.type] ?? event.type,
+            detail: event.detail,
+            actor: event.actor.name,
+          })),
+        }
       }
     }
   }
 
-  if (!ticketData && !repairData) {
+  if (!ticketData && !repairData && !workshopData) {
     return <div className="p-8 text-center text-red-500">Ticket no encontrado</div>
   }
 
@@ -227,6 +326,10 @@ export default async function TicketPage({
   const businessName = ticketBusinessName?.value || "PROSOLUTIONS"
   const subtitle = ticketSubtitle?.value || "Venta de refacciones y\nReparación profesional"
   const footer = ticketFooter?.value || "¡Gracias por tu preferencia!"
+
+  if (workshopData) {
+    return <WorkshopSheetView data={{ ...workshopData, businessName }} />
+  }
 
   if (repairData) {
     return <RepairTicketView data={{ ...repairData, businessName, subtitle, footer }} />

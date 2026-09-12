@@ -11,6 +11,8 @@ export interface RepairTicketData {
   folio: string
   date: string
   client?: string
+  // Segundo teléfono de contacto declarado en recepción (opcional).
+  clientPhoneAlt?: string
   branch?: string
   receivedBy?: string
   promisedAt?: string
@@ -18,6 +20,9 @@ export interface RepairTicketData {
   issue: string
   // Cobros confirmados (anticipo/abonos/liquidación) y presupuesto en pesos.
   payments?: { label: string; amount: number; method: string }[]
+  // Presupuesto estimado original: solo llega cuando un presupuesto
+  // autorizado distinto ya lo reemplazó en la línea "Presupuesto".
+  estimatedQuote?: number
   quote?: number
   balance?: number
   qrCode?: string
@@ -39,6 +44,19 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [evidenceQrDataUrl, setEvidenceQrDataUrl] = useState<string | null>(null)
 
+  // El ticket suele abrirse en pestaña nueva (target="_blank"): ahí
+  // history.back() es un callejón sin salida, así que cerramos la pestaña.
+  function goBack() {
+    if (window.opener || window.history.length <= 1) {
+      window.close()
+      // window.close() falla si la pestaña no la abrió un script: ir al taller.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.href = "/admin/taller"
+    } else {
+      window.history.back()
+    }
+  }
+
   useEffect(() => {
     if (data.qrCode) {
       QRCode.toDataURL(data.qrCode, { width: 160, margin: 1 })
@@ -56,7 +74,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
       {/* Controles NO imprimibles */}
       <div className="max-w-sm mx-auto mb-6 flex items-center justify-between gap-2 print:hidden bg-background p-4 rounded-xl shadow-sm">
-        <Button variant="outline" size="sm" onClick={() => window.history.back()}>
+        <Button variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>
@@ -84,6 +102,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
         {/* Datos de recepción */}
         <div className="text-xs space-y-1 mb-3">
           {data.client && <p><span className="text-gray-500">Cliente:</span> {data.client}</p>}
+          {data.clientPhoneAlt && <p><span className="text-gray-500">Contacto 2:</span> {data.clientPhoneAlt}</p>}
           {data.branch && <p><span className="text-gray-500">Sucursal de recepción:</span> {data.branch}</p>}
           {data.receivedBy && <p><span className="text-gray-500">Recibió:</span> {data.receivedBy}</p>}
           {data.promisedAt && <p><span className="text-gray-500">Fecha promesa:</span> {formatDate(data.promisedAt)}</p>}
@@ -118,7 +137,8 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
               {data.payments?.map((p, idx) => (
                 <p key={idx}>{p.label}: {formatPrice(p.amount)} ({p.method})</p>
               ))}
-              {data.quote !== undefined && <p>Presupuesto: {formatPrice(data.quote)}</p>}
+              {data.estimatedQuote !== undefined && <p>Presupuesto estimado: {formatPrice(data.estimatedQuote)}</p>}
+              {data.quote !== undefined && <p>{data.estimatedQuote !== undefined ? "Presupuesto autorizado" : "Presupuesto"}: {formatPrice(data.quote)}</p>}
               {data.balance !== undefined && <p className="font-bold">Saldo: {formatPrice(data.balance)}</p>}
             </div>
           </div>
@@ -129,6 +149,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
         {/* QR de seguimiento */}
         {qrDataUrl && (
           <div className="text-center mb-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={qrDataUrl} alt="QR de seguimiento" className="w-28 h-28 mx-auto" />
             {data.trackingHint && (
               <p className="text-[10px] text-gray-600 mt-1 leading-snug">{data.trackingHint}</p>

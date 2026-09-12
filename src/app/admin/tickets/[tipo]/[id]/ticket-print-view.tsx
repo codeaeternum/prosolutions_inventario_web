@@ -63,7 +63,13 @@ export function TicketPrintView({ data }: { data: TicketData }) {
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
       {/* Controles NO imprimibles */}
       <div className="max-w-sm mx-auto mb-6 flex items-center justify-between gap-2 print:hidden bg-background p-4 rounded-xl shadow-sm">
-        <Button variant="outline" size="sm" onClick={() => window.history.back()}>
+        <Button variant="outline" size="sm" onClick={() => {
+          // Pestaña abierta por script (target="_blank"): history.back() no hace
+          // nada ahí; cerramos y si no se puede, volvemos al panel.
+          if (window.opener || window.history.length <= 1) { window.close(); // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+            window.location.href = "/admin" }
+          else window.history.back()
+        }}>
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>

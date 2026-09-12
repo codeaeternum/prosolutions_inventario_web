@@ -170,7 +170,15 @@ export default function WorkshopPage() {
     return () => window.removeEventListener("beforeunload", warnBeforeUnload)
   }, [hasUnsavedChanges])
 
-  function backToOrders() {
+  function syncOrderUrl(id: string | null, replace = false) {
+    const url = new URL(window.location.href)
+    if (id) url.searchParams.set("orden", id)
+    else url.searchParams.delete("orden")
+    if (replace) window.history.replaceState(null, "", url)
+    else window.history.pushState(null, "", url)
+  }
+
+  function closeOrder() {
     detailVersion.current += 1
     detailRequest.current?.abort()
     detailRequest.current = null
@@ -178,6 +186,11 @@ export default function WorkshopPage() {
     setDrafts({}); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
     setShowAccess(false); setDiscardDialog(false)
+  }
+
+  function backToOrders() {
+    closeOrder()
+    if (new URLSearchParams(window.location.search).get("orden")) syncOrderUrl(null)
   }
   const load = useCallback(async () => {
     const version = ++requestVersion.current
@@ -212,7 +225,8 @@ export default function WorkshopPage() {
   }, [branch, page, search, stage, view])
   useEffect(() => { const timer = setTimeout(() => { void load() }, 200); return () => clearTimeout(timer) }, [load])
 
-  async function openOrder(id: string, preserveDrafts = false) {
+  async function openOrder(id: string, preserveDrafts = false, push = true) {
+    if (push && new URLSearchParams(window.location.search).get("orden") !== id) syncOrderUrl(id)
     const version = ++detailVersion.current
     detailRequest.current?.abort()
     const controller = new AbortController()
@@ -242,6 +256,22 @@ export default function WorkshopPage() {
       if (version === detailVersion.current) { setOpening(false); detailRequest.current = null }
     }
   }
+  // La orden abierta vive en la URL (?orden=<id>): el botón "atrás" del
+  // navegador regresa a la lista y el detalle se puede enlazar/recargar.
+  useEffect(() => {
+    const fromUrl = () => new URLSearchParams(window.location.search).get("orden")
+    const initial = fromUrl()
+    // Diferido: el estado inicial de la orden se carga fuera del ciclo del effect.
+    const timer = setTimeout(() => { if (initial) void openOrder(initial, false, false) }, 0)
+    const onPop = () => {
+      const id = fromUrl()
+      if (id) void openOrder(id, false, false)
+      else closeOrder()
+    }
+    window.addEventListener("popstate", onPop)
+    return () => { clearTimeout(timer); window.removeEventListener("popstate", onPop) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   async function post(url: string, payload: Record<string, unknown>) {
     operationKey.current = getClientOperationKey(operationKey.current, { url, ...payload })
     const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, idempotencyKey: operationKey.current.key }) })
@@ -335,7 +365,7 @@ export default function WorkshopPage() {
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? repairFolio(selected.number) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Imprimir ticket</Link></Button></>}
+        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button></>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
         : <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button>}

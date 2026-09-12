@@ -588,6 +588,8 @@ model RepairOrder {
   status RepairStatus @default(RECEIVED)
   customerName String
   customerPhone String
+  // Segundo contacto opcional (familiar, trabajo, otro responsable).
+  customerPhoneAlt String?
   equipmentType String
   brand String?
   model String?

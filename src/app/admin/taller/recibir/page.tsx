@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input"
 import { BusinessName } from "@/components/admin/business-name"
 import { IntakeStepper } from "@/components/admin/taller/intake-stepper"
 import { PatternPad } from "@/components/admin/taller/pattern-pad"
+import { PhoneInput, parsePhone } from "@/components/admin/taller/phone-input"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
 import { repairFolio } from "@/lib/workshop-labels"
 
 type Branch = { id: string; name: string }
@@ -65,10 +67,9 @@ const ACCESS_OPTIONS: { value: AccessType; label: string; icon: LucideIcon }[] =
   { value: "PIN", label: "PIN", icon: Hash },
   { value: "PASSWORD", label: "Contraseña", icon: KeyRound },
 ]
-const ACCESSORY_OPTIONS = ["Cargador", "Cable", "Funda", "Mica", "SIM", "MicroSD", "Caja", "Control remoto", "Otro"]
-
 const emptyForm = {
-  customerName: "", customerPhone: "", intakeBranchId: "", assignedToId: "",
+  customerName: "", customerPhone: "", customerPhoneDial: "+52", phoneAltVisible: false, customerPhoneAlt: "", customerPhoneAltDial: "+52",
+  intakeBranchId: "", assignedToId: "",
   equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", equipmentColorCustom: false, serialNumber: "",
   serviceName: "", servicePriceCents: null as number | null, otherService: "", budgetAmount: "", signatureData: "",
   accessType: "NONE" as AccessType, pattern: [] as number[], accessValue: "",
@@ -150,8 +151,21 @@ export default function ReceiveEquipmentPage() {
   const serviceVersion = useRef(0)
   const brandVersion = useRef(0)
   const modelVersion = useRef(0)
+  const serviceBoxRef = useRef<HTMLDivElement | null>(null)
 
   const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setForm(previous => ({ ...previous, ...changes })) }
+
+  // Al cambiar la lada se reescribe el teléfono con el nuevo código y el mismo número local.
+  const setPhoneDial = (phoneField: "customerPhone" | "customerPhoneAlt") => (dial: string) => {
+    setDirty(true)
+    setForm(previous => {
+      const local = parsePhone(previous[phoneField]).local
+      const combined = local ? `${dial} ${local}` : ""
+      return phoneField === "customerPhone"
+        ? { ...previous, customerPhoneDial: dial, customerPhone: combined }
+        : { ...previous, customerPhoneAltDial: dial, customerPhoneAlt: combined }
+    })
+  }
 
   // SignaturePad emite onChange tras cada render si el handler cambia; el handler
   // memoizado + el bail-out por valor evitan un ciclo de render infinito.
@@ -204,6 +218,19 @@ export default function ReceiveEquipmentPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [serviceQuery])
+
+  // Cierra la lista de servicios al hacer clic fuera del buscador.
+  useEffect(() => {
+    if (!serviceResults.length) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (serviceBoxRef.current && !serviceBoxRef.current.contains(event.target as Node)) {
+        setServiceResults([])
+        setServiceSearched("")
+      }
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick)
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick)
+  }, [serviceResults.length])
 
   useEffect(() => {
     const term = brandTerm.trim()
@@ -291,7 +318,11 @@ export default function ReceiveEquipmentPage() {
 
   const pickCustomer = (hit: CustomerHit) => {
     searchVersion.current += 1
-    update({ customerName: hit.name, ...(hit.phone ? { customerPhone: hit.phone } : {}) })
+    const phone = hit.phone ? parsePhone(hit.phone) : null
+    update({
+      customerName: hit.name,
+      ...(phone?.local ? { customerPhoneDial: phone.dial ?? "+52", customerPhone: `${phone.dial ?? "+52"} ${phone.local}` } : {}),
+    })
     setMatchedCustomer(hit)
     setSuggestions([])
     setLookupTerm("")
@@ -343,7 +374,9 @@ export default function ReceiveEquipmentPage() {
     if (index === 0) {
       if (!form.customerName.trim()) return "Escribe el nombre del cliente."
       const phone = form.customerPhone.trim()
-      if (phone.length < 7 || !PHONE_PATTERN.test(phone)) return "Revisa el teléfono: solo dígitos, +, espacios y guiones (mínimo 7 caracteres)."
+      if (parsePhone(phone).local.length < 7 || !PHONE_PATTERN.test(phone)) return "Revisa el teléfono: al menos 7 dígitos después de la lada."
+      const phoneAlt = form.customerPhoneAlt.trim()
+      if (phoneAlt && (parsePhone(phoneAlt).local.length < 7 || !PHONE_PATTERN.test(phoneAlt))) return "Revisa el teléfono alterno: al menos 7 dígitos después de la lada."
       if (!form.intakeBranchId) return "Selecciona la sucursal de recepción."
     }
     if (index === 1) {
@@ -398,6 +431,7 @@ export default function ReceiveEquipmentPage() {
     return Object.fromEntries(Object.entries({
       customerName: form.customerName.trim(),
       customerPhone: form.customerPhone.trim(),
+      customerPhoneAlt: form.customerPhoneAlt.trim(),
       intakeBranchId: form.intakeBranchId,
       assignedToId: form.assignedToId,
       equipmentType: equipmentLabel,
@@ -409,15 +443,17 @@ export default function ReceiveEquipmentPage() {
       deviceAccessValue: accessValue,
       accessories: accessoryText,
       intakeCondition: form.intakeCondition.trim(),
-      reportedIssue: [reportedIssueText, budgetLabel ? `Presupuesto estimado: ${budgetLabel}` : ""].filter(Boolean).join(" · "),
+      reportedIssue: reportedIssueText,
       signatureData: form.signatureData,
+      // El presupuesto de recepción viaja en su propio campo.
+      quoteCents: budgetCents || undefined,
       functionalConditions: form.functionalConditions.length ? form.functionalConditions : "",
       aesthetics: form.aesthetics,
       location: form.location.trim(),
       promisedAt: form.promisedAt && !Number.isNaN(Date.parse(form.promisedAt)) ? new Date(form.promisedAt).toISOString() : "",
       scheduledAt: form.scheduledAt && !Number.isNaN(Date.parse(form.scheduledAt)) ? new Date(form.scheduledAt).toISOString() : "",
       advance: form.advanceEnabled && advanceCents > 0 ? { amountCents: advanceCents, method: form.advanceMethod } : "",
-    }).filter(([, value]) => value !== ""))
+    }).filter(([, value]) => value !== "" && value !== undefined))
   }
 
   async function createOrder() {
@@ -464,6 +500,11 @@ export default function ReceiveEquipmentPage() {
   }
 
   const showNewCustomerNote = searchedTerm.length >= 3 && suggestions.length === 0 && !matchedCustomer && lookupTerm.trim().length >= 3
+  const profile = deviceProfileFor(form.equipmentType)
+  // Sugerencias del perfil + lo ya seleccionado aunque no aplique al tipo + "Otro" libre.
+  const accessoryChips = [...new Set([...profile.accessorySuggestions, ...form.accessories, "Otro"])]
+  const allowedAccessOptions = ACCESS_OPTIONS.filter(option => profile.accessTypes.includes(option.value))
+  const conditionHints = form.functionalConditions.map(condition => CONDITION_HINTS[condition]).filter((hint): hint is string => Boolean(hint))
   const accessOption = ACCESS_OPTIONS.find(option => option.value === form.accessType)
   const accessLabel = accessOption?.label ?? "Sin bloqueo"
   const branchName = branches.find(branch => branch.id === form.intakeBranchId)?.name ?? ""
@@ -531,10 +572,19 @@ export default function ReceiveEquipmentPage() {
                     <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </label>
-                  <label className="relative block space-y-2 text-sm">Teléfono de contacto *
-                    <Input type="tel" value={form.customerPhone} onChange={event => { update({ customerPhone: event.target.value }); trackLookup("customerPhone", event.target.value) }} minLength={7} maxLength={30} autoComplete="off" placeholder="Ej. 55 1234 5678" />
+                  <PhoneInput label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
                     {lookupField === "customerPhone" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
-                  </label>
+                  </PhoneInput>
+                  {form.phoneAltVisible || form.customerPhoneAlt ? (
+                    <div className="space-y-1.5">
+                      <PhoneInput label="Otro contacto (opcional)" value={form.customerPhoneAlt} dialCode={form.customerPhoneAltDial} onDialCode={setPhoneDial("customerPhoneAlt")} onChange={phone => update({ customerPhoneAlt: phone })} />
+                      <button type="button" onClick={() => update({ phoneAltVisible: false, customerPhoneAlt: "" })} className="text-xs text-muted-foreground transition hover:text-destructive">Quitar contacto alterno</button>
+                    </div>
+                  ) : (
+                    <div className="self-end sm:col-span-2">
+                      <button type="button" onClick={() => update({ phoneAltVisible: true })} className="text-xs font-medium text-primary transition hover:underline">Agregar otro contacto</button>
+                    </div>
+                  )}
                   {(searching || matchedCustomer || showNewCustomerNote) && (
                     <div className="sm:col-span-2" aria-live="polite">
                       {searching && <p className="text-xs text-muted-foreground">Buscando clientes…</p>}
@@ -570,7 +620,10 @@ export default function ReceiveEquipmentPage() {
                       {equipmentTypes.map(value => {
                         const Icon = EQUIPMENT_ICONS[value] ?? Package
                         return (
-                          <button key={value} type="button" aria-pressed={form.equipmentType === value} onClick={() => update({ equipmentType: value })} className={chipClass(form.equipmentType === value)}>
+                          <button key={value} type="button" aria-pressed={form.equipmentType === value} onClick={() => {
+                            const next = deviceProfileFor(value)
+                            update(next.accessTypes.includes(form.accessType) ? { equipmentType: value } : { equipmentType: value, accessType: "NONE" })
+                          }} className={chipClass(form.equipmentType === value)}>
                             <Icon size={15} />{value}
                           </button>
                         )
@@ -579,6 +632,9 @@ export default function ReceiveEquipmentPage() {
                     {form.equipmentType === "Otro" && (
                       <Input value={form.equipmentTypeOther} onChange={event => update({ equipmentTypeOther: event.target.value })} maxLength={100} placeholder="¿Qué equipo es? Ej. smartwatch, bocina, drone…" autoFocus className="mt-2 max-w-sm" />
                     )}
+                    {form.equipmentType && profile.extraHints.map(hint => (
+                      <p key={hint} className="text-xs text-muted-foreground">{hint}</p>
+                    ))}
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div className="space-y-2">
@@ -593,7 +649,7 @@ export default function ReceiveEquipmentPage() {
                           </button>
                         </p>
                       ) : (
-                        <div className="relative">
+                        <div className="relative" ref={serviceBoxRef}>
                           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                           <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder="Buscar: cambio de pantalla, batería…" className="pl-9" />
                           {serviceResults.length > 0 && (
@@ -659,23 +715,25 @@ export default function ReceiveEquipmentPage() {
                       {modelSearching && <span className="block text-xs text-muted-foreground">Buscando modelos…</span>}
                       {pickedModel?.code && pickedModel.model === form.model && <span className="block text-xs text-muted-foreground">Código de referencia: {pickedModel.code}</span>}
                     </label>
-                    <div className="space-y-2 sm:col-span-2">
-                      <p className="text-sm">Color</p>
-                      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Color del equipo">
-                        {EQUIPMENT_COLORS.map(({ label, hex }) => (
-                          <button key={label} type="button" role="radio" aria-checked={!form.equipmentColorCustom && form.equipmentColor === label} onClick={() => update({ equipmentColor: label, equipmentColorCustom: false })} className={chipClass(!form.equipmentColorCustom && form.equipmentColor === label)}>
-                            <span aria-hidden className="h-3 w-3 rounded-full border border-black/25" style={{ backgroundColor: hex }} />{label}
-                          </button>
-                        ))}
-                        <button type="button" role="radio" aria-checked={form.equipmentColorCustom} onClick={() => update({ equipmentColorCustom: true, equipmentColor: "" })} className={chipClass(form.equipmentColorCustom)}>Otro</button>
-                      </div>
-                      {form.equipmentColorCustom && (
-                        <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
-                      )}
-                    </div>
-                    <label className="block space-y-2 text-sm">Serie o IMEI
-                      <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={100} placeholder="15 dígitos para celulares" />
+                    <label className="block space-y-2 text-sm">{profile.serialLabel}
+                      <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={100} placeholder={profile.serialPlaceholder} />
                     </label>
+                    {profile.colorRelevant && (
+                      <div className="space-y-2 sm:col-span-2">
+                        <p className="text-sm">Color</p>
+                        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Color del equipo">
+                          {EQUIPMENT_COLORS.map(({ label, hex }) => (
+                            <button key={label} type="button" role="radio" aria-checked={!form.equipmentColorCustom && form.equipmentColor === label} onClick={() => update({ equipmentColor: label, equipmentColorCustom: false })} className={chipClass(!form.equipmentColorCustom && form.equipmentColor === label)}>
+                              <span aria-hidden className="h-3 w-3 rounded-full border border-black/25" style={{ backgroundColor: hex }} />{label}
+                            </button>
+                          ))}
+                          <button type="button" role="radio" aria-checked={form.equipmentColorCustom} onClick={() => update({ equipmentColorCustom: true, equipmentColor: "" })} className={chipClass(form.equipmentColorCustom)}>Otro</button>
+                        </div>
+                        {form.equipmentColorCustom && (
+                          <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -685,7 +743,7 @@ export default function ReceiveEquipmentPage() {
                   <div className="space-y-2">
                     <p className="text-sm">Bloqueo del equipo</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Tipo de bloqueo">
-                      {ACCESS_OPTIONS.map(({ value, label, icon: Icon }) => (
+                      {allowedAccessOptions.map(({ value, label, icon: Icon }) => (
                         <button key={value} type="button" role="radio" aria-checked={form.accessType === value} onClick={() => update({ accessType: value })} className={`flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-sm transition ${form.accessType === value ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>
                           <Icon size={18} />{label}
                         </button>
@@ -709,7 +767,7 @@ export default function ReceiveEquipmentPage() {
                   <div className="space-y-2">
                     <p className="text-sm">Accesorios recibidos</p>
                     <div className="flex flex-wrap gap-2">
-                      {ACCESSORY_OPTIONS.map(item => (
+                      {accessoryChips.map(item => (
                         <button key={item} type="button" aria-pressed={form.accessories.includes(item)} onClick={() => update({ accessories: form.accessories.includes(item) ? form.accessories.filter(accessory => accessory !== item) : [...form.accessories, item] })} className={chipClass(form.accessories.includes(item))}>
                           {item}
                         </button>
@@ -729,6 +787,9 @@ export default function ReceiveEquipmentPage() {
                           </button>
                         ))}
                       </div>
+                      {conditionHints.map(hint => (
+                        <p key={hint} className="text-xs text-muted-foreground">{hint}</p>
+                      ))}
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm">Estética</p>
@@ -813,6 +874,7 @@ export default function ReceiveEquipmentPage() {
                     <SummaryGroup title="Cliente" icon={UserRound} items={[
                       ["Nombre", form.customerName.trim()],
                       ["Teléfono", form.customerPhone.trim()],
+                      ...(form.customerPhoneAlt.trim() ? [["Teléfono alterno", form.customerPhoneAlt.trim()] as [string, ReactNode]] : []),
                       ["Sucursal de recepción", branchName],
                       ["Responsable técnico", staffName],
                     ]} />
@@ -821,7 +883,7 @@ export default function ReceiveEquipmentPage() {
                       ["Marca", form.brand.trim()],
                       ["Modelo", form.model.trim()],
                       ["Color", form.equipmentColor.trim()],
-                      ["Serie o IMEI", form.serialNumber.trim()],
+                      [profile.serialLabel, form.serialNumber.trim()],
                       ["Servicio", serviceSummary],
                     ]} />
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[

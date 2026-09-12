@@ -19,6 +19,7 @@ import {
   ArrowRightLeft,
   Wrench,
   Wallet,
+  ClipboardList,
 } from "lucide-react"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
@@ -170,7 +171,7 @@ export default async function AdminDashboard() {
       title: "Caja Actual",
       value: stats.isRegisterOpen ? formatPrice(stats.cashTotal) : "Cerrada",
       description: stats.isRegisterOpen ? "Efectivo en turno" : "Abre caja para operar",
-      icon: ShoppingCart,
+      icon: Wallet,
       href: "/admin/caja",
       alert: stats.isRegisterOpen ? "Turno activo" : "Requiere apertura",
       alertClass: stats.isRegisterOpen ? "text-green-500" : "text-amber-500",
@@ -270,8 +271,14 @@ export default async function AdminDashboard() {
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link href="/admin/taller">
+              <Link href="/admin/taller/recibir">
                 <Wrench className="h-4 w-4" />
+                Recibir equipo
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/taller">
+                <ClipboardList className="h-4 w-4" />
                 Recibir equipo
               </Link>
             </Button>
@@ -288,7 +295,9 @@ export default async function AdminDashboard() {
                 <CardTitle className="text-sm font-medium">
                   {stat.title}
                 </CardTitle>
-                <stat.icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="rounded-lg bg-primary/10 p-2 text-primary shrink-0">
+                  <stat.icon className="h-4 w-4" />
+                </span>
               </CardHeader>
               <CardContent className="flex-1 flex flex-col">
                 <div className="text-2xl font-bold">{stat.value}</div>

@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema } from "./operations"
-import { repairNextStages, repairLabels } from "../workshop-labels"
+import { repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 
 const text = z.string().trim().min(1).max(500)
 const optionalText = z.string().trim().max(500).optional()
@@ -11,6 +11,7 @@ const conditionFlag = z.enum(["ENCENDIDO", "APAGADO", "MOJADO", "MANIPULADO", "R
 const createSchema = z.object({
   idempotencyKey: operationKeySchema, customerName: text,
   customerPhone: z.string().trim().min(7).max(30).regex(/^[+\d\s()-]+$/),
+  customerPhoneAlt: z.string().trim().max(30).regex(/^[+\d\s()-]+$/).optional().or(z.literal("")),
   equipmentType: text, brand: optionalText, model: optionalText, serialNumber: optionalText,
   equipmentColor: optionalText,
   deviceAccessType: z.enum(["NONE", "PATTERN", "PIN", "PASSWORD"]).optional(),
@@ -24,6 +25,8 @@ const createSchema = z.object({
   scheduledAt: z.iso.datetime().optional(),
   // Firma del cliente en PNG base64 (data URL), capturada en recepción.
   signatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
+  // Presupuesto estimado declarado en recepción (sin diagnóstico aún).
+  quoteCents: moneyCents.optional(),
   // Anticipo cobrado en recepción; con caja abierta genera su asiento de caja.
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
@@ -48,8 +51,9 @@ export async function createRepair(db: PrismaClient, actorId: string, raw: unkno
     const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } })) throw new BusinessError("La persona asignada no está habilitada.")
-    const order = await tx.repairOrder.create({ data: { ...input, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    const order = await tx.repairOrder.create({ data: { ...input, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
     await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
+    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.` } })
     if (advance && advance.amountCents > 0) {
       const { cashNote } = await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
       await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).${cashNote}` } })
@@ -57,6 +61,55 @@ export async function createRepair(db: PrismaClient, actorId: string, raw: unkno
     return { order }
   })
 }
+/** Mueve inventario de la sucursal actual de la orden por una refacción vinculada
+ *  al catálogo: OUT al autorizarse/agregarse, RETURN al retirarse estando autorizada.
+ *  Respeta el invariante de stock no negativo (CHECK en BranchStock y Product):
+ *  si no alcanzan las existencias descuenta lo que hay y el detalle de la orden
+ *  documenta el faltante — la pieza pudo montarse antes de catalogarse.
+ *  Devuelve el resultado del movimiento, o null si la refacción no está vinculada. */
+async function syncPartStock(tx: Prisma.TransactionClient, args: {
+  order: { number: number; currentBranchId: string }
+  part: { id: string; productId: string | null; description: string; qty: number; unitPriceCents: number }
+  actorId: string; type: "OUT" | "RETURN"
+}): Promise<{ deducted: number; stock: number } | null> {
+  const { order, part, actorId, type } = args
+  if (!part.productId) return null
+  const productId = part.productId
+  const folio = repairFolio(order.number)
+  if (type === "RETURN") {
+    // Se repone solo lo que realmente se descontó (el movimiento OUT registra la
+    // cantidad efectiva en `notes` con el id de la refacción).
+    const moved = await tx.inventoryMovement.aggregate({ where: { productId, type: "OUT", notes: { contains: part.id } }, _sum: { quantity: true } })
+    const returnQty = moved._sum.quantity ?? 0
+    if (returnQty <= 0) return { deducted: 0, stock: 0 }
+    await tx.branchStock.upsert({
+      where: { productId_branchId: { productId, branchId: order.currentBranchId } },
+      create: { productId, branchId: order.currentBranchId, quantity: returnQty },
+      update: { quantity: { increment: returnQty } },
+    })
+    const product = await tx.product.update({ where: { id: productId }, data: { stock: { increment: returnQty } } })
+    await tx.inventoryMovement.create({ data: { type: "RETURN", quantity: returnQty, previousStock: product.stock - returnQty, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Devolución refacción ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * returnQty) / 100, businessVersion: 1 } })
+    return { deducted: returnQty, stock: product.stock }
+  }
+  // OUT: el CHECK quantity >= 0 no admite negativos — se toma solo lo disponible.
+  const stockRow = await tx.branchStock.findUnique({ where: { productId_branchId: { productId, branchId: order.currentBranchId } } })
+  const available = Math.max(0, stockRow?.quantity ?? 0)
+  const deduct = Math.min(part.qty, available)
+  if (deduct <= 0) return { deducted: 0, stock: 0 }
+  const taken = await tx.branchStock.updateMany({ where: { productId, branchId: order.currentBranchId, quantity: { gte: deduct } }, data: { quantity: { decrement: deduct } } })
+  if (taken.count !== 1) return { deducted: 0, stock: 0 } // el stock cambió en paralelo; el evento no afirma descuento
+  // Product.stock es el total cacheado; también tiene CHECK >= 0 — se limita igual.
+  const productRow = await tx.product.findUnique({ where: { id: productId }, select: { stock: true } })
+  const productDeduct = Math.min(deduct, Math.max(0, productRow?.stock ?? 0))
+  const product = await tx.product.update({ where: { id: productId }, data: { stock: { decrement: productDeduct } } })
+  await tx.inventoryMovement.create({ data: { type: "OUT", quantity: deduct, previousStock: product.stock + productDeduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * part.qty) / 100, businessVersion: 1 } })
+  return { deducted: deduct, stock: product.stock - (deduct - productDeduct) }
+}
+/** Sufijo de evento con el resultado del movimiento de inventario vinculado. */
+const stockNote = (result: { deducted: number; stock: number } | null, qty: number) =>
+  result === null ? ""
+    : result.deducted <= 0 ? " — sin existencias en la sucursal; no se descontó inventario"
+    : ` — stock quedó en ${result.stock}${result.deducted < qty ? ` (faltan ${qty - result.deducted} sin existencias registradas)` : ""}`
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
@@ -144,9 +197,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       const needsApproval = actorUser?.role === "EMPLOYEE"
       const part = await tx.repairPart.create({ data: { orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
       eventType = "PART"
+      // Las creadas ya APPROVED (administrador) descuentan stock de inmediato;
+      // las REQUESTED del técnico lo descuentan recién en PART_DECIDE.
+      const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, type: "OUT" })
       detail = needsApproval
         ? `Refacción solicitada: ${part.qty} × ${part.description} — pendiente de autorización`
-        : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+        : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
     } else if (input.action === "PART_DECIDE") {
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       if (actorUser?.role !== "ADMIN") throw new BusinessError("Solo el administrador autoriza refacciones.", 403)
@@ -161,8 +217,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       })
       if (decided.count !== 1) throw new BusinessError("La refacción ya fue autorizada o rechazada.", 409)
       eventType = "PART"
+      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, type: "OUT" }) : null
       detail = input.approve
-        ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN`
+        ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(decidedStock, part.qty)}`
         : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
     } else if (input.action === "PART_REMOVE") {
       const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
@@ -175,7 +232,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       if (!allowed) throw new BusinessError(part.status === "REQUESTED" ? "Solo quien la solicitó puede retirarla; el administrador la autoriza o rechaza." : "Solo el administrador puede retirar una refacción autorizada o rechazada.", 403)
       await tx.repairPart.delete({ where: { id: part.id } })
       eventType = "PART"
-      detail = `Refacción retirada: ${part.description}`
+      // Solo las APPROVED llegaron a descontar stock; REQUESTED/REJECTED nunca lo tocaron.
+      const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, type: "RETURN" }) : null
+      detail = `Refacción retirada: ${part.description}${stockNote(removedStock, part.qty)}`
     } else if (input.action === "NOTE") {
       eventPublic = input.noteIsPublic
     }
