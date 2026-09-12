@@ -143,8 +143,8 @@ export default async function TicketPage({
       }
     }
   } else if (tipo === "reparacion") {
-    // Comprobante de recepción de taller: no lleva importes ni datos de
-    // desbloqueo (deviceAccessType/Value son sensibles y nunca se imprimen).
+    // Comprobante de recepción de taller. NUNCA imprimir deviceAccessType ni
+    // deviceAccessValue: son datos de desbloqueo del cliente.
     const order = await prisma.repairOrder.findUnique({
       where: { id },
       include: {
@@ -152,10 +152,27 @@ export default async function TicketPage({
         currentBranch: true,
         assignedTo: { select: { name: true } },
         createdBy: { select: { name: true } },
+        payments: { where: { status: "CONFIRMED" }, orderBy: { createdAt: "asc" } },
       }
     })
 
     if (order) {
+      const CONDITION_LABELS: Record<string, string> = {
+        ENCENDIDO: "Encendido", APAGADO: "Apagado", MOJADO: "Mojado",
+        MANIPULADO: "Manipulado", ROTO: "Roto", INCOMPLETO: "Incompleto",
+      }
+      const AESTHETICS_LABELS: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
+      const METHOD_LABELS: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
+      const PURPOSE_LABELS: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación" }
+
+      const conditions = (order.functionalConditions ?? "")
+        .split(",")
+        .map(c => CONDITION_LABELS[c.trim()] ?? c.trim())
+        .filter(Boolean)
+        .join(", ")
+      const quotedCents = order.approvedQuoteCents ?? order.quoteCents
+      const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
+
       const folio = repairFolio(order.number)
       const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
       repairData = {
@@ -173,8 +190,19 @@ export default async function TicketPage({
           { label: "Color", value: order.equipmentColor ?? "" },
           { label: "Accesorios", value: order.accessories ?? "" },
           { label: "Estado físico", value: order.intakeCondition ?? "" },
+          { label: "Condiciones", value: conditions },
+          { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
+          // Referencia de custodia interna: solo se imprime si existe.
+          { label: "Ubicación", value: order.location ?? "" },
         ].filter(row => row.value !== ""),
         issue: order.reportedIssue,
+        payments: order.payments.map(p => ({
+          label: PURPOSE_LABELS[p.purpose ?? ""] ?? "Pago",
+          amount: p.amount,
+          method: METHOD_LABELS[p.method] ?? p.method,
+        })),
+        quote: quotedCents != null ? quotedCents / 100 : undefined,
+        balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
         qrCode: `${base}/seguimiento?folio=${folio}`,
         trackingHint: "Rastrea tu equipo en línea con este folio y los últimos 4 dígitos de tu teléfono",
       }

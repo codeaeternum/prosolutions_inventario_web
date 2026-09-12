@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import {
   Wrench, Search, Check, Loader2, MapPin, CalendarClock,
-  PackageSearch, FileText, History, AlertCircle,
+  PackageSearch, FileText, History, AlertCircle, MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,6 +18,8 @@ interface PublicEvent {
   id: string
   detail: string
   createdAt: string
+  // MESSAGE: nota que el taller marcó como visible para el cliente.
+  kind: "EVENT" | "MESSAGE"
 }
 
 interface PublicOrder {
@@ -49,6 +51,10 @@ const STATUS_NOTE: Partial<Record<RepairStage, string>> = {
   READY: "Tu equipo está listo. Recógelo en la sucursal presentando tu ticket.",
   DELIVERED: "Equipo entregado. ¡Gracias por tu preferencia!",
   CANCELLED: "Esta orden fue cancelada. Si tienes dudas, acude a la sucursal con tu ticket.",
+  NOT_REPAIRED: "No fue posible completar la reparación. Acude a la sucursal para recoger tu equipo.",
+  NOT_AUTHORIZED: "El presupuesto no fue autorizado. Acude a la sucursal para recoger tu equipo o renegociar.",
+  EXTERNAL_LAB: "Tu equipo fue enviado a un laboratorio especializado. Te avisaremos al regresar.",
+  WARRANTY: "Tu equipo reingresó por garantía de la reparación anterior.",
 }
 
 const STATUS_VARIANT: Record<RepairStage, "default" | "secondary" | "destructive" | "success" | "warning"> = {
@@ -61,6 +67,10 @@ const STATUS_VARIANT: Record<RepairStage, "default" | "secondary" | "destructive
   READY: "success",
   DELIVERED: "success",
   CANCELLED: "destructive",
+  NOT_REPAIRED: "destructive",
+  NOT_AUTHORIZED: "destructive",
+  EXTERNAL_LAB: "secondary",
+  WARRANTY: "warning",
 }
 
 const labelToStage = new Map<string, RepairStage>(
@@ -364,10 +374,21 @@ function OrderCard({ order }: { order: PublicOrder }) {
             </h3>
             <ul className="space-y-3">
               {order.events.slice(0, 10).map(e => (
-                <li key={e.id} className="text-sm flex flex-col gap-0.5 border-l-2 border-border pl-3">
-                  <span className="text-xs text-muted-foreground">{formatDate(e.createdAt)}</span>
-                  <span className="leading-relaxed">{e.detail}</span>
-                </li>
+                e.kind === "MESSAGE" ? (
+                  <li key={e.id} className="rounded-lg border border-primary/25 bg-primary/5 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Mensaje del taller
+                    </p>
+                    <p className="text-sm leading-relaxed mt-1">{e.detail}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{formatDate(e.createdAt)}</p>
+                  </li>
+                ) : (
+                  <li key={e.id} className="text-sm flex flex-col gap-0.5 border-l-2 border-border pl-3">
+                    <span className="text-xs text-muted-foreground">{formatDate(e.createdAt)}</span>
+                    <span className="leading-relaxed">{e.detail}</span>
+                  </li>
+                )
               ))}
             </ul>
           </div>

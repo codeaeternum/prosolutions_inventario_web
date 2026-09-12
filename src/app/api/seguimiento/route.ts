@@ -18,12 +18,14 @@ const NO_STORE = { "Cache-Control": "no-store" } as const
 const onlyDigits = (value: string) => value.replace(/\D/g, "")
 
 // El detalle de cada evento lo escribe el personal: antes de exponerlo se
-// eliminan montos (el presupuesto aún no es público) y nombres internos.
+// eliminan montos (el presupuesto aún no es público), nombres internos y la
+// locación física del equipo (dato de custodia interno).
 function publicDetail(detail: string): string {
   return detail
     .replace(/Presupuesto\s+[\d.,]+\s*MXN\.?/i, "Presupuesto registrado.")
     .replace(/Autorización registrada por el operador para\s+[\d.,]+\s*MXN\.?/i, "Presupuesto autorizado.")
     .replace(/Responsable:\s*[^.\n]+\.?/i, "Técnico asignado.")
+    .replace(/,?\s*locación\s+[^.,\n]+/gi, "")
     .replace(/\$?\s*\d[\d,]*(\.\d{1,2})?\s*MXN/gi, "")
     .replace(/\$\s*\d[\d,]*(\.\d{1,2})?/g, "")
     .replace(/ {2,}/g, " ")
@@ -57,7 +59,7 @@ export async function GET(req: Request) {
         events: {
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 100,
-          select: { id: true, detail: true, createdAt: true },
+          select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
         },
       },
     })
@@ -68,7 +70,10 @@ export async function GET(req: Request) {
     }
 
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
-    // Nunca: nombre/teléfono completo, presupuesto (quoteCents), IDs internos.
+    // Nunca: nombre/teléfono completo, presupuesto (quoteCents), IDs internos,
+    // location, aesthetics ni functionalConditions (custodia interna).
+    // Las notas type=NOTE solo salen si el taller las marcó isPublic: las
+    // privadas son bitácora interna (pueden traer locación o datos de plan).
     return NextResponse.json(
       {
         order: {
@@ -81,11 +86,14 @@ export async function GET(req: Request) {
           promisedAt: order.promisedAt,
           createdAt: order.createdAt,
           branch: order.currentBranch.name,
-          events: order.events.map(e => ({
-            id: e.id,
-            detail: publicDetail(e.detail),
-            createdAt: e.createdAt,
-          })),
+          events: order.events
+            .filter(e => e.type !== "NOTE" || e.isPublic)
+            .map(e => ({
+              id: e.id,
+              detail: publicDetail(e.detail),
+              createdAt: e.createdAt,
+              kind: e.type === "NOTE" ? ("MESSAGE" as const) : ("EVENT" as const),
+            })),
         },
       },
       { headers: NO_STORE },

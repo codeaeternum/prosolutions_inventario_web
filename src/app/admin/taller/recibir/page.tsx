@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useRef, useState } from "react"
-import { ArrowLeft, ArrowRight, CheckCircle2, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, Monitor, Package, Printer, RotateCcw, ShieldCheck, Smartphone, Tablet, Tv, UserRound, type LucideIcon } from "lucide-react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,18 +16,40 @@ type Branch = { id: string; name: string }
 type Person = { id: string; name: string }
 type CustomerHit = { id: string; name: string; phone: string | null; email: string | null; businessName: string | null }
 type AccessType = "NONE" | "PATTERN" | "PIN" | "PASSWORD"
+type FunctionalCondition = "ENCENDIDO" | "APAGADO" | "MOJADO" | "MANIPULADO" | "ROTO" | "INCOMPLETO"
+type Aesthetics = "BUENO" | "REGULAR" | "MALO"
+type AdvanceMethod = "CASH" | "CARD" | "TRANSFER"
 type CreatedOrder = { id: string; number: number; customerName: string }
 type LookupField = "customerName" | "customerPhone"
+type WorkshopService = { id: string; name: string; description: string | null; priceCents: number | null; equipmentType: string | null }
 
-const STEPS = ["Cliente", "Equipo", "Acceso y estado", "Resumen"]
+const STEPS = ["Cliente", "Equipo", "Acceso y estado", "Entrega y cobro", "Resumen"]
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const PHONE_PATTERN = /^[+\d\s()-]+$/
+const MAX_ADVANCE_AMOUNT = 999999
+const money = (cents: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100)
 
-const EQUIPMENT_TYPES: { value: string; icon: LucideIcon }[] = [
-  { value: "Celular", icon: Smartphone }, { value: "Tablet", icon: Tablet },
-  { value: "Laptop", icon: Laptop }, { value: "Computadora", icon: Monitor },
-  { value: "Consola", icon: Gamepad2 }, { value: "Televisión", icon: Tv },
-  { value: "Audio", icon: Headphones }, { value: "Otro", icon: Package },
+const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
+const DEFAULT_LOCATIONS = ["Recepción", "Mesa 1", "Mesa 2", "Anaquel A", "Anaquel B"]
+const EQUIPMENT_ICONS: Record<string, LucideIcon> = {
+  Celular: Smartphone, Tablet, Laptop, Computadora: Monitor, Consola: Gamepad2,
+  Smartwatch: Watch, Pantalla: Monitor, Impresora: Printer, "Televisión": Tv, Audio: Headphones, Otro: Package,
+}
+const FUNCTIONAL_CONDITIONS: { value: FunctionalCondition; label: string; icon: LucideIcon }[] = [
+  { value: "ENCENDIDO", label: "Encendido", icon: Zap },
+  { value: "APAGADO", label: "Apagado", icon: PowerOff },
+  { value: "MOJADO", label: "Mojado", icon: Droplets },
+  { value: "MANIPULADO", label: "Manipulado", icon: Wrench },
+  { value: "ROTO", label: "Roto", icon: ShieldAlert },
+  { value: "INCOMPLETO", label: "Incompleto", icon: Puzzle },
+]
+const AESTHETIC_OPTIONS: { value: Aesthetics; label: string }[] = [
+  { value: "BUENO", label: "Bueno" }, { value: "REGULAR", label: "Regular" }, { value: "MALO", label: "Malo" },
+]
+const ADVANCE_METHODS: { value: AdvanceMethod; label: string; icon: LucideIcon }[] = [
+  { value: "CASH", label: "Efectivo", icon: Banknote },
+  { value: "CARD", label: "Tarjeta", icon: CreditCard },
+  { value: "TRANSFER", label: "Transferencia", icon: ArrowLeftRight },
 ]
 const BRANDS = ["Samsung", "Apple", "Xiaomi", "Motorola", "LG", "Sony", "HP", "Lenovo", "Dell", "Huawei", "Nintendo", "Otra"]
 const ACCESS_OPTIONS: { value: AccessType; label: string; icon: LucideIcon }[] = [
@@ -41,9 +63,13 @@ const ACCESSORY_OPTIONS = ["Cargador", "Cable", "Funda", "Mica", "SIM", "MicroSD
 const emptyForm = {
   customerName: "", customerPhone: "", intakeBranchId: "", assignedToId: "",
   equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", serialNumber: "",
+  serviceName: "", servicePriceCents: null as number | null, otherService: "",
   accessType: "NONE" as AccessType, pattern: [] as number[], accessValue: "",
   accessories: [] as string[], accessoryOther: "",
-  intakeCondition: "", reportedIssue: "", promisedAt: "",
+  functionalConditions: [] as FunctionalCondition[], aesthetics: "" as Aesthetics | "",
+  intakeCondition: "", reportedIssue: "",
+  promisedAt: "", scheduledAt: "", location: "",
+  advanceEnabled: false, advanceAmount: "", advanceMethod: "CASH" as AdvanceMethod,
 }
 
 const chipClass = (selected: boolean) =>
@@ -65,7 +91,7 @@ function CustomerSuggestions({ hits, onPick }: { hits: CustomerHit[]; onPick: (h
   )
 }
 
-function SummaryGroup({ title, icon: Icon, items }: { title: string; icon: LucideIcon; items: [string, string | undefined][] }) {
+function SummaryGroup({ title, icon: Icon, items }: { title: string; icon: LucideIcon; items: [string, ReactNode][] }) {
   return (
     <div className="rounded-lg border p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Icon size={15} className="text-primary" />{title}</h3>
@@ -97,9 +123,17 @@ export default function ReceiveEquipmentPage() {
   const [suggestions, setSuggestions] = useState<CustomerHit[]>([])
   const [searching, setSearching] = useState(false)
   const [matchedCustomer, setMatchedCustomer] = useState<CustomerHit | null>(null)
+  const [equipmentTypes, setEquipmentTypes] = useState<string[]>(DEFAULT_EQUIPMENT_TYPES)
+  const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS)
+  const [serviceQuery, setServiceQuery] = useState("")
+  const [serviceResults, setServiceResults] = useState<WorkshopService[]>([])
+  const [serviceSearching, setServiceSearching] = useState(false)
+  const [serviceSearched, setServiceSearched] = useState("")
+  const [serviceCatalogDown, setServiceCatalogDown] = useState(false)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const searchVersion = useRef(0)
+  const serviceVersion = useRef(0)
 
   const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setForm(previous => ({ ...previous, ...changes })) }
 
@@ -109,8 +143,43 @@ export default function ReceiveEquipmentPage() {
       .then(response => response.json())
       .then(data => { if (!cancelled) { setBranches(data.branches ?? []); setStaff(data.staff ?? []); setMetaLoaded(true) } })
       .catch(() => { if (!cancelled) { setMetaLoaded(true); toast.error("No se pudieron cargar sucursales y técnicos. Recarga la página.") } })
+    fetch("/api/workshop-config")
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error("sin configuración"))))
+      .then(data => {
+        if (cancelled) return
+        const types = Array.isArray(data.equipmentTypes) && data.equipmentTypes.length ? data.equipmentTypes : DEFAULT_EQUIPMENT_TYPES
+        setEquipmentTypes(types.includes("Otro") ? types : [...types, "Otro"])
+        setLocations(Array.isArray(data.locations) && data.locations.length ? data.locations : DEFAULT_LOCATIONS)
+      })
+      .catch(() => { /* sin catálogo de configuración: se usan los valores por defecto */ })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    const term = serviceQuery.trim()
+    if (term.length < 2) {
+      serviceVersion.current += 1
+      const timer = setTimeout(() => { setServiceResults([]); setServiceSearched(""); setServiceSearching(false) }, 0)
+      return () => clearTimeout(timer)
+    }
+    const timer = setTimeout(async () => {
+      const version = ++serviceVersion.current
+      setServiceSearching(true)
+      try {
+        const response = await fetch(`/api/workshop-services?q=${encodeURIComponent(term)}`)
+        const data = await response.json().catch(() => ({}))
+        if (version !== serviceVersion.current) return
+        setServiceResults(response.ok ? data.services ?? [] : [])
+        setServiceCatalogDown(!response.ok)
+        setServiceSearched(term)
+      } catch {
+        if (version === serviceVersion.current) { setServiceResults([]); setServiceCatalogDown(true); setServiceSearched(term) }
+      } finally {
+        if (version === serviceVersion.current) setServiceSearching(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [serviceQuery])
 
   useEffect(() => {
     if (!dirty || created) return
@@ -160,6 +229,23 @@ export default function ReceiveEquipmentPage() {
     setMatchedCustomer(null)
   }
 
+  const pickService = (service: WorkshopService) => {
+    serviceVersion.current += 1
+    const current = form.reportedIssue.trim()
+    update({
+      serviceName: service.name,
+      servicePriceCents: typeof service.priceCents === "number" ? service.priceCents : null,
+      reportedIssue: current ? `${service.name} · ${current}` : service.name,
+    })
+    setServiceQuery("")
+    setServiceResults([])
+    setServiceSearched("")
+  }
+
+  const toggleCondition = (value: FunctionalCondition) => {
+    update({ functionalConditions: form.functionalConditions.includes(value) ? form.functionalConditions.filter(condition => condition !== value) : [...form.functionalConditions, value] })
+  }
+
   function validateStep(index: number): string | null {
     if (index === 0) {
       if (!form.customerName.trim()) return "Escribe el nombre del cliente."
@@ -175,7 +261,21 @@ export default function ReceiveEquipmentPage() {
       if (form.accessType === "PATTERN" && form.pattern.length < 4) return "Dibuja el patrón con al menos 4 puntos, o elige otro tipo de bloqueo."
       if ((form.accessType === "PIN" || form.accessType === "PASSWORD") && !form.accessValue.trim()) return "Escribe el PIN o la contraseña, o cambia el tipo de bloqueo."
       if (form.accessories.includes("Otro") && !form.accessoryOther.trim()) return "Describe el accesorio en el campo Otro."
-      if (!form.reportedIssue.trim()) return "Describe la falla que reporta el cliente."
+      if (!reportedIssueText) return "Describe la falla que reporta el cliente."
+    }
+    if (index === 3) {
+      if (form.scheduledAt) {
+        const when = new Date(form.scheduledAt)
+        const startOfToday = new Date()
+        startOfToday.setHours(0, 0, 0, 0)
+        if (Number.isNaN(when.getTime())) return "Revisa la fecha programada de reparación."
+        if (when < startOfToday) return "La fecha programada de reparación no puede ser anterior a hoy."
+      }
+      if (form.advanceEnabled) {
+        const amount = Number.parseFloat(form.advanceAmount)
+        if (!Number.isFinite(amount) || amount <= 0) return "Escribe el monto del anticipo."
+        if (amount > MAX_ADVANCE_AMOUNT) return `El anticipo no puede superar ${money(MAX_ADVANCE_AMOUNT * 100)}.`
+      }
     }
     return null
   }
@@ -190,6 +290,10 @@ export default function ReceiveEquipmentPage() {
 
   const accessoryText = form.accessories.map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item).join(" · ")
   const equipmentLabel = form.equipmentType === "Otro" ? form.equipmentTypeOther.trim() : form.equipmentType
+  const reportedIssueText = [form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
+  const advanceAmountNumber = Number.parseFloat(form.advanceAmount)
+  const advanceCents = form.advanceEnabled && Number.isFinite(advanceAmountNumber) ? Math.round(advanceAmountNumber * 100) : 0
+  const advanceMethodLabel = ADVANCE_METHODS.find(method => method.value === form.advanceMethod)?.label ?? ""
 
   function buildPayload() {
     const accessValue = form.accessType === "PATTERN" ? form.pattern.join("-") : form.accessType === "NONE" ? "" : form.accessValue.trim()
@@ -207,8 +311,13 @@ export default function ReceiveEquipmentPage() {
       deviceAccessValue: accessValue,
       accessories: accessoryText,
       intakeCondition: form.intakeCondition.trim(),
-      reportedIssue: form.reportedIssue.trim(),
+      reportedIssue: reportedIssueText,
+      functionalConditions: form.functionalConditions.length ? form.functionalConditions : "",
+      aesthetics: form.aesthetics,
+      location: form.location.trim(),
       promisedAt: form.promisedAt && !Number.isNaN(Date.parse(form.promisedAt)) ? new Date(form.promisedAt).toISOString() : "",
+      scheduledAt: form.scheduledAt && !Number.isNaN(Date.parse(form.scheduledAt)) ? new Date(form.scheduledAt).toISOString() : "",
+      advance: form.advanceEnabled && advanceCents > 0 ? { amountCents: advanceCents, method: form.advanceMethod } : "",
     }).filter(([, value]) => value !== ""))
   }
 
@@ -243,6 +352,10 @@ export default function ReceiveEquipmentPage() {
     setMatchedCustomer(null)
     setLookupTerm("")
     setSearchedTerm("")
+    setServiceQuery("")
+    setServiceResults([])
+    setServiceSearched("")
+    setServiceCatalogDown(false)
     operationKey.current = null
   }
 
@@ -252,6 +365,24 @@ export default function ReceiveEquipmentPage() {
   const branchName = branches.find(branch => branch.id === form.intakeBranchId)?.name ?? ""
   const staffName = form.assignedToId ? staff.find(person => person.id === form.assignedToId)?.name ?? "" : "Asignar después"
   const promisedLabel = form.promisedAt ? new Date(form.promisedAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }) : ""
+  const scheduledLabel = form.scheduledAt && !Number.isNaN(Date.parse(form.scheduledAt)) ? new Date(form.scheduledAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }) : ""
+  const aestheticsLabel = AESTHETIC_OPTIONS.find(option => option.value === form.aesthetics)?.label ?? ""
+  const serviceSummary = [form.serviceName, form.otherService.trim()].filter(Boolean).join(" · ")
+  const advanceLabel = advanceCents > 0 ? `${money(advanceCents)} · ${advanceMethodLabel}` : ""
+  const toLocalInputValue = (date: Date) => { const copy = new Date(date); copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset()); return copy.toISOString().slice(0, 16) }
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  const scheduledMin = toLocalInputValue(startOfToday)
+  const conditionChips = form.functionalConditions.length ? (
+    <span className="flex flex-wrap gap-1.5">
+      {form.functionalConditions.map(value => {
+        const option = FUNCTIONAL_CONDITIONS.find(item => item.value === value)
+        if (!option) return null
+        const ConditionIcon = option.icon
+        return <span key={value} className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"><ConditionIcon size={12} />{option.label}</span>
+      })}
+    </span>
+  ) : undefined
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 pb-20">
@@ -259,7 +390,7 @@ export default function ReceiveEquipmentPage() {
         <div>
           <p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p>
           <h1 className="mt-1 text-3xl font-bold">Recibir equipo</h1>
-          <p className="mt-2 text-muted-foreground">Registra la recepción en cuatro pasos: cliente, equipo, acceso y confirmación.</p>
+          <p className="mt-2 text-muted-foreground">Registra la recepción en cinco pasos: cliente, equipo, acceso, entrega y confirmación.</p>
         </div>
         <Button variant="outline" asChild>
           <Link href="/admin/taller"><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Link>
@@ -271,6 +402,9 @@ export default function ReceiveEquipmentPage() {
           <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
           <h2 className="mt-3 text-2xl font-bold">Orden {repairFolio(created.number)} creada</h2>
           <p className="mt-2 text-muted-foreground">El equipo de {created.customerName} quedó registrado como recibido. Entrega el ticket al cliente.</p>
+          {advanceCents > 0 && (
+            <p className="mt-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">Anticipo registrado: {money(advanceCents)} ({advanceMethodLabel}).</p>
+          )}
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Button asChild>
               <a href={`/admin/tickets/reparacion/${created.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-4 w-4" />Imprimir ticket de recepción</a>
@@ -328,15 +462,49 @@ export default function ReceiveEquipmentPage() {
                   <div className="space-y-2">
                     <p className="text-sm">Tipo de equipo *</p>
                     <div className="flex flex-wrap gap-2">
-                      {EQUIPMENT_TYPES.map(({ value, icon: Icon }) => (
-                        <button key={value} type="button" aria-pressed={form.equipmentType === value} onClick={() => update({ equipmentType: value })} className={chipClass(form.equipmentType === value)}>
-                          <Icon size={15} />{value}
-                        </button>
-                      ))}
+                      {equipmentTypes.map(value => {
+                        const Icon = EQUIPMENT_ICONS[value] ?? Package
+                        return (
+                          <button key={value} type="button" aria-pressed={form.equipmentType === value} onClick={() => update({ equipmentType: value })} className={chipClass(form.equipmentType === value)}>
+                            <Icon size={15} />{value}
+                          </button>
+                        )
+                      })}
                     </div>
                     {form.equipmentType === "Otro" && (
                       <Input value={form.equipmentTypeOther} onChange={event => update({ equipmentTypeOther: event.target.value })} maxLength={100} placeholder="¿Qué equipo es? Ej. smartwatch, bocina, drone…" autoFocus className="mt-2 max-w-sm" />
                     )}
+                  </div>
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <p className="text-sm">Servicio del catálogo</p>
+                      <div className="relative">
+                        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder="Buscar: cambio de pantalla, batería…" className="pl-9" />
+                        {serviceResults.length > 0 && (
+                          <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
+                            {serviceResults.map(service => (
+                              <li key={service.id}>
+                                <button type="button" onClick={() => pickService(service)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
+                                  <span className="flex items-center justify-between gap-3">
+                                    <span className="font-medium">{service.name}</span>
+                                    {typeof service.priceCents === "number" && <span className="shrink-0 text-xs text-muted-foreground">{money(service.priceCents)}</span>}
+                                  </span>
+                                  {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      {serviceSearching && <p className="text-xs text-muted-foreground">Buscando servicios…</p>}
+                      {!serviceSearching && serviceCatalogDown && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Catálogo no disponible; usa el campo Otro servicio.</p>}
+                      {!serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
+                      {form.servicePriceCents !== null && <p className="text-xs font-medium text-primary">Precio sugerido: {money(form.servicePriceCents)}</p>}
+                    </div>
+                    <label className="block space-y-2 text-sm">Otro servicio
+                      <Input value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio que no está en el catálogo" />
+                    </label>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
                     <label className="block space-y-2 text-sm">Marca
@@ -396,20 +564,90 @@ export default function ReceiveEquipmentPage() {
                     )}
                   </div>
                   <div className="grid gap-5">
-                    <label className="block space-y-2 text-sm">Estado físico al recibir
+                    <div className="space-y-2">
+                      <p className="text-sm">Condiciones del equipo</p>
+                      <div className="flex flex-wrap gap-2">
+                        {FUNCTIONAL_CONDITIONS.map(({ value, label, icon: Icon }) => (
+                          <button key={value} type="button" aria-pressed={form.functionalConditions.includes(value)} onClick={() => toggleCondition(value)} className={chipClass(form.functionalConditions.includes(value))}>
+                            <Icon size={15} />{label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm">Estética</p>
+                      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Estética del equipo">
+                        {AESTHETIC_OPTIONS.map(({ value, label }) => (
+                          <button key={value} type="button" role="radio" aria-checked={form.aesthetics === value} onClick={() => update({ aesthetics: form.aesthetics === value ? "" : value })} className={chipClass(form.aesthetics === value)}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="block space-y-2 text-sm">Otras observaciones del estado físico
                       <textarea value={form.intakeCondition} onChange={event => update({ intakeCondition: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Golpes, humedad, piezas faltantes…" />
                     </label>
                     <label className="block space-y-2 text-sm">Falla que reporta el cliente *
                       <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
-                    </label>
-                    <label className="block max-w-xs space-y-2 text-sm">Fecha promesa de entrega
-                      <Input type="datetime-local" value={form.promisedAt} onChange={event => update({ promisedAt: event.target.value })} />
                     </label>
                   </div>
                 </div>
               )}
 
               {step === 3 && (
+                <div className="space-y-6">
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <label className="block space-y-2 text-sm">Fecha promesa de entrega
+                      <Input type="datetime-local" value={form.promisedAt} onChange={event => update({ promisedAt: event.target.value })} />
+                    </label>
+                    <label className="block space-y-2 text-sm">Fecha programada de reparación
+                      <Input type="datetime-local" value={form.scheduledAt} min={scheduledMin} onChange={event => update({ scheduledAt: event.target.value })} />
+                      <span className="block text-xs text-muted-foreground">Cuándo trabajará el técnico en el equipo. Opcional.</span>
+                    </label>
+                    <label className="block space-y-2 text-sm sm:col-span-2">Locación física del equipo
+                      <div className="relative max-w-sm">
+                        <MapPin size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <Input list="workshop-locations" value={form.location} onChange={event => update({ location: event.target.value })} maxLength={80} placeholder="Ej. Anaquel A, Mesa 2…" className="pl-9" />
+                      </div>
+                      <datalist id="workshop-locations">{locations.map(location => <option key={location} value={location} />)}</datalist>
+                    </label>
+                  </div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="flex items-center gap-2 text-sm font-medium"><CircleDollarSign size={15} className="text-primary" />Anticipo del cliente</p>
+                        <p className="text-xs text-muted-foreground">Activa si el cliente deja dinero a cuenta al entregar el equipo.</p>
+                      </div>
+                      <button type="button" role="switch" aria-checked={form.advanceEnabled} aria-label="El cliente deja anticipo" onClick={() => update({ advanceEnabled: !form.advanceEnabled })} className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.advanceEnabled ? "bg-primary" : "bg-muted"}`}>
+                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-all ${form.advanceEnabled ? "left-[1.375rem]" : "left-0.5"}`} />
+                      </button>
+                    </div>
+                    {form.advanceEnabled && (
+                      <div className="mt-4 grid gap-4 border-t pt-4 sm:grid-cols-2">
+                        <label className="block space-y-2 text-sm">Monto del anticipo *
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                            <Input type="number" inputMode="decimal" min="0" max={MAX_ADVANCE_AMOUNT} step="0.01" value={form.advanceAmount} onChange={event => update({ advanceAmount: event.target.value })} placeholder="0.00" className="pl-7" />
+                          </div>
+                          <span className="block text-xs text-muted-foreground">Hasta {money(MAX_ADVANCE_AMOUNT * 100)}.</span>
+                        </label>
+                        <div className="space-y-2">
+                          <p className="text-sm">Método de cobro *</p>
+                          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Método de cobro del anticipo">
+                            {ADVANCE_METHODS.map(({ value, label, icon: Icon }) => (
+                              <button key={value} type="button" role="radio" aria-checked={form.advanceMethod === value} onClick={() => update({ advanceMethod: value })} className={chipClass(form.advanceMethod === value)}>
+                                <Icon size={15} />{label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {step === 4 && (
                 <div className="space-y-5">
                   <p className="text-sm text-muted-foreground">Revisa que la información esté completa antes de crear la orden.</p>
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -425,15 +663,23 @@ export default function ReceiveEquipmentPage() {
                       ["Modelo", form.model.trim()],
                       ["Color", form.equipmentColor.trim()],
                       ["Serie o IMEI", form.serialNumber.trim()],
+                      ["Servicio", serviceSummary],
                     ]} />
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[
                       ["Bloqueo del equipo", accessLabel],
                       ["Accesorios recibidos", accessoryText],
                     ]} />
                     <SummaryGroup title="Estado" icon={ShieldCheck} items={[
-                      ["Falla reportada", form.reportedIssue.trim()],
-                      ["Estado físico", form.intakeCondition.trim()],
+                      ["Falla reportada", reportedIssueText],
+                      ["Condiciones", conditionChips],
+                      ["Estética", aestheticsLabel],
+                      ["Otras observaciones", form.intakeCondition.trim()],
+                    ]} />
+                    <SummaryGroup title="Entrega y cobro" icon={CalendarClock} items={[
                       ["Fecha promesa", promisedLabel],
+                      ["Reparación programada", scheduledLabel],
+                      ["Locación", form.location.trim()],
+                      ["Anticipo", advanceLabel],
                     ]} />
                   </div>
                 </div>

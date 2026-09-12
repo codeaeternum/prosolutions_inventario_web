@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, Printer } from "lucide-react"
 import QRCode from "qrcode"
 import { Button } from "@/components/ui/button"
-import { formatDate } from "@/lib/utils"
+import { formatDate, formatPrice } from "@/lib/utils"
 
 export interface RepairTicketData {
   title: string
@@ -16,6 +16,10 @@ export interface RepairTicketData {
   promisedAt?: string
   equipment: { label: string; value: string }[]
   issue: string
+  // Cobros confirmados (anticipo/abonos/liquidación) y presupuesto en pesos.
+  payments?: { label: string; amount: number; method: string }[]
+  quote?: number
+  balance?: number
   qrCode?: string
   trackingHint?: string
   businessName?: string
@@ -94,6 +98,20 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
           <h3 className="text-[10px] uppercase text-gray-500 mb-1">Falla reportada</h3>
           <p className="text-xs leading-snug">{data.issue}</p>
         </div>
+
+        {/* Cobros y presupuesto (solo si existen) */}
+        {((data.payments?.length ?? 0) > 0 || data.quote !== undefined) && (
+          <div className="mb-3">
+            <h3 className="text-[10px] uppercase text-gray-500 mb-1">Cobros</h3>
+            <div className="text-xs space-y-0.5">
+              {data.payments?.map((p, idx) => (
+                <p key={idx}>{p.label}: {formatPrice(p.amount)} ({p.method})</p>
+              ))}
+              {data.quote !== undefined && <p>Presupuesto: {formatPrice(data.quote)}</p>}
+              {data.balance !== undefined && <p className="font-bold">Saldo: {formatPrice(data.balance)}</p>}
+            </div>
+          </div>
+        )}
 
         <div className="border-b-2 border-dashed border-gray-300 my-2"></div>
 

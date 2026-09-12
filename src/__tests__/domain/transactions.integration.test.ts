@@ -220,5 +220,41 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     await expect(update({ action: "NOTE", detail: "Reescribir historial" })).rejects.toMatchObject({ status: 409 })
     expect(await db.cashMovement.count({ where: { referenceId: order.id } })).toBe(0)
   })
+  it("workshop money cycle: anticipo, abono y liquidación al entregar", async () => {
+    // La caja del suite ya se cerró en la prueba anterior; abrimos una nueva.
+    await changeCash(db, admin, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const { order } = await createRepair(db, admin, {
+      idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000002",
+      equipmentType: "Celular", reportedIssue: "Pantalla rota", intakeBranchId: PRINCIPAL_BRANCH_ID,
+      advance: { amountCents: 10000, method: "CASH" },
+    })
+    expect(await db.payment.count({ where: { repairOrderId: order.id, purpose: "ADVANCE" } })).toBe(1)
+    expect(await db.cashMovement.count({ where: { referenceType: "REPAIR_PAYMENT" } })).toBeGreaterThanOrEqual(1)
+
+    let version = order.version
+    const update = async (payload: Record<string, unknown>) => {
+      const result = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })
+      version = result.order.version
+      return result.order
+    }
+    await update({ action: "STATUS", status: "DIAGNOSIS" })
+    await update({ action: "QUOTE", quoteCents: 50000 })
+    await update({ action: "APPROVE" })
+    // Abono parcial — queda saldo de 30000
+    await update({ action: "PAYMENT", paymentCents: 10000, paymentMethod: "CARD" })
+    // Entrega temprana se rechaza (aún no está READY)
+    await expect(update({ action: "SETTLE_DELIVER", paymentMethod: "CASH" })).rejects.toMatchObject({ status: 409 })
+    await update({ action: "STATUS", status: "QUALITY_CHECK" })
+    await update({ action: "STATUS", status: "READY", detail: "Todo verificado" })
+    // Liquidar y entregar cobra el saldo restante de una vez
+    const delivered = await update({ action: "SETTLE_DELIVER", paymentMethod: "CASH", detail: "Recibe el titular" })
+    expect(delivered.status).toBe("DELIVERED")
+    const paid = await db.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: order.id, status: "CONFIRMED" } })
+    expect(paid._sum.amount).toBe(500)
+    // Orden cerrada: solo garantía puede reabrirla
+    await expect(updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, action: "NOTE", detail: "x" })).rejects.toMatchObject({ status: 409 })
+    const reopened = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, action: "STATUS", status: "WARRANTY", detail: "Reingreso por garantía" })
+    expect(reopened.order.status).toBe("WARRANTY")
+  })
 
 })

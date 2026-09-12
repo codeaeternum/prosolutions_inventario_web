@@ -9,7 +9,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const auth = await requireAdmin()
     if (auth.error) return auth.error
     const { id } = await params
-    const order = await prisma.repairOrder.findUnique({ where: { id }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true } } }, orderBy: { createdAt: "asc" } } } })
+    const order = await prisma.repairOrder.findUnique({ where: { id }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: "CONFIRMED" }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } } } })
     return NextResponse.json(order ? { order } : { error: "Orden no encontrada" }, { status: order ? 200 : 404, headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }

@@ -448,6 +448,10 @@ enum RepairStatus {
   READY
   DELIVERED
   CANCELLED
+  NOT_REPAIRED   // No quedó: irreparable, se devuelve al cliente
+  NOT_AUTHORIZED // El cliente no autorizó el presupuesto
+  EXTERNAL_LAB   // Enviado a laboratorio/proveedor externo
+  WARRANTY       // Reingreso por garantía de una reparación previa
 }
 
 // Sucursal física del negocio (locales). El nombre de tabla se conserva por
@@ -548,6 +552,10 @@ model Payment {
   id             String         @id @default(cuid())
   saleId         String?
   sale           Sale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  // Cobros de taller: anticipo (ADVANCE), abono (ABONO) o liquidación (SETTLEMENT).
+  repairOrderId  String?
+  repairOrder    RepairOrder?   @relation(fields: [repairOrderId], references: [id], onDelete: Restrict)
+  purpose        String?
   method         PaymentMethod
   amount         Float
   status         PaymentStatus  @default(CONFIRMED)
@@ -561,6 +569,7 @@ model Payment {
   createdAt      DateTime       @default(now())
 
   @@index([saleId])
+  @@index([repairOrderId])
   @@index([method, createdAt])
 }
 
@@ -581,6 +590,14 @@ model RepairOrder {
   deviceAccessType String?
   deviceAccessValue String?
   intakeCondition String?
+  // Condiciones funcionales (flags separados por coma: ENCENDIDO,APAGADO,MOJADO,
+  // MANIPULADO,ROTO,INCOMPLETO) y estética cosmética (BUENO | REGULAR | MALO).
+  functionalConditions String?
+  aesthetics String?
+  // Anaquel/mesa/caja donde quedó físicamente el equipo.
+  location String?
+  // Agenda del técnico: distinta de la fecha prometida al cliente.
+  scheduledAt DateTime?
   reportedIssue String
   diagnosis String?
   quoteCents Int?
@@ -599,6 +616,7 @@ model RepairOrder {
   createdBy User @relation("RepairCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   events RepairEvent[]
   parts  RepairPart[]
+  payments Payment[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([currentBranchId, status, createdAt])
@@ -632,6 +650,23 @@ model RepairEvent {
   actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
   type String
   detail String
+  // Notas visibles para el cliente en el rastreo público (solo type=NOTE).
+  isPublic Boolean @default(false)
   createdAt DateTime @default(now())
   @@index([orderId, createdAt])
+}
+
+// Catálogo de servicios del taller (cambio de pantalla, liberación, etc.) con
+// precio sugerido; se usa como autocomplete al recibir equipos.
+model WorkshopService {
+  id String @id @default(cuid())
+  name String
+  description String?
+  priceCents Int @default(0)
+  equipmentType String?
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, name])
 }

@@ -27,6 +27,7 @@ import {
   FolderTree,
   Tag,
   Warehouse,
+  BookOpen,
 } from "lucide-react"
 
 const navigationGroups = [
@@ -40,6 +41,7 @@ const navigationGroups = [
     name: "Taller",
     items: [
       { name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench },
+      { name: "Catálogo de servicios", href: "/admin/taller/catalogo", icon: BookOpen },
     ]
   },
   {

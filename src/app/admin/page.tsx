@@ -39,7 +39,8 @@ async function getDashboardStats() {
       todaysSales,
       activeRegister,
       activeRepairs,
-      readyRepairs
+      readyRepairs,
+      overdueRepairs
     ] = await Promise.all([
       prisma.product.count({ where: { isActive: true } }),
       prisma.user.count({ where: { role: "CUSTOMER" } }),
@@ -74,7 +75,8 @@ async function getDashboardStats() {
         include: { movements: true }
       }),
       prisma.repairOrder.count({ where: { status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
-      prisma.repairOrder.count({ where: { status: "READY" } })
+      prisma.repairOrder.count({ where: { status: "READY" } }),
+      prisma.repairOrder.count({ where: { status: { notIn: ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] }, promisedAt: { lt: new Date() } } })
     ])
 
     // Contar productos con stock bajo en JS
@@ -100,7 +102,8 @@ async function getDashboardStats() {
       cashTotal,
       isRegisterOpen: !!activeRegister,
       activeRepairs,
-      readyRepairs
+      readyRepairs,
+      overdueRepairs
     }
   } catch (error) {
     console.error("Error fetching dashboard stats:", error)
@@ -116,7 +119,8 @@ async function getDashboardStats() {
       cashTotal: 0,
       isRegisterOpen: false,
       activeRepairs: 0,
-      readyRepairs: 0
+      readyRepairs: 0,
+      overdueRepairs: 0
     }
   }
 }
@@ -183,11 +187,11 @@ export default async function AdminDashboard() {
     {
       title: "Órdenes en taller",
       value: stats.activeRepairs,
-      description: stats.readyRepairs > 0 ? `${stats.readyRepairs} listas para entregar` : "Equipos en proceso",
+      description: stats.overdueRepairs > 0 ? `${stats.overdueRepairs} atrasadas · ${stats.readyRepairs} listas` : stats.readyRepairs > 0 ? `${stats.readyRepairs} listas para entregar` : "Equipos en proceso",
       icon: Wrench,
       href: "/admin/taller",
-      alert: stats.readyRepairs > 0 ? "Entregas pendientes" : null,
-      alertClass: "text-green-500",
+      alert: stats.overdueRepairs > 0 ? `${stats.overdueRepairs} atrasadas` : stats.readyRepairs > 0 ? "Entregas pendientes" : null,
+      alertClass: stats.overdueRepairs > 0 ? "text-rose-500" : "text-green-500",
     },
     {
       title: "Usuarios Nuevos",

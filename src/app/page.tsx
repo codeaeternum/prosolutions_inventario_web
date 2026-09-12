@@ -1,4 +1,3 @@
-import Image from "next/image"
 import Link from "next/link"
 
 export const dynamic = 'force-dynamic'
@@ -13,6 +12,12 @@ import {
 } from "lucide-react"
 
 const pipeline = ["Recepción", "Diagnóstico", "Presupuesto", "Autorización", "Reparación", "Listo", "Entregado"]
+
+const pains = [
+  { title: "“¿Y el patrón del equipo?”", desc: "Olvidar el PIN o patrón cuesta piezas y tiempo. Reficio lo captura al recibir — oculto hasta que lo necesitas." },
+  { title: "Stock que “desaparece”", desc: "Si no sabes cuántas pantallas te quedan, no sabes cuánto estás perdiendo. Stock por sucursal, siempre exacto." },
+  { title: "Cobros sin registrar", desc: "Anticipos en un cuaderno, saldos en la memoria. Aquí cada peso queda en caja y en la orden." },
+]
 
 const features = [
   {
@@ -106,9 +111,9 @@ export default async function HomePage() {
               Software para talleres de reparación
             </div>
 
-            <h1 className="text-4xl sm:text-6xl font-bold tracking-tight leading-tight">
+            <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tighter leading-[1.05]">
               Tu taller, reparado<br />
-              <span className="text-primary">por dentro.</span>
+              <span className="bg-gradient-to-r from-primary via-violet-400 to-indigo-500 bg-clip-text text-transparent">por dentro.</span>
             </h1>
 
             <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto">
@@ -146,6 +151,51 @@ export default async function HomePage() {
           </div>
         </section>
 
+        {/* Pain → solution */}
+        <section className="border-t">
+          <div className="container mx-auto max-w-6xl px-4 py-20">
+            <div className="grid lg:grid-cols-2 gap-12 items-start">
+              <div className="space-y-8">
+                <p className="text-xs font-semibold uppercase tracking-widest text-rose-500">Fugas de dinero</p>
+                <h2 className="text-4xl sm:text-5xl font-extrabold tracking-tighter leading-tight">
+                  ¿Papel, Excel<br />o <span className="text-rose-500">caos</span>?
+                </h2>
+                <div className="space-y-6">
+                  {pains.map((pain) => (
+                    <div key={pain.title} className="border-l-2 border-rose-500/40 pl-4">
+                      <h3 className="font-semibold">{pain.title}</h3>
+                      <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{pain.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-2xl border bg-card p-8 space-y-6 lg:sticky lg:top-24">
+                <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
+                  <Zap className="h-6 w-6 text-primary-foreground" />
+                </div>
+                <h3 className="text-2xl font-bold tracking-tight">La transformación digital</h3>
+                <ul className="space-y-4">
+                  {[
+                    "Recepción con patrón, PIN y evidencia del estado físico",
+                    "Anticipos y abonos que entran directo a caja",
+                    "Rastreo público por folio — cero llamadas de “¿ya quedó?”",
+                    "Inventario por sucursal con alertas de stock bajo",
+                    "Tu marca, no la nuestra: tickets y rastreo con tu nombre",
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-3">
+                      <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                      <span className="text-muted-foreground">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Button size="lg" className="w-full gap-2" asChild>
+                  <Link href="/register">Tomar el control<ArrowRight className="h-4 w-4" /></Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Features */}
         <section className="border-t bg-muted/30">
           <div className="container mx-auto max-w-6xl px-4 py-20">
@@ -157,7 +207,7 @@ export default async function HomePage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {features.map((f) => (
-                <div key={f.title} className="flex flex-col gap-3 p-6 rounded-xl border bg-card">
+                <div key={f.title} className="flex flex-col gap-3 p-6 rounded-xl border bg-card transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5">
                   <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
                     <f.icon className="h-5 w-5 text-primary" />
                   </div>
