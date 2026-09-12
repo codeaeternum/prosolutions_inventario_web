@@ -50,7 +50,7 @@ export default async function TicketPage({
           total: item.totalPrice,
         })),
         total: saleDoc.total,
-        paymentMethod: saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join(" + "),
+        paymentMethod: saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
         notes: saleDoc.branch.name,
         cashier: saleDoc.seller.name,
       }

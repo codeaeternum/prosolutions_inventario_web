@@ -2,16 +2,11 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard,
-  Package,
-  Tag,
-  Layers,
-  Tags,
   Users,
   CalendarCheck,
   BarChart3,
@@ -21,36 +16,53 @@ import {
   Bell,
   Boxes,
   ShoppingCart,
-  QrCode,
   ArrowLeftRight,
   CreditCard,
   Wallet,
   Wrench,
   Building2,
   MoreHorizontal,
+  Package,
+  FolderTree,
+  Tag,
+  Warehouse,
 } from "lucide-react"
 
 const navigationGroups = [
-  { name: "Taller · Piloto", items: [{ name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench }] },
   {
-    name: "General",
+    name: "Inicio",
     items: [
       { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
     ]
   },
   {
-    name: "Operaciones",
+    name: "Taller",
+    items: [
+      { name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench },
+    ]
+  },
+  {
+    name: "Ventas y Caja",
     items: [
       { name: "Punto de Venta", href: "/admin/ventas", icon: ShoppingCart },
       { name: "Caja", href: "/admin/caja", icon: Wallet },
       { name: "Reservas", href: "/admin/reservas", icon: CalendarCheck },
-      { name: "Movimientos", href: "/admin/movimientos", icon: ArrowLeftRight },
+      { name: "Crédito y Cartera", href: "/admin/credito", icon: CreditCard },
+    ]
+  },
+  {
+    name: "Catálogo",
+    items: [
+      { name: "Productos", href: "/admin/productos", icon: Package },
+      { name: "Clasificación", href: "/admin/catalogo", icon: FolderTree },
+      { name: "Etiquetas", href: "/admin/etiquetas", icon: Tag },
     ]
   },
   {
     name: "Inventario",
     items: [
-      { name: "Inventario Web", href: "/admin/inventario", icon: Boxes },
+      { name: "Stock por sucursal", href: "/admin/inventario", icon: Warehouse },
+      { name: "Movimientos", href: "/admin/movimientos", icon: ArrowLeftRight },
     ]
   },
   {
@@ -58,7 +70,6 @@ const navigationGroups = [
     items: [
       { name: "Sucursales", href: "/admin/sucursales", icon: Building2 },
       { name: "Usuarios", href: "/admin/usuarios", icon: Users },
-      { name: "Crédito y Cartera", href: "/admin/credito", icon: CreditCard },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
       { name: "Notificaciones", href: "/admin/notificaciones", icon: Bell },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
@@ -85,9 +96,9 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const filteredNavigation = navigationGroups.filter(group => {
-    // Hide "Administración" and "Usuarios" if user is EMPLOYEE
+    // Hide "Administración" and "Taller" if user is EMPLOYEE
     if (user.role === "EMPLOYEE") {
-      return group.name !== "Administración" && group.name !== "Taller · Piloto"
+      return group.name !== "Administración" && group.name !== "Taller"
     }
     return true
   })
@@ -121,14 +132,10 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
       >
         <div className="flex h-16 items-center justify-between px-6 border-b">
           <div className="flex items-center gap-2">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={40}
-              height={40}
-              className="rounded-lg"
-            />
-            <span className="font-bold text-lg">Pro-Solutions</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Wrench className="h-5 w-5" />
+            </div>
+            <span className="font-bold text-lg">Reficio</span>
           </div>
           <Button
             variant="ghost"
@@ -158,7 +165,7 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
                             isActive
                               ? "bg-primary/10 text-primary"
                               : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                            "group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold transition-colors"
+                            "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150"
                           )}
                         >
                           <item.icon
@@ -216,14 +223,13 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-64 lg:flex-col">
         <div className="flex grow flex-col gap-y-5 overflow-y-auto border-r bg-card px-6">
           <div className="flex h-16 shrink-0 items-center gap-2 border-b">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={40}
-              height={40}
-              className="rounded-lg"
-            />
-            <span className="font-bold text-lg">Pro-Solutions</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Wrench className="h-5 w-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="font-bold text-lg leading-tight">Reficio</span>
+              <span className="text-[10px] text-muted-foreground leading-tight">ProSolutions</span>
+            </div>
           </div>
           <nav className="flex flex-1 flex-col">
             <ul role="list" className="flex flex-1 flex-col gap-y-7 pt-4">
@@ -244,7 +250,7 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
                               isActive
                                 ? "bg-primary/10 text-primary"
                                 : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                              "group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold transition-colors"
+                              "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150"
                             )}
                           >
                             <item.icon

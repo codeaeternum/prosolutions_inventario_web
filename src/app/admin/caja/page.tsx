@@ -204,7 +204,7 @@ export default function CajaPage() {
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <Wallet className="h-6 w-6" /> Control de Caja
                     </h1>
                     <p className="text-muted-foreground">

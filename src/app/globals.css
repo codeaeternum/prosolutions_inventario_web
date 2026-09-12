@@ -4,8 +4,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ==========================================
-   PRO-SOLUTIONS - Design tokens (HSL)
+   REFICIO - Design tokens (HSL)
    Variables en formato H S% L% para consistencia y soporte de opacidad (ej. bg-primary/50).
+   Acento de marca: violeta (hue ~262).
    ========================================== */
 
 :root {
@@ -18,14 +19,14 @@
   --popover-foreground: 0 0% 14.5%;
 
   /* Primario / Secundario / Muted */
-  --primary: 0 0% 20.5%;
-  --primary-foreground: 0 0% 98.5%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 97%;
   --secondary-foreground: 0 0% 20.5%;
   --muted: 0 0% 97%;
   --muted-foreground: 0 0% 55.6%;
-  --accent: 0 0% 97%;
-  --accent-foreground: 0 0% 20.5%;
+  --accent: 262 60% 96%;
+  --accent-foreground: 262 60% 30%;
 
   /* Estados semánticos */
   --destructive: 0 72% 51%;
@@ -38,7 +39,7 @@
   /* Bordes e inputs */
   --border: 0 0% 92.2%;
   --input: 0 0% 92.2%;
-  --ring: 0 0% 70.8%;
+  --ring: 262 83% 58%;
 
   /* Radius (único token base) */
   --radius: 0.625rem;
@@ -46,20 +47,20 @@
   /* Sidebar */
   --sidebar-background: 0 0% 98%;
   --sidebar-foreground: 0 0% 14.5%;
-  --sidebar-primary: 0 0% 20.5%;
-  --sidebar-primary-foreground: 0 0% 98.5%;
+  --sidebar-primary: 262 83% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 0 0% 97%;
   --sidebar-accent-foreground: 0 0% 20.5%;
   --sidebar-border: 0 0% 92.2%;
-  --sidebar-ring: 0 0% 70.8%;
+  --sidebar-ring: 262 83% 58%;
   --sidebar: 0 0% 98.5%;
 
   /* Charts */
-  --chart-1: 25 95% 53%;
+  --chart-1: 262 83% 58%;
   --chart-2: 173 58% 39%;
-  --chart-3: 220 70% 50%;
+  --chart-3: 25 95% 53%;
   --chart-4: 43 96% 56%;
-  --chart-5: 27 96% 61%;
+  --chart-5: 304 63% 58%;
 }
 
 /* Skip link: visible al foco para accesibilidad */
@@ -109,38 +110,38 @@
 }
 
 .dark {
-  --background: 0 0% 14.5%;
+  --background: 0 0% 11%;
   --foreground: 0 0% 98.5%;
-  --card: 0 0% 20.5%;
+  --card: 0 0% 16.5%;
   --card-foreground: 0 0% 98.5%;
-  --popover: 0 0% 20.5%;
+  --popover: 0 0% 16.5%;
   --popover-foreground: 0 0% 98.5%;
 
-  --primary: 0 0% 92.2%;
-  --primary-foreground: 0 0% 20.5%;
-  --secondary: 0 0% 26.9%;
+  --primary: 263 85% 68%;
+  --primary-foreground: 262 83% 12%;
+  --secondary: 0 0% 23%;
   --secondary-foreground: 0 0% 98.5%;
-  --muted: 0 0% 26.9%;
+  --muted: 0 0% 23%;
   --muted-foreground: 0 0% 70.8%;
-  --accent: 0 0% 26.9%;
-  --accent-foreground: 0 0% 98.5%;
+  --accent: 262 40% 24%;
+  --accent-foreground: 262 60% 90%;
 
   --destructive: 0 63% 55%;
   --destructive-foreground: 0 0% 100%;
 
   --border: 0 0% 100% / 10%;
   --input: 0 0% 100% / 15%;
-  --ring: 0 0% 55.6%;
+  --ring: 263 85% 68%;
 
   --sidebar-background: 0 0% 8%;
   --sidebar-foreground: 0 0% 98.5%;
-  --sidebar-primary: 264 67% 58%;
-  --sidebar-primary-foreground: 0 0% 98.5%;
-  --sidebar-accent: 0 0% 26.9%;
+  --sidebar-primary: 263 85% 68%;
+  --sidebar-primary-foreground: 262 83% 12%;
+  --sidebar-accent: 0 0% 23%;
   --sidebar-accent-foreground: 0 0% 98.5%;
   --sidebar-border: 0 0% 100% / 10%;
-  --sidebar-ring: 0 0% 55.6%;
-  --sidebar: 0 0% 20.5%;
+  --sidebar-ring: 263 85% 68%;
+  --sidebar: 0 0% 14%;
 
   --chart-1: 264 67% 58%;
   --chart-2: 162 76% 45%;
@@ -202,7 +203,29 @@
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ============ Motion: entrada suave de contenido ============ */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#main-content > * {
+  animation: page-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #main-content > * {
+    animation: none;
+  }
+}
+
+/* Micro-interacciones en tarjetas clicables */
+a > [class*="card"]:hover,
+a > .hover\:shadow-md {
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
 
 /* Scrollbar personalizada */

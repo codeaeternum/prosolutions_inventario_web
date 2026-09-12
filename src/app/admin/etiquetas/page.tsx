@@ -236,7 +236,7 @@ export default function EtiquetasPage() {
         <div className="space-y-6 pb-20 lg:pb-0">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <QrCode className="h-6 w-6" />
                         Etiquetas QR
                     </h1>

@@ -16,17 +16,17 @@ const inter = Inter({
   variable: "--font-inter",
 })
 
-const siteName = "Pro-Solutions"
-const defaultTitle = "Pro-Solutions | Refacciones para Celulares"
-const defaultDescription = "Catálogo de refacciones para celulares - Pro-Solutions Téc. Diego Alvarez"
+const siteName = "Reficio"
+const defaultTitle = "Reficio | Software para talleres de reparación"
+const defaultDescription = "Órdenes de reparación, inventario por sucursal, punto de venta, crédito y catálogo web — el sistema operativo de tu taller."
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    process.env.NEXTAUTH_URL ?? "https://prosolutions.ascnex.com"
+    process.env.NEXTAUTH_URL ?? "https://reficio.app"
   ),
   title: {
     default: defaultTitle,
-    template: "%s | Pro-Solutions",
+    template: "%s | Reficio",
   },
   description: defaultDescription,
   manifest: "/manifest.json",

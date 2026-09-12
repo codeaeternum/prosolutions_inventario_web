@@ -9,6 +9,7 @@ interface SelectContextValue {
     onValueChange: (value: string) => void
     open: boolean
     setOpen: (open: boolean) => void
+    labels: Map<string, React.ReactNode>
 }
 
 const SelectContext = React.createContext<SelectContextValue | null>(null)
@@ -28,6 +29,18 @@ interface SelectProps {
     children: React.ReactNode
 }
 
+function collectItemLabels(children: React.ReactNode, labels: Map<string, React.ReactNode>) {
+    React.Children.forEach(children, (child) => {
+        if (!React.isValidElement(child)) return
+        const props = child.props as { value?: string; children?: React.ReactNode }
+        if (child.type === SelectItem && typeof props.value === "string") {
+            labels.set(props.value, props.children)
+            return
+        }
+        if (props.children) collectItemLabels(props.children, labels)
+    })
+}
+
 function Select({ value, defaultValue = "", onValueChange, children }: SelectProps) {
     const [internalValue, setInternalValue] = React.useState(defaultValue)
     const [open, setOpen] = React.useState(false)
@@ -42,8 +55,11 @@ function Select({ value, defaultValue = "", onValueChange, children }: SelectPro
         setOpen(false)
     }, [value, onValueChange])
 
+    const labels = new Map<string, React.ReactNode>()
+    collectItemLabels(children, labels)
+
     return (
-        <SelectContext.Provider value={{ value: currentValue, onValueChange: handleValueChange, open, setOpen }}>
+        <SelectContext.Provider value={{ value: currentValue, onValueChange: handleValueChange, open, setOpen, labels }}>
             <div className="relative">
                 {children}
             </div>
@@ -83,8 +99,9 @@ interface SelectValueProps {
 }
 
 function SelectValue({ placeholder }: SelectValueProps) {
-    const { value } = useSelectContext()
-    return <span className={cn(!value && "text-muted-foreground")}>{value || placeholder}</span>
+    const { value, labels } = useSelectContext()
+    const label = value ? (labels.get(value) ?? value) : null
+    return <span className={cn("truncate", !value && "text-muted-foreground")}>{label || placeholder}</span>
 }
 
 interface SelectContentProps {

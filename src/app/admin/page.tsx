@@ -19,6 +19,7 @@ import {
   ScanBarcode,
   Plus,
   ArrowRightLeft,
+  Wrench,
 } from "lucide-react"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
@@ -245,7 +246,13 @@ export default async function AdminDashboard() {
             <Button asChild variant="outline" size="sm" className="gap-2">
               <Link href="/admin/inventario">
                 <ArrowRightLeft className="h-4 w-4" />
-                Ajustes de Lote
+                Entradas y traspasos
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/admin/taller">
+                <Wrench className="h-4 w-4" />
+                Recibir equipo
               </Link>
             </Button>
           </div>
@@ -353,7 +360,7 @@ export default async function AdminDashboard() {
                 ))}
                 <div className="pt-2">
                   <Button asChild variant="outline" className="w-full">
-                    <Link href="/admin/reservas">Ver y Gestionar Reservas 📦</Link>
+                    <Link href="/admin/reservas">Ver y gestionar reservas</Link>
                   </Button>
                 </div>
               </div>
@@ -424,7 +431,7 @@ export default async function AdminDashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.totalBrands}</div>
             <Button variant="link" className="p-0 h-auto" asChild>
-              <Link href="/admin/marcas">Gestionar marcas</Link>
+              <Link href="/admin/catalogo?tab=marcas">Gestionar marcas</Link>
             </Button>
           </CardContent>
         </Card>

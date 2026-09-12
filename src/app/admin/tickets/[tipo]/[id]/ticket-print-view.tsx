@@ -24,11 +24,9 @@ interface TicketData {
 }
 
 export function TicketPrintView({ data }: { data: TicketData }) {
-  const [mounted, setMounted] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    setMounted(true)
     if (data.qrCode) {
       QRCode.toDataURL(data.qrCode, { width: 160, margin: 1 })
         .then(url => setQrDataUrl(url))
@@ -41,7 +39,7 @@ export function TicketPrintView({ data }: { data: TicketData }) {
   }
 
   const handleShareWa = () => {
-    let text = `*PROSOLUTIONS - ${data.title}*\n`
+    let text = `*${(data.businessName || "Ticket").toUpperCase()} - ${data.title}*\n`
     text += `Folio: ${data.folio}\n`
     text += `Fecha: ${formatDate(data.date)}\n`
     if (data.client) text += `Cliente: ${data.client}\n`
@@ -60,7 +58,6 @@ export function TicketPrintView({ data }: { data: TicketData }) {
     window.open(url, '_blank')
   }
 
-  if (!mounted) return null
 
   return (
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
@@ -131,9 +128,9 @@ export function TicketPrintView({ data }: { data: TicketData }) {
             <span>{formatPrice(data.total)}</span>
           </div>
           {data.paymentMethod && (
-            <div className="flex justify-between text-xs text-gray-600">
+            <div className="flex justify-between gap-4 text-xs text-gray-600">
               <span>MÉTODO:</span>
-              <span>{data.paymentMethod}</span>
+              <span className="text-right whitespace-pre-line">{data.paymentMethod}</span>
             </div>
           )}
           {data.newBalance !== undefined && (

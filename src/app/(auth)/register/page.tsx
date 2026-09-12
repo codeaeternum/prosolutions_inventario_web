@@ -3,13 +3,11 @@
 import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Loader2, Eye, EyeOff, CheckCircle, Store, ShoppingBag, Mail, Phone, ChevronDown } from "lucide-react"
+import { Loader2, Eye, EyeOff, CheckCircle, Store, ShoppingBag, Mail, Phone, ChevronDown, Wrench } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // Lista de dominios de correo populares para autocompletado
@@ -201,12 +199,6 @@ export default function RegisterPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-background">
-        <div className="absolute top-4 right-4">
-          <ThemeToggle />
-        </div>
-
-        <main id="main-content" role="main" className="w-full flex justify-center">
         <Card className="w-full max-w-md text-center">
           <CardHeader>
             <div className="flex justify-center mb-4">
@@ -240,29 +232,18 @@ export default function RegisterPage() {
             </Button>
           </CardFooter>
         </Card>
-        </main>
-      </div>
     )
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-background">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
-
-      <main id="main-content" role="main" className="w-full flex justify-center">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={100}
-              height={100}
-              className="rounded-lg"
-            />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+              <Wrench className="h-7 w-7" />
+            </div>
           </div>
+          <p className="text-lg font-bold tracking-tight mb-1">Reficio</p>
           <CardTitle className="text-2xl">Solicitar acceso</CardTitle>
           <CardDescription>
             Completa el formulario. Un administrador revisará tu solicitud y te notificará por correo.
@@ -551,7 +532,5 @@ export default function RegisterPage() {
           </CardFooter>
         </form>
       </Card>
-      </main>
-    </div>
   )
 }

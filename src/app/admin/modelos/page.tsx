@@ -33,6 +33,10 @@ interface Model {
 }
 
 export default function ModelsPage() {
+  return <ModelsPanel />
+}
+
+export function ModelsPanel({ embedded = false }: { embedded?: boolean }) {
   const [models, setModels] = useState<Model[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
   const [loading, setLoading] = useState(true)
@@ -128,13 +132,15 @@ export default function ModelsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
+        {!embedded && (
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Modelos</h2>
           <p className="text-muted-foreground">
             Gestiona los modelos de celulares por marca
           </p>
         </div>
-        <Button onClick={() => setShowForm(!showForm)} disabled={brands.length === 0}>
+        )}
+        <Button onClick={() => setShowForm(!showForm)} className={embedded ? "ml-auto" : ""} disabled={brands.length === 0}>
           <Plus className="mr-2 h-4 w-4" />
           Nuevo Modelo
         </Button>

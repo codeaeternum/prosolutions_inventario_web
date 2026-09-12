@@ -24,7 +24,6 @@ import {
   Upload,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
-import { Breadcrumbs } from "@/components/admin/breadcrumbs"
 import { EmptyState } from "@/components/admin/empty-state"
 import {
   Dialog,
@@ -217,7 +216,6 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
-      <Breadcrumbs items={[{ label: "Productos" }]} />
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Productos</h2>

@@ -4,13 +4,11 @@ import { useState, useRef, useEffect } from "react"
 import { signIn } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Loader2, Eye, EyeOff, Mail, Phone, ChevronDown } from "lucide-react"
+import { Loader2, Eye, EyeOff, Mail, Phone, ChevronDown, Wrench } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { safeRedirectPath } from "@/lib/safe-redirect"
 
@@ -110,23 +108,14 @@ export default function LoginPage() {
   const selectedCountry = countryCodes.find(c => c.code === countryCode)
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-background">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
-
-      <main id="main-content" role="main" className="w-full flex justify-center">
-      <Card className="w-full max-w-md">
+    <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={120}
-              height={120}
-              className="rounded-lg"
-            />
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+              <Wrench className="h-8 w-8" />
+            </div>
           </div>
+          <p className="text-lg font-bold tracking-tight mb-1">Reficio</p>
           <CardTitle className="text-2xl">Iniciar sesión</CardTitle>
           <CardDescription>
             Usa tu correo o teléfono y contraseña para acceder a tu cuenta
@@ -312,7 +301,5 @@ export default function LoginPage() {
           </CardFooter>
         </form>
       </Card>
-      </main>
-    </div>
   )
 }

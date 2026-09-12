@@ -27,6 +27,10 @@ interface Category {
 }
 
 export default function CategoriesPage() {
+  return <CategoriesPanel />
+}
+
+export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -106,13 +110,15 @@ export default function CategoriesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Categorías</h2>
-          <p className="text-muted-foreground">
-            Gestiona los tipos de refacciones
-          </p>
-        </div>
-        <Button onClick={() => setShowForm(!showForm)}>
+        {!embedded && (
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight">Categorías</h2>
+            <p className="text-muted-foreground">
+              Gestiona los tipos de refacciones
+            </p>
+          </div>
+        )}
+        <Button onClick={() => setShowForm(!showForm)} className={embedded ? "ml-auto" : ""}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva Categoría
         </Button>

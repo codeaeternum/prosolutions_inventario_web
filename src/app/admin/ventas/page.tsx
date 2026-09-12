@@ -21,7 +21,6 @@ import {
     DialogFooter
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Breadcrumbs } from "@/components/admin/breadcrumbs"
 import { EmptyState } from "@/components/admin/empty-state"
 import {
     ShoppingCart,
@@ -73,6 +72,10 @@ export default function VentasPage() {
     const [showCheckout, setShowCheckout] = useState(false)
     const [paymentMethod, setPaymentMethod] = useState("EFECTIVO")
     const [cashGiven, setCashGiven] = useState("")
+    const [splitMode, setSplitMode] = useState(false)
+    const [splitPayments, setSplitPayments] = useState<{ method: string; amount: string }[]>([
+        { method: "EFECTIVO", amount: "" },
+    ])
 
     // Credit payment state
     const [creditSearch, setCreditSearch] = useState("")
@@ -203,24 +206,43 @@ export default function VentasPage() {
     const processSale = async () => {
         if (cart.length === 0 || submitting.current) return
 
+        const usesCredit = splitMode
+            ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0)
+            : paymentMethod === "CREDITO"
+        const creditPortion = splitMode
+            ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+            : (paymentMethod === "CREDITO" ? cartTotal : 0)
+
         // Validar crédito si aplica
-        if (paymentMethod === "CREDITO") {
+        if (usesCredit) {
             if (!creditCustomer) {
                 toast.error("Selecciona un cliente para venta a crédito")
                 return
             }
             const available = (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)
-            if (cartTotal > available) {
-                toast.error(`Crédito insuficiente. Disponible: $${available.toLocaleString()}, Total: $${cartTotal.toLocaleString()}`)
+            if (creditPortion > available) {
+                toast.error(`Crédito insuficiente. Disponible: $${available.toLocaleString()}, Cargo: $${creditPortion.toLocaleString()}`)
                 return
             }
         }
 
-        const payload = {
+        const payload: Record<string, unknown> = {
             items: cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
-            paymentMethod,
-            customerId: paymentMethod === "CREDITO" ? creditCustomer?.id : undefined,
+            customerId: usesCredit ? creditCustomer?.id : undefined,
             branchId: branchId || undefined,
+        }
+        if (splitMode) {
+            const payments = splitPayments
+                .filter(p => p.method && parseFloat(p.amount) > 0)
+                .map(p => ({ method: p.method, amount: parseFloat(p.amount) }))
+            const sum = payments.reduce((s, p) => s + p.amount, 0)
+            if (payments.length === 0 || Math.abs(sum - cartTotal) > 0.009) {
+                toast.error(`Los pagos deben sumar ${formatPrice(cartTotal)} (suman ${formatPrice(sum)})`)
+                return
+            }
+            payload.payments = payments
+        } else {
+            payload.paymentMethod = paymentMethod
         }
         pendingOperation.current = getClientOperationKey(pendingOperation.current, payload)
         submitting.current = true
@@ -247,6 +269,8 @@ export default function VentasPage() {
             setCreditSearch("")
             setCreditResults([])
             setCashGiven("")
+            setSplitMode(false)
+            setSplitPayments([{ method: "EFECTIVO", amount: "" }])
             setShowCheckout(false)
         } catch (error) {
             toast.error(error instanceof TypeError
@@ -263,18 +287,17 @@ export default function VentasPage() {
 
     return (
         <div className="space-y-6 pb-20 lg:pb-0">
-            <Breadcrumbs items={[{ label: "Venta Rápida" }]} />
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <ShoppingCart className="h-6 w-6" />
                         Venta Rápida
                         {cajaOpen !== null && (
                             cajaOpen ? (
-                                <Badge variant="default" className="bg-green-600 text-xs font-normal ml-2">Caja abierta ✅</Badge>
+                                <Badge variant="default" className="bg-green-600 text-xs font-normal ml-2">Caja abierta</Badge>
                             ) : (
                                 <Link href="/admin/caja">
-                                    <Badge variant="destructive" className="text-xs font-normal ml-2 cursor-pointer hover:opacity-80">⚠️ Caja cerrada — Abrir</Badge>
+                                    <Badge variant="destructive" className="text-xs font-normal ml-2 cursor-pointer hover:opacity-80">Caja cerrada — Abrir</Badge>
                                 </Link>
                             )
                         )}
@@ -496,22 +519,96 @@ export default function VentasPage() {
                             <span className="text-2xl font-bold text-primary">{formatPrice(cartTotal)}</span>
                         </div>
                         
-                        <div className="space-y-2">
-                            <Label>Método de Pago</Label>
-                            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                                <SelectTrigger disabled={processing}>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="EFECTIVO">Efectivo</SelectItem>
-                                    <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
-                                    <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
-                                    <SelectItem value="CREDITO">💳 A crédito (cobro a cuenta)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        {!splitMode ? (
+                            <div className="space-y-2">
+                                <Label>Método de Pago</Label>
+                                <div className="flex gap-2">
+                                    <div className="flex-1">
+                                        <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                                            <SelectTrigger disabled={processing}>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="EFECTIVO">Efectivo</SelectItem>
+                                                <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
+                                                <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
+                                                <SelectItem value="CREDITO">💳 A crédito (cobro a cuenta)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <Button type="button" variant="outline" disabled={processing} onClick={() => {
+                                        setSplitMode(true)
+                                        setSplitPayments([{ method: paymentMethod === "CREDITO" ? "EFECTIVO" : paymentMethod, amount: cartTotal.toString() }])
+                                    }}>
+                                        Dividir
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <Label>Pago dividido</Label>
+                                    <Button type="button" variant="ghost" size="sm" disabled={processing} onClick={() => setSplitMode(false)}>
+                                        Pago único
+                                    </Button>
+                                </div>
+                                {splitPayments.map((p, i) => (
+                                    <div key={i} className="flex gap-2 items-center">
+                                        <div className="flex-1">
+                                            <Select value={p.method} onValueChange={(m) => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, method: m } : x))}>
+                                                <SelectTrigger disabled={processing}>
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="EFECTIVO">Efectivo</SelectItem>
+                                                    <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
+                                                    <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
+                                                    <SelectItem value="CREDITO">💳 Crédito</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            placeholder="0.00"
+                                            aria-label={`Monto pago ${i + 1}`}
+                                            disabled={processing}
+                                            value={p.amount}
+                                            onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                                            className="w-28"
+                                        />
+                                        {splitPayments.length > 1 && (
+                                            <Button type="button" variant="ghost" size="icon" disabled={processing} aria-label="Quitar método" onClick={() => setSplitPayments(prev => prev.filter((_, j) => j !== i))}>
+                                                <X className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                    </div>
+                                ))}
+                                {splitPayments.length < 4 && (
+                                    <Button type="button" variant="outline" size="sm" disabled={processing} onClick={() => {
+                                        const used = new Set(splitPayments.map(p => p.method))
+                                        const next = ["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"].find(m => !used.has(m)) ?? "EFECTIVO"
+                                        const remaining = cartTotal - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+                                        setSplitPayments(prev => [...prev, { method: next, amount: remaining > 0 ? remaining.toFixed(2) : "" }])
+                                    }}>
+                                        <Plus className="h-4 w-4 mr-1" /> Agregar método
+                                    </Button>
+                                )}
+                                {(() => {
+                                    const sum = splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+                                    const diff = cartTotal - sum
+                                    return Math.abs(diff) > 0.009 ? (
+                                        <p className={`text-sm font-medium ${diff > 0 ? "text-destructive" : "text-amber-600"}`}>
+                                            {diff > 0 ? `Faltan ${formatPrice(diff)}` : `Sobran ${formatPrice(-diff)}`}
+                                        </p>
+                                    ) : (
+                                        <p className="text-sm font-medium text-green-600">✓ Los pagos cubren el total</p>
+                                    )
+                                })()}
+                            </div>
+                        )}
 
-                        {paymentMethod === "EFECTIVO" && (
+                        {!splitMode && paymentMethod === "EFECTIVO" && (
                             <div className="space-y-2">
                                 <Label>Efectivo Recibido (Calculadora de Cambio)</Label>
                                 <Input 
@@ -535,7 +632,7 @@ export default function VentasPage() {
                             </div>
                         )}
 
-                        {paymentMethod === "CREDITO" && (
+                        {(splitMode ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0) : paymentMethod === "CREDITO") && (
                             <div className="space-y-3">
                                 {!creditCustomer ? (
                                     <>
@@ -596,11 +693,17 @@ export default function VentasPage() {
                                             </div>
                                             <Button variant="ghost" size="sm" disabled={processing} onClick={() => setCreditCustomer(null)}>Cambiar</Button>
                                         </div>
-                                        {cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)) && (
-                                            <p className="text-destructive text-xs font-medium mt-2">
-                                                ⚠️ El total supera el crédito disponible
-                                            </p>
-                                        )}
+                                        {(() => {
+                                            const charge = splitMode
+                                                ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+                                                : cartTotal
+                                            const available = Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0))
+                                            return charge > available ? (
+                                                <p className="text-destructive text-xs font-medium mt-2">
+                                                    ⚠️ El cargo a crédito ({formatPrice(charge)}) supera lo disponible ({formatPrice(available)})
+                                                </p>
+                                            ) : null
+                                        })()}
                                     </div>
                                 )}
                             </div>
@@ -613,7 +716,7 @@ export default function VentasPage() {
                                 e.preventDefault();
                                 await processSale();
                             }} 
-                            disabled={processing || (paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal)) || (paymentMethod === "CREDITO" && (!creditCustomer || cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0))))}
+                            disabled={processing || (!splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal)) || (splitMode ? (splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0) && !creditCustomer) : (paymentMethod === "CREDITO" && (!creditCustomer || cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)))))}
                         >
                             {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                             Confirmar venta

@@ -41,7 +41,7 @@ export default function AdminVerificarPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <QrCode className="h-6 w-6" />
             Escanear QR de reserva
           </h1>

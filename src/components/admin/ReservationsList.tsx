@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from '@/components/ui/badge'
 import { useCurrency } from '@/components/currency-provider'
+import { User, QrCode as QrCodeIcon, Phone, Send } from 'lucide-react'
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'
 
@@ -82,7 +83,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                 <table className="w-full">
                     <thead>
                         <tr className="bg-muted text-left text-sm font-semibold text-muted-foreground">
-                            <th className="p-4">ID</th>
+                            <th className="p-4">Fecha</th>
                             <th className="p-4">Cliente</th>
                             <th className="p-4">Producto</th>
                             <th className="p-4">Total</th>
@@ -94,7 +95,10 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                     <tbody className="divide-y divide-border">
                         {reservations.map((r) => (
                             <tr key={r.id} className="hover:bg-muted/50 text-sm">
-                                <td className="p-4 font-mono text-xs text-muted-foreground">{r.id.substring(0, 8)}...</td>
+                                <td className="p-4 text-xs text-muted-foreground whitespace-nowrap" title={r.id}>
+                                    {new Date(r.createdAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
+                                    <span className="block">{new Date(r.createdAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</span>
+                                </td>
                                 <td className="p-4">
                                     <div className="font-medium text-foreground flex items-center gap-2">
                                         {r.user.name}
@@ -110,7 +114,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                             className="text-muted-foreground hover:text-foreground"
                                             title="Ver QR Cliente"
                                         >
-                                            👤
+                                            <User className="h-4 w-4" />
                                         </button>
                                         <button
                                             onClick={async () => {
@@ -125,19 +129,19 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                             className="text-muted-foreground hover:text-foreground"
                                             title="Ver QR Reserva"
                                         >
-                                            🔲
+                                            <QrCodeIcon className="h-4 w-4" />
                                         </button>
                                     </div>
                                     <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
                                         {r.user.phone && (
                                             <a href={`https://wa.me/${r.user.phone.replace(/[^0-9]/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1" title="Contactar por WhatsApp">
-                                                📱 {r.user.phone}
+                                                <Phone className="h-3.5 w-3.5" /> {r.user.phone}
                                             </a>
                                         )}
                                         {!r.user.phone && <span className="text-muted-foreground">Sin teléfono</span>}
 
                                         {r.user.telegramId && (
-                                            <span className="text-blue-500 text-xs ml-1" title="Usuario Telegram">✈️</span>
+                                            <span className="text-blue-500 ml-1 inline-flex" title="Usuario Telegram"><Send className="h-3.5 w-3.5" /></span>
                                         )}
                                     </div>
                                 </td>
@@ -173,7 +177,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                             disabled={isUpdating}
                                             className="p-1 px-3 bg-primary text-primary-foreground rounded hover:opacity-90 text-xs disabled:opacity-50"
                                         >
-                                            ✅ Validar
+                                            Validar pago
                                         </button>
                                     )}
 
@@ -184,7 +188,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                             disabled={isUpdating}
                                             className="p-1 px-3 bg-primary text-primary-foreground rounded hover:opacity-90 text-xs disabled:opacity-50"
                                         >
-                                            📦 Entregar
+                                            Entregar
                                         </button>
                                     )}
 

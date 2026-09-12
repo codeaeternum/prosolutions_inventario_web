@@ -22,6 +22,8 @@ import {
   ShieldOff,
   CreditCard,
   DollarSign,
+  Send,
+  Phone,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
@@ -519,7 +521,7 @@ export default function UsersPage() {
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                     <div className="min-w-0">
                       <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
-                        <span className="truncate">{user.name}</span>
+                        <span className="truncate" title={user.name}>{user.name}</span>
                         {user.role === "ADMIN" && (
                           <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 shrink-0">
                             <Crown className="mr-1 h-3 w-3" />
@@ -530,10 +532,10 @@ export default function UsersPage() {
                       <p className="text-sm text-muted-foreground truncate">{user.email}</p>
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-muted-foreground">
                         {user.telegramId && (
-                          <span title="Registrado por Telegram">📱 Telegram</span>
+                          <span title="Registrado por Telegram" className="inline-flex items-center gap-1"><Send className="h-3.5 w-3.5" /> Telegram</span>
                         )}
                         {user.phone && (
-                          <span>📞 {user.phone}</span>
+                          <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {user.phone}</span>
                         )}
                         {!user.telegramId && !user.phone && (
                           <span className="italic">Sin contacto</span>

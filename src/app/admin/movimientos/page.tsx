@@ -41,7 +41,6 @@ import {
     DialogDescription,
 } from "@/components/ui/dialog"
 import Link from "next/link"
-import { Breadcrumbs } from "@/components/admin/breadcrumbs"
 import { Loader2, Trash2, Plus, Printer, Share2, Undo2, MoreHorizontal } from "lucide-react"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
@@ -149,6 +148,19 @@ export default function MovimientosPage() {
         }).catch(() => {})
     }, [])
 
+    const reasonLabels: Record<string, string> = {
+        ADJUSTMENT: "Ajuste",
+        ADJUSTMENT_IN: "Ajuste de entrada",
+        ADJUSTMENT_OUT: "Ajuste de salida",
+        SALE: "Venta",
+        RETURN: "Devolución",
+        TRANSFER: "Traspaso",
+        DAMAGED: "Dañado",
+        LOST: "Perdido",
+    }
+    const displayReason = (reason: string | null) =>
+        reason ? (reasonLabels[reason] ?? reason) : null
+
     const getTypeConfig = (type: string) => {
         switch (type) {
             case "SALE": return { label: "Venta", color: "bg-green-100 text-green-800" }
@@ -226,10 +238,9 @@ export default function MovimientosPage() {
 
     return (
         <div className="space-y-6">
-            <Breadcrumbs items={[{ label: "Movimientos" }]} />
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold">Movimientos</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">Movimientos</h1>
                     <p className="text-sm text-muted-foreground">Historial de entradas, salidas y ajustes</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -311,9 +322,9 @@ export default function MovimientosPage() {
                                                     <Badge variant="secondary" className={config.color}>
                                                         {config.label}
                                                     </Badge>
-                                                    {mov.reason && (
-                                                        <p className="text-xs text-muted-foreground mt-1 max-w-[150px] truncate" title={mov.reason}>
-                                                            {mov.reason}
+                                                    {displayReason(mov.reason) && (
+                                                        <p className="text-xs text-muted-foreground mt-1 max-w-[150px] truncate" title={displayReason(mov.reason) ?? undefined}>
+                                                            {displayReason(mov.reason)}
                                                         </p>
                                                     )}
                                                 </TableCell>

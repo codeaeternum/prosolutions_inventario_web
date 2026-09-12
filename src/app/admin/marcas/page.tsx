@@ -27,6 +27,10 @@ interface Brand {
 }
 
 export default function BrandsPage() {
+  return <BrandsPanel />
+}
+
+export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
   const [brands, setBrands] = useState<Brand[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -106,13 +110,15 @@ export default function BrandsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
+        {!embedded && (
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Marcas</h2>
           <p className="text-muted-foreground">
             Gestiona las marcas de celulares
           </p>
         </div>
-        <Button onClick={() => setShowForm(!showForm)}>
+        )}
+        <Button onClick={() => setShowForm(!showForm)} className={embedded ? "ml-auto" : ""}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva Marca
         </Button>

@@ -1,7 +1,7 @@
 {
-  "name": "Pro-Solutions Inventario",
-  "short_name": "Pro-Solutions",
-  "description": "Catálogo de refacciones para celulares - Pro-Solutions",
+  "name": "Reficio — Software para talleres",
+  "short_name": "Reficio",
+  "description": "Órdenes de reparación, inventario por sucursal, punto de venta y catálogo web.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -57,6 +57,6 @@
       "purpose": "maskable any"
     }
   ],
-  "categories": ["business", "shopping"],
+  "categories": ["business", "productivity"],
   "lang": "es-MX"
 }

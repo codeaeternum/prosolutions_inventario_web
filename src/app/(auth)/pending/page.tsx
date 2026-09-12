@@ -1,30 +1,20 @@
 "use client"
 
 import { signOut } from "next-auth/react"
-import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Clock, LogOut } from "lucide-react"
+import { Clock, LogOut, Wrench } from "lucide-react"
 
 export default function PendingPage() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-background">
-      <div className="absolute top-4 right-4">
-        <ThemeToggle />
-      </div>
-
       <Card className="w-full max-w-md text-center">
         <CardHeader>
-          <div className="flex justify-center mb-4">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={100}
-              height={100}
-              className="rounded-lg"
-            />
+          <div className="flex justify-center mb-2">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+              <Wrench className="h-7 w-7" />
+            </div>
           </div>
+          <p className="text-lg font-bold tracking-tight mb-4">Reficio</p>
           <div className="flex justify-center mb-4">
             <div className="p-4 bg-warning/10 rounded-full">
               <Clock className="h-12 w-12 text-warning" />
@@ -53,6 +43,5 @@ export default function PendingPage() {
           </Button>
         </CardFooter>
       </Card>
-    </div>
   )
 }
