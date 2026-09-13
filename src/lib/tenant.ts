@@ -21,6 +21,7 @@ const TENANT_MODELS = new Set([
   "Payment", "RepairOrder", "RepairPart", "RepairEvent", "CashRequest",
   "RepairPhoto", "WorkshopService", "MarketplaceRequest",
   "InventoryMovement",
+  "Supplier", "Purchase", "PurchaseItem",
 ])
 
 type Args = Record<string, unknown> & { where?: Record<string, unknown>; data?: unknown }

@@ -77,5 +77,5 @@ Write-Host ""
 Write-Host "[4/4] Estado de contenedores:" -ForegroundColor Yellow
 docker ps -a --filter "name=prosolutions" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 Write-Host ""
-Write-Host "App: https://prosolutions.ascnex.com (o http://localhost:3005)" -ForegroundColor Green
+Write-Host "App: https://reficio.app (o http://localhost:3005)" -ForegroundColor Green
 Write-Host "Listo." -ForegroundColor Green

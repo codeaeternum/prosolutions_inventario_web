@@ -6,7 +6,7 @@ La web ya funciona como **PWA**: el dueño puede instalarla en el iPhone (o Andr
 
 ## 1. Instalar la PWA en el iPhone
 
-1. Abre **Safari** y entra a tu sitio (ej. `https://prosolutions.ascnex.com`).
+1. Abre **Safari** y entra a tu sitio (ej. `https://reficio.app`).
 2. Inicia sesión como admin.
 3. Pulsa el botón **Compartir** (cuadrado con flecha hacia arriba).
 4. Baja y elige **“Añadir a la pantalla de inicio”**.

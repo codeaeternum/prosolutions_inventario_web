@@ -56,6 +56,18 @@ export async function GET(request: NextRequest) {
         } else if (typeParam === "CANCELLED") {
             onlyReservations = true
             reservationWhere = { status: "CANCELLED" }
+        } else if (typeParam === "DAMAGED" || typeParam === "LOST" || typeParam === "MERMAS") {
+            // DAMAGED/LOST se persisten como OUT (el enum MovementType no los
+            // incluye). Las mermas nuevas llevan notes "merma:damaged"|"merma:lost"
+            // para distinguir el subtipo. paymentMethod null excluye las ventas
+            // POS/bot, que también se guardan como OUT. MERMAS = todas las salidas
+            // que no son venta (incluye mermas antiguas sin marca y salidas de uso interno).
+            movementWhere.type = "OUT"
+            movementWhere.paymentMethod = null
+            if (typeParam !== "MERMAS") {
+                movementWhere.notes = { startsWith: `merma:${typeParam.toLowerCase()}` }
+            }
+            onlyMovements = true
         } else if (typeParam && typeParam !== "ALL") {
             movementTypeFilter = toPrismaMovementType(typeParam)
             if (movementTypeFilter) {
@@ -68,7 +80,7 @@ export async function GET(request: NextRequest) {
             onlyReservations ? Promise.resolve([]) : prisma.inventoryMovement.findMany({
                 where: movementWhere,
                 include: {
-                    product: { select: { id: true, name: true, barcode: true } },
+                    product: { select: { id: true, name: true, barcode: true, costPrice: true } },
                     user: { select: { id: true, name: true } },
                     branch: { select: { id: true, name: true } },
                     toBranch: { select: { id: true, name: true } },

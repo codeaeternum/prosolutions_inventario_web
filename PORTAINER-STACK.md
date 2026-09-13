@@ -26,7 +26,7 @@ Tu aplicación está publicada en Cloudflare como:
 
 | Publicado en Cloudflare | URL interna (origen) |
 |-------------------------|----------------------|
-| **prosolutions.ascnex.com** | `http://host.docker.internal:3005` |
+| **reficio.app** | `http://host.docker.internal:3005` |
 
 - El stack expone la app en el puerto **3005** del host (`3005:3000` en el compose).
 - Si el agente de Cloudflare Tunnel (**cloudflared**) corre **dentro de Docker**, `http://host.docker.internal:3005` es correcto: así el contenedor del tunnel alcanza el puerto 3005 del host donde escucha la app.
@@ -36,8 +36,8 @@ Tu aplicación está publicada en Cloudflare como:
 
 1. **Stacks** → **Add stack** → nombre: `prosolutions`.
 2. **Build method:** Repository → URL del repo (o Web editor pegando el `docker-compose.yml`).
-3. Añadir variables de entorno (ver tabla más abajo); mínimo: `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://prosolutions.ascnex.com`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD`, `CRON_SECRET`.
-4. **Deploy**. La app quedará en `http://<ip-del-n5>:3005` y Cloudflare seguirá sirviendo `https://prosolutions.ascnex.com`.
+3. Añadir variables de entorno (ver tabla más abajo); mínimo: `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://reficio.app`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD`, `CRON_SECRET`.
+4. **Deploy**. La app quedará en `http://<ip-del-n5>:3005` y Cloudflare seguirá sirviendo `https://reficio.app`.
 
 ---
 
@@ -134,7 +134,7 @@ Para “recrear igual” que antes: usa el mismo `docker-compose.yml` del repo y
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
 | `NEXTAUTH_SECRET` | Sí | Clave para JWT/sesiones (genera una con `openssl rand -base64 32`) |
-| `NEXTAUTH_URL` | Sí | URL pública de la app, ej. `https://prosolutions.ascnex.com` |
+| `NEXTAUTH_URL` | Sí | URL pública de la app, ej. `https://reficio.app` |
 | `TELEGRAM_BOT_TOKEN` | Sí | Token del bot de Telegram |
 | `DATABASE_URL` | Sí | `postgresql://prosolutions:<POSTGRES_PASSWORD>@db:5432/prosolutions_db` |
 | `POSTGRES_PASSWORD` | Sí | Contraseña del servicio `db`; debe coincidir con la de `DATABASE_URL` |

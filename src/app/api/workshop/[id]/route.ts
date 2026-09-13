@@ -30,7 +30,7 @@ async function readySideEffects(order: { id: string; number: number; status: str
       data: { orderId: order.id, folio },
     }).catch(() => {})
   }
-  const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
+  const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
   const digits = order.customerPhone.replace(/\D/g, "")
   // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
   const phone = digits.length === 10 ? `52${digits}` : digits

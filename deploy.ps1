@@ -49,7 +49,7 @@ if (-not $Remote) {
         exit 1
     }
     docker ps -a --filter "name=prosolutions" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-    Write-Host "Listo. App: https://prosolutions.ascnex.com" -ForegroundColor Green
+    Write-Host "Listo. App: https://reficio.app" -ForegroundColor Green
     exit 0
 }
 
@@ -119,4 +119,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[4/4] Listo." -ForegroundColor Green
-Write-Host "App: https://prosolutions.ascnex.com" -ForegroundColor Green
+Write-Host "App: https://reficio.app" -ForegroundColor Green

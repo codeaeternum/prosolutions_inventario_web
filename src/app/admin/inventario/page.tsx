@@ -3,12 +3,15 @@
 import { Suspense } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowRightLeft, History, Warehouse } from "lucide-react"
+import { ArrowRightLeft, History, PackageX, ShoppingCart, Truck, Warehouse } from "lucide-react"
 import MovimientosInventario from "./components/movimientos"
 import { ExistenciasPanel } from "@/components/admin/inventario/existencias"
 import { HistorialMovimientos } from "@/components/admin/inventario/historial-movimientos"
+import { MermasPanel } from "@/components/admin/inventario/mermas-panel"
+import { ComprasPanel } from "@/components/admin/inventario/compras-panel"
+import { ProveedoresPanel } from "@/components/admin/inventario/proveedores-panel"
 
-const TABS = ["existencias", "movimiento", "historial"] as const
+const TABS = ["existencias", "movimiento", "historial", "mermas", "compras", "proveedores"] as const
 type Tab = (typeof TABS)[number]
 
 function InventarioTabs() {
@@ -38,6 +41,18 @@ function InventarioTabs() {
                         <History className="h-4 w-4" />
                         Historial
                     </TabsTrigger>
+                    <TabsTrigger value="mermas" className="flex items-center gap-2">
+                        <PackageX className="h-4 w-4" />
+                        Mermas
+                    </TabsTrigger>
+                    <TabsTrigger value="compras" className="flex items-center gap-2">
+                        <ShoppingCart className="h-4 w-4" />
+                        Compras
+                    </TabsTrigger>
+                    <TabsTrigger value="proveedores" className="flex items-center gap-2">
+                        <Truck className="h-4 w-4" />
+                        Proveedores
+                    </TabsTrigger>
                 </TabsList>
             </div>
 
@@ -51,6 +66,18 @@ function InventarioTabs() {
 
             <TabsContent value="historial" className="mt-0">
                 <HistorialMovimientos />
+            </TabsContent>
+
+            <TabsContent value="mermas" className="mt-0">
+                <MermasPanel />
+            </TabsContent>
+
+            <TabsContent value="compras" className="mt-0">
+                <ComprasPanel />
+            </TabsContent>
+
+            <TabsContent value="proveedores" className="mt-0">
+                <ProveedoresPanel />
             </TabsContent>
         </Tabs>
     )

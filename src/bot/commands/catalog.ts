@@ -325,7 +325,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
             const reservation = result.reservations[0]
             const totalPrice = reservation.totalPrice
 
-            const qrData = `${process.env.NEXTAUTH_URL || 'https://prosolutions.ascnex.com'}/verificar/${reservation.qrCode}`
+            const qrData = `${process.env.NEXTAUTH_URL || 'https://reficio.app'}/verificar/${reservation.qrCode}`
             const qrBuffer = await QRCode.toBuffer(qrData)
 
             const methodLabel = method === 'STORE' ? 'Pago en Tienda' : method === 'TRANSFER' ? 'Transferencia' : 'A crédito'

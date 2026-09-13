@@ -53,6 +53,9 @@ model Business {
   workshopServices    WorkshopService[]
   marketplaceRequests MarketplaceRequest[]
   inventoryMovements  InventoryMovement[]
+  suppliers           Supplier[]
+  purchases           Purchase[]
+  purchaseItems       PurchaseItem[]
 
   @@index([isActive])
 }
@@ -201,6 +204,7 @@ model User {
   salesMade             Sale[]               @relation("SaleSeller")
   salesAsCustomer       Sale[]               @relation("SaleCustomer")
   paymentsMade          Payment[]            @relation("PaymentCreatedBy")
+  purchases             Purchase[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -296,6 +300,7 @@ model Product {
   stocks              BranchStock[]
   saleItems           SaleItem[]
   repairParts         RepairPart[]
+  purchaseItems       PurchaseItem[]
   marketplaceRequests MarketplaceRequest[]
 
   createdAt DateTime @default(now())
@@ -586,6 +591,7 @@ model Branch {
   movements         InventoryMovement[]
   transfersReceived InventoryMovement[] @relation("TransferDestination")
   cashRequests      CashRequest[]
+  purchases         Purchase[]
   createdAt         DateTime            @default(now())
 
   @@unique([businessId, name])
@@ -926,5 +932,71 @@ model MarketplaceRequest {
 
   @@index([status])
   @@index([productId])
+  @@index([businessId])
+}
+
+// ==================== COMPRAS / PROVEEDORES ====================
+
+// Proveedor de refacciones. Los montos de compra se guardan en centavos.
+model Supplier {
+  id         String     @id @default(cuid())
+  businessId String
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name       String
+  phone      String?
+  email      String?
+  notes      String?
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  purchases  Purchase[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+enum PurchaseStatus {
+  DRAFT // Borrador editable; aún no se pide al proveedor
+  ORDERED // Pedida al proveedor, en espera de entrega
+  RECEIVED // Recibida: el stock ya entró a la sucursal
+  CANCELLED
+}
+
+// Orden de compra. Al pasar a RECEIVED genera los movimientos IN de inventario
+// sobre purchase.branchId (mismo efecto que moveInventory type IN).
+model Purchase {
+  id          String         @id @default(cuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  number      Int            @default(autoincrement()) // folio visible: OC-000001
+  supplierId  String?
+  supplier    Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status      PurchaseStatus @default(DRAFT)
+  branchId    String
+  branch      Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  notes       String?
+  totalCents  Int            @default(0) // suma de items, calculado en servidor
+  items       PurchaseItem[]
+  createdById String
+  createdBy   User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  receivedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+}
+
+model PurchaseItem {
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchaseId    String
+  purchase      Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity      Int
+  unitCostCents Int
+
+  @@index([purchaseId])
   @@index([businessId])
 }

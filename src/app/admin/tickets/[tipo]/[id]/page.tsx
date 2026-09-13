@@ -150,7 +150,7 @@ export default async function TicketPage({
     })
 
     if (res) {
-      const qrUrl = `${process.env.NEXTAUTH_URL || 'https://prosolutions.ascnex.com'}/verificar/${res.qrCode || res.id}`
+      const qrUrl = `${process.env.NEXTAUTH_URL || 'https://reficio.app'}/verificar/${res.qrCode || res.id}`
       ticketData = {
         title: "TICKET DE RESERVA / ENTREGA",
         folio: res.id.slice(-8).toUpperCase(),
@@ -214,7 +214,7 @@ export default async function TicketPage({
       const quotedCents = order.approvedQuoteCents ?? order.quoteCents
       const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
       const folio = repairFolio(order.number)
-      const base = (process.env.NEXTAUTH_URL || "https://prosolutions.ascnex.com").replace(/\/+$/, "")
+      const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
       // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
       // fotos; solo va en documentos internos (hoja de taller / etiqueta),
       // nunca en el ticket ni la cotización que recibe el cliente.

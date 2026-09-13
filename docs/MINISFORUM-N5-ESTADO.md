@@ -65,7 +65,7 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 
 | Dominio público | Origen (URL interna en Cloudflare) |
 |-----------------|-------------------------------------|
-| **https://prosolutions.ascnex.com** | `http://host.docker.internal:3005` |
+| **https://reficio.app** | `http://host.docker.internal:3005` |
 
 - Si **cloudflared** corre **dentro de Docker** en el N5, `host.docker.internal:3005` es correcto.
 - Si **cloudflared** corre **en el host** (Windows), en la config del tunnel usa `http://127.0.0.1:3005` o `http://localhost:3005`.
@@ -87,7 +87,7 @@ Definidas en Portainer (stack) o en `.env` si usas `docker compose` por CLI:
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
 | `NEXTAUTH_SECRET` | Sí | Clave para JWT/sesiones. Mismo valor que `AUTH_SECRET`. |
-| `NEXTAUTH_URL` | Sí | URL pública, ej. `https://prosolutions.ascnex.com` |
+| `NEXTAUTH_URL` | Sí | URL pública, ej. `https://reficio.app` |
 | `TELEGRAM_BOT_TOKEN` | Sí (si usas bot) | Token del bot de Telegram |
 | `DATABASE_URL` | No (en compose) | Ya viene en el YAML para `app` y `bot` (postgresql://prosolutions:...@db:5432/prosolutions_db) |
 | `POSTGRES_*` | No (en compose) | User/password/DB definidos en el servicio `db` |

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import {
   LayoutDashboard, ArrowRight, Wrench, Smartphone, ShieldCheck, Zap,
-  ClipboardList, Package, Store, CreditCard, MessageCircle, QrCode,
+  ClipboardList, Package, Store, CreditCard, QrCode, Users, Globe,
   ArrowLeftRight, Receipt, Search, Bell, CheckCircle2
 } from "lucide-react"
 
@@ -46,9 +46,9 @@ const features = [
     desc: "Tu cliente consulta el estado de su equipo con folio — sin llamadas ni mensajes de '¿ya quedó?'.",
   },
   {
-    icon: MessageCircle,
-    title: "Asistente en Telegram",
-    desc: "Catálogo, reservas y consultas de stock sin costo de API. Tus clientes cotizan solos, 24/7.",
+    icon: Users,
+    title: "Mercado entre talleres",
+    desc: "Tus talleres aliados piden refacciones a tu stock con precio mayoreo — tú decides qué productos ven.",
   },
 ]
 
@@ -129,10 +129,10 @@ export default async function HomePage() {
                 </Link>
               </Button>
               <Button size="lg" variant="outline" className="w-full sm:w-auto gap-2 text-lg h-14 px-8" asChild>
-                <a href="https://t.me/ProSolutions_Bot" target="_blank" rel="noopener noreferrer">
-                  <MessageCircle className="h-5 w-5" />
-                  Probar el asistente
-                </a>
+                <Link href="/registro">
+                  <Store className="h-5 w-5" />
+                  Crea tu negocio
+                </Link>
               </Button>
             </div>
 
@@ -189,7 +189,7 @@ export default async function HomePage() {
                   ))}
                 </ul>
                 <Button size="lg" className="w-full gap-2" asChild>
-                  <Link href="/register">Tomar el control<ArrowRight className="h-4 w-4" /></Link>
+                  <Link href="/registro">Tomar el control<ArrowRight className="h-4 w-4" /></Link>
                 </Button>
               </div>
             </div>
@@ -283,6 +283,79 @@ export default async function HomePage() {
           </div>
         </section>
 
+        {/* Tu propia dirección */}
+        <section className="border-t">
+          <div className="container mx-auto max-w-6xl px-4 py-20">
+            <div className="grid lg:grid-cols-2 gap-12 items-center">
+              <div className="space-y-6">
+                <p className="text-xs font-semibold uppercase tracking-widest text-primary">Tu propia dirección</p>
+                <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
+                  reficio.app/<span className="bg-gradient-to-r from-primary via-violet-400 to-indigo-500 bg-clip-text text-transparent">tu-negocio</span>
+                </h2>
+                <p className="text-muted-foreground text-lg leading-relaxed">
+                  Cada negocio obtiene su propia dirección dentro de Reficio — con tu nombre, no el nuestro.
+                  Sin dominios que configurar ni hosting que pagar.
+                </p>
+                <ul className="space-y-3">
+                  {[
+                    "Vitrina pública con tu catálogo, servicios y mercado",
+                    "Rastreo de reparaciones por folio para tus clientes",
+                    "Mercado entre talleres: tus aliados compran a tu stock",
+                  ].map((item) => (
+                    <li key={item} className="flex items-start gap-3">
+                      <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                      <span className="text-muted-foreground">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Button size="lg" variant="outline" className="gap-2" asChild>
+                  <Link href="/registro">Reserva tu dirección<ArrowRight className="h-4 w-4" /></Link>
+                </Button>
+              </div>
+              {/* Mock de navegador */}
+              <div className="rounded-2xl border bg-card shadow-lg shadow-primary/5 overflow-hidden">
+                <div className="flex items-center gap-2 border-b bg-muted/50 px-4 py-3">
+                  <span className="h-3 w-3 rounded-full bg-rose-400/80" />
+                  <span className="h-3 w-3 rounded-full bg-amber-400/80" />
+                  <span className="h-3 w-3 rounded-full bg-emerald-400/80" />
+                  <div className="ml-3 flex flex-1 items-center gap-1.5 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground">
+                    <Globe className="h-3 w-3 shrink-0" />
+                    <span className="truncate">reficio.app/tu-taller/order-status</span>
+                  </div>
+                </div>
+                <div className="p-6 space-y-5">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
+                      <Wrench className="h-5 w-5 text-primary-foreground" />
+                    </div>
+                    <div>
+                      <p className="font-semibold leading-tight">Tu Taller</p>
+                      <p className="text-xs text-muted-foreground">Vitrina pública · reficio.app</p>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border bg-muted/30 p-4 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="font-medium">Orden #RF-1024</span>
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Listo para entrega</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full w-[85%] rounded-full bg-gradient-to-r from-primary to-indigo-500" />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Tu cliente sigue su equipo sin llamarte.</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    {["Vitrina", "Rastreo", "Mercado"].map((label) => (
+                      <div key={label} className="rounded-lg border bg-background py-2 text-xs font-medium text-muted-foreground">
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* CTA */}
         <section className="border-t">
           <div className="container mx-auto max-w-6xl px-4 py-20 text-center">
@@ -300,7 +373,7 @@ export default async function HomePage() {
                   </Link>
                 </Button>
                 <Button size="lg" variant="outline" className="gap-2" asChild>
-                  <Link href="/register">Crear cuenta de prueba</Link>
+                  <Link href="/registro">Crear cuenta de prueba</Link>
                 </Button>
               </div>
             </div>

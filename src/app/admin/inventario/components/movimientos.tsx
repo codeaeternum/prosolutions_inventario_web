@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,7 +29,7 @@ import {
     ScanBarcode,
     Loader2,
     Trash2,
-    Info,
+
     CheckCircle,
     Layers
 } from "lucide-react"
@@ -158,7 +157,8 @@ export default function MovimientosInventario() {
         setSaving(true)
         try {
             const payload = { branchId: branchId || undefined, items: batchItems.map(item => ({ productId: item.product.id, type: item.type,
-                quantity: item.quantity, reason: globalReason.trim(), notes: globalNotes.trim() || undefined,
+                quantity: item.quantity, reason: globalReason.trim(),
+                notes: [(item.type === "DAMAGED" || item.type === "LOST") ? `merma:${item.type.toLowerCase()}` : null, globalNotes.trim() || null].filter(Boolean).join(" · ") || undefined,
                 ...(item.type === "TRANSFER" ? { toBranchId: item.toBranchId } : {}) })) }
             pendingBatch.current = getClientOperationKey(pendingBatch.current, payload)
             const res = await fetch("/api/inventory", { method: "POST", headers: { "Content-Type": "application/json" },
