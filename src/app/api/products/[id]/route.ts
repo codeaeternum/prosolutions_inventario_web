@@ -116,6 +116,35 @@ export async function PUT(
       )
     }
 
+    // La categoría, los modelos y la sucursal deben pertenecer a esta empresa.
+    const category = await prisma.category.findFirst({
+      where: { id: categoryId, businessId },
+      select: { id: true },
+    })
+    if (!category) {
+      return NextResponse.json(
+        { error: "Categoría no encontrada" },
+        { status: 404 }
+      )
+    }
+    if (!isUniversal) {
+      const ownedModels = await prisma.model.count({
+        where: { id: { in: modelIds }, businessId },
+      })
+      if (ownedModels !== modelIds.length) {
+        return NextResponse.json(
+          { error: "Uno o más modelos no existen" },
+          { status: 400 }
+        )
+      }
+    }
+    if (stockBranchId && !await prisma.branch.findFirst({ where: { id: stockBranchId, businessId }, select: { id: true } })) {
+      return NextResponse.json(
+        { error: "Sucursal no encontrada" },
+        { status: 400 }
+      )
+    }
+
     // Verificar que el producto existe
     const existingProduct = await prisma.product.findUnique({
       where: { id, businessId },
@@ -220,7 +249,7 @@ export async function PUT(
       if (stockDiff !== 0) {
         const branch = stockDiff > 0
           ? await releaseStock(tx, { productId: id, quantity: stockDiff, branchId: stockBranchId ?? editor?.homeBranchId, businessId })
-          : (await takeStock(tx, { productId: id, quantity: -stockDiff, branchId: stockBranchId ?? editor?.homeBranchId })).branch
+          : (await takeStock(tx, { productId: id, quantity: -stockDiff, branchId: stockBranchId ?? editor?.homeBranchId, businessId })).branch
         const after = await tx.product.findUniqueOrThrow({ where: { id }, select: { stock: true } })
         await tx.inventoryMovement.create({
           data: {

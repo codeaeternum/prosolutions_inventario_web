@@ -1,19 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
-
-type TransactionClient = Omit<
-  typeof prisma,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
->
 
 export async function GET(req: NextRequest) {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const { searchParams } = new URL(req.url)
     const fromDate = searchParams.get("from")
@@ -55,32 +52,32 @@ export async function GET(req: NextRequest) {
       categoriesWithStock,
     ] = await Promise.all([
       // Productos
-      prisma.product.count(),
-      prisma.product.count({ where: { isActive: true } }),
+      prisma.product.count({ where: { businessId } }),
+      prisma.product.count({ where: { businessId, isActive: true } }),
       prisma.product.findMany({
-        where: { isActive: true },
+        where: { businessId, isActive: true },
         select: { stock: true, minStock: true, wholesalePrice: true },
       }),
       // Usuarios
-      prisma.user.count({ where: { role: "CUSTOMER" } }),
-      prisma.user.count({ where: { role: "CUSTOMER", status: "APPROVED" } }),
-      prisma.user.count({ where: { status: "PENDING" } }),
+      prisma.user.count({ where: { businessId, role: "CUSTOMER" } }),
+      prisma.user.count({ where: { businessId, role: "CUSTOMER", status: "APPROVED" } }),
+      prisma.user.count({ where: { businessId, status: "PENDING" } }),
       // Reservas (con filtro de fecha si aplica)
       prisma.reservation.count({
-        where: hasDateFilter ? { createdAt: dateFilter } : {},
+        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
       }),
       prisma.reservation.groupBy({
         by: ["status"],
         _count: { status: true },
-        where: hasDateFilter ? { createdAt: dateFilter } : {},
+        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
       }),
       // Catálogo
-      prisma.brand.count(),
-      prisma.category.count(),
-      prisma.model.count(),
+      prisma.brand.count({ where: { businessId } }),
+      prisma.category.count({ where: { businessId } }),
+      prisma.model.count({ where: { businessId } }),
       // Top productos
       prisma.product.findMany({
-        where: { isActive: true },
+        where: { businessId, isActive: true },
         select: {
           id: true,
           name: true,
@@ -88,8 +85,8 @@ export async function GET(req: NextRequest) {
           _count: {
             select: {
               reservations: hasDateFilter
-                ? { where: { createdAt: dateFilter } }
-                : true,
+                ? { where: { businessId, createdAt: dateFilter } }
+                : { where: { businessId } },
             },
           },
         },
@@ -100,6 +97,7 @@ export async function GET(req: NextRequest) {
       }),
       // Top marcas
       prisma.brand.findMany({
+        where: { businessId },
         select: {
           id: true,
           name: true,
@@ -114,7 +112,7 @@ export async function GET(req: NextRequest) {
       }),
       // Últimas reservas
       prisma.reservation.findMany({
-        where: hasDateFilter ? { createdAt: dateFilter } : {},
+        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
         include: {
           user: { select: { name: true } },
           product: { select: { name: true } },
@@ -124,7 +122,7 @@ export async function GET(req: NextRequest) {
       }),
       // Top clientes
       prisma.user.findMany({
-        where: { role: "CUSTOMER", status: "APPROVED" },
+        where: { businessId, role: "CUSTOMER", status: "APPROVED" },
         select: {
           id: true,
           name: true,
@@ -133,8 +131,8 @@ export async function GET(req: NextRequest) {
           _count: {
             select: {
               reservations: hasDateFilter
-                ? { where: { createdAt: dateFilter, status: "COMPLETED" } }
-                : { where: { status: "COMPLETED" } },
+                ? { where: { businessId, createdAt: dateFilter, status: "COMPLETED" } }
+                : { where: { businessId, status: "COMPLETED" } },
             },
           },
         },
@@ -145,11 +143,12 @@ export async function GET(req: NextRequest) {
       }),
       // Stock bajo por categoría
       prisma.category.findMany({
+        where: { businessId },
         select: {
           id: true,
           name: true,
           products: {
-            where: { isActive: true },
+            where: { businessId, isActive: true },
             select: {
               id: true,
               name: true,
@@ -196,6 +195,7 @@ export async function GET(req: NextRequest) {
       topBrandsData.map(async (b: { id: string; name: string; _count: { models: number } }) => {
         const productCount = await prisma.product.count({
           where: {
+            businessId,
             models: {
               some: {
                 model: { brandId: b.id },

@@ -23,7 +23,7 @@ async function mintSession(req: NextRequest, user: {
   id: string; name: string; email: string | null; phone: string | null;
   role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"; status: string;
   customerType: "NORMAL" | "STORE" | "TECHNICIAN"; password: string | null;
-  jobTitle: string | null
+  jobTitle: string | null; businessId: string
 }, impersonator: string | null) {
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET
   if (!secret) throw new Error("AUTH_SECRET no configurado")
@@ -37,6 +37,7 @@ async function mintSession(req: NextRequest, user: {
       status: user.status,
       customerType: user.customerType,
       jobTitle: user.jobTitle,
+      businessId: user.businessId,
       passwordVersion: passwordVersion(user.password),
       impersonator,
     },
@@ -84,7 +85,9 @@ export async function POST(req: NextRequest) {
   }
 
   const target = await prisma.user.findUnique({ where: { id: targetId } })
-  if (!target || target.status !== "APPROVED" || (target.role !== "ADMIN" && target.role !== "EMPLOYEE")) {
+  // Una cuenta de otra empresa responde igual que una inexistente: el cambio
+  // rápido de usuario nunca cruza negocios.
+  if (!target || target.businessId !== caller.businessId || target.status !== "APPROVED" || (target.role !== "ADMIN" && target.role !== "EMPLOYEE")) {
     return NextResponse.json({ error: "Usuario no disponible" }, { status: 404 })
   }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError } from "@/lib/domain/operations"
@@ -20,12 +21,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
+    const businessId = businessIdOf(getSession(auth)!)
     const { id } = await params
     const input = updateSchema.parse(await req.json())
-    const existing = await prisma.workshopService.findUnique({ where: { id } })
+    const existing = await prisma.workshopService.findUnique({ where: { id, businessId } })
     if (!existing) throw new BusinessError("Servicio no encontrado.", 404)
     const service = await prisma.workshopService.update({
-      where: { id },
+      where: { id, businessId },
       data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.description !== undefined ? { description: input.description || null } : {}),

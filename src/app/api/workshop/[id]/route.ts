@@ -28,7 +28,7 @@ async function readySideEffects(order: { id: string; number: number; status: str
       title: "Orden lista para entregar",
       message: `${folio} está lista para que el cliente la recoja.`,
       data: { orderId: order.id, folio },
-    }).catch(() => {})
+    }, order.businessId).catch(() => {})
   }
   const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
   const digits = order.customerPhone.replace(/\D/g, "")

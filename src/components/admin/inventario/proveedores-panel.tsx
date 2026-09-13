@@ -26,7 +26,9 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/admin/empty-state"
-import { Ban, Loader2, Mail, Pencil, Phone, Plus, Truck } from "lucide-react"
+import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
+import { Ban, Banknote, CalendarClock, History, Loader2, Mail, Pencil, Phone, Plus, Truck } from "lucide-react"
+import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
 interface Supplier {
@@ -37,6 +39,25 @@ interface Supplier {
     notes: string | null
     isActive: boolean
     _count: { purchases: number }
+}
+
+interface SupplierBalance {
+    supplier: Supplier
+    recibidoCents: number
+    pagadoCents: number
+    saldoCents: number
+    proximoVencimiento: string | null
+    ocsPendientes: PendingPurchase[]
+}
+
+interface SupplierPaymentRow {
+    id: string
+    amountCents: number
+    method: string
+    notes: string | null
+    createdAt: string
+    purchase: { id: string; number: number } | null
+    createdBy: { id: string; name: string } | null
 }
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" }
@@ -54,13 +75,27 @@ export function ProveedoresPanel() {
     const [deactivateTarget, setDeactivateTarget] = useState<Supplier | null>(null)
     const [deactivating, setDeactivating] = useState(false)
 
+    // Cuentas por pagar: saldos por proveedor + pago/historial.
+    const [balances, setBalances] = useState<Record<string, SupplierBalance>>({})
+    const [payTarget, setPayTarget] = useState<Supplier | null>(null)
+    const [historySupplier, setHistorySupplier] = useState<Supplier | null>(null)
+    const [payments, setPayments] = useState<SupplierPaymentRow[] | null>(null)
+
     const fetchSuppliers = useCallback(async () => {
         setError(null)
         try {
-            const res = await fetch("/api/suppliers")
-            const data = await res.json().catch(() => null)
-            if (!res.ok) throw new Error(data?.error || "Error al cargar proveedores")
+            const [supRes, balRes] = await Promise.all([
+                fetch("/api/suppliers"),
+                fetch("/api/suppliers/balances"),
+            ])
+            const data = await supRes.json().catch(() => null)
+            if (!supRes.ok) throw new Error(data?.error || "Error al cargar proveedores")
             setSuppliers(data?.suppliers ?? [])
+            // Los saldos son complementarios: si fallan, las tarjetas igual se muestran.
+            const balData = balRes.ok ? await balRes.json().catch(() => null) : null
+            const map: Record<string, SupplierBalance> = {}
+            for (const b of (balData?.balances ?? []) as SupplierBalance[]) map[b.supplier.id] = b
+            setBalances(map)
         } catch (e) {
             setError(e instanceof Error ? e.message : "Error al cargar proveedores")
         } finally {
@@ -71,6 +106,22 @@ export function ProveedoresPanel() {
     useEffect(() => {
         void Promise.resolve().then(fetchSuppliers)
     }, [fetchSuppliers])
+
+    const openHistory = (s: Supplier) => {
+        setPayments(null)
+        setHistorySupplier(s)
+    }
+
+    // Carga el historial de pagos al abrir el diálogo correspondiente.
+    useEffect(() => {
+        if (!historySupplier) return
+        let cancelled = false
+        fetch(`/api/supplier-payments?supplierId=${encodeURIComponent(historySupplier.id)}`)
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error("Error al cargar pagos"))))
+            .then(d => { if (!cancelled) setPayments(d?.payments ?? []) })
+            .catch(() => { if (!cancelled) setPayments([]) })
+        return () => { cancelled = true }
+    }, [historySupplier])
 
     const openCreate = () => {
         setEditing(null)
@@ -169,45 +220,85 @@ export function ProveedoresPanel() {
                 />
             ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {suppliers.map(s => (
-                        <Card key={s.id} className={s.isActive ? "" : "opacity-60"}>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-lg flex items-center gap-2 min-w-0">
-                                    <Truck className="h-5 w-5 text-muted-foreground shrink-0" />
-                                    <span className="truncate">{s.name}</span>
-                                </CardTitle>
-                                <div className="flex gap-1 shrink-0">
-                                    <Button variant="ghost" size="icon" onClick={() => openEdit(s)} aria-label={`Editar ${s.name}`}>
-                                        <Pencil className="h-4 w-4" />
-                                    </Button>
-                                    {s.isActive && (
-                                        <Button variant="ghost" size="icon" onClick={() => setDeactivateTarget(s)} aria-label={`Desactivar ${s.name}`}>
-                                            <Ban className="h-4 w-4" />
+                    {suppliers.map(s => {
+                        const bal = balances[s.id]
+                        return (
+                            <Card key={s.id} className={s.isActive ? "" : "opacity-60"}>
+                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                    <CardTitle className="text-lg flex items-center gap-2 min-w-0">
+                                        <Truck className="h-5 w-5 text-muted-foreground shrink-0" />
+                                        <span className="truncate">{s.name}</span>
+                                    </CardTitle>
+                                    <div className="flex gap-1 shrink-0">
+                                        <Button variant="ghost" size="icon" onClick={() => openEdit(s)} aria-label={`Editar ${s.name}`}>
+                                            <Pencil className="h-4 w-4" />
                                         </Button>
+                                        {s.isActive && (
+                                            <Button variant="ghost" size="icon" onClick={() => setDeactivateTarget(s)} aria-label={`Desactivar ${s.name}`}>
+                                                <Ban className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                    {!s.isActive && <Badge variant="secondary">Inactivo</Badge>}
+                                    <div className="space-y-1 text-sm text-muted-foreground">
+                                        {s.phone && (
+                                            <p className="flex items-center gap-2">
+                                                <Phone className="h-3.5 w-3.5" /> {s.phone}
+                                            </p>
+                                        )}
+                                        {s.email && (
+                                            <p className="flex items-center gap-2 truncate">
+                                                <Mail className="h-3.5 w-3.5 shrink-0" /> {s.email}
+                                            </p>
+                                        )}
+                                        {!s.phone && !s.email && <p className="text-xs">Sin datos de contacto</p>}
+                                    </div>
+                                    <Badge variant="secondary">
+                                        {s._count.purchases} compra{s._count.purchases === 1 ? "" : "s"}
+                                    </Badge>
+
+                                    {bal && (
+                                        <div className="rounded-lg border p-3 space-y-1.5 text-sm">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span className="text-muted-foreground">Saldo</span>
+                                                {bal.saldoCents > 0 ? (
+                                                    <span className="font-semibold text-red-600 tabular-nums">
+                                                        Debes {formatPrice(bal.saldoCents / 100)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="font-medium text-green-600">Liquidado</span>
+                                                )}
+                                            </div>
+                                            {bal.saldoCents > 0 && (
+                                                <p className="text-xs text-muted-foreground tabular-nums">
+                                                    Recibido {formatPrice(bal.recibidoCents / 100)} · Pagado {formatPrice(bal.pagadoCents / 100)}
+                                                </p>
+                                            )}
+                                            {bal.proximoVencimiento && bal.saldoCents > 0 && (
+                                                <p className={`flex items-center gap-1.5 text-xs ${new Date(bal.proximoVencimiento) < new Date() ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                                                    <CalendarClock className="h-3.5 w-3.5" />
+                                                    Vence {formatDay(bal.proximoVencimiento)}
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
-                                </div>
-                            </CardHeader>
-                            <CardContent className="space-y-2">
-                                {!s.isActive && <Badge variant="secondary">Inactivo</Badge>}
-                                <div className="space-y-1 text-sm text-muted-foreground">
-                                    {s.phone && (
-                                        <p className="flex items-center gap-2">
-                                            <Phone className="h-3.5 w-3.5" /> {s.phone}
-                                        </p>
-                                    )}
-                                    {s.email && (
-                                        <p className="flex items-center gap-2 truncate">
-                                            <Mail className="h-3.5 w-3.5 shrink-0" /> {s.email}
-                                        </p>
-                                    )}
-                                    {!s.phone && !s.email && <p className="text-xs">Sin datos de contacto</p>}
-                                </div>
-                                <Badge variant="secondary">
-                                    {s._count.purchases} compra{s._count.purchases === 1 ? "" : "s"}
-                                </Badge>
-                            </CardContent>
-                        </Card>
-                    ))}
+
+                                    <div className="flex gap-2 pt-1">
+                                        <Button variant="outline" size="sm" onClick={() => setPayTarget(s)}>
+                                            <Banknote className="mr-1.5 h-4 w-4" />
+                                            Registrar pago
+                                        </Button>
+                                        <Button variant="ghost" size="sm" onClick={() => openHistory(s)}>
+                                            <History className="mr-1.5 h-4 w-4" />
+                                            Historial
+                                        </Button>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )
+                    })}
                 </div>
             )}
 
@@ -308,6 +399,62 @@ export function ProveedoresPanel() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Registrar abono al proveedor */}
+            <PagoProveedorDialog
+                open={payTarget !== null}
+                onOpenChange={(open) => { if (!open) setPayTarget(null) }}
+                supplier={payTarget}
+                purchases={payTarget ? (balances[payTarget.id]?.ocsPendientes ?? []) : []}
+                onSaved={() => void fetchSuppliers()}
+            />
+
+            {/* Historial de pagos del proveedor */}
+            <Dialog open={historySupplier !== null} onOpenChange={(open) => { if (!open) setHistorySupplier(null) }}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <History className="h-5 w-5 text-muted-foreground" />
+                            Pagos a {historySupplier?.name}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Abonos registrados, más recientes primero.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {payments === null ? (
+                        <div className="flex items-center justify-center py-10">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : payments.length === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                            Sin pagos registrados a este proveedor.
+                        </p>
+                    ) : (
+                        <div className="rounded-md border divide-y max-h-80 overflow-y-auto">
+                            {payments.map(p => (
+                                <div key={p.id} className="p-3 flex justify-between items-start gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-medium">
+                                            {SUPPLIER_METHOD_LABELS[p.method] ?? p.method}
+                                            {p.purchase
+                                                ? ` · OC-${String(p.purchase.number).padStart(6, "0")}`
+                                                : " · Cuenta general"}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {formatDate(p.createdAt)}
+                                            {p.createdBy ? ` · ${p.createdBy.name}` : ""}
+                                        </p>
+                                        {p.notes && <p className="text-xs text-muted-foreground mt-0.5">{p.notes}</p>}
+                                    </div>
+                                    <span className="font-semibold text-sm tabular-nums shrink-0">
+                                        {formatPrice(p.amountCents / 100)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

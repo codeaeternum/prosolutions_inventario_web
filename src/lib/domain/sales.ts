@@ -31,16 +31,16 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
   if (payments.some(p => p.method === "CREDITO") && !input.customerId) throw new BusinessError("Selecciona al cliente del crédito.")
   if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
-    const seller = await actor(tx, actorId, "staff")
-    const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId)
-    const customer = input.customerId ? await actor(tx, input.customerId) : null
+    const seller = await actor(tx, actorId, "staff", businessId)
+    const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId, businessId)
+    const customer = input.customerId ? await actor(tx, input.customerId, "customer", businessId) : null
 
     // Precios del servidor; stock por sucursal con decremento condicional.
     const tier = input.priceTier ?? "auto"
     const lines = []
     let totalCents = 0
     for (const item of items) {
-      const { product } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id })
+      const { product } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id, businessId })
       const unitCents = cents(
         tier === "wholesale" ? product.wholesalePrice
           : tier === "retail" ? product.retailPrice
@@ -81,7 +81,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
       const paymentCents = payments.length === 1 ? totalCents : cents(payment.amount!, true)
       let cashMovementId: string | undefined
       if (method === "CASH") {
-        register ??= await openRegister(tx, branch.id)
+        register ??= await openRegister(tx, branch.id, businessId)
         const cashIn = await tx.cashMovement.create({ data: {
           businessId, registerId: register.id, userId: actorId, amount: amount(paymentCents), type: "IN",
           referenceType: "SALE", referenceId: sale.id, description: `Venta V-${sale.number}`,
@@ -89,7 +89,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
         cashMovementId = cashIn.id
       }
       if (method === "CREDIT") {
-        await addDebt(tx, customer!.id, paymentCents, { type: "SALE", id: sale.id, notes: `Venta V-${sale.number}` })
+        await addDebt(tx, customer!.id, paymentCents, { type: "SALE", id: sale.id, notes: `Venta V-${sale.number}` }, businessId)
       }
       created.push(await tx.payment.create({ data: {
         businessId, saleId: sale.id, method, amount: amount(paymentCents), status: "CONFIRMED",
@@ -113,7 +113,7 @@ async function refund(tx: Transaction, input: {
 
   let cashMovementId: string | undefined
   if (input.channel === "EFECTIVO") {
-    const register = await openRegister(tx, input.branchId)
+    const register = await openRegister(tx, input.branchId, input.businessId)
     const cashOut = await tx.cashMovement.create({ data: {
       businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT", amount: amount(input.refundCents),
       referenceType: "RETURN", referenceId: input.saleId, description: input.note,
@@ -122,7 +122,7 @@ async function refund(tx: Transaction, input: {
   }
   if (input.channel === "CREDITO") {
     if (!input.customerId) throw new BusinessError("La venta no tiene cliente para revertir el crédito.", 409)
-    const customer = await tx.user.findUniqueOrThrow({ where: { id: input.customerId } })
+    const customer = await tx.user.findUniqueOrThrow({ where: { id: input.customerId, businessId: input.businessId } })
     const balance = cents(customer.creditBalance, true)
     if (input.refundCents > balance) throw new BusinessError("El cliente ya abonó; el excedente requiere devolución en efectivo o conciliación.", 409, "CREDIT_REFUND_REVIEW")
     await tx.user.update({ where: { id: customer.id }, data: { creditBalance: amount(balance - input.refundCents) } })

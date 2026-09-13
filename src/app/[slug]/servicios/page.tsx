@@ -74,7 +74,7 @@ export default async function PublicServicesPage({ params }: PageProps) {
   if (target.kind !== "business") redirect(`/${target.slug}`)
 
   const services = await prisma.workshopService.findMany({
-    where: { isActive: true },
+    where: { businessId: target.businessId, isActive: true },
     orderBy: { name: "asc" },
     select: { id: true, name: true, description: true, priceCents: true, equipmentType: true },
   })

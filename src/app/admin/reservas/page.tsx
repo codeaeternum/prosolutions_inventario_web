@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import Link from "next/link"
 import { prisma } from "@/lib/prisma"
+import { businessIdOf } from "@/lib/tenant"
 import ReservationsList from "@/components/admin/ReservationsList"
 import { Pagination } from "@/components/ui/pagination"
 import { Button } from "@/components/ui/button"
@@ -19,6 +20,7 @@ export default async function AdminReservationsPage({
 }) {
   const session = await auth()
   if (session?.user?.role !== "ADMIN") redirect("/")
+  const businessId = businessIdOf(session)
 
   const params = await searchParams
   const page = Math.max(1, parseInt(params.page ?? "1", 10) || 1)
@@ -26,6 +28,7 @@ export default async function AdminReservationsPage({
 
   const [reservationsRaw, total] = await Promise.all([
     prisma.reservation.findMany({
+      where: { businessId },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
         user: true,
@@ -34,7 +37,7 @@ export default async function AdminReservationsPage({
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.reservation.count(),
+    prisma.reservation.count({ where: { businessId } }),
   ])
 
   const statusPriority: Record<string, number> = {

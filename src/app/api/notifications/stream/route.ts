@@ -1,14 +1,15 @@
 import { NextRequest } from "next/server"
 import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 // Almacenar conexiones activas
-type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; password: string | null; close: () => void }
+type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; businessId: string; password: string | null; close: () => void }
 const connections = new Map<string, Connection>()
 
 async function stillAuthorized(connection: Connection): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { id: connection.userId }, select: { status: true, password: true } })
-  return user?.status === "APPROVED" && user.password === connection.password
+  const user = await prisma.user.findUnique({ where: { id: connection.userId }, select: { status: true, password: true, businessId: true } })
+  return user?.status === "APPROVED" && user.password === connection.password && user.businessId === connection.businessId
 }
 
 // Tipos de eventos
@@ -31,32 +32,35 @@ export interface NotificationPayload {
   timestamp: string
 }
 
-async function broadcast(notification: Omit<NotificationPayload, "timestamp">, roles: Set<string>) {
+// Cada evento pertenece a UNA empresa: solo llega al staff conectado de ese negocio.
+async function broadcast(notification: Omit<NotificationPayload, "timestamp">, roles: Set<string>, businessId: string) {
   const payload: NotificationPayload = { ...notification, timestamp: new Date().toISOString() }
   const bytes = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`)
   await Promise.all([...connections.values()].map(async connection => {
     try {
-      if (!roles.has(connection.role) || !await stillAuthorized(connection)) { connection.close(); return }
+      if (connection.businessId !== businessId || !roles.has(connection.role) || !await stillAuthorized(connection)) { connection.close(); return }
       connection.controller.enqueue(bytes)
     } catch { connection.close() }
   }))
 }
 
-// Eventos administrativos: solo admins conectados
-export async function sendNotificationToAdmins(notification: Omit<NotificationPayload, "timestamp">) {
-  return broadcast(notification, new Set(["ADMIN"]))
+// Eventos administrativos: solo admins conectados de la empresa indicada
+export async function sendNotificationToAdmins(notification: Omit<NotificationPayload, "timestamp">, businessId: string) {
+  return broadcast(notification, new Set(["ADMIN"]), businessId)
 }
 
-// Eventos operativos: todo el staff (admin + empleados)
-export async function sendNotificationToStaff(notification: Omit<NotificationPayload, "timestamp">) {
-  return broadcast(notification, new Set(["ADMIN", "EMPLOYEE"]))
+// Eventos operativos: todo el staff (admin + empleados) de la empresa indicada
+export async function sendNotificationToStaff(notification: Omit<NotificationPayload, "timestamp">, businessId: string) {
+  return broadcast(notification, new Set(["ADMIN", "EMPLOYEE"]), businessId)
 }
 
 export async function GET(req: NextRequest) {
   const result = await requireAdminOrEmployee()
   if (result.error) return result.error
 
-  const userId = getSession(result)!.user.id
+  const session = getSession(result)!
+  const userId = session.user.id
+  const businessId = businessIdOf(session)
   const current = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true, password: true } })
   if (!current || (current.role !== "ADMIN" && current.role !== "EMPLOYEE") || current.status !== "APPROVED") return new Response(null, { status: 403 })
   const connectionId = crypto.randomUUID()
@@ -71,7 +75,7 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       controllerRef = controller
-      const connection = { controller, userId, role: current.role, password: current.password, close }
+      const connection = { controller, userId, role: current.role, businessId, password: current.password, close }
       connections.set(connectionId, connection)
       controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`))
       heartbeat = setInterval(async () => {

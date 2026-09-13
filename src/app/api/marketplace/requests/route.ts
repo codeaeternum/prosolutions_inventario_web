@@ -137,7 +137,7 @@ export async function POST(req: Request) {
       title: "Nueva solicitud de refacción",
       message: `${request.tallerName} solicita ${request.qty}× ${product.name}`,
       data: { requestId: request.id },
-    }).catch(() => {})
+    }, businessId).catch(() => {})
 
     return NextResponse.json({ request }, { status: 201 })
   } catch (error) {

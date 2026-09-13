@@ -9,10 +9,11 @@ export async function GET(req: Request) {
   try {
     const result = await requireAdminOrEmployee()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const branchId = new URL(req.url).searchParams.get("branchId") || undefined
     const activeRegister = await prisma.cashRegister.findFirst({
-      where: { status: "OPEN", ...(branchId ? { branchId } : {}) },
+      where: { businessId, status: "OPEN", ...(branchId ? { branchId } : {}) },
       orderBy: { openedAt: "desc" },
       include: {
         branch: { select: { id: true, name: true } },
@@ -39,7 +40,7 @@ export async function GET(req: Request) {
         calculatedTotal
       }
     })
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Error al obtener caja" }, { status: 500 })
   }
 }

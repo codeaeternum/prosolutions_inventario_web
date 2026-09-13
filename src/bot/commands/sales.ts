@@ -133,7 +133,7 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
 👤 Por: Admin
 ${successMsg}`)
 
-        } catch (e: any) {
+        } catch (e) {
             console.error('Error processing sale:', e)
             delete sessions.sale[telegramId]
             await ctx.answerCbQuery('Error')
@@ -303,10 +303,10 @@ Total: *$${total.toLocaleString()}*
             try {
                 const productId = deleteSession.selectedProduct.id
                 await transaction(prisma, async tx => {
-                    const currentUser = await tx.user.findUnique({ where: { telegramId }, select: { id: true } })
+                    const currentUser = await tx.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
                     if (!currentUser) throw new BusinessError('Cuenta no autorizada.', 403)
-                    await actor(tx, currentUser.id, 'admin')
-                    await tx.product.update({ where: { id: productId }, data: { isActive: false } })
+                    await actor(tx, currentUser.id, 'admin', currentUser.businessId)
+                    await tx.product.update({ where: { id: productId, businessId: currentUser.businessId }, data: { isActive: false } })
                 })
                 const productName = deleteSession.selectedProduct.name
                 delete sessions.deleteProduct[telegramId]

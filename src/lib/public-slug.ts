@@ -36,6 +36,8 @@ export type SlugTarget =
       slug: string
       name: string
       userId: string
+      /** Id del negocio al que pertenece el taller (scoping multi-tenant). */
+      businessId: string
       /** Nombre del negocio al que pertenece el taller ("Taller aliado de X"). */
       businessName: string
       /** Talleres aliados no tienen logo propio por ahora: siempre null. */
@@ -97,6 +99,7 @@ export const resolvePublicSlug = cache(async (rawSlug: string): Promise<SlugTarg
         jobTitle: true,
         businessName: true,
         phone: true,
+        businessId: true,
         business: { select: { name: true } },
       },
     })
@@ -107,6 +110,7 @@ export const resolvePublicSlug = cache(async (rawSlug: string): Promise<SlugTarg
       slug,
       name: user.jobTitle ?? user.businessName ?? user.name,
       userId: user.id,
+      businessId: user.businessId,
       businessName: clean(user.business.name) ?? "el negocio",
       logo: null,
       phone: clean(user.phone),

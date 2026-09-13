@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
                         if (diff !== 0) {
                             const branch = diff > 0
                                 ? await releaseStock(tx, { productId: existingProduct.id, quantity: diff, branchId: importBranchId, businessId })
-                                : (await takeStock(tx, { productId: existingProduct.id, quantity: -diff, branchId: importBranchId })).branch
+                                : (await takeStock(tx, { productId: existingProduct.id, quantity: -diff, branchId: importBranchId, businessId })).branch
                             const after = await tx.product.findUniqueOrThrow({ where: { id: existingProduct.id }, select: { stock: true } })
                             await tx.inventoryMovement.create({ data: {
                                 businessId, productId: existingProduct.id, userId: actorId, type: "ADJUSTMENT",

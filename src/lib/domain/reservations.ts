@@ -39,13 +39,13 @@ export async function createReservations(db: PrismaClient, userId: string, busin
   }
   const payload = { items, type, method, proof: method === "TRANSFER" ? input.paymentProofUrl : null }
   return operation(db, { key: input.idempotencyKey, actorId: userId, businessId, kind: "RESERVATION_CREATE", payload }, async tx => {
-    const user = await actor(tx, userId)
+    const user = await actor(tx, userId, "customer", businessId)
     const config = await settings(tx, businessId)
     const expiresAt = new Date(Date.now() + (type === "DEPOSIT" ? config.pendingVerificationHours * 3600000 : config.tempReservationMinutes * 60000))
     const reservations = []
     let totalCents = 0
     for (const item of items) {
-      const { product, branch } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: input.branchId })
+      const { product, branch } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: input.branchId, businessId })
       const lineCents = cents(user.customerType === "STORE" ? product.wholesalePrice : product.retailPrice) * item.quantity
       cents(amount(lineCents))
       const reservation = await tx.reservation.create({ data: {
@@ -59,7 +59,7 @@ export async function createReservations(db: PrismaClient, userId: string, busin
         previousStock: product.stock, newStock: product.stock - item.quantity,
         reason: `Reserva #${reservation.id}`, notes: "Compromiso de existencias; todavía no es una entrega.",
       } })
-      if (method === "CREDIT") await addDebt(tx, userId, lineCents, { type: "RESERVATION", id: reservation.id, notes: `Cargo de reserva #${reservation.id}` })
+      if (method === "CREDIT") await addDebt(tx, userId, lineCents, { type: "RESERVATION", id: reservation.id, notes: `Cargo de reserva #${reservation.id}` }, businessId)
       totalCents += lineCents
       reservations.push({ ...reservation, product: { id: product.id, name: product.name }, user: { name: user.name } })
     }
@@ -74,7 +74,7 @@ async function reverseReservationDebt(tx: Transaction, reservation: Reservation)
   const entries = await tx.creditMovement.findMany({ where: { referenceType: "RESERVATION", referenceId: reservation.id, userId: reservation.userId } })
   const reversalCents = entries.reduce((sum, entry) => sum + (entry.type === "DEBT" ? 1 : -1) * cents(entry.amount), 0)
   if (reversalCents <= 0) return
-  const user = await tx.user.findUniqueOrThrow({ where: { id: reservation.userId } })
+  const user = await tx.user.findUniqueOrThrow({ where: { id: reservation.userId, businessId: reservation.businessId } })
   const balanceCents = cents(user.creditBalance, true)
   if (balanceCents < reversalCents) throw new BusinessError("Existen abonos que requieren conciliar un saldo a favor. No se modificó la reserva ni el inventario.", 409, "CREDIT_REFUND_REVIEW")
   await tx.user.update({ where: { id: user.id }, data: { creditBalance: amount(balanceCents - reversalCents) } })
@@ -93,7 +93,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
   if (actorId === null && input.action !== "expire") throw new BusinessError("Acción no autorizada.", 403)
   if (actorId !== null && input.action === "expire") throw new BusinessError("La expiración se ejecuta desde el proceso del sistema.", 403)
   return transaction(db, async tx => {
-    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "customer" : "admin") : null
+    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "customer" : "admin", businessId) : null
     const reservation = await tx.reservation.findUnique({ where: { id }, include: { product: { select: { id: true, name: true } } } })
     if (!reservation || reservation.businessId !== businessId) throw new BusinessError("Reserva no encontrada.", 404)
     if (user && user.role !== "ADMIN" && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)
@@ -132,9 +132,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       if (dueCents > 0 && !method) throw new BusinessError("Selecciona el medio de pago al entregar.")
       if (method === "CREDIT" && reservation.paymentMethod !== "CREDIT") {
         if (reservation.businessVersion < 1) throw new BusinessError("Revisa manualmente el historial antes de convertir esta reserva a crédito.", 409)
-        await addDebt(tx, reservation.userId, dueCents, { type: "RESERVATION", id, notes: `Saldo a crédito al entregar reserva #${id}` })
+        await addDebt(tx, reservation.userId, dueCents, { type: "RESERVATION", id, notes: `Saldo a crédito al entregar reserva #${id}` }, businessId)
       } else if (method === "EFECTIVO" && dueCents > 0) {
-        const register = await openRegister(tx, reservation.branchId)
+        const register = await openRegister(tx, reservation.branchId, businessId)
         await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId!, type: "IN", amount: amount(dueCents), referenceType: "RESERVATION", referenceId: id, description: `Saldo en efectivo de reserva #${id}` } })
       }
       if (method) data.paymentMethod = method

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 /**
@@ -13,6 +14,7 @@ export async function GET(request: NextRequest) {
     try {
         const auth = await requireAdminOrEmployee()
         if (auth.error) return auth.error
+        const businessId = businessIdOf(getSession(auth)!)
 
         const { searchParams } = new URL(request.url)
         const search = searchParams.get("search")?.trim()
@@ -20,6 +22,7 @@ export async function GET(request: NextRequest) {
         const lowStock = searchParams.get("lowStock") === "true"
 
         const where = {
+            businessId,
             isActive: true,
             ...(categoryId ? { categoryId } : {}),
             ...(search
@@ -43,6 +46,7 @@ export async function GET(request: NextRequest) {
                     minStock: true,
                     category: { select: { id: true, name: true } },
                     stocks: {
+                        where: { businessId },
                         select: {
                             branchId: true,
                             quantity: true,
@@ -52,11 +56,12 @@ export async function GET(request: NextRequest) {
                 },
             }),
             prisma.branch.findMany({
-                where: { isActive: true },
+                where: { businessId, isActive: true },
                 orderBy: { createdAt: "asc" },
                 select: { id: true, name: true },
             }),
             prisma.category.findMany({
+                where: { businessId },
                 orderBy: { name: "asc" },
                 select: { id: true, name: true },
             }),

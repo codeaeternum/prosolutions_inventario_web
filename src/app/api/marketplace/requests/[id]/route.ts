@@ -99,7 +99,7 @@ export async function PATCH(
       // Guard de estado: si otro admin la decidió en paralelo, la venta ya
       // existía por idempotencia pero la solicitud no se toca dos veces.
       const updated = await prisma.marketplaceRequest.updateMany({
-        where: { id, status: "APPROVED" },
+        where: { id, businessId, status: "APPROVED" },
         data: {
           status: "FULFILLED",
           decidedById: actorId,
@@ -124,7 +124,7 @@ export async function PATCH(
 
     // ---- APPROVE / REJECT: PENDING -> APPROVED / REJECTED ----
     const updated = await prisma.marketplaceRequest.updateMany({
-      where: { id, status: "PENDING" },
+      where: { id, businessId, status: "PENDING" },
       data: {
         status: action === "APPROVE" ? "APPROVED" : "REJECTED",
         decidedById: actorId,

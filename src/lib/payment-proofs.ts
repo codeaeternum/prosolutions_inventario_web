@@ -51,6 +51,15 @@ export async function isOwnedPaymentProof(url: string, userId: string): Promise<
     return metadata.uploaderId === userId
   } catch { return false }
 }
+/** Uploader registrado en el sidecar JSON del comprobante (null si es un archivo legado sin metadatos). */
+export async function paymentProofUploaderId(filename: string): Promise<string | null> {
+  if (!validProofFilename(filename)) return null
+  try {
+    const file = await confinedPath(paymentProofDirectory(), `${filename}.json`)
+    const metadata = JSON.parse(await fs.readFile(file, "utf8")) as { uploaderId?: string }
+    return metadata.uploaderId ?? null
+  } catch { return null }
+}
 export async function readPaymentProof(filename: string): Promise<{ bytes: Buffer; mime: string } | null> {
   if (!validProofFilename(filename)) return null
   const roots = [paymentProofDirectory(), path.join(process.cwd(), "public", "uploads", "payments")]

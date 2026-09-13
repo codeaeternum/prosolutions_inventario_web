@@ -4,7 +4,6 @@ import { notFound, redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { repairFolio } from "@/lib/workshop-labels"
 import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug"
-import { getDefaultBusinessId } from "@/lib/settings"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { Button } from "@/components/ui/button"
 import { PublicShell } from "@/components/public/public-shell"
@@ -34,10 +33,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
-/** Slug público del negocio por defecto (vacío si no está activo/configurado). */
-async function getBusinessSlug(): Promise<string> {
+/** Slug público del negocio indicado (vacío si no está activo/configurado). */
+async function getBusinessSlug(businessId: string): Promise<string> {
   const business = await prisma.business.findUnique({
-    where: { id: await getDefaultBusinessId() },
+    where: { id: businessId },
     select: { slug: true, isActive: true },
   })
   const slug = normalizeSlug(business?.slug ?? "")
@@ -50,15 +49,15 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
   if (!target) notFound()
 
   // Las cotizaciones las emite el negocio: un taller aliado no tiene documento
-  // propio. Se reenvía a la ruta brandeada del negocio (o a la global si el
+  // propio. Se reenvía a la ruta brandeada de SU negocio (o a la global si el
   // negocio aún no tiene slug).
   if (target.kind === "workshop") {
-    const businessSlug = await getBusinessSlug()
+    const businessSlug = await getBusinessSlug(target.businessId)
     const safeToken = encodeURIComponent(token)
     redirect(businessSlug ? `/${businessSlug}/cotizacion/${safeToken}` : `/cotizacion/${safeToken}`)
   }
 
-  const order = await loadQuoteByToken(token)
+  const order = await loadQuoteByToken(token, target.businessId)
 
   return (
     <PublicShell

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/api-auth'
+import { Prisma } from '@prisma/client'
+import { getSession, requireAdmin } from '@/lib/api-auth'
+import { businessIdOf } from '@/lib/tenant'
 
 // API para enviar notificaciones vía Telegram Bot
 // POST /api/notifications/telegram
 export async function POST(req: NextRequest) {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     try {
         const { message, customerType } = await req.json()
@@ -22,7 +25,7 @@ export async function POST(req: NextRequest) {
 
         const { prisma } = await import('@/lib/prisma')
 
-        const where: any = { telegramId: { not: null } }
+        const where: Prisma.UserWhereInput = { businessId, telegramId: { not: null } }
         if (customerType && customerType !== 'ALL') {
             where.customerType = customerType
         }
@@ -51,7 +54,7 @@ export async function POST(req: NextRequest) {
 
                 if (res.ok) sent++
                 else failed++
-            } catch (e) {
+            } catch {
                 failed++
             }
         }

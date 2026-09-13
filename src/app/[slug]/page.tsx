@@ -53,7 +53,7 @@ type BusinessTarget = Extract<SlugTarget, { kind: "business" }>
 
 async function BusinessLanding({ target }: { target: BusinessTarget }) {
   const services = await prisma.workshopService.findMany({
-    where: { isActive: true },
+    where: { businessId: target.businessId, isActive: true },
     orderBy: { name: "asc" },
     take: 8,
     select: { id: true, name: true, description: true, priceCents: true, equipmentType: true },

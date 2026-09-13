@@ -1,6 +1,6 @@
 import type { PrismaClient, Product } from "@prisma/client"
 import { z } from "zod"
-import { releaseStock, transaction } from "./operations"
+import { BusinessError, releaseStock, transaction } from "./operations"
 
 export const createProductSchema = z.object({
   name: z.string().trim().min(1).max(500),
@@ -17,6 +17,8 @@ export const createProductSchema = z.object({
 export async function createProduct(db: PrismaClient, actorId: string, businessId: string, raw: unknown): Promise<Product> {
   const input = createProductSchema.parse(raw)
   return transaction(db, async tx => {
+    const category = await tx.category.findFirst({ where: { id: input.categoryId, businessId }, select: { id: true } })
+    if (!category) throw new BusinessError("La categoría no existe.", 400)
     const product = await tx.product.create({ data: {
       businessId,
       name: input.name, categoryId: input.categoryId,
@@ -24,7 +26,7 @@ export async function createProduct(db: PrismaClient, actorId: string, businessI
       costPrice: input.costPrice ?? null, stock: 0, images: input.images, isActive: true,
     } })
     if (input.stock > 0) {
-      const user = await tx.user.findUnique({ where: { id: actorId }, select: { homeBranchId: true } })
+      const user = await tx.user.findUnique({ where: { id: actorId, businessId }, select: { homeBranchId: true } })
       const branch = await releaseStock(tx, { productId: product.id, quantity: input.stock, branchId: input.branchId ?? user?.homeBranchId, businessId })
       await tx.inventoryMovement.create({ data: {
         businessId, productId: product.id, userId: actorId, type: "IN", quantity: input.stock,

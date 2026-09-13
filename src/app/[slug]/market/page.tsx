@@ -57,6 +57,7 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
   const pagina = Math.max(1, Number.parseInt(sp.pagina ?? "1", 10) || 1)
 
   const where: Prisma.ProductWhereInput = {
+    businessId: target.businessId,
     isActive: true,
     marketplaceVisible: true,
     ...(q && {
@@ -87,7 +88,7 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
     }),
     prisma.product.count({ where }),
     prisma.category.findMany({
-      where: { products: { some: { isActive: true, marketplaceVisible: true } } },
+      where: { businessId: target.businessId, products: { some: { businessId: target.businessId, isActive: true, marketplaceVisible: true } } },
       orderBy: { name: "asc" },
       select: { slug: true, name: true },
     }),

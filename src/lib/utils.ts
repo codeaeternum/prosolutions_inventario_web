@@ -16,6 +16,16 @@ export function formatDate(date: Date | string): string {
   })
 }
 
+/** Solo fecha (sin hora): para promesas de pago, vencimientos, etc. */
+export function formatDay(date: Date | string): string {
+  const d = new Date(date)
+  return d.toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  })
+}
+
 export function formatPrice(price: number): string {
   return new Intl.NumberFormat("es-MX", {
     style: "currency",

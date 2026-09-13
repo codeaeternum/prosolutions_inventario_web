@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Wrench } from "lucide-react"
 import { prisma } from "@/lib/prisma"
-import { getBusinessSetting, getDefaultBusinessId } from "@/lib/settings"
+import { getBusinessSetting } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { QuoteDocument, QuoteNotFound } from "@/components/public/quote-view"
@@ -70,7 +70,8 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
     )
   }
 
-  const businessName = await getBusinessSetting(await getDefaultBusinessId(), "ticket_business_name")
+  // El branding sale del negocio DUEÑO de la orden, no del negocio por defecto.
+  const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
 
   return (
     <PageShell>

@@ -23,7 +23,19 @@ import {
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { TraspasoDialog } from "@/components/admin/inventario/traspaso-dialog"
-import { AlertTriangle, ArrowLeftRight, Loader2, Package, Search, Warehouse } from "lucide-react"
+import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
+import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { Label } from "@/components/ui/label"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
+import { AlertTriangle, ArrowLeftRight, ClipboardList, Loader2, Package, Search, Warehouse } from "lucide-react"
+import { toast } from "sonner"
 
 interface BranchColumn {
     id: string
@@ -82,6 +94,15 @@ export function ExistenciasPanel() {
         setTransferOpen(true)
     }
 
+    // Conteo físico: diálogo de inicio + panel inline con la sesión abierta.
+    const [countDialogOpen, setCountDialogOpen] = useState(false)
+    const [countBranchId, setCountBranchId] = useState("")
+    const [countNotes, setCountNotes] = useState("")
+    const [creatingCount, setCreatingCount] = useState(false)
+    const [focusCountId, setFocusCountId] = useState<string | null>(null)
+    const [countsRefreshKey, setCountsRefreshKey] = useState(0)
+    const createOp = useRef<ClientOperationKey | null>(null)
+
     useEffect(() => {
         debounceRef.current = setTimeout(() => setDebouncedSearch(search.trim()), 300)
         return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -121,6 +142,40 @@ export function ExistenciasPanel() {
     const quantityByBranch = (p: StockProduct, branchId: string) =>
         p.branches.find((b) => b.branchId === branchId)?.quantity ?? 0
 
+    const openCountDialog = () => {
+        setCountBranchId(branches[0]?.id ?? "")
+        setCountNotes("")
+        setCountDialogOpen(true)
+    }
+
+    const createCount = async () => {
+        if (creatingCount) return
+        if (!countBranchId) return toast.error("Selecciona la sucursal a contar.")
+        const payload = { branchId: countBranchId, notes: countNotes.trim() || undefined }
+        createOp.current = getClientOperationKey(createOp.current, payload)
+        setCreatingCount(true)
+        try {
+            const res = await fetch("/api/inventory/counts", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...payload, idempotencyKey: createOp.current.key }),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(json?.error || "No se pudo abrir el conteo.")
+            createOp.current = null
+            toast.success(`Conteo ${json?.folio ?? ""} abierto`, {
+                description: `Captura lo que hay físicamente en ${json?.count?.branch?.name ?? "la sucursal"}.`,
+            })
+            setCountDialogOpen(false)
+            setFocusCountId(json?.count?.id ?? null)
+            setCountsRefreshKey(k => k + 1)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Error de conexión. Reintenta abrir el conteo.")
+        } finally {
+            setCreatingCount(false)
+        }
+    }
+
     return (
         <div className="space-y-4">
             {/* Toolbar */}
@@ -154,7 +209,24 @@ export function ExistenciasPanel() {
                     <AlertTriangle className="mr-1 h-4 w-4" />
                     Solo stock bajo
                 </Button>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openCountDialog}
+                    disabled={branches.length === 0}
+                    className="sm:ml-auto"
+                >
+                    <ClipboardList className="mr-1 h-4 w-4" />
+                    Conteo físico
+                </Button>
             </div>
+
+            {/* Sesión de conteo físico abierta + historial */}
+            <ConteoPanel
+                focusCountId={focusCountId}
+                refreshKey={countsRefreshKey}
+                onChanged={() => void fetchStock()}
+            />
 
             {/* Resumen */}
             {data && !loading && (
@@ -295,6 +367,60 @@ export function ExistenciasPanel() {
                 onOpenChange={setTransferOpen}
                 onSaved={() => void fetchStock()}
             />
+
+            {/* Inicio de sesión de conteo físico */}
+            <Dialog open={countDialogOpen} onOpenChange={setCountDialogOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <ClipboardList className="h-5 w-5 text-muted-foreground" />
+                            Nuevo conteo físico
+                        </DialogTitle>
+                        <DialogDescription>
+                            Captura lo que hay realmente en la sucursal; al aplicar, el sistema
+                            ajusta las diferencias y las deja auditadas en el historial.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 pt-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="conteo-branch">Sucursal a contar</Label>
+                            <Select value={countBranchId} onValueChange={setCountBranchId}>
+                                <SelectTrigger id="conteo-branch">
+                                    <SelectValue placeholder="Sucursal" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {branches.map((b) => (
+                                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="conteo-notes">Notas (opcional)</Label>
+                            <Input
+                                id="conteo-notes"
+                                placeholder="Ej: conteo de fin de mes, auditoría sorpresa…"
+                                value={countNotes}
+                                onChange={(e) => setCountNotes(e.target.value)}
+                                maxLength={1000}
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={() => setCountDialogOpen(false)} disabled={creatingCount}>
+                            Cancelar
+                        </Button>
+                        <Button onClick={() => void createCount()} disabled={creatingCount || !countBranchId}>
+                            {creatingCount
+                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                : <ClipboardList className="mr-2 h-4 w-4" />}
+                            Abrir conteo
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

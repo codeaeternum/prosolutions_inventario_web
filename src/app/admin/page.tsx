@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma"
+import { auth } from "@/lib/auth"
+import { businessIdOf } from "@/lib/tenant"
 
 // Prevent static generation - requires database at runtime
 export const dynamic = 'force-dynamic'
@@ -26,6 +28,9 @@ import { PriceDisplay } from "@/components/price-display"
 
 async function getDashboardStats() {
   try {
+    const session = await auth()
+    if (!session) throw new Error("Sin sesión")
+    const businessId = businessIdOf(session)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
@@ -43,17 +48,17 @@ async function getDashboardStats() {
       readyRepairs,
       overdueRepairs
     ] = await Promise.all([
-      prisma.product.count({ where: { isActive: true } }),
-      prisma.user.count({ where: { role: "CUSTOMER" } }),
-      prisma.user.count({ where: { status: "PENDING" } }),
-      prisma.reservation.count({ where: { status: "PENDING" } }),
+      prisma.product.count({ where: { businessId, isActive: true } }),
+      prisma.user.count({ where: { businessId, role: "CUSTOMER" } }),
+      prisma.user.count({ where: { businessId, status: "PENDING" } }),
+      prisma.reservation.count({ where: { businessId, status: "PENDING" } }),
       prisma.product.findMany({
-        where: { isActive: true },
+        where: { businessId, isActive: true },
         select: { stock: true, minStock: true },
       }),
-      prisma.brand.count(),
+      prisma.brand.count({ where: { businessId } }),
       prisma.reservation.findMany({
-        where: { status: { in: ["PENDING", "DEPOSIT_VERIFIED"] } },
+        where: { businessId, status: { in: ["PENDING", "DEPOSIT_VERIFIED"] } },
         include: {
           user: { select: { name: true, email: true } },
           product: { select: { name: true } },
@@ -65,6 +70,7 @@ async function getDashboardStats() {
       prisma.inventoryMovement.aggregate({
         _sum: { totalPrice: true },
         where: {
+          businessId,
           type: "OUT",
           reason: { contains: "Venta" },
           createdAt: { gte: today }
@@ -72,12 +78,12 @@ async function getDashboardStats() {
       }),
       // Caja activa
       prisma.cashRegister.findFirst({
-        where: { status: "OPEN" },
+        where: { businessId, status: "OPEN" },
         include: { movements: true }
       }),
-      prisma.repairOrder.count({ where: { status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
-      prisma.repairOrder.count({ where: { status: "READY" } }),
-      prisma.repairOrder.count({ where: { status: { notIn: ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] }, promisedAt: { lt: new Date() } } })
+      prisma.repairOrder.count({ where: { businessId, status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
+      prisma.repairOrder.count({ where: { businessId, status: "READY" } }),
+      prisma.repairOrder.count({ where: { businessId, status: { notIn: ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] }, promisedAt: { lt: new Date() } } })
     ])
 
     // Contar productos con stock bajo en JS
@@ -128,9 +134,13 @@ async function getDashboardStats() {
 
 async function getLowStockProducts() {
   try {
+    const session = await auth()
+    if (!session) throw new Error("Sin sesión")
+    const businessId = businessIdOf(session)
     // Obtener productos con stock bajo (stock <= minStock)
     const products = await prisma.product.findMany({
       where: {
+        businessId,
         isActive: true,
       },
       include: {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdmin, requireMarketplaceViewer } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
 
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
     if (result.error) return result.error
     const session = getSession(result)!
     const isAdmin = session.user.role === "ADMIN"
+    const businessId = businessIdOf(session)
 
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()
@@ -26,6 +28,7 @@ export async function GET(req: Request) {
     const includeHidden = searchParams.get("hidden") === "1" && isAdmin
 
     const where = {
+      businessId,
       isActive: true,
       ...(includeHidden ? {} : { marketplaceVisible: true }),
       ...(category && { categoryId: category }),
@@ -54,6 +57,7 @@ export async function GET(req: Request) {
           marketplaceVisible: true,
           category: { select: { id: true, name: true } },
           stocks: {
+            where: { businessId },
             select: {
               quantity: true,
               branch: { select: { id: true, name: true } },
@@ -64,7 +68,7 @@ export async function GET(req: Request) {
         take: 100,
       }),
       prisma.product.count({
-        where: { isActive: true, marketplaceVisible: true },
+        where: { businessId, isActive: true, marketplaceVisible: true },
       }),
     ])
 
@@ -106,6 +110,7 @@ export async function POST(req: Request) {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const body = await req.json()
     const parseResult = toggleVisibilitySchema.safeParse(body)
@@ -115,7 +120,7 @@ export async function POST(req: Request) {
     const { productId, marketplaceVisible } = parseResult.data
 
     const existing = await prisma.product.findUnique({
-      where: { id: productId },
+      where: { id: productId, businessId },
       select: { id: true },
     })
     if (!existing) {

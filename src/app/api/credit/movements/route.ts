@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAuth, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 export async function GET(req: NextRequest) {
@@ -10,6 +11,7 @@ export async function GET(req: NextRequest) {
   if (summary === "true") {
     const adminResult = await requireAdmin()
     if (adminResult.error) return adminResult.error
+    const businessId = businessIdOf(getSession(adminResult)!)
 
     const firstDayOfMonth = new Date()
     firstDayOfMonth.setDate(1)
@@ -19,21 +21,22 @@ export async function GET(req: NextRequest) {
       await Promise.all([
         prisma.user.aggregate({
           _sum: { creditBalance: true },
-          where: { creditBalance: { gt: 0 } },
+          where: { businessId, creditBalance: { gt: 0 } },
         }),
         prisma.user.count({
-          where: { creditBalance: { gt: 0 } },
+          where: { businessId, creditBalance: { gt: 0 } },
         }),
         prisma.creditMovement.aggregate({
           _sum: { amount: true },
           where: {
+            businessId,
             // Debt reversals reduce the balance but are not money collected.
             type: "PAYMENT",
             createdAt: { gte: firstDayOfMonth },
           },
         }),
         prisma.user.findMany({
-          where: { creditBalance: { gt: 0 } },
+          where: { businessId, creditBalance: { gt: 0 } },
           select: {
             id: true,
             name: true,
@@ -45,6 +48,7 @@ export async function GET(req: NextRequest) {
           take: 20,
         }),
         prisma.creditMovement.findMany({
+          where: { businessId },
           include: { user: { select: { name: true } } },
           orderBy: { createdAt: "desc" },
           take: 30,
@@ -72,12 +76,12 @@ export async function GET(req: NextRequest) {
 
   const [movements, total] = await Promise.all([
     prisma.creditMovement.findMany({
-      where: { userId },
+      where: { userId, businessId: businessIdOf(session) },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.creditMovement.count({ where: { userId } }),
+    prisma.creditMovement.count({ where: { userId, businessId: businessIdOf(session) } }),
   ])
 
   return NextResponse.json({

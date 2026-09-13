@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
@@ -13,7 +14,10 @@ const DEFAULT_SETTINGS = {
 // GET - Obtener configuración
 export async function GET() {
   try {
-    const businessId = await getDefaultBusinessId()
+    // Con sesión se responde la configuración de SU empresa; sin sesión el
+    // comportamiento público histórico usa el negocio por defecto.
+    const session = await auth()
+    const businessId = session ? businessIdOf(session) : await getDefaultBusinessId()
     let settings = await prisma.settings.findFirst({
       where: { businessId },
     })

@@ -119,7 +119,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       title: approving ? "Cotización aprobada" : "Cotización rechazada",
       message: `${folio}${equipment ? ` · ${equipment}` : ""} — el cliente ${approving ? "aprobó" : "no autorizó"} la cotización vía link público${signer ? ` (${signer})` : ""}.`,
       data: { orderId: decided.order.id, folio },
-    }).catch(() => {})
+    }, decided.order.businessId).catch(() => {})
 
     return NextResponse.json(
       {

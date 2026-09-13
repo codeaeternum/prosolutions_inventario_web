@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
+import { auth } from "@/lib/auth"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
@@ -15,9 +16,10 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const brandId = searchParams.get("brandId")
+    const session = await auth()
 
     const models = await prisma.model.findMany({
-      where: { businessId: await getDefaultBusinessId(), ...(brandId ? { brandId } : {}) },
+      where: { businessId: session ? businessIdOf(session) : await getDefaultBusinessId(), ...(brandId ? { brandId } : {}) },
       include: {
         brand: { select: { name: true } },
         _count: { select: { products: true } },
@@ -45,6 +47,15 @@ export async function POST(req: Request) {
     }
     const { name, brandId } = parseResult.data
     const businessId = businessIdOf(getSession(result)!)
+
+    // La marca debe pertenecer a esta empresa; una ajena responde como inexistente.
+    const brand = await prisma.brand.findFirst({
+      where: { id: brandId, businessId },
+      select: { id: true },
+    })
+    if (!brand) {
+      return NextResponse.json({ error: "Marca no encontrada" }, { status: 404 })
+    }
 
     const slug = generateSlug(name)
 

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { sendNotificationToAdmins, NotificationType } from "../stream/route"
 
 // API para enviar notificaciones programáticamente
 export async function POST(req: NextRequest) {
   const result = await requireAdmin()
   if (result.error) return result.error
+  const businessId = businessIdOf(getSession(result)!)
 
   try {
     const body = await req.json()
@@ -23,7 +25,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    sendNotificationToAdmins({ type, title, message, data })
+    sendNotificationToAdmins({ type, title, message, data }, businessId)
 
     return NextResponse.json({ success: true })
   } catch {

@@ -1,12 +1,16 @@
 import { auth } from "@/lib/auth"
 import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
 import { NextResponse } from "next/server"
+import { businessIdOf } from "@/lib/tenant"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { Prisma } from "@prisma/client"
 
 export async function GET(req: Request) {
     try {
-    const viewer = (await auth())?.user
+    const viewerSession = await auth()
+    const viewer = viewerSession?.user
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
         const { searchParams } = new URL(req.url)
         const query = searchParams.get("q")?.trim()
         const publicOnly = searchParams.get("publicOnly") === "true"
@@ -31,6 +35,7 @@ export async function GET(req: Request) {
         }))
 
     const baseWhere = {
+        businessId,
         isActive: true,
         ...(publicOnly ? { stock: { gt: 0 } } : {})
     }
@@ -72,12 +77,16 @@ export async function GET(req: Request) {
                 const limit = 10
                 
                 // raw query parameters
-                const results: any[] = await prisma.$queryRaw`
+                const results = await prisma.$queryRaw<Array<{
+                    id: string; name: string; barcode: string | null; stock: number
+                    retailPrice: number; wholesalePrice: number; images: string[]; categoryName: string | null
+                }>>`
                     SELECT p.id, p.name, p.barcode, p.stock, p."retailPrice", p."wholesalePrice", p.images, 
                            c.name as "categoryName"
                     FROM "Product" p
                     LEFT JOIN "Category" c ON p."categoryId" = c.id
-                    WHERE p."isActive" = true 
+                    WHERE p."isActive" = true
+                      AND p."businessId" = ${businessId}
                       ${publicOnly ? Prisma.raw('AND p.stock > 0') : Prisma.raw('')}
                       AND similarity(p.name, ${fuzzyQuery}) > 0.3
                     ORDER BY similarity(p.name, ${fuzzyQuery}) DESC
@@ -93,7 +102,7 @@ export async function GET(req: Request) {
                     retailPrice: row.retailPrice,
                     wholesalePrice: row.wholesalePrice,
                     images: row.images,
-                    category: { name: row.categoryName },
+                    category: { name: row.categoryName ?? "Sin categoría" },
                     models: [] // Omitimos modelos en raw query para simplificar
                 }))
 
@@ -129,13 +138,12 @@ export async function GET(req: Request) {
                     }
                 })
 
-                const ranked = looseProducts.map(p => {
-                    const name = p.name.toLowerCase()
-                    const score = words.filter(w => name.includes(w.toLowerCase())).length
-                    return { ...p, score }
-                }).sort((a, b) => b.score - a.score)
+                const ranked = looseProducts.map(p => ({
+                    product: p,
+                    score: words.filter(w => p.name.toLowerCase().includes(w.toLowerCase())).length,
+                })).sort((a, b) => b.score - a.score)
 
-                products = ranked.map(({ score, ...p }) => p)
+                products = ranked.map(r => r.product)
             }
         }
 
@@ -143,7 +151,7 @@ export async function GET(req: Request) {
         let result = products.slice(0, 20)
         if (branchId && isCatalogStaff(viewer)) {
             const stocks = await prisma.branchStock.findMany({
-                where: { branchId, productId: { in: result.map(p => p.id) } },
+                where: { branchId, businessId, productId: { in: result.map(p => p.id) } },
                 select: { productId: true, quantity: true },
             })
             const byProduct = new Map(stocks.map(s => [s.productId, s.quantity]))

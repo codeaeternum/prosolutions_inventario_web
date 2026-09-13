@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
+import { auth } from "@/lib/auth"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
@@ -13,8 +14,9 @@ const createCategorySchema = z.object({
 
 export async function GET() {
   try {
+    const session = await auth()
     const categories = await prisma.category.findMany({
-      where: { businessId: await getDefaultBusinessId() },
+      where: { businessId: session ? businessIdOf(session) : await getDefaultBusinessId() },
       include: {
         _count: { select: { products: true } },
       },

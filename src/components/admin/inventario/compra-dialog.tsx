@@ -90,6 +90,7 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
     const [supplierId, setSupplierId] = useState(NO_SUPPLIER)
     const [branchId, setBranchId] = useState(branches[0]?.id ?? "")
     const [notes, setNotes] = useState("")
+    const [dueAt, setDueAt] = useState("") // YYYY-MM-DD, fecha promesa de pago
     const [lines, setLines] = useState<PurchaseLine[]>([])
 
     const [search, setSearch] = useState("")
@@ -164,6 +165,7 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
             supplierId: supplierId === NO_SUPPLIER ? null : supplierId,
             branchId,
             notes: notes.trim() || undefined,
+            dueAt: dueAt || null,
             items: parsedLines,
         }
         operation.current = getClientOperationKey(operation.current, payload)
@@ -335,16 +337,27 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
                     </div>
                 )}
 
-                <div className="space-y-1.5">
-                    <Label htmlFor="compra-notes">Notas (opcional)</Label>
-                    <Textarea
-                        id="compra-notes"
-                        placeholder="Factura del proveedor, condiciones de entrega…"
-                        value={notes}
-                        onChange={e => setNotes(e.target.value)}
-                        maxLength={1000}
-                        className="resize-none h-16"
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="compra-dueat">Fecha promesa de pago (opcional)</Label>
+                        <Input
+                            id="compra-dueat"
+                            type="date"
+                            value={dueAt}
+                            onChange={e => setDueAt(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="compra-notes">Notas (opcional)</Label>
+                        <Textarea
+                            id="compra-notes"
+                            placeholder="Factura del proveedor, condiciones de entrega…"
+                            value={notes}
+                            onChange={e => setNotes(e.target.value)}
+                            maxLength={1000}
+                            className="resize-none h-16"
+                        />
+                    </div>
                 </div>
             </div>
 

@@ -79,7 +79,7 @@ export async function GET(req: Request) {
       category: true,
       _count: { select: { reservations: true } },
       // Existencias por sucursal (productDto las expone sólo a staff).
-      ...(isCatalogStaff(viewer) ? { stocks: { include: { branch: { select: { id: true, name: true } } } } } : {}),
+      ...(isCatalogStaff(viewer) ? { stocks: { where: { businessId }, include: { branch: { select: { id: true, name: true } } } } } : {}),
     }
 
     if (lowStock) {
@@ -163,6 +163,35 @@ export async function POST(req: Request) {
       modelIds,
       stockBranchId,
     } = parseResult.data
+
+    // La categoría, los modelos y la sucursal deben pertenecer a esta empresa.
+    const category = await prisma.category.findFirst({
+      where: { id: categoryId, businessId },
+      select: { id: true },
+    })
+    if (!category) {
+      return NextResponse.json(
+        { error: "Categoría no encontrada" },
+        { status: 404 }
+      )
+    }
+    if (!isUniversal) {
+      const ownedModels = await prisma.model.count({
+        where: { id: { in: modelIds }, businessId },
+      })
+      if (ownedModels !== modelIds.length) {
+        return NextResponse.json(
+          { error: "Uno o más modelos no existen" },
+          { status: 400 }
+        )
+      }
+    }
+    if (stockBranchId && !await prisma.branch.findFirst({ where: { id: stockBranchId, businessId }, select: { id: true } })) {
+      return NextResponse.json(
+        { error: "Sucursal no encontrada" },
+        { status: 400 }
+      )
+    }
 
     // Check if barcode already exists
     if (barcode) {

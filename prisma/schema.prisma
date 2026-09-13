@@ -1,9 +1,10 @@
 // ProSolutions Inventario - Database Schema
 //
-// NOTA: la BD contiene objetos que este archivo no puede expresar (índice
-// parcial "CashRegister_one_open", CHECK constraints de 20260911000000 e índice
-// GIN trigram idx_product_name_trgm). `prisma migrate dev` puede proponer
-// borrarlos: revisa el SQL generado antes de aplicar (usa --create-only).
+// NOTA: la BD contiene objetos que este archivo no puede expresar (índices
+// parciales "CashRegister_one_open" e "InventoryCount_one_open", CHECK
+// constraints de 20260911000000 e índice GIN trigram idx_product_name_trgm).
+// `prisma migrate dev` puede proponer borrarlos: revisa el SQL generado antes
+// de aplicar (usa --create-only).
 generator client {
   provider = "prisma-client-js"
 }
@@ -56,6 +57,9 @@ model Business {
   suppliers           Supplier[]
   purchases           Purchase[]
   purchaseItems       PurchaseItem[]
+  supplierPayments    SupplierPayment[]
+  inventoryCounts     InventoryCount[]
+  inventoryCountItems InventoryCountItem[]
 
   @@index([isActive])
 }
@@ -205,6 +209,8 @@ model User {
   salesAsCustomer       Sale[]               @relation("SaleCustomer")
   paymentsMade          Payment[]            @relation("PaymentCreatedBy")
   purchases             Purchase[]
+  supplierPayments      SupplierPayment[]
+  inventoryCounts       InventoryCount[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -302,6 +308,7 @@ model Product {
   repairParts         RepairPart[]
   purchaseItems       PurchaseItem[]
   marketplaceRequests MarketplaceRequest[]
+  inventoryCountItems InventoryCountItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -592,6 +599,7 @@ model Branch {
   transfersReceived InventoryMovement[] @relation("TransferDestination")
   cashRequests      CashRequest[]
   purchases         Purchase[]
+  inventoryCounts   InventoryCount[]
   createdAt         DateTime            @default(now())
 
   @@unique([businessId, name])
@@ -939,16 +947,17 @@ model MarketplaceRequest {
 
 // Proveedor de refacciones. Los montos de compra se guardan en centavos.
 model Supplier {
-  id         String     @id @default(cuid())
+  id         String            @id @default(cuid())
   businessId String
-  business   Business   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
   name       String
   phone      String?
   email      String?
   notes      String?
-  isActive   Boolean    @default(true)
-  createdAt  DateTime   @default(now())
+  isActive   Boolean           @default(true)
+  createdAt  DateTime          @default(now())
   purchases  Purchase[]
+  payments   SupplierPayment[]
 
   @@unique([businessId, name])
   @@index([businessId])
@@ -964,23 +973,29 @@ enum PurchaseStatus {
 // Orden de compra. Al pasar a RECEIVED genera los movimientos IN de inventario
 // sobre purchase.branchId (mismo efecto que moveInventory type IN).
 model Purchase {
-  id          String         @id @default(cuid())
-  businessId  String
-  business    Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  number      Int            @default(autoincrement()) // folio visible: OC-000001
-  supplierId  String?
-  supplier    Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  status      PurchaseStatus @default(DRAFT)
-  branchId    String
-  branch      Branch         @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  notes       String?
-  totalCents  Int            @default(0) // suma de items, calculado en servidor
-  items       PurchaseItem[]
-  createdById String
-  createdBy   User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  receivedAt  DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id               String            @id @default(cuid())
+  businessId       String
+  business         Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  number           Int               @default(autoincrement()) // folio visible: OC-000001
+  supplierId       String?
+  supplier         Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  status           PurchaseStatus    @default(DRAFT)
+  branchId         String
+  branch           Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  notes            String?
+  totalCents       Int               @default(0) // suma de items, calculado en servidor
+  // Abonos ligados a ESTA orden (cache por OC; la deuda del proveedor se deriva
+  // de sum(RECEIVED.totalCents) - sum(SupplierPayment.amountCents)).
+  paidCents        Int               @default(0)
+  dueAt            DateTime? // fecha promesa de pago al proveedor
+  paidAt           DateTime? // cuándo quedó liquidada (paidCents >= totalCents)
+  items            PurchaseItem[]
+  supplierPayments SupplierPayment[]
+  createdById      String
+  createdBy        User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  receivedAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   @@index([businessId, status])
   @@index([businessId, createdAt])
@@ -998,5 +1013,79 @@ model PurchaseItem {
   unitCostCents Int
 
   @@index([purchaseId])
+  @@index([businessId])
+}
+
+// Abono del negocio a un proveedor (cuentas por pagar). Puede ligarse a una OC
+// en estado ORDERED|RECEIVED o quedar a cuenta general (purchaseId null).
+// NO genera CashMovement: el pago a proveedores es dinero externo (transferencia
+// bancaria, efectivo entregado fuera de mostrador), no sale de la caja del local.
+model SupplierPayment {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  supplierId  String
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseId  String?
+  purchase    Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  amountCents Int
+  method      String // "CASH" | "CARD" | "TRANSFER" (solo documenta el medio usado)
+  notes       String?
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+
+  @@index([businessId])
+  @@index([supplierId])
+  @@index([purchaseId])
+}
+
+// ==================== CONTEO FÍSICO ====================
+
+enum CountStatus {
+  OPEN // Captura en curso; editable hasta aplicar o cancelar
+  APPLIED // Ajustes aplicados: cada diferencia quedó como InventoryMovement ADJUSTMENT
+  CANCELLED
+}
+
+// Sesión de conteo físico por sucursal: se captura lo que realmente hay y al
+// aplicar se generan los ajustes auditados contra el stock registrado.
+// Solo una OPEN por sucursal a la vez: la BD tiene el índice único parcial
+// "InventoryCount_one_open" (no expresable en este archivo, como
+// "CashRegister_one_open"); el dominio también lo valida.
+model InventoryCount {
+  id          String               @id @default(cuid())
+  businessId  String
+  business    Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  number      Int                  @unique @default(autoincrement()) // folio visible: CC-000001
+  branchId    String
+  branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  status      CountStatus          @default(OPEN)
+  notes       String?
+  createdById String
+  createdBy   User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  appliedAt   DateTime?
+  createdAt   DateTime             @default(now())
+  items       InventoryCountItem[]
+
+  @@index([businessId, status])
+}
+
+// Producto capturado dentro de una sesión de conteo. expectedQty es lo que el
+// sistema tenía registrado (BranchStock) al capturar; si el stock se mueve
+// antes de aplicar, se re-sincroniza al aplicar para que el ajuste registrado
+// siempre sea countedQty - expectedQty.
+model InventoryCountItem {
+  id          String         @id @default(cuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  countId     String
+  count       InventoryCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  expectedQty Int
+  countedQty  Int
+
+  @@unique([countId, productId])
   @@index([businessId])
 }

@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
     try {
         const result = await requireAdminOrEmployee()
         if (result.error) return result.error
+        const businessId = businessIdOf(getSession(result)!)
 
         const { searchParams } = new URL(request.url)
         const productId = searchParams.get("productId")
@@ -40,11 +41,11 @@ export async function GET(request: NextRequest) {
         const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50") || 50))
         const offset = Math.min(20000, Math.max(0, parseInt(searchParams.get("offset") || "0") || 0))
 
-        const movementWhere: Record<string, unknown> = {}
+        const movementWhere: Record<string, unknown> = { businessId }
         if (productId) movementWhere.productId = productId
         if (branchId) movementWhere.branchId = branchId
 
-        let reservationWhere: { status: { in: ("COMPLETED" | "CANCELLED")[] } } | { status: "COMPLETED" } | { status: "CANCELLED" } = { status: { in: ["COMPLETED", "CANCELLED"] } }
+        let reservationWhere: { businessId: string; status: { in: ("COMPLETED" | "CANCELLED")[] } } | { businessId: string; status: "COMPLETED" } | { businessId: string; status: "CANCELLED" } = { businessId, status: { in: ["COMPLETED", "CANCELLED"] } }
         let movementTypeFilter: MovementType | null = null
         let onlyReservations = false
         let onlyMovements = false
@@ -52,10 +53,10 @@ export async function GET(request: NextRequest) {
         if (typeParam === "SALE") {
             movementWhere.type = "OUT"
             movementWhere.paymentMethod = { not: null }
-            reservationWhere = { status: "COMPLETED" }
+            reservationWhere = { businessId, status: "COMPLETED" }
         } else if (typeParam === "CANCELLED") {
             onlyReservations = true
-            reservationWhere = { status: "CANCELLED" }
+            reservationWhere = { businessId, status: "CANCELLED" }
         } else if (typeParam === "DAMAGED" || typeParam === "LOST" || typeParam === "MERMAS") {
             // DAMAGED/LOST se persisten como OUT (el enum MovementType no los
             // incluye). Las mermas nuevas llevan notes "merma:damaged"|"merma:lost"
@@ -127,7 +128,7 @@ export async function GET(request: NextRequest) {
 
         const total = (typeof totalMovements === "number" ? totalMovements : 0) + (typeof totalReservations === "number" ? totalReservations : 0)
         const enriched = await Promise.all(combined.map(async row => {
-            const returned = await prisma.inventoryMovement.aggregate({ where: { type: "RETURN", ...(row.source === "RESERVATION" ? { reservationId: row.id } : { relatedId: row.id }) }, _sum: { quantity: true } })
+            const returned = await prisma.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", ...(row.source === "RESERVATION" ? { reservationId: row.id } : { relatedId: row.id }) }, _sum: { quantity: true } })
             return { ...row, returnableQuantity: Math.max(0, row.quantity - (returned._sum.quantity ?? 0)) }
         }))
         return NextResponse.json({ movements: enriched, total })

@@ -35,7 +35,7 @@ async function decide(tx: Transaction, actorId: string, businessId: string, id: 
     return { request: await tx.cashRequest.findUniqueOrThrow({ where: { id }, include: requestInclude }) }
   }
   // APPROVE: requiere caja abierta en la sucursal de la solicitud.
-  const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: request.branchId }, orderBy: { openedAt: "desc" } })
+  const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: request.branchId, businessId }, orderBy: { openedAt: "desc" } })
   if (!register) throw new BusinessError("Abre la caja de la sucursal primero.", 409)
   const approved = await tx.cashRequest.updateMany({
     where: { id, status: "PENDING" },

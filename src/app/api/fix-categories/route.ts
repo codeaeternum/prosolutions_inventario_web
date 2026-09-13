@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 // POST /api/fix-categories — Rename all categories to singular form (one-time migration)
@@ -7,6 +8,7 @@ export async function POST() {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const renames: Record<string, string> = {
       "Pantallas OLED": "Pantalla OLED",
@@ -34,12 +36,12 @@ export async function POST() {
 
     for (const [oldName, newName] of Object.entries(renames)) {
       const cat = await prisma.category.findFirst({
-        where: { name: { equals: oldName, mode: "insensitive" } },
+        where: { businessId, name: { equals: oldName, mode: "insensitive" } },
       })
       if (cat) {
         // Check if target name already exists (avoid unique constraint)
         const exists = await prisma.category.findFirst({
-          where: { name: { equals: newName, mode: "insensitive" }, NOT: { id: cat.id } },
+          where: { businessId, name: { equals: newName, mode: "insensitive" }, NOT: { id: cat.id } },
         })
         if (exists) {
           skipped++

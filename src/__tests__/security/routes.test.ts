@@ -4,12 +4,12 @@ import os from "node:os"
 import path from "node:path"
 import { NextRequest } from "next/server"
 
-const mocks = vi.hoisted(() => ({ auth: vi.fn(), findProduct: vi.fn(), productCount: vi.fn(), findReservation: vi.fn(), authPost: vi.fn(), findUser: vi.fn() }))
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), findProduct: vi.fn(), productCount: vi.fn(), findReservation: vi.fn(), authPost: vi.fn(), findUser: vi.fn(), findUserById: vi.fn() }))
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST: mocks.authPost } }))
 vi.mock("@/lib/prisma", () => ({ prisma: {
   product: { findMany: mocks.findProduct, findUnique: mocks.findProduct, count: mocks.productCount },
   reservation: { findFirst: mocks.findReservation },
-  user: { findMany: mocks.findUser },
+  user: { findMany: mocks.findUser, findUnique: mocks.findUserById },
   business: { findFirst: vi.fn(async () => ({ id: "biz-test" })) },
 } }))
 import { GET as fixPreview, POST as fixApply } from "@/app/api/fix-catalog/route"
@@ -23,10 +23,10 @@ import { GET as reports } from "@/app/api/reports/route"
 import { paymentProofFilename, writePaymentProof } from "@/lib/payment-proofs"
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=", "base64")
-const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL" } })
+const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test" } })
 let directory: string
 beforeEach(async () => {
-  vi.clearAllMocks(); mocks.auth.mockResolvedValue(null); mocks.findReservation.mockResolvedValue(null)
+  vi.clearAllMocks(); mocks.auth.mockResolvedValue(null); mocks.findReservation.mockResolvedValue(null); mocks.findUserById.mockResolvedValue({ businessId: "biz-test" })
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "proof-route-test-"))
   vi.stubEnv("PAYMENT_PROOFS_DIR", directory)
 })

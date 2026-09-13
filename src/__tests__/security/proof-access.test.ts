@@ -4,10 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { NextRequest } from "next/server"
 
-const mocks = vi.hoisted(() => ({ authSession: vi.fn(), findReservation: vi.fn(), getAuthRedirect: vi.fn() }))
+const mocks = vi.hoisted(() => ({ authSession: vi.fn(), findReservation: vi.fn(), getAuthRedirect: vi.fn(), findUserById: vi.fn() }))
 // api-auth calls auth() for the session; middleware calls auth(handler) as a wrapper.
 vi.mock("@/lib/auth", () => ({ auth: (arg?: unknown) => (typeof arg === "function" ? arg : mocks.authSession()) }))
-vi.mock("@/lib/prisma", () => ({ prisma: { reservation: { findFirst: mocks.findReservation } } }))
+vi.mock("@/lib/prisma", () => ({ prisma: { reservation: { findFirst: mocks.findReservation }, user: { findUnique: mocks.findUserById } } }))
 vi.mock("@/lib/auth.config", () => ({ getAuthRedirect: mocks.getAuthRedirect }))
 
 import { GET as uploads } from "@/app/uploads/[[...path]]/route"
@@ -15,7 +15,7 @@ import middleware from "@/middleware"
 import { paymentProofFilename, writePaymentProof } from "@/lib/payment-proofs"
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=", "base64")
-const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL" } })
+const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test" } })
 // The middleware only reads req.auth and req.nextUrl; a stub with a real NextURL exercises the same logic.
 const runMiddleware = (req: NextRequest, auth: unknown) => (middleware as any)({ auth, nextUrl: req.nextUrl })
 const getUpload = (segments: string[]) => uploads(new NextRequest(`https://app.invalid/uploads/${segments.join("/")}`), { params: Promise.resolve({ path: segments }) })
@@ -25,6 +25,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   mocks.authSession.mockResolvedValue(null)
   mocks.findReservation.mockResolvedValue(null)
+  mocks.findUserById.mockResolvedValue({ businessId: "biz-test" })
   mocks.getAuthRedirect.mockReturnValue(null)
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "proof-access-test-"))
   vi.stubEnv("PAYMENT_PROOFS_DIR", directory)

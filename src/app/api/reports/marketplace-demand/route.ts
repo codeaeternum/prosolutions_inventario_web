@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 
 // Reporte de demanda del marketplace B2B: qué refacciones piden los talleres
 // aliados. La "demanda" = solicitudes NO rechazadas (PENDING/APPROVED/FULFILLED);
@@ -27,8 +28,10 @@ export async function GET() {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
+    const businessId = businessIdOf(getSession(auth)!)
 
     const requests = await prisma.marketplaceRequest.findMany({
+      where: { businessId },
       select: {
         productId: true,
         qty: true,
@@ -41,7 +44,7 @@ export async function GET() {
 
     const productIds = [...new Set(requests.map((r) => r.productId))]
     const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, businessId },
       select: {
         id: true,
         name: true,

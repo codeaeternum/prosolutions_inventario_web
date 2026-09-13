@@ -17,6 +17,8 @@ const createSchema = z.object({
   supplierId: z.string().min(1).nullish(),
   branchId: z.string().min(1),
   notes: z.string().trim().max(1000).optional(),
+  // Fecha promesa de pago al proveedor, YYYY-MM-DD (como la emite <input type="date">).
+  dueAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha promesa inválida").nullish(),
   items: z.array(purchaseItemSchema).min(1).max(200),
 })
 
@@ -30,6 +32,11 @@ export async function createPurchase(db: PrismaClient, actorId: string, business
       ? await tx.supplier.findFirst({ where: { id: input.supplierId, businessId, isActive: true } })
       : null
     if (input.supplierId && !supplier) throw new BusinessError("Proveedor no encontrado o inactivo.", 404)
+
+    // Se guarda al mediodía UTC para que en cualquier zona horaria de México
+    // (UTC-6 a UTC-8) la fecha mostrada sea la misma que capturó el usuario.
+    const dueAt = input.dueAt ? new Date(`${input.dueAt}T12:00:00.000Z`) : null
+    if (dueAt && Number.isNaN(dueAt.getTime())) throw new BusinessError("Fecha promesa inválida.", 400)
 
     const lines = []
     let totalCents = 0
@@ -46,6 +53,7 @@ export async function createPurchase(db: PrismaClient, actorId: string, business
         branchId: branch.id,
         supplierId: supplier?.id ?? null,
         notes: input.notes || null,
+        dueAt,
         totalCents,
         createdById: actorId,
         items: { create: lines },
@@ -143,6 +151,13 @@ export function listPurchases(db: PrismaClient, businessId: string, status?: Pur
       branch: { select: { id: true, name: true } },
       createdBy: { select: { id: true, name: true } },
       items: { include: { product: { select: { id: true, name: true, barcode: true } } } },
+      supplierPayments: {
+        select: {
+          id: true, amountCents: true, method: true, notes: true, createdAt: true,
+          createdBy: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
     },
     orderBy: [{ createdAt: "desc" }, { number: "desc" }],
     take: 200,

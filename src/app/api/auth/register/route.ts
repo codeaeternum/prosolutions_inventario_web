@@ -103,7 +103,7 @@ export async function POST(req: Request) {
         phone,
         requestedType,
       },
-    })
+    }, businessId)
 
     return NextResponse.json({
       message: "Solicitud enviada correctamente",

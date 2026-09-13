@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -10,11 +11,12 @@ import { VerifyActions } from "./verify-actions"
 
 export const dynamic = "force-dynamic"
 
-async function getReservation(code: string) {
+async function getReservation(code: string, businessId: string) {
   try {
     // Aceptar id (QR del bot) o qrCode (campo único de la reserva)
     return await prisma.reservation.findFirst({
       where: {
+        businessId,
         OR: [{ id: code }, { qrCode: code }],
       },
       include: {
@@ -80,7 +82,7 @@ export default async function VerifyPage({
     redirect("/login?callbackUrl=/verificar/" + qrCode)
   }
 
-  const reservation = await getReservation(qrCode)
+  const reservation = await getReservation(qrCode, businessIdOf(session))
 
   if (!reservation) {
     return (

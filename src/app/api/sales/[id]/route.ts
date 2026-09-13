@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 
@@ -9,7 +10,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (auth.error) return auth.error
     const { id } = await params
     const sale = await prisma.sale.findUnique({
-      where: { id },
+      where: { id, businessId: businessIdOf(getSession(auth)!) },
       include: {
         branch: { select: { id: true, name: true } },
         seller: { select: { id: true, name: true } },

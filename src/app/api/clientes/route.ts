@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { CustomerType } from "@prisma/client"
 
@@ -12,6 +13,7 @@ export async function GET(req: Request) {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()
@@ -21,6 +23,7 @@ export async function GET(req: Request) {
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20", 10) || 20))
 
     const where = {
+      businessId,
       role: "CUSTOMER" as const,
       status: "APPROVED" as const,
       ...(typeParam && { customerType: typeParam as CustomerType }),
@@ -50,7 +53,12 @@ export async function GET(req: Request) {
           creditBalance: true,
           totalPurchases: true,
           createdAt: true,
-          _count: { select: { reservations: true, salesAsCustomer: true } },
+          _count: {
+            select: {
+              reservations: { where: { businessId } },
+              salesAsCustomer: { where: { businessId } },
+            },
+          },
         },
         orderBy: { name: "asc" },
         skip: (page - 1) * limit,
@@ -64,7 +72,7 @@ export async function GET(req: Request) {
     const repairsByPhone = phones.length
       ? await prisma.repairOrder.groupBy({
           by: ["customerPhone"],
-          where: { customerPhone: { in: phones } },
+          where: { businessId, customerPhone: { in: phones } },
           _count: { _all: true },
         })
       : []

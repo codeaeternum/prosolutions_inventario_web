@@ -9,10 +9,13 @@ import { prisma } from "@/lib/prisma"
  * Compartido por /cotizacion/[token] (global, fallback cuando no hay slug) y
  * /<slug>/cotizacion/[token] (brandeada bajo la vitrina del negocio).
  */
-export function loadQuoteByToken(token: string) {
+export function loadQuoteByToken(token: string, businessId?: string) {
   return prisma.repairOrder.findUnique({
-    where: { quoteToken: token },
+    // Con businessId la página brandeada nunca muestra una cotización de otro
+    // negocio: un token ajeno bajo /<slug>/ responde como no encontrada.
+    where: { quoteToken: token, ...(businessId ? { businessId } : {}) },
     select: {
+      businessId: true,
       number: true,
       status: true,
       customerName: true,

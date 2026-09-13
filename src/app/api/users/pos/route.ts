@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 /** Minimal approved customer lookup needed to take a credit payment at the counter. */
 export async function GET(req: Request) {
   const result = await requireAdminOrEmployee()
   if (result.error) return result.error
+  const businessId = businessIdOf(getSession(result)!)
   const params = new URL(req.url).searchParams
   const search = params.get("search")?.trim() ?? ""
   if (search.length < 2 || search.length > 100) return NextResponse.json({ users: [] })
   const users = await prisma.user.findMany({
-    where: { role: "CUSTOMER", status: "APPROVED", creditLimit: { not: null }, OR: [
+    where: { businessId, role: "CUSTOMER", status: "APPROVED", creditLimit: { not: null }, OR: [
       { name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } },
     ] },
     select: { id: true, name: true, customerType: true, creditLimit: true, creditBalance: true },

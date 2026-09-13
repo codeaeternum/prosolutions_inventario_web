@@ -34,9 +34,10 @@ export function mergeItems(input: Item[]): Item[] {
   return [...merged].sort(([a], [b]) => a.localeCompare(b)).map(([productId, quantity]) => itemSchema.parse({ productId, quantity }))
 }
 
-export async function actor(tx: Transaction, id: string, permission: "customer" | "staff" | "admin" = "customer") {
+export async function actor(tx: Transaction, id: string, permission: "customer" | "staff" | "admin" = "customer", businessId?: string) {
   const user = await tx.user.findUnique({ where: { id } })
-  if (!user || user.status !== "APPROVED") throw new BusinessError("La cuenta no está autorizada para operar.", 403, "ACCOUNT_NOT_APPROVED")
+  // Mismo mensaje genérico para cuenta ajena: no revelar que el usuario existe en otro negocio.
+  if (!user || user.status !== "APPROVED" || (businessId && user.businessId !== businessId)) throw new BusinessError("La cuenta no está autorizada para operar.", 403, "ACCOUNT_NOT_APPROVED")
   if (permission === "admin" && user.role !== "ADMIN") throw new BusinessError("Se requiere administrador.", 403)
   if (permission === "staff" && !["ADMIN", "EMPLOYEE"].includes(user.role)) throw new BusinessError("Acceso denegado.", 403)
   return user
@@ -65,7 +66,7 @@ export async function operation<T extends object>(
   const key = operationKeySchema.parse(input.key)
   const requestHash = createHash("sha256").update(JSON.stringify(input.payload)).digest("hex")
   return transaction(db, async tx => {
-    await actor(tx, input.actorId, input.permission)
+    await actor(tx, input.actorId, input.permission, input.businessId)
     const existing = await tx.businessOperation.findUnique({ where: { key } })
     if (existing) {
       if (existing.actorId !== input.actorId || existing.kind !== input.kind || existing.requestHash !== requestHash || existing.businessId !== input.businessId) {
@@ -84,26 +85,28 @@ export async function operation<T extends object>(
 export const PRINCIPAL_BRANCH_ID = "branch-principal"
 
 /** Sucursal por defecto cuando el flujo no especifica una (catálogo público, historiales). */
-export async function resolveBranch(tx: Transaction, branchId?: string | null) {
+export async function resolveBranch(tx: Transaction, branchId?: string | null, businessId?: string) {
+  const scope = businessId ? { businessId } : {}
   if (branchId) {
-    const branch = await tx.branch.findUnique({ where: { id: branchId } })
+    // Una sucursal de otro negocio responde igual que una inexistente/inactiva.
+    const branch = await tx.branch.findFirst({ where: { id: branchId, ...scope } })
     if (!branch || !branch.isActive) throw new BusinessError("La sucursal seleccionada no está activa.", 409)
     return branch
   }
-  const branch = await tx.branch.findUnique({ where: { id: PRINCIPAL_BRANCH_ID } })
+  const branch = await tx.branch.findFirst({ where: { id: PRINCIPAL_BRANCH_ID, ...scope } })
   if (branch) return branch
-  const first = await tx.branch.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" } })
+  const first = await tx.branch.findFirst({ where: { isActive: true, ...scope }, orderBy: { createdAt: "asc" } })
   if (!first) throw new BusinessError("No hay sucursales activas.", 409)
   return first
 }
 
 /** Descuenta existencias de UNA sucursal y del total cacheado, en la misma transacción. */
-export async function takeStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null }) {
-  const product = await tx.product.findUnique({ where: { id: input.productId } })
+export async function takeStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null; businessId: string }) {
+  const product = await tx.product.findFirst({ where: { id: input.productId, businessId: input.businessId } })
   if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
-  const branch = await resolveBranch(tx, input.branchId)
+  const branch = await resolveBranch(tx, input.branchId, input.businessId)
   const taken = await tx.branchStock.updateMany({
-    where: { productId: product.id, branchId: branch.id, quantity: { gte: input.quantity } },
+    where: { productId: product.id, branchId: branch.id, businessId: input.businessId, quantity: { gte: input.quantity } },
     data: { quantity: { decrement: input.quantity } },
   })
   if (taken.count !== 1) throw new BusinessError(`Stock insuficiente de ${product.name} en ${branch.name}.`, 409, "INSUFFICIENT_STOCK")
@@ -114,7 +117,9 @@ export async function takeStock(tx: Transaction, input: { productId: string; qua
 
 /** Devuelve existencias a UNA sucursal y al total cacheado. Crea la fila si no existía. */
 export async function releaseStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null; businessId: string }) {
-  const branch = await resolveBranch(tx, input.branchId)
+  const product = await tx.product.findFirst({ where: { id: input.productId, businessId: input.businessId } })
+  if (!product) throw new BusinessError("El producto ya no está disponible.", 409)
+  const branch = await resolveBranch(tx, input.branchId, input.businessId)
   await tx.branchStock.upsert({
     where: { productId_branchId: { productId: input.productId, branchId: branch.id } },
     create: { businessId: input.businessId, productId: input.productId, branchId: branch.id, quantity: input.quantity },
@@ -125,19 +130,19 @@ export async function releaseStock(tx: Transaction, input: { productId: string; 
 }
 
 /** Caja abierta de UNA sucursal (una por local; restricción única parcial en BD). */
-export async function openRegister(tx: Transaction, branchId?: string | null) {
-  const branch = await resolveBranch(tx, branchId)
-  const registers = await tx.cashRegister.findMany({ where: { status: "OPEN", branchId: branch.id }, take: 2 })
+export async function openRegister(tx: Transaction, branchId?: string | null, businessId?: string) {
+  const branch = await resolveBranch(tx, branchId, businessId)
+  const registers = await tx.cashRegister.findMany({ where: { status: "OPEN", branchId: branch.id, ...(businessId ? { businessId } : {}) }, take: 2 })
   if (registers.length !== 1) throw new BusinessError(registers.length ? `Hay más de una caja abierta en ${branch.name}; requiere revisión.` : `Abre la caja de ${branch.name} antes de registrar efectivo.`, 409, "REGISTER_REQUIRED")
   const locked = await tx.cashRegister.updateMany({ where: { id: registers[0].id, status: "OPEN" }, data: { status: "OPEN" } })
   if (locked.count !== 1) throw new BusinessError("La caja acaba de cerrarse.", 409)
   return registers[0]
 }
 
-export async function addDebt(tx: Transaction, userId: string, totalCents: number, reference: { type: "SALE" | "RESERVATION" | "MANUAL"; id?: string; notes: string }) {
+export async function addDebt(tx: Transaction, userId: string, totalCents: number, reference: { type: "SALE" | "RESERVATION" | "MANUAL"; id?: string; notes: string }, businessId: string) {
   if (totalCents === 0) return
   const user = await tx.user.findUnique({ where: { id: userId } })
-  if (!user || user.status !== "APPROVED") throw new BusinessError("El cliente no está habilitado para crédito.", 409)
+  if (!user || user.status !== "APPROVED" || user.businessId !== businessId) throw new BusinessError("El cliente no está habilitado para crédito.", 409)
   const balance = cents(user.creditBalance, true)
   const limit = user.creditLimit == null ? 0 : cents(user.creditLimit, true)
   if (limit <= 0 || balance + totalCents > limit) throw new BusinessError("Crédito disponible insuficiente.", 409, "INSUFFICIENT_CREDIT")

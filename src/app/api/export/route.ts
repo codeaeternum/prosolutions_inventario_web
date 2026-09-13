@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
 
@@ -47,18 +48,18 @@ function formatDateTime(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-async function exportProducts(): Promise<string> {
+async function exportProducts(businessId: string): Promise<string> {
   const [products, branches] = await Promise.all([
     prisma.product.findMany({
-      where: { isActive: true },
+      where: { businessId, isActive: true },
       orderBy: { name: "asc" },
       take: MAX_ROWS,
       include: {
         category: { select: { name: true } },
-        stocks: { select: { branchId: true, quantity: true } },
+        stocks: { where: { businessId }, select: { branchId: true, quantity: true } },
       },
     }),
-    prisma.branch.findMany({ orderBy: { name: "asc" } }),
+    prisma.branch.findMany({ where: { businessId }, orderBy: { name: "asc" } }),
   ])
   const headers = [
     "Código de barras",
@@ -88,9 +89,9 @@ async function exportProducts(): Promise<string> {
   return toCsv(headers, rows)
 }
 
-async function exportSales(branchId?: string): Promise<string> {
+async function exportSales(businessId: string, branchId?: string): Promise<string> {
   const sales = await prisma.sale.findMany({
-    where: branchId ? { branchId } : {},
+    where: { businessId, ...(branchId ? { branchId } : {}) },
     orderBy: { number: "desc" },
     take: MAX_ROWS,
     include: {
@@ -116,9 +117,9 @@ async function exportSales(branchId?: string): Promise<string> {
   return toCsv(headers, rows)
 }
 
-async function exportOrders(branchId?: string): Promise<string> {
+async function exportOrders(businessId: string, branchId?: string): Promise<string> {
   const orders = await prisma.repairOrder.findMany({
-    where: branchId ? { currentBranchId: branchId } : {},
+    where: { businessId, ...(branchId ? { currentBranchId: branchId } : {}) },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: MAX_ROWS,
     include: {
@@ -152,6 +153,7 @@ export async function GET(req: Request) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
+    const businessId = businessIdOf(getSession(auth)!)
 
     const query = new URL(req.url).searchParams
     const type = query.get("type") as ExportType | null
@@ -163,13 +165,13 @@ export async function GET(req: Request) {
     let csv: string
     switch (type) {
       case "products":
-        csv = await exportProducts()
+        csv = await exportProducts(businessId)
         break
       case "sales":
-        csv = await exportSales(branchId)
+        csv = await exportSales(businessId, branchId)
         break
       case "orders":
-        csv = await exportOrders(branchId)
+        csv = await exportOrders(businessId, branchId)
         break
     }
     return csvResponse(type, csv)

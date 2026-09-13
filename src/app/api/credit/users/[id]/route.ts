@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 
@@ -13,10 +14,11 @@ export async function GET(
 ) {
   const result = await requireAdmin()
   if (result.error) return result.error
+  const businessId = businessIdOf(getSession(result)!)
 
   const { id } = await params
   const user = await prisma.user.findUnique({
-    where: { id },
+    where: { id, businessId },
     select: {
       id: true,
       name: true,
@@ -40,6 +42,7 @@ export async function PATCH(
 ) {
   const result = await requireAdmin()
   if (result.error) return result.error
+  const businessId = businessIdOf(getSession(result)!)
 
   const { id } = await params
   const body = await req.json()
@@ -50,6 +53,12 @@ export async function PATCH(
       { status: 400 }
     )
   }
+
+  const existing = await prisma.user.findFirst({
+    where: { id, businessId },
+    select: { id: true },
+  })
+  if (!existing) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
 
   const user = await prisma.user.update({
     where: { id },

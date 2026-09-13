@@ -39,12 +39,22 @@ import {
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/admin/empty-state"
 import { CompraDialog } from "@/components/admin/inventario/compra-dialog"
-import { CheckCircle2, Eye, Loader2, PackageCheck, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
-import { formatDate, formatPrice } from "@/lib/utils"
+import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
+import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
+import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
 type PurchaseStatus = "DRAFT" | "ORDERED" | "RECEIVED" | "CANCELLED"
 type PurchaseAction = "ORDER" | "RECEIVE" | "CANCEL"
+
+interface SupplierPaymentRow {
+    id: string
+    amountCents: number
+    method: string
+    notes: string | null
+    createdAt: string
+    createdBy: { id: string; name: string } | null
+}
 
 interface PurchaseRow {
     id: string
@@ -52,6 +62,9 @@ interface PurchaseRow {
     status: PurchaseStatus
     notes: string | null
     totalCents: number
+    paidCents: number
+    dueAt: string | null
+    paidAt: string | null
     receivedAt: string | null
     createdAt: string
     supplier: { id: string; name: string } | null
@@ -63,6 +76,7 @@ interface PurchaseRow {
         unitCostCents: number
         product: { id: string; name: string; barcode: string | null }
     }[]
+    supplierPayments: SupplierPaymentRow[]
 }
 
 interface SupplierOption { id: string; name: string }
@@ -93,6 +107,24 @@ function folio(number: number) {
     return `OC-${String(number).padStart(6, "0")}`
 }
 
+/** ¿Se puede registrar un abono contra esta OC? (ORDERED|RECEIVED con saldo y proveedor). */
+function isPayable(p: PurchaseRow) {
+    return (p.status === "ORDERED" || p.status === "RECEIVED") && p.supplier !== null && p.totalCents - p.paidCents > 0
+}
+
+function toPendingPurchase(p: PurchaseRow): PendingPurchase {
+    return {
+        id: p.id,
+        number: p.number,
+        folio: folio(p.number),
+        status: p.status,
+        totalCents: p.totalCents,
+        paidCents: p.paidCents,
+        saldoCents: p.totalCents - p.paidCents,
+        dueAt: p.dueAt,
+    }
+}
+
 export function ComprasPanel() {
     const [purchases, setPurchases] = useState<PurchaseRow[]>([])
     const [loading, setLoading] = useState(true)
@@ -104,6 +136,7 @@ export function ComprasPanel() {
 
     const [createOpen, setCreateOpen] = useState(false)
     const [detail, setDetail] = useState<PurchaseRow | null>(null)
+    const [payTarget, setPayTarget] = useState<PurchaseRow | null>(null)
     const [pending, setPending] = useState<{ purchase: PurchaseRow; action: PurchaseAction } | null>(null)
     const [acting, setActing] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
@@ -265,9 +298,16 @@ export function ComprasPanel() {
                                                     {formatPrice(p.totalCents / 100)}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Badge variant="outline" className={config.className}>
-                                                        {config.label}
-                                                    </Badge>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        <Badge variant="outline" className={config.className}>
+                                                            {config.label}
+                                                        </Badge>
+                                                        {p.totalCents > 0 && p.paidCents >= p.totalCents && (
+                                                            <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300">
+                                                                Pagada
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                 </TableCell>
                                                 <TableCell className="hidden sm:table-cell text-sm text-muted-foreground whitespace-nowrap">
                                                     {formatDate(p.createdAt)}
@@ -308,6 +348,18 @@ export function ComprasPanel() {
                                                                 <PackageCheck className="h-4 w-4" />
                                                             </Button>
                                                         )}
+                                                        {isPayable(p) && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-8 w-8 text-amber-600"
+                                                                onClick={() => setPayTarget(p)}
+                                                                title={`Registrar pago (saldo ${formatPrice((p.totalCents - p.paidCents) / 100)})`}
+                                                                aria-label={`Registrar pago de ${folio(p.number)}`}
+                                                            >
+                                                                <Banknote className="h-4 w-4" />
+                                                            </Button>
+                                                        )}
                                                         {(p.status === "DRAFT" || p.status === "ORDERED") && (
                                                             <Button
                                                                 variant="ghost"
@@ -337,6 +389,16 @@ export function ComprasPanel() {
                 branches={branches}
                 open={createOpen}
                 onOpenChange={setCreateOpen}
+                onSaved={() => void fetchPurchases()}
+            />
+
+            {/* Abono ligado a esta OC */}
+            <PagoProveedorDialog
+                open={payTarget !== null}
+                onOpenChange={(open) => { if (!open) setPayTarget(null) }}
+                supplier={payTarget?.supplier ?? null}
+                purchases={payTarget ? [toPendingPurchase(payTarget)] : []}
+                fixedPurchase={payTarget ? toPendingPurchase(payTarget) : null}
                 onSaved={() => void fetchPurchases()}
             />
 
@@ -378,23 +440,71 @@ export function ComprasPanel() {
                                 </span>
                                 <span className="font-semibold tabular-nums">Total: {formatPrice(detail.totalCents / 100)}</span>
                             </div>
-                            {detail.notes && (
-                                <p className="text-sm text-muted-foreground border rounded-md p-3">{detail.notes}</p>
-                            )}
-                            {(detail.status === "DRAFT" || detail.status === "ORDERED") && (
-                                <div className="flex justify-end gap-2 pt-1">
-                                    {detail.status === "DRAFT" && (
-                                        <Button variant="outline" onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
-                                            <Send className="mr-2 h-4 w-4" /> Ordenar
-                                        </Button>
+
+                            {/* Cuenta por pagar de la OC */}
+                            {detail.supplier && (detail.status === "ORDERED" || detail.status === "RECEIVED") && (
+                                <div className="rounded-lg border p-3 space-y-1.5 text-sm">
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-muted-foreground">Pagado</span>
+                                        <span className="tabular-nums">{formatPrice(detail.paidCents / 100)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-muted-foreground">Saldo</span>
+                                        <span className={`font-medium tabular-nums ${detail.totalCents - detail.paidCents > 0 ? "text-red-600" : "text-green-600"}`}>
+                                            {detail.totalCents - detail.paidCents > 0
+                                                ? formatPrice((detail.totalCents - detail.paidCents) / 100)
+                                                : "Liquidada"}
+                                        </span>
+                                    </div>
+                                    {detail.dueAt && detail.totalCents - detail.paidCents > 0 && (
+                                        <p className={`text-xs ${new Date(detail.dueAt) < new Date() ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                                            Promesa de pago: {formatDay(detail.dueAt)}
+                                        </p>
                                     )}
-                                    {detail.status === "ORDERED" && (
-                                        <Button onClick={() => { setDetail(null); requestAction(detail, "RECEIVE") }}>
-                                            <CheckCircle2 className="mr-2 h-4 w-4" /> Recibir mercancía
-                                        </Button>
+                                    {detail.paidAt && (
+                                        <p className="text-xs text-muted-foreground">Liquidada el {formatDay(detail.paidAt)}</p>
                                     )}
                                 </div>
                             )}
+
+                            {/* Abonos ligados a esta OC */}
+                            {detail.supplierPayments.length > 0 && (
+                                <div className="rounded-md border divide-y max-h-40 overflow-y-auto">
+                                    {detail.supplierPayments.map(p => (
+                                        <div key={p.id} className="px-3 py-2 flex justify-between items-center gap-3 text-sm">
+                                            <div className="min-w-0">
+                                                <p className="font-medium">{SUPPLIER_METHOD_LABELS[p.method] ?? p.method}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {formatDate(p.createdAt)}{p.createdBy ? ` · ${p.createdBy.name}` : ""}
+                                                    {p.notes ? ` · ${p.notes}` : ""}
+                                                </p>
+                                            </div>
+                                            <span className="tabular-nums font-medium shrink-0">{formatPrice(p.amountCents / 100)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {detail.notes && (
+                                <p className="text-sm text-muted-foreground border rounded-md p-3">{detail.notes}</p>
+                            )}
+                            <div className="flex justify-end gap-2 pt-1">
+                                {isPayable(detail) && (
+                                    <Button variant="outline" onClick={() => { setDetail(null); setPayTarget(detail) }}>
+                                        <Banknote className="mr-2 h-4 w-4" /> Pagar
+                                    </Button>
+                                )}
+                                {detail.status === "DRAFT" && (
+                                    <Button variant="outline" onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
+                                        <Send className="mr-2 h-4 w-4" /> Ordenar
+                                    </Button>
+                                )}
+                                {detail.status === "ORDERED" && (
+                                    <Button onClick={() => { setDetail(null); requestAction(detail, "RECEIVE") }}>
+                                        <CheckCircle2 className="mr-2 h-4 w-4" /> Recibir mercancía
+                                    </Button>
+                                )}
+                            </div>
                         </>
                     )}
                 </DialogContent>

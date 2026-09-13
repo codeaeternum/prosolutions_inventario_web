@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/api-auth'
+import { getSession, requireAdmin } from '@/lib/api-auth'
+import { businessIdOf } from '@/lib/tenant'
 
 /**
  * One-time migration API to fix product names in the catalog.
@@ -54,12 +55,14 @@ export async function GET() {
     try {
         const authResult = await requireAdmin()
         if (authResult.error) return authResult.error
+        const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({
+            where: { businessId },
             include: { category: true }
         })
 
-        const lcdCategory = await prisma.category.findFirst({ where: { name: { contains: 'LCD', mode: 'insensitive' } } })
-        const oledCategory = await prisma.category.findFirst({ where: { name: { contains: 'OLED', mode: 'insensitive' } } })
+        const lcdCategory = await prisma.category.findFirst({ where: { businessId, name: { contains: 'LCD', mode: 'insensitive' } } })
+        const oledCategory = await prisma.category.findFirst({ where: { businessId, name: { contains: 'OLED', mode: 'insensitive' } } })
 
         const fixes: NameFix[] = []
 
@@ -99,8 +102,8 @@ export async function GET() {
             fixesNeeded: fixes.length,
             fixes
         })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e) {
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Error interno" }, { status: 500 })
     }
 }
 
@@ -108,12 +111,14 @@ export async function POST() {
     try {
         const authResult = await requireAdmin()
         if (authResult.error) return authResult.error
+        const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({
+            where: { businessId },
             include: { category: true }
         })
 
-        const lcdCategory = await prisma.category.findFirst({ where: { name: { contains: 'LCD', mode: 'insensitive' } } })
-        const oledCategory = await prisma.category.findFirst({ where: { name: { contains: 'OLED', mode: 'insensitive' } } })
+        const lcdCategory = await prisma.category.findFirst({ where: { businessId, name: { contains: 'LCD', mode: 'insensitive' } } })
+        const oledCategory = await prisma.category.findFirst({ where: { businessId, name: { contains: 'OLED', mode: 'insensitive' } } })
 
         const fixes: NameFix[] = []
         let updated = 0
@@ -140,12 +145,12 @@ export async function POST() {
             }
 
             if (newName !== p.name || newCategoryId) {
-                const updateData: any = {}
+                const updateData: { name?: string; categoryId?: string } = {}
                 if (newName !== p.name) updateData.name = newName
                 if (newCategoryId) updateData.categoryId = newCategoryId
 
                 await prisma.product.update({
-                    where: { id: p.id },
+                    where: { id: p.id, businessId },
                     data: updateData
                 })
                 updated++
@@ -159,7 +164,7 @@ export async function POST() {
             updated,
             fixes
         })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e) {
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Error interno" }, { status: 500 })
     }
 }

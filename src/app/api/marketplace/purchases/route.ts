@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
 
@@ -50,6 +51,7 @@ export async function GET() {
 
     const requests = await prisma.marketplaceRequest.findMany({
       where: {
+        businessId: businessIdOf(session),
         status: "FULFILLED",
         saleId: { not: null },
         ...(isWorkshop ? { requestedById: session.user.id } : {}),
