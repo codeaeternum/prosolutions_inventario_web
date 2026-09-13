@@ -107,11 +107,11 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
 
             const adminUser = await prisma.user.findUnique({
                 where: { telegramId },
-                select: { id: true }
+                select: { id: true, businessId: true }
             })
 
             if (!adminUser) return ctx.reply('Cuenta no disponible.')
-            const result = await sell(prisma, adminUser.id, {
+            const result = await sell(prisma, adminUser.id, adminUser.businessId, {
                 idempotencyKey: `bot-sale:${telegramId}:${ctx.callbackQuery.message?.message_id ?? ctx.update.update_id}`,
                 items: [{ productId, quantity: number }], paymentMethod: 'EFECTIVO',
             })

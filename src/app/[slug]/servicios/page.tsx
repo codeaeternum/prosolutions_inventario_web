@@ -7,7 +7,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { prisma } from "@/lib/prisma"
-import { resolveSlug } from "@/lib/public-slug"
+import { resolvePublicSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { PublicShell } from "@/components/public/public-shell"
@@ -23,7 +23,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target || target.kind !== "business") {
     return { title: "Servicios", robots: { index: false, follow: false } }
   }
@@ -67,7 +67,7 @@ function serviceMessage(service: Service): string {
 
 export default async function PublicServicesPage({ params }: PageProps) {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) notFound()
   // El catálogo de servicios es vitrina del negocio; un taller aliado muestra
   // su propio perfil, así que se regresa a su portada.

@@ -31,32 +31,32 @@ const createSchema = z.object({
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
 async function registerPayment(tx: Prisma.TransactionClient, args: {
-  orderId: string; orderNumber: number; branchId: string; actorId: string
+  orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
   amountCents: number; method: "CASH" | "CARD" | "TRANSFER"; purpose: "ADVANCE" | "ABONO" | "SETTLEMENT"; note?: string
 }) {
-  const payment = await tx.payment.create({ data: { repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
+  const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
   let cashNote = ""
   if (args.method === "CASH") {
     const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: args.branchId }, orderBy: { openedAt: "desc" } })
     if (register) {
-      const movement = await tx.cashMovement.create({ data: { registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller OT-${String(args.orderNumber).padStart(6, "0")} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
+      const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller OT-${String(args.orderNumber).padStart(6, "0")} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
       await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
     } else cashNote = " Sin caja abierta en la sucursal: quedó documentado sin asiento de caja."
   }
   return { payment, cashNote }
 }
-export async function createRepair(db: PrismaClient, actorId: string, raw: unknown) {
+export async function createRepair(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const { idempotencyKey, promisedAt, scheduledAt, functionalConditions, advance, ...input } = createSchema.parse(raw)
-  return operation(db, { key: idempotencyKey, actorId, kind: "REPAIR_CREATE", permission: "staff", payload: { ...input, promisedAt, scheduledAt, functionalConditions, advance } }, async tx => {
-    const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true } })
+  return operation(db, { key: idempotencyKey, actorId, businessId, kind: "REPAIR_CREATE", permission: "staff", payload: { ...input, promisedAt, scheduledAt, functionalConditions, advance } }, async tx => {
+    const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true, businessId } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } } })) throw new BusinessError("La persona asignada no está habilitada.")
-    const order = await tx.repairOrder.create({ data: { ...input, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
-    await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
-    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.` } })
+    const order = await tx.repairOrder.create({ data: { ...input, businessId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
+    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.` } })
     if (advance && advance.amountCents > 0) {
-      const { cashNote } = await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
-      await tx.repairEvent.create({ data: { actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).${cashNote}` } })
+      const { cashNote } = await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, businessId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).${cashNote}` } })
     }
     return { order }
   })
@@ -70,9 +70,9 @@ export async function createRepair(db: PrismaClient, actorId: string, raw: unkno
 async function syncPartStock(tx: Prisma.TransactionClient, args: {
   order: { number: number; currentBranchId: string }
   part: { id: string; productId: string | null; description: string; qty: number; unitPriceCents: number }
-  actorId: string; type: "OUT" | "RETURN"
+  actorId: string; businessId: string; type: "OUT" | "RETURN"
 }): Promise<{ deducted: number; stock: number } | null> {
-  const { order, part, actorId, type } = args
+  const { order, part, actorId, businessId, type } = args
   if (!part.productId) return null
   const productId = part.productId
   const folio = repairFolio(order.number)
@@ -84,11 +84,11 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
     if (returnQty <= 0) return { deducted: 0, stock: 0 }
     await tx.branchStock.upsert({
       where: { productId_branchId: { productId, branchId: order.currentBranchId } },
-      create: { productId, branchId: order.currentBranchId, quantity: returnQty },
+      create: { businessId, productId, branchId: order.currentBranchId, quantity: returnQty },
       update: { quantity: { increment: returnQty } },
     })
     const product = await tx.product.update({ where: { id: productId }, data: { stock: { increment: returnQty } } })
-    await tx.inventoryMovement.create({ data: { type: "RETURN", quantity: returnQty, previousStock: product.stock - returnQty, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Devolución refacción ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * returnQty) / 100, businessVersion: 1 } })
+    await tx.inventoryMovement.create({ data: { businessId, type: "RETURN", quantity: returnQty, previousStock: product.stock - returnQty, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Devolución refacción ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * returnQty) / 100, businessVersion: 1 } })
     return { deducted: returnQty, stock: product.stock }
   }
   // OUT: el CHECK quantity >= 0 no admite negativos — se toma solo lo disponible.
@@ -102,7 +102,7 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
   const productRow = await tx.product.findUnique({ where: { id: productId }, select: { stock: true } })
   const productDeduct = Math.min(deduct, Math.max(0, productRow?.stock ?? 0))
   const product = await tx.product.update({ where: { id: productId }, data: { stock: { decrement: productDeduct } } })
-  await tx.inventoryMovement.create({ data: { type: "OUT", quantity: deduct, previousStock: product.stock + productDeduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * part.qty) / 100, businessVersion: 1 } })
+  await tx.inventoryMovement.create({ data: { businessId, type: "OUT", quantity: deduct, previousStock: product.stock + productDeduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * part.qty) / 100, businessVersion: 1 } })
   return { deducted: deduct, stock: product.stock - (deduct - productDeduct) }
 }
 /** Sufijo de evento con el resultado del movimiento de inventario vinculado. */
@@ -127,12 +127,12 @@ const actionSchema = z.object({
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
 })
 const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "SETTLE_DELIVER"]
-export async function updateRepair(db: PrismaClient, actorId: string, id: string, raw: unknown) {
+export async function updateRepair(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "REPAIR_UPDATE", permission: "staff", payload: { id, ...input } }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
-    if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
     const reopeningToWarranty = order.status === "DELIVERED" && input.action === "STATUS" && input.status === "WARRANTY"
     if (order.status === "CANCELLED" || (order.status === "DELIVERED" && !reopeningToWarranty)) throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
@@ -175,7 +175,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
     } else if (input.action === "PAYMENT") {
       if (input.paymentCents === undefined || input.paymentCents <= 0) throw new BusinessError("Indica el monto del abono.")
       if (!input.paymentMethod) throw new BusinessError("Selecciona el método de cobro.")
-      const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
+      const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
       eventType = "PAYMENT"
       detail = `Abono ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} ${input.detail ?? ""}`.trim()
     } else if (input.action === "SETTLE_DELIVER") {
@@ -185,7 +185,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       const balanceCents = Math.max(0, quoted - Math.round(paid * 100))
       if (balanceCents > 0 && !input.paymentMethod) throw new BusinessError(`Restan ${(balanceCents / 100).toFixed(2)} MXN por cobrar. Selecciona el método.`, 409)
       if (balanceCents > 0) {
-        const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
+        const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
         detail = `Liquidado ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} Entrega a: ${input.detail}`
       } else detail = `Sin saldo pendiente. Entrega a: ${input.detail}`
       Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail })
@@ -195,11 +195,11 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       if (input.partProductId && !await tx.product.findUnique({ where: { id: input.partProductId } })) throw new BusinessError("El producto seleccionado no existe.")
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       const needsApproval = actorUser?.role === "EMPLOYEE"
-      const part = await tx.repairPart.create({ data: { orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
+      const part = await tx.repairPart.create({ data: { businessId, orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
       eventType = "PART"
       // Las creadas ya APPROVED (administrador) descuentan stock de inmediato;
       // las REQUESTED del técnico lo descuentan recién en PART_DECIDE.
-      const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, type: "OUT" })
+      const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT" })
       detail = needsApproval
         ? `Refacción solicitada: ${part.qty} × ${part.description} — pendiente de autorización`
         : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
@@ -217,7 +217,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       })
       if (decided.count !== 1) throw new BusinessError("La refacción ya fue autorizada o rechazada.", 409)
       eventType = "PART"
-      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, type: "OUT" }) : null
+      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT" }) : null
       detail = input.approve
         ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(decidedStock, part.qty)}`
         : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
@@ -233,14 +233,14 @@ export async function updateRepair(db: PrismaClient, actorId: string, id: string
       await tx.repairPart.delete({ where: { id: part.id } })
       eventType = "PART"
       // Solo las APPROVED llegaron a descontar stock; REQUESTED/REJECTED nunca lo tocaron.
-      const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, type: "RETURN" }) : null
+      const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN" }) : null
       detail = `Refacción retirada: ${part.description}${stockNote(removedStock, part.qty)}`
     } else if (input.action === "NOTE") {
       eventPublic = input.noteIsPublic
     }
     const result = await tx.repairOrder.updateMany({ where: { id, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
-    await tx.repairEvent.create({ data: { actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
+    await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
 }

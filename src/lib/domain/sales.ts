@@ -24,13 +24,13 @@ const saleSchema = z.object({
   priceTier: z.enum(["auto", "wholesale", "retail"]).optional(),
 }).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
 
-export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
+export async function sell(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = saleSchema.parse(raw)
   const items = mergeItems(input.items)
   const payments = input.payments ?? [{ method: input.paymentMethod! }]
   if (payments.some(p => p.method === "CREDITO") && !input.customerId) throw new BusinessError("Selecciona al cliente del crédito.")
   if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
     const seller = await actor(tx, actorId, "staff")
     const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId)
     const customer = input.customerId ? await actor(tx, input.customerId) : null
@@ -55,17 +55,17 @@ export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
     const totalPaidCents = payments.length === 1 ? totalCents : payments.reduce((sum, p) => sum + cents(p.amount!, true), 0)
     if (totalPaidCents !== totalCents) throw new BusinessError(`Los pagos no cuadran con el total (${total}).`, 409)
 
-    const sale = await tx.sale.create({ data: { total, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
+    const sale = await tx.sale.create({ data: { businessId, total, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
     const movements = []
     const saleItems = []
     for (const line of lines) {
       const saleItem = await tx.saleItem.create({ data: {
-        saleId: sale.id, productId: line.product.id, quantity: line.item.quantity,
+        businessId, saleId: sale.id, productId: line.product.id, quantity: line.item.quantity,
         unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
       } })
       const updated = await tx.product.findUniqueOrThrow({ where: { id: line.product.id } })
       const movement = await tx.inventoryMovement.create({ data: {
-        productId: line.product.id, userId: actorId, type: "OUT", quantity: line.item.quantity,
+        businessId, productId: line.product.id, userId: actorId, type: "OUT", quantity: line.item.quantity,
         previousStock: updated.stock + line.item.quantity, newStock: updated.stock,
         reason: `Venta V-${sale.number}`, unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
         customerId: customer?.id, businessVersion: 1, branchId: branch.id, saleId: sale.id,
@@ -83,7 +83,7 @@ export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
       if (method === "CASH") {
         register ??= await openRegister(tx, branch.id)
         const cashIn = await tx.cashMovement.create({ data: {
-          registerId: register.id, userId: actorId, amount: amount(paymentCents), type: "IN",
+          businessId, registerId: register.id, userId: actorId, amount: amount(paymentCents), type: "IN",
           referenceType: "SALE", referenceId: sale.id, description: `Venta V-${sale.number}`,
         } })
         cashMovementId = cashIn.id
@@ -92,7 +92,7 @@ export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
         await addDebt(tx, customer!.id, paymentCents, { type: "SALE", id: sale.id, notes: `Venta V-${sale.number}` })
       }
       created.push(await tx.payment.create({ data: {
-        saleId: sale.id, method, amount: amount(paymentCents), status: "CONFIRMED",
+        businessId, saleId: sale.id, method, amount: amount(paymentCents), status: "CONFIRMED",
         reference: payment.reference ?? null, cashMovementId: cashMovementId ?? null, createdById: actorId,
       } }))
     }
@@ -102,7 +102,7 @@ export async function sell(db: PrismaClient, actorId: string, raw: unknown) {
 
 /** Devuelve el stock a la sucursal de la venta y revierte el dinero por cada medio. */
 async function refund(tx: Transaction, input: {
-  saleId: string; actorId: string; branchId: string; customerId: string | null;
+  saleId: string; actorId: string; businessId: string; branchId: string; customerId: string | null;
   refundCents: number; channel: MethodInput; note: string;
 }) {
   const paid = await tx.payment.aggregate({ where: { saleId: input.saleId, method: METHOD_MAP[input.channel], amount: { gt: 0 } }, _sum: { amount: true } })
@@ -115,7 +115,7 @@ async function refund(tx: Transaction, input: {
   if (input.channel === "EFECTIVO") {
     const register = await openRegister(tx, input.branchId)
     const cashOut = await tx.cashMovement.create({ data: {
-      registerId: register.id, userId: input.actorId, type: "OUT", amount: amount(input.refundCents),
+      businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT", amount: amount(input.refundCents),
       referenceType: "RETURN", referenceId: input.saleId, description: input.note,
     } })
     cashMovementId = cashOut.id
@@ -126,10 +126,10 @@ async function refund(tx: Transaction, input: {
     const balance = cents(customer.creditBalance, true)
     if (input.refundCents > balance) throw new BusinessError("El cliente ya abonó; el excedente requiere devolución en efectivo o conciliación.", 409, "CREDIT_REFUND_REVIEW")
     await tx.user.update({ where: { id: customer.id }, data: { creditBalance: amount(balance - input.refundCents) } })
-    await tx.creditMovement.create({ data: { userId: customer.id, amount: amount(input.refundCents), type: "REVERSAL", referenceType: "SALE", referenceId: input.saleId, notes: `REVERSIÓN DE DEUDA. ${input.note}` } })
+    await tx.creditMovement.create({ data: { businessId: input.businessId, userId: customer.id, amount: amount(input.refundCents), type: "REVERSAL", referenceType: "SALE", referenceId: input.saleId, notes: `REVERSIÓN DE DEUDA. ${input.note}` } })
   }
   return tx.payment.create({ data: {
-    saleId: input.saleId, method: METHOD_MAP[input.channel], amount: amount(-input.refundCents), status: "REFUNDED",
+    businessId: input.businessId, saleId: input.saleId, method: METHOD_MAP[input.channel], amount: amount(-input.refundCents), status: "REFUNDED",
     cashMovementId: cashMovementId ?? null, createdById: input.actorId, notes: input.note,
   } })
 }
@@ -141,11 +141,11 @@ const returnSchema = z.object({
   reason: z.string().trim().min(1).max(500),
   idempotencyKey: operationKeySchema,
 })
-export async function returnSaleItems(db: PrismaClient, actorId: string, raw: unknown) {
+export async function returnSaleItems(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = returnSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
     const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true } })
-    if (!sale || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
+    if (!sale || sale.businessId !== businessId || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
     const merged = mergeItems(input.items.map(i => ({ productId: i.saleItemId, quantity: i.quantity })))
     let refundCents = 0
     for (const line of merged) {
@@ -153,10 +153,10 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, raw: un
       if (!item) throw new BusinessError("Una línea no pertenece a esta venta.", 409)
       const changed = await tx.saleItem.updateMany({ where: { id: item.id, quantity: { gte: item.returnedQuantity + line.quantity } }, data: { returnedQuantity: { increment: line.quantity } } })
       if (changed.count !== 1) throw new BusinessError(`La cantidad a devolver de ${item.id} supera lo vendido.`, 409)
-      await releaseStock(tx, { productId: item.productId, quantity: line.quantity, branchId: sale.branchId })
+      await releaseStock(tx, { productId: item.productId, quantity: line.quantity, branchId: sale.branchId, businessId })
       const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
       await tx.inventoryMovement.create({ data: {
-        productId: item.productId, userId: actorId, type: "RETURN", quantity: line.quantity,
+        businessId, productId: item.productId, userId: actorId, type: "RETURN", quantity: line.quantity,
         previousStock: product.stock - line.quantity, newStock: product.stock,
         reason: `Devolución V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
         unitPrice: item.unitPrice, totalPrice: amount(cents(item.unitPrice) * line.quantity),
@@ -164,25 +164,25 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, raw: un
       } })
       refundCents += cents(item.unitPrice) * line.quantity
     }
-    const refundRow = await refund(tx, { saleId: sale.id, actorId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
+    const refundRow = await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
     return { refund: refundRow, refunded: amount(refundCents) }
   })
 }
 
 const voidSchema = z.object({ saleId: z.string().min(1), reason: z.string().trim().min(1).max(500), idempotencyKey: operationKeySchema })
-export async function voidSale(db: PrismaClient, actorId: string, raw: unknown) {
+export async function voidSale(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = voidSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "SALE_VOID", permission: "staff", payload: input }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_VOID", permission: "staff", payload: input }, async tx => {
     const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true, payments: true } })
-    if (!sale) throw new BusinessError("Venta no encontrada.", 404)
+    if (!sale || sale.businessId !== businessId) throw new BusinessError("Venta no encontrada.", 404)
     if (sale.status !== "COMPLETED") throw new BusinessError("La venta ya fue anulada.", 409)
     for (const item of sale.items) {
       const pending = item.quantity - item.returnedQuantity
       if (pending <= 0) continue
-      await releaseStock(tx, { productId: item.productId, quantity: pending, branchId: sale.branchId })
+      await releaseStock(tx, { productId: item.productId, quantity: pending, branchId: sale.branchId, businessId })
       const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
       await tx.inventoryMovement.create({ data: {
-        productId: item.productId, userId: actorId, type: "IN", quantity: pending,
+        businessId, productId: item.productId, userId: actorId, type: "IN", quantity: pending,
         previousStock: product.stock - pending, newStock: product.stock,
         reason: `Anulación V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
       } })
@@ -190,7 +190,7 @@ export async function voidSale(db: PrismaClient, actorId: string, raw: unknown) 
     for (const payment of sale.payments) {
       if (payment.status !== "CONFIRMED" || payment.amount <= 0) continue
       const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === payment.method)!
-      await refund(tx, { saleId: sale.id, actorId, branchId: sale.branchId, customerId: sale.customerId, refundCents: cents(payment.amount), channel, note: `Anulación V-${sale.number}: ${input.reason}` })
+      await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: cents(payment.amount), channel, note: `Anulación V-${sale.number}: ${input.reason}` })
       await tx.payment.update({ where: { id: payment.id }, data: { status: "VOIDED" } })
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { status: "VOIDED" } })

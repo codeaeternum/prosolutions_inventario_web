@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { operation, operationKeySchema } from "@/lib/domain/operations"
@@ -49,7 +50,8 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
     const { idempotencyKey, ...input } = upsertSchema.parse(await req.json())
     const data = {
       brand: input.brand,
@@ -58,7 +60,7 @@ export async function POST(req: Request) {
       type: input.type || "SMARTPHONE",
     }
     if (idempotencyKey) {
-      const result = await operation(prisma, { key: idempotencyKey, actorId, kind: "DEVICE_MODEL_UPSERT", permission: "staff", payload: input }, async tx => ({
+      const result = await operation(prisma, { key: idempotencyKey, actorId, businessId: businessIdOf(session), kind: "DEVICE_MODEL_UPSERT", permission: "staff", payload: input }, async tx => ({
         model: await tx.deviceModel.upsert({ where: { brand_model: { brand: data.brand, model: data.model } }, create: data, update: { code: data.code, type: data.type } }),
       }))
       return NextResponse.json(result, { status: 201 })

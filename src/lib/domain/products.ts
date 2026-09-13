@@ -14,19 +14,20 @@ export const createProductSchema = z.object({
 })
 
 /** Crea producto con existencia inicial en UNA sucursal (branchId o la del actor). */
-export async function createProduct(db: PrismaClient, actorId: string, raw: unknown): Promise<Product> {
+export async function createProduct(db: PrismaClient, actorId: string, businessId: string, raw: unknown): Promise<Product> {
   const input = createProductSchema.parse(raw)
   return transaction(db, async tx => {
     const product = await tx.product.create({ data: {
+      businessId,
       name: input.name, categoryId: input.categoryId,
       retailPrice: input.retailPrice, wholesalePrice: input.wholesalePrice,
       costPrice: input.costPrice ?? null, stock: 0, images: input.images, isActive: true,
     } })
     if (input.stock > 0) {
       const user = await tx.user.findUnique({ where: { id: actorId }, select: { homeBranchId: true } })
-      const branch = await releaseStock(tx, { productId: product.id, quantity: input.stock, branchId: input.branchId ?? user?.homeBranchId })
+      const branch = await releaseStock(tx, { productId: product.id, quantity: input.stock, branchId: input.branchId ?? user?.homeBranchId, businessId })
       await tx.inventoryMovement.create({ data: {
-        productId: product.id, userId: actorId, type: "IN", quantity: input.stock,
+        businessId, productId: product.id, userId: actorId, type: "IN", quantity: input.stock,
         previousStock: 0, newStock: input.stock, reason: "Stock inicial",
         branchId: branch.id, businessVersion: 1,
       } })

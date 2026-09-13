@@ -9,9 +9,9 @@ const movementSchema = z.object({
   branchId: z.string().min(1).optional(), toBranchId: z.string().min(1).optional(),
 })
 const schema = z.object({ idempotencyKey: operationKeySchema, branchId: z.string().min(1).optional(), items: z.array(movementSchema).min(1).max(100) })
-export async function moveInventory(db: PrismaClient, actorId: string, raw: unknown) {
+export async function moveInventory(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = schema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
     const movements = []
     for (const row of input.items) {
       const product = await tx.product.findUnique({ where: { id: row.productId } })
@@ -26,9 +26,9 @@ export async function moveInventory(db: PrismaClient, actorId: string, raw: unkn
         if (row.toBranchId === origin.id) throw new BusinessError("El origen y el destino del traspaso son la misma sucursal.")
         const destination = await resolveBranch(tx, row.toBranchId)
         await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId: origin.id })
-        await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId: destination.id })
+        await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId: destination.id, businessId })
         const movement = await tx.inventoryMovement.create({ data: {
-          productId: product.id, userId: actorId, type: "TRANSFER",
+          businessId, productId: product.id, userId: actorId, type: "TRANSFER",
           quantity: row.quantity, previousStock: product.stock, newStock: product.stock,
           reason: row.reason, notes: `Traspaso ${origin.name} → ${destination.name}${row.notes ? `. ${row.notes}` : ""}`,
           branchId: origin.id, toBranchId: destination.id, businessVersion: 1,
@@ -61,23 +61,23 @@ export async function moveInventory(db: PrismaClient, actorId: string, raw: unkn
           const balance = cents(customer.creditBalance, true)
           if (value > balance) throw new BusinessError("Hay pagos previos que requieren conciliar el saldo a favor.", 409)
           await tx.user.update({ where: { id: customerId }, data: { creditBalance: amount(balance - value) } })
-          if (value > 0) await tx.creditMovement.create({ data: { userId: customerId, amount: amount(value), type: "REVERSAL", referenceType: row.relatedId ? "SALE" : "RESERVATION", referenceId: row.relatedId ?? row.reservationId, notes: "REVERSIÓN DE DEUDA por devolución. No es un abono de dinero." } })
+          if (value > 0) await tx.creditMovement.create({ data: { businessId, userId: customerId, amount: amount(value), type: "REVERSAL", referenceType: row.relatedId ? "SALE" : "RESERVATION", referenceId: row.relatedId ?? row.reservationId, notes: "REVERSIÓN DE DEUDA por devolución. No es un abono de dinero." } })
         }
       }
       const positive = ["IN", "ADJUSTMENT_IN", "RETURN"].includes(row.type)
       const branch = positive
-        ? await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId })
+        ? await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId, businessId })
         : (await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId })).branch
       const updated = await tx.product.findUniqueOrThrow({ where: { id: product.id } })
       const movement = await tx.inventoryMovement.create({ data: {
-        productId: product.id, userId: actorId, type: row.type.startsWith("ADJUSTMENT") ? "ADJUSTMENT" : row.type === "RETURN" ? "RETURN" : positive ? "IN" : "OUT",
+        businessId, productId: product.id, userId: actorId, type: row.type.startsWith("ADJUSTMENT") ? "ADJUSTMENT" : row.type === "RETURN" ? "RETURN" : positive ? "IN" : "OUT",
         quantity: row.quantity, previousStock: updated.stock - (positive ? row.quantity : -row.quantity), newStock: updated.stock, reason: row.reason, notes: row.notes,
         relatedId: row.relatedId, reservationId: row.reservationId, businessVersion: 1, branchId: branch.id,
         ...(value !== undefined ? { totalPrice: amount(value), unitPrice: amount(value / row.quantity), paymentMethod: method, customerId } : {}),
       } })
       if (row.type === "RETURN" && method === "EFECTIVO" && value! > 0) {
         const register = await openRegister(tx, branch.id)
-        await tx.cashMovement.create({ data: { registerId: register.id, userId: actorId, type: "OUT", amount: amount(value!), referenceType: "RETURN", referenceId: movement.id, description: `Devolución: ${product.name}` } })
+        await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: amount(value!), referenceType: "RETURN", referenceId: movement.id, description: `Devolución: ${product.name}` } })
       }
       movements.push(movement)
     }

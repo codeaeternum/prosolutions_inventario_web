@@ -62,9 +62,8 @@ export async function GET(req: Request) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
-    const [order, settings] = await Promise.all([
-      prisma.repairOrder.findUnique({
-        where: { number },
+    const order = await prisma.repairOrder.findUnique({
+      where: { number },
         include: {
           currentBranch: { select: { name: true } },
           events: {
@@ -83,22 +82,18 @@ export async function GET(req: Request) {
             where: { status: "CONFIRMED" },
             select: { amount: true },
           },
+          // Branding del negocio dueño de la orden (encabezado + CTA WhatsApp).
+          business: { select: { name: true, phone: true } },
         },
-      }),
-      // Branding del negocio para el encabezado y el CTA de WhatsApp.
-      prisma.systemSettings.findMany({
-        where: { key: { in: ["ticket_business_name", "public_phone"] } },
-        select: { key: true, value: true },
-      }),
-    ])
+      })
 
     // Respuesta genérica: no revelar si falló el folio o el teléfono.
     if (!order || !onlyDigits(order.customerPhone).endsWith(phone4)) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
-    const businessName = settings.find(s => s.key === "ticket_business_name")?.value?.trim() || null
-    const whatsappPhone = settings.find(s => s.key === "public_phone")?.value?.trim() || null
+    const businessName = order.business?.name?.trim() || null
+    const whatsappPhone = order.business?.phone?.trim() || null
     const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
 
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.

@@ -3,7 +3,8 @@ import Link from "next/link"
 import { notFound, redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { repairFolio } from "@/lib/workshop-labels"
-import { isValidSlug, normalizeSlug, resolveSlug } from "@/lib/public-slug"
+import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { Button } from "@/components/ui/button"
 import { PublicShell } from "@/components/public/public-shell"
@@ -11,7 +12,7 @@ import { QuoteDocument, QuoteNotFound } from "@/components/public/quote-view"
 
 // Cotización brandeada bajo la vitrina del negocio (/<slug>/cotizacion/<token>).
 // Mismo documento que /cotizacion/[token], pero dentro del PublicShell del
-// negocio — es el link que comparte el staff cuando hay business_slug.
+// negocio — es el link que comparte el staff cuando el negocio tiene slug.
 // Enlace privado por WhatsApp: siempre dinámico y jamás indexable.
 export const dynamic = "force-dynamic"
 
@@ -22,7 +23,7 @@ interface PageProps {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug, token } = await params
   const [target, order] = await Promise.all([
-    resolveSlug(slug),
+    resolvePublicSlug(slug),
     prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true } }),
   ])
   const title = order ? `Cotización ${repairFolio(order.number)}` : "Cotización"
@@ -33,19 +34,19 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
-/** business_slug del negocio (vacío si no está configurado). */
+/** Slug público del negocio por defecto (vacío si no está activo/configurado). */
 async function getBusinessSlug(): Promise<string> {
-  const row = await prisma.systemSettings.findUnique({
-    where: { key: "business_slug" },
-    select: { value: true },
+  const business = await prisma.business.findUnique({
+    where: { id: await getDefaultBusinessId() },
+    select: { slug: true, isActive: true },
   })
-  const slug = normalizeSlug(row?.value ?? "")
-  return isValidSlug(slug) ? slug : ""
+  const slug = normalizeSlug(business?.slug ?? "")
+  return business?.isActive && isValidSlug(slug) ? slug : ""
 }
 
 export default async function SlugCotizacionPage({ params }: PageProps) {
   const { slug, token } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) notFound()
 
   // Las cotizaciones las emite el negocio: un taller aliado no tiene documento

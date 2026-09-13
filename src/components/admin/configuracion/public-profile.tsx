@@ -79,8 +79,9 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 /**
- * Tarjeta «Perfil público»: edita business_slug + datos públicos del negocio
- * contra GET/POST /api/settings/public-profile y muestra los links copiables.
+ * Tarjeta «Perfil público»: edita el slug de Business + datos públicos del
+ * negocio contra GET/POST /api/settings/public-profile y muestra los links
+ * copiables.
  */
 export function PublicProfileCard() {
   const [profile, setProfile] = useState<PublicProfile>(EMPTY_PROFILE)
@@ -138,6 +139,11 @@ export function PublicProfileCard() {
     const cleanSlug = normalizeSlugInput(profile.slug)
     if (slugError) {
       toast.error(slugError)
+      return
+    }
+    // Business.slug es obligatorio: la vitrina ya no se "apaga" vaciándolo.
+    if (!cleanSlug) {
+      toast.error("El link público no puede quedar vacío: elige un slug para tu vitrina")
       return
     }
     inFlight.current = true
@@ -338,7 +344,7 @@ export function PublicProfileCard() {
                 value={profile.slug}
                 onChange={(value) => setProfile(prev => ({ ...prev, slug: value }))}
                 placeholder="prosolutions"
-                hint={`Tu vitrina quedará en ${host}/<slug> — déjalo vacío para desactivarla.`}
+                hint={`Tu vitrina pública vive en ${host}/<slug>.`}
                 disabled={saving}
               />
               <div className="space-y-2">
@@ -477,7 +483,10 @@ export function PublicProfileCard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 border-t pt-5">
-              <Button onClick={() => void save()} disabled={saving || !dirty || !!slugError}>
+              <Button
+                onClick={() => void save()}
+                disabled={saving || !dirty || !!slugError || !normalizeSlugInput(profile.slug)}
+              >
                 {saving ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (

@@ -19,13 +19,13 @@ if (enabled) {
 }
 const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
 const prefix = `test-${randomUUID()}`
-let admin: string, customer: string, category: string, register: string, branchB: string
+let admin: string, customer: string, category: string, register: string, branchB: string, biz: string
 const key = () => `${prefix}:${randomUUID()}`
 
 /** Producto con existencias en una sucursal; el total cacheado siempre iguala la suma de sucursales. */
 async function product(stock = 5, price = 100, branchId = PRINCIPAL_BRANCH_ID) {
-  const row = await db.product.create({ data: { name: `${prefix}-product`, categoryId: category, stock: 0, retailPrice: price, wholesalePrice: price, images: [] } })
-  if (stock > 0) await db.branchStock.create({ data: { productId: row.id, branchId, quantity: stock } })
+  const row = await db.product.create({ data: { businessId: biz, name: `${prefix}-product`, categoryId: category, stock: 0, retailPrice: price, wholesalePrice: price, images: [] } })
+  if (stock > 0) await db.branchStock.create({ data: { businessId: biz, productId: row.id, branchId, quantity: stock } })
   return db.product.update({ where: { id: row.id }, data: { stock } })
 }
 const stockAt = async (productId: string, branchId = PRINCIPAL_BRANCH_ID) =>
@@ -33,20 +33,21 @@ const stockAt = async (productId: string, branchId = PRINCIPAL_BRANCH_ID) =>
 
 describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   beforeAll(async () => {
-    admin = (await db.user.create({ data: { name: prefix, role: "ADMIN", status: "APPROVED" } })).id
-    customer = (await db.user.create({ data: { name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000 } })).id
-    category = (await db.category.create({ data: { name: prefix, slug: prefix } })).id
-    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, name: "Local principal" }, update: { isActive: true } })
-    branchB = (await db.branch.create({ data: { name: `${prefix}-B` } })).id
+    biz = (await db.business.create({ data: { name: prefix, slug: prefix } })).id
+    admin = (await db.user.create({ data: { businessId: biz, name: prefix, role: "ADMIN", status: "APPROVED" } })).id
+    customer = (await db.user.create({ data: { businessId: biz, name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000 } })).id
+    category = (await db.category.create({ data: { businessId: biz, name: prefix, slug: prefix } })).id
+    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, businessId: biz, name: "Local principal" }, update: { isActive: true } })
+    branchB = (await db.branch.create({ data: { businessId: biz, name: `${prefix}-B` } })).id
     // Fixture database may retain open registers from a previous interrupted test run.
     await db.cashRegister.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED", closedAt: new Date() } })
-    register = (await changeCash(db, admin, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).id
+    register = (await changeCash(db, admin, biz, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).id
   })
   afterAll(async () => { await db.$disconnect() })
 
   it("only one of three simultaneous reservations gets the last unit", async () => {
     const p = await product(1)
-    const results = await Promise.allSettled(Array.from({ length: 3 }, () => createReservations(db, customer, { productId: p.id, quantity: 1, idempotencyKey: key() })))
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () => createReservations(db, customer, biz, { productId: p.id, quantity: 1, idempotencyKey: key() })))
     expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1)
     expect(await stockAt(p.id)).toBe(0)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(0)
@@ -55,7 +56,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   })
   it("rolls back all cart lines when one is out of stock", async () => {
     const p = await product(2), empty = await product(0)
-    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }, { productId: empty.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toThrow()
+    await expect(sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }, { productId: empty.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toThrow()
     expect(await stockAt(p.id)).toBe(2)
     expect(await db.sale.count({ where: { sellerId: admin } })).toBe(0)
     expect(await db.inventoryMovement.count({ where: { productId: p.id } })).toBe(0)
@@ -63,7 +64,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   it("a sale is a numbered document and simultaneous retry commits it once", async () => {
     const p = await product(3)
     const input = { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() }
-    const [first, second] = await Promise.all([sell(db, admin, input), sell(db, admin, input)])
+    const [first, second] = await Promise.all([sell(db, admin, biz, input), sell(db, admin, biz, input)])
     expect(first.operationId).toBe(second.operationId)
     expect(first.sale.id).toBe(second.sale.id)
     expect(first.sale.number).toBeGreaterThan(0)
@@ -71,40 +72,40 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     expect(first.payments).toHaveLength(1)
     expect(await stockAt(p.id)).toBe(2)
     expect(await db.cashMovement.count({ where: { referenceId: first.sale.id } })).toBe(1)
-    await expect(sell(db, admin, { ...input, paymentMethod: "TARJETA" })).rejects.toMatchObject({ status: 409 })
+    await expect(sell(db, admin, biz, { ...input, paymentMethod: "TARJETA" })).rejects.toMatchObject({ status: 409 })
   })
   it("card sales never enter the physical cash drawer", async () => {
     const p = await product()
-    const result = await sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const result = await sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
     expect(await db.cashMovement.count({ where: { referenceId: result.sale.id } })).toBe(0)
   })
   it("stock is isolated per branch: branch B cannot sell branch A's units", async () => {
     const p = await product(2)
-    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
+    await expect(sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
     expect(await stockAt(p.id)).toBe(2)
     expect(await stockAt(p.id, branchB)).toBe(0)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
   })
   it("each branch has its own register: B opens while principal is open", async () => {
-    const other = await changeCash(db, admin, { action: "OPEN", amount: 100, branchId: branchB, idempotencyKey: key() })
+    const other = await changeCash(db, admin, biz, { action: "OPEN", amount: 100, branchId: branchB, idempotencyKey: key() })
     expect((await db.cashRegister.findUniqueOrThrow({ where: { id: other.id } })).branchId).toBe(branchB)
-    await expect(changeCash(db, admin, { action: "OPEN", amount: 0, branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    await changeCash(db, admin, { action: "CLOSE", registerId: other.id, amount: 100, branchId: branchB, idempotencyKey: key() })
+    await expect(changeCash(db, admin, biz, { action: "OPEN", amount: 0, branchId: branchB, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await changeCash(db, admin, biz, { action: "CLOSE", registerId: other.id, amount: 100, branchId: branchB, idempotencyKey: key() })
   })
   it("transfers move stock between branches atomically and audit both ends", async () => {
     const p = await product(4)
-    await moveInventory(db, admin, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "TRANSFER", quantity: 3, reason: "Fixture", toBranchId: branchB }] })
+    await moveInventory(db, admin, biz, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "TRANSFER", quantity: 3, reason: "Fixture", toBranchId: branchB }] })
     expect(await stockAt(p.id)).toBe(1)
     expect(await stockAt(p.id, branchB)).toBe(3)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(4)
     const movement = await db.inventoryMovement.findFirstOrThrow({ where: { productId: p.id, type: "TRANSFER" } })
     expect(movement.toBranchId).toBe(branchB)
-    await expect(moveInventory(db, admin, { idempotencyKey: key(), items: [{ productId: p.id, type: "TRANSFER", quantity: 9, reason: "Fixture", branchId: PRINCIPAL_BRANCH_ID, toBranchId: branchB }] })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
+    await expect(moveInventory(db, admin, biz, { idempotencyKey: key(), items: [{ productId: p.id, type: "TRANSFER", quantity: 9, reason: "Fixture", branchId: PRINCIPAL_BRANCH_ID, toBranchId: branchB }] })).rejects.toMatchObject({ code: "INSUFFICIENT_STOCK" })
   })
   it("a split cash+credit sale charges debt only for the credit part", async () => {
     const p = await product(2, 200)
     const before = (await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance
-    const result = await sell(db, admin, {
+    const result = await sell(db, admin, biz, {
       items: [{ productId: p.id, quantity: 2 }], branchId: PRINCIPAL_BRANCH_ID, customerId: customer,
       payments: [{ method: "EFECTIVO", amount: 150 }, { method: "CREDITO", amount: 250 }], idempotencyKey: key(),
     })
@@ -115,12 +116,12 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   })
   it("sale returns restore branch stock, cap at sold units and refund once", async () => {
     const p = await product(3)
-    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const sale = await sell(db, admin, biz, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
     const line = { saleItemId: sale.items[0].id, quantity: 2 }
     const input = { saleId: sale.sale.id, items: [line], refundMethod: "EFECTIVO", reason: "Fixture return", idempotencyKey: key() }
-    const returned = await returnSaleItems(db, admin, input)
-    await returnSaleItems(db, admin, input)
-    await expect(returnSaleItems(db, admin, { saleId: sale.sale.id, items: [{ ...line, quantity: 1 }], refundMethod: "EFECTIVO", reason: "Extra", idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    const returned = await returnSaleItems(db, admin, biz, input)
+    await returnSaleItems(db, admin, biz, input)
+    await expect(returnSaleItems(db, admin, biz, { saleId: sale.sale.id, items: [{ ...line, quantity: 1 }], refundMethod: "EFECTIVO", reason: "Extra", idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
     expect(await stockAt(p.id)).toBe(3)
     expect(returned.refund.method).toBe("CASH")
     expect(await db.cashMovement.count({ where: { referenceId: sale.sale.id, type: "OUT" } })).toBe(1)
@@ -128,10 +129,10 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   })
   it("voiding a sale keeps the document, restocks the branch and voids payments", async () => {
     const p = await product(2)
-    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const sale = await sell(db, admin, biz, { items: [{ productId: p.id, quantity: 2 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
     const input = { saleId: sale.sale.id, reason: "Venta capturada por error", idempotencyKey: key() }
-    await voidSale(db, admin, input)
-    await expect(voidSale(db, admin, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await voidSale(db, admin, biz, input)
+    await expect(voidSale(db, admin, biz, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
     expect((await db.sale.findUniqueOrThrow({ where: { id: sale.sale.id } })).status).toBe("VOIDED")
     expect(await stockAt(p.id)).toBe(2)
     expect(await db.payment.count({ where: { saleId: sale.sale.id, status: "VOIDED" } })).toBe(1)
@@ -140,19 +141,19 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   it("owner cancellation reverses debt and stock once, never creates cash", async () => {
     const p = await product(3)
     const initial = (await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance
-    const result = await createReservations(db, customer, { productId: p.id, quantity: 1, paymentMethod: "CREDIT", idempotencyKey: key() })
+    const result = await createReservations(db, customer, biz, { productId: p.id, quantity: 1, paymentMethod: "CREDIT", idempotencyKey: key() })
     const id = result.reservations[0].id
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(initial + 100)
-    const results = await Promise.all([changeReservation(db, customer, id, { action: "cancel" }), changeReservation(db, customer, id, { action: "cancel" })])
+    const results = await Promise.all([changeReservation(db, customer, biz, id, { action: "cancel" }), changeReservation(db, customer, biz, id, { action: "cancel" })])
     expect(results.filter(r => r.changed)).toHaveLength(1)
     expect(await stockAt(p.id)).toBe(3)
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(initial)
     expect(await db.cashMovement.count({ where: { referenceId: id } })).toBe(0)
-    await expect(changeReservation(db, admin, id, { action: "deliver", finalPaymentMethod: "EFECTIVO" })).rejects.toMatchObject({ status: 409 })
+    await expect(changeReservation(db, admin, biz, id, { action: "deliver", finalPaymentMethod: "EFECTIVO" })).rejects.toMatchObject({ status: 409 })
   })
   it("expiry releases new reservations through the same audited path", async () => {
     const p = await product(2)
-    const result = await createReservations(db, customer, { productId: p.id, idempotencyKey: key() })
+    const result = await createReservations(db, customer, biz, { productId: p.id, idempotencyKey: key() })
     await db.reservation.update({ where: { id: result.reservations[0].id }, data: { expiresAt: new Date(0) } })
     await expireReservations(db)
     expect(await stockAt(p.id)).toBe(2)
@@ -160,52 +161,52 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   })
   it("inventory batch rolls back rather than losing failed rows", async () => {
     const p = await product(2)
-    await expect(moveInventory(db, admin, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "IN", quantity: 1, reason: "fixture" }, { productId: p.id, type: "OUT", quantity: 10, reason: "fixture" }] })).rejects.toThrow()
+    await expect(moveInventory(db, admin, biz, { idempotencyKey: key(), branchId: PRINCIPAL_BRANCH_ID, items: [{ productId: p.id, type: "IN", quantity: 1, reason: "fixture" }, { productId: p.id, type: "OUT", quantity: 10, reason: "fixture" }] })).rejects.toThrow()
     expect(await stockAt(p.id)).toBe(2)
     expect((await db.product.findUniqueOrThrow({ where: { id: p.id } })).stock).toBe(2)
   })
   it("rejects overpayment and excessive fractional precision without changing balances", async () => {
-    await changeCredit(db, admin, "DEBT", { userId: customer, amount: 50, idempotencyKey: key() })
+    await changeCredit(db, admin, biz, "DEBT", { userId: customer, amount: 50, idempotencyKey: key() })
     const balance = (await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance
-    await expect(changeCredit(db, admin, "PAYMENT", { userId: customer, amount: balance + 1, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    await expect(changeCredit(db, admin, "DEBT", { userId: customer, amount: 1.001, idempotencyKey: key() })).rejects.toThrow()
+    await expect(changeCredit(db, admin, biz, "PAYMENT", { userId: customer, amount: balance + 1, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await expect(changeCredit(db, admin, biz, "DEBT", { userId: customer, amount: 1.001, idempotencyKey: key() })).rejects.toThrow()
     const input = { userId: customer, amount: 25, idempotencyKey: key() }
-    const paid = await changeCredit(db, admin, "PAYMENT", input)
-    await changeCredit(db, admin, "PAYMENT", input)
+    const paid = await changeCredit(db, admin, biz, "PAYMENT", input)
+    await changeCredit(db, admin, biz, "PAYMENT", input)
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(balance - 25)
     expect(await db.cashMovement.count({ where: { referenceId: paid.movementId } })).toBe(1)
   })
   it("denies a revoked actor even when replaying a committed operation", async () => {
     const p = await product()
     const input = { productId: p.id, idempotencyKey: key() }
-    await createReservations(db, customer, input)
+    await createReservations(db, customer, biz, input)
     await db.user.update({ where: { id: customer }, data: { status: "REJECTED" } })
-    await expect(createReservations(db, customer, input)).rejects.toMatchObject({ status: 403 })
+    await expect(createReservations(db, customer, biz, input)).rejects.toMatchObject({ status: 403 })
     await db.user.update({ where: { id: customer }, data: { status: "APPROVED" } })
   })
   it("close targets a specific register and cash writes cannot survive its closure", async () => {
-    await expect(changeCash(db, admin, { action: "CLOSE", registerId: "wrong", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
-    await changeCash(db, admin, { action: "CLOSE", registerId: register, amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    await expect(changeCash(db, admin, biz, { action: "CLOSE", registerId: "wrong", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await changeCash(db, admin, biz, { action: "CLOSE", registerId: register, amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
     const p = await product(1)
-    await expect(sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
+    await expect(sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "EFECTIVO", branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })).rejects.toMatchObject({ status: 409 })
     expect(await stockAt(p.id)).toBe(1)
   })
   it("workshop preserves intake, tracks location and rejects stale edits", async () => {
     const input = { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000000", equipmentType: "Consola", reportedIssue: "No enciende", intakeBranchId: PRINCIPAL_BRANCH_ID }
-    const { order } = await createRepair(db, admin, input)
-    expect((await createRepair(db, admin, input)).order.id).toBe(order.id)
-    await expect(createRepair(db, customer, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
-    const moved = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "TRANSFER", branchId: branchB, detail: "Recepción por técnico de prueba" })
+    const { order } = await createRepair(db, admin, biz, input)
+    expect((await createRepair(db, admin, biz, input)).order.id).toBe(order.id)
+    await expect(createRepair(db, customer, biz, { ...input, idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    const moved = await updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "TRANSFER", branchId: branchB, detail: "Recepción por técnico de prueba" })
     expect(moved.order.currentBranchId).toBe(branchB)
     expect(moved.order.intakeBranchId).toBe(PRINCIPAL_BRANCH_ID)
-    await expect(updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "NOTE", detail: "Texto obsoleto" })).rejects.toMatchObject({ status: 409 })
+    await expect(updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: 1, action: "NOTE", detail: "Texto obsoleto" })).rejects.toMatchObject({ status: 409 })
     expect(await db.repairEvent.count({ where: { orderId: order.id } })).toBe(2)
   })
   it("workshop requires diagnosis, approval and quality review before delivery", async () => {
-    const { order } = await createRepair(db, admin, { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000001", equipmentType: "Audio", reportedIssue: "Sin sonido", intakeBranchId: PRINCIPAL_BRANCH_ID })
+    const { order } = await createRepair(db, admin, biz, { idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000001", equipmentType: "Audio", reportedIssue: "Sin sonido", intakeBranchId: PRINCIPAL_BRANCH_ID })
     let version = order.version
     const update = async (payload: Record<string, unknown>) => {
-      const result = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })
+      const result = await updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })
       version = result.order.version
       return result.order
     }
@@ -222,8 +223,8 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
   })
   it("workshop money cycle: anticipo, abono y liquidación al entregar", async () => {
     // La caja del suite ya se cerró en la prueba anterior; abrimos una nueva.
-    await changeCash(db, admin, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
-    const { order } = await createRepair(db, admin, {
+    await changeCash(db, admin, biz, { action: "OPEN", amount: 0, branchId: PRINCIPAL_BRANCH_ID, idempotencyKey: key() })
+    const { order } = await createRepair(db, admin, biz, {
       idempotencyKey: key(), customerName: "Cliente ficticio", customerPhone: "0000000002",
       equipmentType: "Celular", reportedIssue: "Pantalla rota", intakeBranchId: PRINCIPAL_BRANCH_ID,
       advance: { amountCents: 10000, method: "CASH" },
@@ -233,7 +234,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
 
     let version = order.version
     const update = async (payload: Record<string, unknown>) => {
-      const result = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })
+      const result = await updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: version, detail: "Prueba documentada", ...payload })
       version = result.order.version
       return result.order
     }
@@ -252,8 +253,8 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     const paid = await db.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: order.id, status: "CONFIRMED" } })
     expect(paid._sum.amount).toBe(500)
     // Orden cerrada: solo garantía puede reabrirla
-    await expect(updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, action: "NOTE", detail: "x" })).rejects.toMatchObject({ status: 409 })
-    const reopened = await updateRepair(db, admin, order.id, { idempotencyKey: key(), expectedVersion: version, action: "STATUS", status: "WARRANTY", detail: "Reingreso por garantía" })
+    await expect(updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: version, action: "NOTE", detail: "x" })).rejects.toMatchObject({ status: 409 })
+    const reopened = await updateRepair(db, admin, biz, order.id, { idempotencyKey: key(), expectedVersion: version, action: "STATUS", status: "WARRANTY", detail: "Reingreso por garantía" })
     expect(reopened.order.status).toBe("WARRANTY")
   })
 

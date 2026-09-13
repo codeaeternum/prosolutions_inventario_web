@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "./slug-utils"
 import bcrypt from "bcryptjs"
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
     const searchQuery = searchParams.get("search")
 
     const where = {
+      businessId: businessIdOf(getSession(result)!),
       ...(status && { status: status as "PENDING" | "APPROVED" | "REJECTED" }),
       ...(roleParam && { role: roleParam as UserRole }),
       ...(searchQuery && {
@@ -84,6 +86,7 @@ export async function POST(req: Request) {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const body = await req.json()
     const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin, publicSlug } = body
@@ -111,7 +114,7 @@ export async function POST(req: Request) {
     }
 
     if (homeBranchId) {
-      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId } })
+      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId, businessId } })
       if (!branch || !branch.isActive) {
         return NextResponse.json({ error: "Sucursal inválida" }, { status: 400 })
       }
@@ -132,7 +135,7 @@ export async function POST(req: Request) {
     // Link público del taller aliado: solo aplica a role WORKSHOP; vacío = sin vitrina.
     let cleanPublicSlug: string | null = null
     if (role === "WORKSHOP") {
-      const resolved = await resolveWorkshopSlug(publicSlug)
+      const resolved = await resolveWorkshopSlug(publicSlug, businessId)
       if (resolved instanceof NextResponse) return resolved
       cleanPublicSlug = resolved
     }
@@ -141,6 +144,7 @@ export async function POST(req: Request) {
 
     const user = await prisma.user.create({
       data: {
+        businessId,
         name,
         email,
         password: hashedPassword,

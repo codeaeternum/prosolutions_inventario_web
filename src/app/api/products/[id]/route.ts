@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth"
 import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock } from "@/lib/domain/operations"
 import type { Prisma } from "@prisma/client"
@@ -14,11 +16,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const viewer = (await auth())?.user
+    const viewerSession = await auth()
+    const viewer = viewerSession?.user
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
     const { id } = await params
 
     const product = await prisma.product.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: {
         models: {
           include: {
@@ -77,6 +81,7 @@ export async function PUT(
     const result = await requireAdmin()
     if (result.error) return result.error
     const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const { id } = await params
     const body = await req.json()
@@ -113,7 +118,7 @@ export async function PUT(
 
     // Verificar que el producto existe
     const existingProduct = await prisma.product.findUnique({
-      where: { id },
+      where: { id, businessId },
     })
 
     if (!existingProduct) {
@@ -128,6 +133,7 @@ export async function PUT(
       const barcodeExists = await prisma.product.findFirst({
         where: {
           barcode,
+          businessId,
           NOT: { id },
         },
       })
@@ -163,6 +169,7 @@ export async function PUT(
         if (oldVal !== newVal) {
           await tx.priceHistory.create({
             data: {
+              businessId,
               productId: id,
               field,
               oldValue: oldVal,
@@ -175,7 +182,7 @@ export async function PUT(
 
       // Actualizar producto
       const updatedProduct = await tx.product.update({
-        where: { id },
+        where: { id, businessId },
         data: {
           name,
           description: description || null,
@@ -192,6 +199,7 @@ export async function PUT(
             ? undefined
             : {
                 create: modelIds.map((modelId: string) => ({
+                  businessId,
                   modelId,
                 })),
               },
@@ -211,11 +219,12 @@ export async function PUT(
       // Ajuste de existencias siempre por el dominio: sucursal + total coherentes.
       if (stockDiff !== 0) {
         const branch = stockDiff > 0
-          ? await releaseStock(tx, { productId: id, quantity: stockDiff, branchId: stockBranchId ?? editor?.homeBranchId })
+          ? await releaseStock(tx, { productId: id, quantity: stockDiff, branchId: stockBranchId ?? editor?.homeBranchId, businessId })
           : (await takeStock(tx, { productId: id, quantity: -stockDiff, branchId: stockBranchId ?? editor?.homeBranchId })).branch
         const after = await tx.product.findUniqueOrThrow({ where: { id }, select: { stock: true } })
         await tx.inventoryMovement.create({
           data: {
+            businessId,
             productId: id,
             type: "ADJUSTMENT",
             quantity: Math.abs(stockDiff),
@@ -252,12 +261,13 @@ export async function DELETE(
     const result = await requireAdmin()
     if (result.error) return result.error
     const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const { id } = await params
 
     // Verificar que el producto existe
     const existingProduct = await prisma.product.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: {
         reservations: {
           where: {
@@ -286,22 +296,22 @@ export async function DELETE(
     await prisma.$transaction(async (tx: TransactionClient) => {
       // Eliminar relaciones de modelos
       await tx.productModel.deleteMany({
-        where: { productId: id },
+        where: { productId: id, businessId },
       })
 
       // Eliminar movimientos de inventario
       await tx.inventoryMovement.deleteMany({
-        where: { productId: id },
+        where: { productId: id, businessId },
       })
 
       // Eliminar reservas (solo las completadas/canceladas)
       await tx.reservation.deleteMany({
-        where: { productId: id },
+        where: { productId: id, businessId },
       })
 
       // Eliminar producto
       await tx.product.delete({
-        where: { id },
+        where: { id, businessId },
       })
     })
 

@@ -12,9 +12,10 @@ async function main() {
   const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url.toString() })) })
   try {
     if (await db.user.count() || await db.product.count() || await db.branch.count()) throw new Error("Pilot database is not empty; refusing to seed or overwrite existing data")
-    const admin = await db.user.create({ data: { email: "piloto@prosolutions.local", name: "Dueño · Demo", role: "ADMIN", status: "APPROVED", password: await bcrypt.hash(password, 12) } })
-    const techs = await Promise.all(["Técnico A · Demo", "Técnico B · Demo"].map(name => db.user.create({ data: { name, role: "EMPLOYEE", status: "APPROVED" } })))
-    const branches = await Promise.all(["Local Centro · Demo", "Local Norte · Demo"].map(name => db.branch.create({ data: { name } })))
+    const business = await db.business.create({ data: { name: "ProSolutions Piloto · Demo", slug: "prosolutions-piloto-demo" } })
+    const admin = await db.user.create({ data: { businessId: business.id, email: "piloto@prosolutions.local", name: "Dueño · Demo", role: "ADMIN", status: "APPROVED", password: await bcrypt.hash(password, 12) } })
+    const techs = await Promise.all(["Técnico A · Demo", "Técnico B · Demo"].map(name => db.user.create({ data: { businessId: business.id, name, role: "EMPLOYEE", status: "APPROVED" } })))
+    const branches = await Promise.all(["Local Centro · Demo", "Local Norte · Demo"].map(name => db.branch.create({ data: { businessId: business.id, name } })))
     const fixtures = [
       { customer: "Cliente de prueba 01", type: "Consola", brand: "Nintendo", model: "Switch", issue: "No carga; se apaga al desconectarla", stage: "DIAGNOSIS", branch: 0 },
       { customer: "Cliente de prueba 02", type: "Laptop", brand: "Lenovo", model: "IdeaPad", issue: "Ventilador ruidoso y temperatura alta", stage: "WAITING_APPROVAL", branch: 1 },
@@ -24,9 +25,9 @@ async function main() {
       { customer: "Cliente de prueba 06", type: "Tablet", brand: "Apple", model: "iPad", issue: "Batería se descarga con rapidez", stage: "WAITING_PARTS", branch: 1 },
     ]
     for (const [index, fixture] of fixtures.entries()) {
-      let { order } = await createRepair(db, admin.id, { idempotencyKey: `pilot-order-${index}`, customerName: fixture.customer, customerPhone: `000000000${index}`, equipmentType: fixture.type, brand: fixture.brand, model: fixture.model, reportedIssue: fixture.issue, intakeBranchId: branches[fixture.branch].id, assignedToId: techs[fixture.branch].id, intakeCondition: "Ejemplo ficticio: rayones leves en carcasa", accessories: "Sin accesorios" })
+      let { order } = await createRepair(db, admin.id, business.id, { idempotencyKey: `pilot-order-${index}`, customerName: fixture.customer, customerPhone: `000000000${index}`, equipmentType: fixture.type, brand: fixture.brand, model: fixture.model, reportedIssue: fixture.issue, intakeBranchId: branches[fixture.branch].id, assignedToId: techs[fixture.branch].id, intakeCondition: "Ejemplo ficticio: rayones leves en carcasa", accessories: "Sin accesorios" })
       const step = async (action: string, detail: string, extra: Record<string, unknown> = {}) => {
-        const result = await updateRepair(db, admin.id, order.id, { idempotencyKey: `pilot-${index}-${order.version}`, expectedVersion: order.version, action, detail, ...extra })
+        const result = await updateRepair(db, admin.id, business.id, order.id, { idempotencyKey: `pilot-${index}-${order.version}`, expectedVersion: order.version, action, detail, ...extra })
         order = result.order
       }
       if (fixture.stage === "RECEIVED") continue

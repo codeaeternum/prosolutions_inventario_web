@@ -187,8 +187,8 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                         fileStream.close()
                         adminSession.data.imageUrl = `/uploads/products/${fileName}`
 
-                        const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } })
-                        const newProduct = await createProduct(prisma, adminUser!.id, {
+                        const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
+                        const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
                             name: adminSession.data.name!,
                             categoryId: adminSession.data.categoryId!,
                             costPrice: adminSession.data.costPrice || null,
@@ -426,8 +426,8 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     return
                 }
                 if (adminSession.step === 'PHOTO' && ctx.message.text.toLowerCase() === 'saltar') {
-                    const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true } })
-                    const newProduct = await createProduct(prisma, adminUser!.id, {
+                    const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
+                    const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
                         name: adminSession.data.name!,
                         categoryId: adminSession.data.categoryId!,
                         costPrice: adminSession.data.costPrice || null,

@@ -59,7 +59,7 @@ export async function transaction<T>(db: PrismaClient, work: (tx: Transaction) =
 /** Receipt and every business write commit together. Reuse with a changed actor/payload fails closed. */
 export async function operation<T extends object>(
   db: PrismaClient,
-  input: { key: string; actorId: string; kind: string; payload: unknown; permission?: "customer" | "staff" | "admin" },
+  input: { key: string; actorId: string; kind: string; businessId: string; payload: unknown; permission?: "customer" | "staff" | "admin" },
   work: (tx: Transaction, operationId: string) => Promise<T>,
 ): Promise<T & { operationId: string }> {
   const key = operationKeySchema.parse(input.key)
@@ -68,12 +68,12 @@ export async function operation<T extends object>(
     await actor(tx, input.actorId, input.permission)
     const existing = await tx.businessOperation.findUnique({ where: { key } })
     if (existing) {
-      if (existing.actorId !== input.actorId || existing.kind !== input.kind || existing.requestHash !== requestHash) {
+      if (existing.actorId !== input.actorId || existing.kind !== input.kind || existing.requestHash !== requestHash || existing.businessId !== input.businessId) {
         throw new BusinessError("El identificador ya se usó para otra operación.", 409, "IDEMPOTENCY_CONFLICT")
       }
       return existing.response as unknown as T & { operationId: string }
     }
-    const receipt = await tx.businessOperation.create({ data: { key, actorId: input.actorId, kind: input.kind, requestHash, response: {} } })
+    const receipt = await tx.businessOperation.create({ data: { key, actorId: input.actorId, kind: input.kind, businessId: input.businessId, requestHash, response: {} } })
     const response = { ...await work(tx, receipt.id), operationId: receipt.id }
     const json = JSON.parse(JSON.stringify(response)) as Prisma.InputJsonValue
     await tx.businessOperation.update({ where: { id: receipt.id }, data: { response: json } })
@@ -113,11 +113,11 @@ export async function takeStock(tx: Transaction, input: { productId: string; qua
 }
 
 /** Devuelve existencias a UNA sucursal y al total cacheado. Crea la fila si no existía. */
-export async function releaseStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null }) {
+export async function releaseStock(tx: Transaction, input: { productId: string; quantity: number; branchId?: string | null; businessId: string }) {
   const branch = await resolveBranch(tx, input.branchId)
   await tx.branchStock.upsert({
     where: { productId_branchId: { productId: input.productId, branchId: branch.id } },
-    create: { productId: input.productId, branchId: branch.id, quantity: input.quantity },
+    create: { businessId: input.businessId, productId: input.productId, branchId: branch.id, quantity: input.quantity },
     update: { quantity: { increment: input.quantity } },
   })
   await tx.product.update({ where: { id: input.productId }, data: { stock: { increment: input.quantity } } })
@@ -143,5 +143,5 @@ export async function addDebt(tx: Transaction, userId: string, totalCents: numbe
   if (limit <= 0 || balance + totalCents > limit) throw new BusinessError("Crédito disponible insuficiente.", 409, "INSUFFICIENT_CREDIT")
   const updated = await tx.user.updateMany({ where: { id: userId, creditBalance: user.creditBalance, creditLimit: user.creditLimit }, data: { creditBalance: amount(balance + totalCents) } })
   if (updated.count !== 1) throw new BusinessError("El saldo cambió; reintenta.", 409)
-  return tx.creditMovement.create({ data: { userId, type: "DEBT", amount: amount(totalCents), referenceType: reference.type, referenceId: reference.id, notes: reference.notes } })
+  return tx.creditMovement.create({ data: { businessId: user.businessId, userId, type: "DEBT", amount: amount(totalCents), referenceType: reference.type, referenceId: reference.id, notes: reference.notes } })
 }

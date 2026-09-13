@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { getBusinessSetting } from "@/lib/settings"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
@@ -45,11 +46,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     }
 
     const { token } = await params
-    const [order, businessName] = await Promise.all([
-      prisma.repairOrder.findUnique({
+    const order = await prisma.repairOrder.findUnique({
         where: { quoteToken: token },
         select: {
           number: true,
+          businessId: true,
           status: true,
           customerName: true,
           equipmentType: true,
@@ -74,11 +75,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
             select: { createdAt: true },
           },
         },
-      }),
-      prisma.systemSettings.findUnique({ where: { key: "ticket_business_name" } }),
-    ])
+      })
 
     if (!order) return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
+    const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
 
     const { service, issue } = parseIssue(order.reportedIssue)
     const laborCents = order.approvedQuoteCents ?? order.quoteCents
@@ -94,7 +94,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
       {
         quote: {
           folio: repairFolio(order.number),
-          businessName: businessName?.value || "PROSOLUTIONS",
+          businessName: businessName || "PROSOLUTIONS",
           issuedAt: order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt,
           customerName: order.customerName,
           equipment: {

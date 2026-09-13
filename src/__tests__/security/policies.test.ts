@@ -5,7 +5,7 @@ import { productDto } from "@/lib/product-dto"
 import { authConfig, getAuthRedirect } from "@/lib/auth.config"
 import type { JWT } from "@auth/core/jwt"
 
-const admin: CurrentUser = { id: "admin", name: "Test", email: "test@example.invalid", phone: null, password: "bcrypt-hash-A", status: "APPROVED", role: "ADMIN", customerType: "NORMAL", jobTitle: null }
+const admin: CurrentUser = { id: "admin", name: "Test", email: "test@example.invalid", phone: null, password: "bcrypt-hash-A", status: "APPROVED", role: "ADMIN", customerType: "NORMAL", jobTitle: null, businessId: "biz-default", isSuperAdmin: false }
 describe("current database authorization", () => {
   const token = refreshSessionToken({ id: admin.id } as JWT, admin, true)!
   it("revokes rejected, deleted and password-changed accounts and pre-upgrade cookies", () => {

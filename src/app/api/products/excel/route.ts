@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock, transaction } from "@/lib/domain/operations"
 import * as XLSX from "xlsx"
@@ -11,6 +12,7 @@ export async function GET() {
 
         // Get all products with related data
         const products = await prisma.product.findMany({
+            where: { businessId: businessIdOf(getSession(result)!) },
             include: {
                 category: { select: { name: true } },
                 models: {
@@ -94,7 +96,9 @@ export async function POST(request: NextRequest) {
     try {
         const result = await requireAdmin()
         if (result.error) return result.error
-        const actorId = getSession(result)!.user.id
+        const session = getSession(result)!
+        const actorId = session.user.id
+        const businessId = businessIdOf(session)
         const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { homeBranchId: true } })
 
         const formData = await request.formData()
@@ -142,7 +146,7 @@ export async function POST(request: NextRequest) {
                 const categoryName = String(row["Categoría"] || "").trim()
                 if (categoryName) {
                     const category = await prisma.category.findFirst({
-                        where: { name: { contains: categoryName, mode: "insensitive" } },
+                        where: { businessId, name: { contains: categoryName, mode: "insensitive" } },
                     })
                     categoryId = category?.id
                 }
@@ -153,11 +157,11 @@ export async function POST(request: NextRequest) {
 
                 if (existingId) {
                     existingProduct = await prisma.product.findUnique({
-                        where: { id: existingId },
+                        where: { id: existingId, businessId },
                     })
                 } else if (barcode) {
-                    existingProduct = await prisma.product.findUnique({
-                        where: { barcode },
+                    existingProduct = await prisma.product.findFirst({
+                        where: { barcode, businessId },
                     })
                 }
 
@@ -180,11 +184,11 @@ export async function POST(request: NextRequest) {
                         const diff = stock - existingProduct.stock
                         if (diff !== 0) {
                             const branch = diff > 0
-                                ? await releaseStock(tx, { productId: existingProduct.id, quantity: diff, branchId: importBranchId })
+                                ? await releaseStock(tx, { productId: existingProduct.id, quantity: diff, branchId: importBranchId, businessId })
                                 : (await takeStock(tx, { productId: existingProduct.id, quantity: -diff, branchId: importBranchId })).branch
                             const after = await tx.product.findUniqueOrThrow({ where: { id: existingProduct.id }, select: { stock: true } })
                             await tx.inventoryMovement.create({ data: {
-                                productId: existingProduct.id, userId: actorId, type: "ADJUSTMENT",
+                                businessId, productId: existingProduct.id, userId: actorId, type: "ADJUSTMENT",
                                 quantity: Math.abs(diff), previousStock: after.stock - diff, newStock: after.stock,
                                 reason: "ADJUSTMENT", notes: "Importación Excel", branchId: branch.id, businessVersion: 1,
                             } })
@@ -195,7 +199,7 @@ export async function POST(request: NextRequest) {
                     // Create new product - need a category
                     if (!categoryId) {
                         // Get first category as default
-                        const defaultCategory = await prisma.category.findFirst()
+                        const defaultCategory = await prisma.category.findFirst({ where: { businessId } })
                         if (!defaultCategory) {
                             errors.push(`Producto "${nombre}" sin categoría y no hay categorías disponibles`)
                             continue
@@ -207,6 +211,7 @@ export async function POST(request: NextRequest) {
                     await transaction(prisma, async tx => {
                         const created = await tx.product.create({
                             data: {
+                                businessId,
                                 name: nombre,
                                 barcode: barcode || undefined,
                                 retailPrice,
@@ -219,9 +224,9 @@ export async function POST(request: NextRequest) {
                             },
                         })
                         if (stock > 0) {
-                            const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: importBranchId })
+                            const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: importBranchId, businessId })
                             await tx.inventoryMovement.create({ data: {
-                                productId: created.id, userId: actorId, type: "IN",
+                                businessId, productId: created.id, userId: actorId, type: "IN",
                                 quantity: stock, previousStock: 0, newStock: stock,
                                 reason: "IMPORT", notes: "Importación Excel", branchId: branch.id, businessVersion: 1,
                             } })

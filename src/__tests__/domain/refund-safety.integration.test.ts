@@ -16,32 +16,33 @@ if (enabled) {
 }
 const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
 const prefix = `refund-test-${randomUUID()}`
-let admin: string, customer: string, category: string
+let admin: string, customer: string, category: string, biz: string
 
 async function product(stock = 1) {
-  const row = await db.product.create({ data: { name: prefix, categoryId: category, stock: 0, retailPrice: 100, wholesalePrice: 100, images: [] } })
-  if (stock > 0) await db.branchStock.create({ data: { productId: row.id, branchId: PRINCIPAL_BRANCH_ID, quantity: stock } })
+  const row = await db.product.create({ data: { businessId: biz, name: prefix, categoryId: category, stock: 0, retailPrice: 100, wholesalePrice: 100, images: [] } })
+  if (stock > 0) await db.branchStock.create({ data: { businessId: biz, productId: row.id, branchId: PRINCIPAL_BRANCH_ID, quantity: stock } })
   return db.product.update({ where: { id: row.id }, data: { stock } })
 }
 
 describe.skipIf(!enabled)("deposit refund safety in PostgreSQL", () => {
   beforeAll(async () => {
-    admin = (await db.user.create({ data: { name: prefix, role: "ADMIN", status: "APPROVED" } })).id
-    customer = (await db.user.create({ data: { name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000, creditBalance: 500 } })).id
-    category = (await db.category.create({ data: { name: prefix, slug: prefix } })).id
-    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, name: "Local principal" }, update: { isActive: true } })
+    biz = (await db.business.create({ data: { name: prefix, slug: prefix } })).id
+    admin = (await db.user.create({ data: { businessId: biz, name: prefix, role: "ADMIN", status: "APPROVED" } })).id
+    customer = (await db.user.create({ data: { businessId: biz, name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000, creditBalance: 500 } })).id
+    category = (await db.category.create({ data: { businessId: biz, name: prefix, slug: prefix } })).id
+    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, businessId: biz, name: "Local principal" }, update: { isActive: true } })
   })
   afterAll(async () => { await db.$disconnect() })
 
   it.each(["EFECTIVO", "CREDIT", "TRANSFERENCIA"])("does not refund the full price using the final %s method", async paymentMethod => {
-    const product = await db.product.create({ data: { name: prefix, categoryId: category, stock: 4, retailPrice: 100, wholesalePrice: 100, images: [] } })
+    const product = await db.product.create({ data: { businessId: biz, name: prefix, categoryId: category, stock: 4, retailPrice: 100, wholesalePrice: 100, images: [] } })
     const reservation = await db.reservation.create({ data: {
-      productId: product.id, userId: customer, quantity: 1, totalPrice: 100,
+      businessId: biz, productId: product.id, userId: customer, quantity: 1, totalPrice: 100,
       type: "DEPOSIT", depositAmount: 50, depositPaid: true, status: "COMPLETED",
       paymentMethod, businessVersion: 1, expiresAt: new Date(Date.now() + 60000),
     } })
     const key = `${prefix}:${randomUUID()}`
-    await expect(moveInventory(db, admin, { idempotencyKey: key, items: [{ productId: product.id, type: "RETURN", quantity: 1, reason: "Fixture refund", reservationId: reservation.id }] })).rejects.toMatchObject({ status: 409, code: "MIXED_PAYMENT_REFUND_REVIEW" })
+    await expect(moveInventory(db, admin, biz, { idempotencyKey: key, items: [{ productId: product.id, type: "RETURN", quantity: 1, reason: "Fixture refund", reservationId: reservation.id }] })).rejects.toMatchObject({ status: 409, code: "MIXED_PAYMENT_REFUND_REVIEW" })
     expect((await db.product.findUniqueOrThrow({ where: { id: product.id } })).stock).toBe(4)
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(500)
     expect(await db.inventoryMovement.count({ where: { productId: product.id } })).toBe(0)
@@ -52,10 +53,10 @@ describe.skipIf(!enabled)("deposit refund safety in PostgreSQL", () => {
 
   it("cancellation offsets a debt with REVERSAL and never reports a payment", async () => {
     const p = await product(1)
-    const result = await createReservations(db, customer, { productId: p.id, paymentMethod: "CREDIT", idempotencyKey: `${prefix}:${randomUUID()}` })
+    const result = await createReservations(db, customer, biz, { productId: p.id, paymentMethod: "CREDIT", idempotencyKey: `${prefix}:${randomUUID()}` })
     const reservation = result.reservations[0]
-    await changeReservation(db, customer, reservation.id, { action: "cancel" })
-    await changeReservation(db, customer, reservation.id, { action: "cancel" })
+    await changeReservation(db, customer, biz, reservation.id, { action: "cancel" })
+    await changeReservation(db, customer, biz, reservation.id, { action: "cancel" })
     const entries = await db.creditMovement.findMany({ where: { referenceId: reservation.id }, orderBy: { createdAt: "asc" } })
     expect(entries.map(entry => ({ type: entry.type, amount: entry.amount }))).toEqual([{ type: "DEBT", amount: 100 }, { type: "REVERSAL", amount: 100 }])
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(500)
@@ -66,10 +67,10 @@ describe.skipIf(!enabled)("deposit refund safety in PostgreSQL", () => {
 
   it("a returned credit sale creates one REVERSAL without a cash receipt", async () => {
     const p = await product(1)
-    const sale = await sell(db, admin, { items: [{ productId: p.id, quantity: 1 }], customerId: customer, paymentMethod: "CREDITO", idempotencyKey: `${prefix}:${randomUUID()}` })
+    const sale = await sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }], customerId: customer, paymentMethod: "CREDITO", idempotencyKey: `${prefix}:${randomUUID()}` })
     const input = { idempotencyKey: `${prefix}:${randomUUID()}`, saleId: sale.sale.id, items: [{ saleItemId: sale.items[0].id, quantity: 1 }], refundMethod: "CREDITO", reason: "Fixture return" }
-    const result = await returnSaleItems(db, admin, input)
-    await returnSaleItems(db, admin, input)
+    const result = await returnSaleItems(db, admin, biz, input)
+    await returnSaleItems(db, admin, biz, input)
     const entries = await db.creditMovement.findMany({ where: { referenceId: sale.sale.id }, orderBy: { createdAt: "asc" } })
     expect(entries.map(entry => ({ type: entry.type, amount: entry.amount }))).toEqual([{ type: "DEBT", amount: 100 }, { type: "REVERSAL", amount: 100 }])
     expect((await db.user.findUniqueOrThrow({ where: { id: customer } })).creditBalance).toBe(500)

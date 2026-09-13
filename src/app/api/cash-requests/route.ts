@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema, transaction, type Transaction } from "@/lib/domain/operations"
@@ -22,19 +23,19 @@ const requestInclude = {
   decidedBy: { select: { id: true, name: true } },
 } satisfies Prisma.CashRequestInclude
 
-async function createRequest(tx: Transaction, actorId: string, input: z.infer<typeof createSchema>) {
-  const branch = await tx.branch.findFirst({ where: { id: input.branchId, isActive: true } })
+async function createRequest(tx: Transaction, actorId: string, businessId: string, input: z.infer<typeof createSchema>) {
+  const branch = await tx.branch.findFirst({ where: { id: input.branchId, isActive: true, businessId } })
   if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
   // Doble-submit sin llave de idempotencia: misma persona, sucursal, monto y
   // concepto en menos de 60s devuelve la solicitud ya registrada.
   const recent = await tx.cashRequest.findFirst({
-    where: { requestedById: actorId, branchId: branch.id, amountCents: input.amountCents, concept: input.concept, createdAt: { gte: new Date(Date.now() - 60_000) } },
+    where: { businessId, requestedById: actorId, branchId: branch.id, amountCents: input.amountCents, concept: input.concept, createdAt: { gte: new Date(Date.now() - 60_000) } },
     orderBy: { createdAt: "desc" },
     include: requestInclude,
   })
   if (recent) return { request: recent, duplicate: true as const }
   const request = await tx.cashRequest.create({
-    data: { branchId: branch.id, amountCents: input.amountCents, concept: input.concept, requestedById: actorId },
+    data: { businessId, branchId: branch.id, amountCents: input.amountCents, concept: input.concept, requestedById: actorId },
     include: requestInclude,
   })
   return { request, duplicate: false as const }
@@ -56,6 +57,7 @@ export async function GET(req: Request) {
       // El empleado ve sus propias solicitudes y las pendientes de su sucursal base.
       const me = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
       where = {
+        businessId: businessIdOf(session),
         ...(branchId ? { branchId } : {}),
         OR: [
           { requestedById: session.user.id, ...(status ? { status: status as (typeof statuses)[number] } : {}) },
@@ -64,6 +66,7 @@ export async function GET(req: Request) {
       }
     } else {
       where = {
+        businessId: businessIdOf(session),
         ...(status ? { status: status as (typeof statuses)[number] } : {}),
         ...(branchId ? { branchId } : {}),
       }
@@ -77,12 +80,14 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const input = createSchema.parse(await req.json())
     const key = input.idempotencyKey ?? req.headers.get("idempotency-key") ?? undefined
     const result = key
-      ? await operation(prisma, { key, actorId, kind: "CASH_REQUEST", permission: "staff", payload: input }, tx => createRequest(tx, actorId, input))
-      : await transaction(prisma, tx => createRequest(tx, actorId, input))
+      ? await operation(prisma, { key, actorId, businessId, kind: "CASH_REQUEST", permission: "staff", payload: input }, tx => createRequest(tx, actorId, businessId, input))
+      : await transaction(prisma, tx => createRequest(tx, actorId, businessId, input))
     return NextResponse.json(result, { status: result.duplicate ? 200 : 201 })
   } catch (error) { return businessFailure(error) }
 }

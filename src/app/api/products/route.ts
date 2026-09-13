@@ -3,6 +3,8 @@ import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/produc
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, transaction } from "@/lib/domain/operations"
 
@@ -29,7 +31,9 @@ const createProductSchema = z
 
 export async function GET(req: Request) {
   try {
-    const viewer = (await auth())?.user
+    const viewerSession = await auth()
+    const viewer = viewerSession?.user
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
     const { searchParams } = new URL(req.url)
     const categoryId = searchParams.get("categoryId")
     const modelId = searchParams.get("modelId")
@@ -42,6 +46,7 @@ export async function GET(req: Request) {
     if (lowStock && !isCatalogStaff(viewer)) return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
 
     const where = {
+      businessId,
       isActive: true,
       ...(categoryId && { categoryId }),
       ...(modelId && {
@@ -127,6 +132,7 @@ export async function POST(req: Request) {
     const result = await requireAdmin()
     if (result.error) return result.error
     const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const body = await req.json()
     const parseResult = createProductSchema.safeParse(body)
@@ -160,8 +166,8 @@ export async function POST(req: Request) {
 
     // Check if barcode already exists
     if (barcode) {
-      const existingProduct = await prisma.product.findUnique({
-        where: { barcode },
+      const existingProduct = await prisma.product.findFirst({
+        where: { barcode, businessId },
       })
       if (existingProduct) {
         return NextResponse.json(
@@ -175,6 +181,7 @@ export async function POST(req: Request) {
     const product = await transaction(prisma, async tx => {
       const created = await tx.product.create({
         data: {
+          businessId,
           name,
           description: description || null,
           barcode: barcode || null,
@@ -190,6 +197,7 @@ export async function POST(req: Request) {
             ? undefined
             : {
                 create: modelIds.map((modelId: string) => ({
+                  businessId,
                   modelId,
                 })),
               },
@@ -208,9 +216,10 @@ export async function POST(req: Request) {
 
       // La existencia inicial entra a UNA sucursal vía el dominio.
       if (stock > 0) {
-        const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: stockBranchId ?? creator?.homeBranchId })
+        const branch = await releaseStock(tx, { productId: created.id, quantity: stock, branchId: stockBranchId ?? creator?.homeBranchId, businessId })
         await tx.inventoryMovement.create({
           data: {
+            businessId,
             productId: created.id,
             type: "IN",
             quantity: stock,

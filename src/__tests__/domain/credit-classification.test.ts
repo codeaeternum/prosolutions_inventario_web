@@ -10,7 +10,11 @@ const mocked = vi.hoisted(() => ({
   notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND") }),
 }))
 vi.mock("@/lib/prisma", () => ({ default: mocked.prisma, prisma: mocked.prisma }))
-vi.mock("@/lib/api-auth", () => ({ requireAdmin: async () => ({ session: { user: { id: "admin", role: "ADMIN" } } }), requireAuth: vi.fn(), getSession: vi.fn() }))
+vi.mock("@/lib/api-auth", () => ({
+  requireAdmin: async () => ({ session: { user: { id: "admin", role: "ADMIN", businessId: "biz-test" } } }),
+  requireAuth: vi.fn(),
+  getSession: vi.fn((result: { session?: unknown }) => result.session ?? null),
+}))
 vi.mock("next/navigation", () => ({ redirect: vi.fn(), notFound: mocked.notFound }))
 vi.mock("@/app/admin/tickets/[tipo]/[id]/ticket-print-view", () => ({ TicketPrintView: () => null }))
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
@@ -44,6 +45,7 @@ export async function GET(req: Request) {
 
     const requests = await prisma.marketplaceRequest.findMany({
       where: {
+        businessId: businessIdOf(session),
         ...(status ? { status } : {}),
         ...(session.user.role === "WORKSHOP" ? { requestedById: session.user.id } : {}),
       },
@@ -76,6 +78,7 @@ export async function POST(req: Request) {
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const isWorkshop = session.user.role === "WORKSHOP"
 
     const parseResult = createSchema.safeParse(await req.json().catch(() => null))
@@ -104,7 +107,7 @@ export async function POST(req: Request) {
     }
 
     const product = await prisma.product.findFirst({
-      where: { id: input.productId, isActive: true, marketplaceVisible: true },
+      where: { id: input.productId, businessId, isActive: true, marketplaceVisible: true },
       select: { id: true, name: true },
     })
     if (!product) {
@@ -116,6 +119,7 @@ export async function POST(req: Request) {
 
     const request = await prisma.marketplaceRequest.create({
       data: {
+        businessId,
         productId: product.id,
         qty: input.qty,
         tallerName,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { operation, operationKeySchema } from "@/lib/domain/operations"
@@ -24,6 +25,7 @@ export async function GET(req: Request) {
     const includeInactive = query.get("all") === "1"
     const services = await prisma.workshopService.findMany({
       where: {
+        businessId: businessIdOf(getSession(auth)!),
         ...(includeInactive ? {} : { isActive: true }),
         ...(search ? { name: { contains: search, mode: "insensitive" as const } } : {}),
       },
@@ -38,11 +40,14 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { idempotencyKey, ...input } = createSchema.parse(await req.json())
-    const result = await operation(prisma, { key: idempotencyKey, actorId, kind: "WORKSHOP_SERVICE_CREATE", permission: "admin", payload: input }, async tx => {
+    const result = await operation(prisma, { key: idempotencyKey, actorId, businessId, kind: "WORKSHOP_SERVICE_CREATE", permission: "admin", payload: input }, async tx => {
       const service = await tx.workshopService.create({
         data: {
+          businessId,
           name: input.name,
           description: input.description || null,
           priceCents: input.priceCents ?? null,

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { generateSlug } from "@/lib/utils"
 
@@ -15,7 +17,7 @@ export async function GET(req: Request) {
     const brandId = searchParams.get("brandId")
 
     const models = await prisma.model.findMany({
-      where: brandId ? { brandId } : undefined,
+      where: { businessId: await getDefaultBusinessId(), ...(brandId ? { brandId } : {}) },
       include: {
         brand: { select: { name: true } },
         _count: { select: { products: true } },
@@ -42,11 +44,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 })
     }
     const { name, brandId } = parseResult.data
+    const businessId = businessIdOf(getSession(result)!)
 
     const slug = generateSlug(name)
 
     const existingModel = await prisma.model.findFirst({
-      where: { brandId, slug },
+      where: { businessId, brandId, slug },
     })
 
     if (existingModel) {
@@ -54,7 +57,7 @@ export async function POST(req: Request) {
     }
 
     const model = await prisma.model.create({
-      data: { name, slug, brandId },
+      data: { businessId, name, slug, brandId },
       include: { brand: { select: { name: true } } },
     })
 

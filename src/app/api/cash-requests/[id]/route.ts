@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema, transaction, type Transaction } from "@/lib/domain/operations"
@@ -20,9 +21,9 @@ const requestInclude = {
   decidedBy: { select: { id: true, name: true } },
 } satisfies Prisma.CashRequestInclude
 
-async function decide(tx: Transaction, actorId: string, id: string, input: z.infer<typeof decideSchema>) {
+async function decide(tx: Transaction, actorId: string, businessId: string, id: string, input: z.infer<typeof decideSchema>) {
   const request = await tx.cashRequest.findUnique({ where: { id } })
-  if (!request) throw new BusinessError("Solicitud no encontrada.", 404)
+  if (!request || request.businessId !== businessId) throw new BusinessError("Solicitud no encontrada.", 404)
   if (request.requestedById === actorId) throw new BusinessError("No puedes autorizar tu propio gasto.", 403)
   if (request.status !== "PENDING") throw new BusinessError("La solicitud ya fue decidida.", 409)
   if (input.decision === "REJECT") {
@@ -42,7 +43,7 @@ async function decide(tx: Transaction, actorId: string, id: string, input: z.inf
   })
   if (approved.count !== 1) throw new BusinessError("La solicitud ya fue decidida.", 409)
   const movement = await tx.cashMovement.create({
-    data: { registerId: register.id, userId: request.requestedById, type: "OUT", amount: request.amountCents / 100, description: `Gasto autorizado: ${request.concept}`, referenceType: "EXPENSE", referenceId: request.id },
+    data: { businessId, registerId: register.id, userId: request.requestedById, type: "OUT", amount: request.amountCents / 100, description: `Gasto autorizado: ${request.concept}`, referenceType: "EXPENSE", referenceId: request.id },
   })
   const updated = await tx.cashRequest.update({ where: { id }, data: { cashMovementId: movement.id }, include: requestInclude })
   return { request: updated }
@@ -52,13 +53,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { id } = await params
     const input = decideSchema.parse(await req.json())
     const key = input.idempotencyKey ?? req.headers.get("idempotency-key") ?? undefined
     const result = key
-      ? await operation(prisma, { key, actorId, kind: "CASH_REQUEST_DECIDE", permission: "admin", payload: { id, ...input } }, tx => decide(tx, actorId, id, input))
-      : await transaction(prisma, tx => decide(tx, actorId, id, input))
+      ? await operation(prisma, { key, actorId, businessId, kind: "CASH_REQUEST_DECIDE", permission: "admin", payload: { id, ...input } }, tx => decide(tx, actorId, businessId, id, input))
+      : await transaction(prisma, tx => decide(tx, actorId, businessId, id, input))
     return NextResponse.json(result)
   } catch (error) { return businessFailure(error) }
 }

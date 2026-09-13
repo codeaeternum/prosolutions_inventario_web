@@ -72,6 +72,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           role: user.role,
           customerType: user.customerType,
           status: user.status,
+          businessId: user.businessId,
+          isSuperAdmin: user.isSuperAdmin,
         }
       }
     })

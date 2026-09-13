@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { sell } from "@/lib/domain/sales"
 import { businessFailure } from "@/lib/domain/http"
@@ -36,7 +37,9 @@ export async function PATCH(
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { id } = await params
 
     const parseResult = decideSchema.safeParse(await req.json().catch(() => null))
@@ -49,7 +52,7 @@ export async function PATCH(
       where: { id },
       include: { requestedBy: { select: { id: true, role: true } } },
     })
-    if (!existing) {
+    if (!existing || existing.businessId !== businessId) {
       return NextResponse.json({ error: "Solicitud no encontrada" }, { status: 404 })
     }
 
@@ -81,7 +84,7 @@ export async function PATCH(
 
       let result: Awaited<ReturnType<typeof sell>>
       try {
-        result = await sell(prisma, actorId, {
+        result = await sell(prisma, actorId, businessId, {
           idempotencyKey: `mkt-fulfill-${existing.id}`,
           items: [{ productId: existing.productId, quantity: existing.qty }],
           paymentMethod,

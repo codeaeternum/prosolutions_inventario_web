@@ -28,6 +28,7 @@ services:
       TELEGRAM_BOT_TOKEN: ""
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
       REPAIR_EVIDENCE_DIR: /app/storage/repair-evidence
+      REFICIO_SIGNUP_ENABLED: ${REFICIO_SIGNUP_ENABLED:-false}
     ports:
       - "${PILOT_BIND:-127.0.0.1}:3316:3000"
     volumes:

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema } from "@/lib/domain/operations"
@@ -31,8 +32,8 @@ function parseList(raw: string | undefined, fallback: string[]): string[] {
 
 const dedupe = (list: string[]) => [...new Set(list)]
 
-async function readConfig(tx: Pick<Transaction, "systemSettings">) {
-  const rows = await tx.systemSettings.findMany({ where: { key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY] } } })
+async function readConfig(tx: Pick<Transaction, "systemSettings">, businessId: string) {
+  const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY] } } })
   const map = new Map(rows.map(row => [row.key, row.value]))
   return {
     equipmentTypes: parseList(map.get(EQUIPMENT_TYPES_KEY), DEFAULT_EQUIPMENT_TYPES),
@@ -44,7 +45,7 @@ export async function GET() {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    return NextResponse.json(await readConfig(prisma), { headers: { "Cache-Control": "private, no-store" } })
+    return NextResponse.json(await readConfig(prisma, businessIdOf(getSession(auth)!)), { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 
@@ -52,27 +53,29 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { idempotencyKey, ...input } = updateSchema.parse(await req.json())
     if (input.equipmentTypes === undefined && input.locations === undefined) throw new BusinessError("No hay cambios por guardar.")
-    const result = await operation(prisma, { key: idempotencyKey, actorId, kind: "WORKSHOP_CONFIG_UPDATE", permission: "admin", payload: input }, async tx => {
+    const result = await operation(prisma, { key: idempotencyKey, actorId, businessId, kind: "WORKSHOP_CONFIG_UPDATE", permission: "admin", payload: input }, async tx => {
       if (input.equipmentTypes !== undefined) {
         const value = JSON.stringify(dedupe(input.equipmentTypes))
         await tx.systemSettings.upsert({
-          where: { key: EQUIPMENT_TYPES_KEY },
-          create: { key: EQUIPMENT_TYPES_KEY, value, type: "JSON" },
+          where: { businessId_key: { businessId, key: EQUIPMENT_TYPES_KEY } },
+          create: { businessId, key: EQUIPMENT_TYPES_KEY, value, type: "JSON" },
           update: { value, type: "JSON" },
         })
       }
       if (input.locations !== undefined) {
         const value = JSON.stringify(dedupe(input.locations))
         await tx.systemSettings.upsert({
-          where: { key: LOCATIONS_KEY },
-          create: { key: LOCATIONS_KEY, value, type: "JSON" },
+          where: { businessId_key: { businessId, key: LOCATIONS_KEY } },
+          create: { businessId, key: LOCATIONS_KEY, value, type: "JSON" },
           update: { value, type: "JSON" },
         })
       }
-      return readConfig(tx)
+      return readConfig(tx, businessId)
     })
     return NextResponse.json(result)
   } catch (error) { return businessFailure(error) }

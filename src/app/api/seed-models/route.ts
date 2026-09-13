@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 // POST /api/seed-models — Seed all Apple iPhone and iPad models
@@ -7,12 +8,13 @@ export async function POST() {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     // Ensure Apple brand exists
-    let apple = await prisma.brand.findFirst({ where: { name: { equals: "Apple", mode: "insensitive" } } })
+    let apple = await prisma.brand.findFirst({ where: { businessId, name: { equals: "Apple", mode: "insensitive" } } })
     if (!apple) {
       apple = await prisma.brand.create({
-        data: { name: "Apple", slug: "apple" },
+        data: { businessId, name: "Apple", slug: "apple" },
       })
     }
 
@@ -49,6 +51,7 @@ export async function POST() {
 
       const exists = await prisma.model.findFirst({
         where: {
+          businessId,
           brandId: apple.id,
           OR: [
             { name: { equals: modelName, mode: "insensitive" } },
@@ -64,6 +67,7 @@ export async function POST() {
 
       await prisma.model.create({
         data: {
+          businessId,
           name: modelName,
           slug,
           brandId: apple.id,

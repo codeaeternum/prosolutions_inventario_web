@@ -3,6 +3,7 @@ import type { BotContext } from "./types"
 import { customerTypeLabels } from "./types"
 import { generateQRCode } from "./utils"
 import { notifyAdmins } from "./notify"
+import { getDefaultBusinessId } from "../../lib/settings"
 
 export function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
@@ -25,6 +26,7 @@ export async function submitRegistration({ prisma, bot, sessions }: Pick<BotCont
   const requested = session.data.customerType
   const requestedCustomerType = requested === "TECHNICIAN" || requested === "STORE" ? requested : "NORMAL"
   const user = await prisma.user.create({ data: {
+    businessId: await getDefaultBusinessId(),
     name: session.data.name!.slice(0, 200), phone: session.data.phone!.slice(0, 50),
     businessName: session.data.businessName?.slice(0, 200), telegramId, qrCode: generateQRCode(),
     role: "CUSTOMER", status: "PENDING", customerType: "NORMAL", requestedCustomerType,

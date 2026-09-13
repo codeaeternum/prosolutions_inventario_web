@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Wrench } from "lucide-react"
 import { prisma } from "@/lib/prisma"
+import { getBusinessSetting, getDefaultBusinessId } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { QuoteDocument, QuoteNotFound } from "@/components/public/quote-view"
@@ -69,13 +70,13 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
     )
   }
 
-  const businessName = await prisma.systemSettings.findUnique({ where: { key: "ticket_business_name" } })
+  const businessName = await getBusinessSetting(await getDefaultBusinessId(), "ticket_business_name")
 
   return (
     <PageShell>
       <QuoteDocument
         order={order}
-        businessName={businessName?.value || "PROSOLUTIONS"}
+        businessName={businessName || "PROSOLUTIONS"}
         token={token}
       />
     </PageShell>

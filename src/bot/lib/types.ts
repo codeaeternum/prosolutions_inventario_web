@@ -77,7 +77,7 @@ export interface SessionStores {
     sale: Record<string, SaleSession>
     cart: Record<string, CartSession>
     qr: Record<string, QRSession>
-    settings: Record<string, { key: string }>
+    settings: Record<string, { key: string; businessId: string }>
 }
 
 // ========== SHARED CONTEXT ==========

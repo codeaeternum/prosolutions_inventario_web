@@ -155,11 +155,11 @@ Vas a registrar la venta de:
         try {
             const adminUser = await prisma.user.findUnique({
                 where: { telegramId },
-                select: { id: true }
+                select: { id: true, businessId: true }
             })
 
             if (!adminUser) return ctx.reply('Cuenta no disponible.')
-            const result = await sell(prisma, adminUser.id, {
+            const result = await sell(prisma, adminUser.id, adminUser.businessId, {
                 idempotencyKey: `bot-cart:${telegramId}:${ctx.callbackQuery.message?.message_id ?? ctx.update.update_id}`,
                 items: cart.items.map(item => ({ productId: item.id, quantity: item.quantity })), paymentMethod: 'EFECTIVO',
             })

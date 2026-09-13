@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
-import { prisma } from "@/lib/prisma"
+import { businessIdOf } from "@/lib/tenant"
+import { getBusinessSetting } from "@/lib/settings"
 
 export async function GET() {
   const result = await requireAdminOrEmployee()
@@ -10,11 +11,9 @@ export async function GET() {
   }
 
   try {
-    const setting = await prisma.systemSettings.findUnique({
-      where: { key: "ticket_business_name" },
-    })
+    const setting = await getBusinessSetting(businessIdOf(session), "ticket_business_name")
     return NextResponse.json(
-      { name: setting?.value || "ProSolutions" },
+      { name: setting || "ProSolutions" },
       { headers: { "Cache-Control": "private, no-store" } }
     )
   } catch (error) {

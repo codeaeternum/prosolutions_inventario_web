@@ -1,7 +1,9 @@
 import { notFound, redirect } from "next/navigation"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { getBusinessSettingsMap } from "@/lib/settings"
 import prisma from "@/lib/prisma"
-import { normalizeSlug } from "@/lib/public-slug"
+import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { TicketPrintView } from "./ticket-print-view"
@@ -29,10 +31,12 @@ const EVENT_LABELS: Record<string, string> = {
 
 // La orden se carga igual para el ticket del cliente que para la hoja interna:
 // incluye refacciones e historial (la hoja los imprime; el ticket los ignora).
-function loadRepairOrder(id: string) {
+function loadRepairOrder(id: string, businessId: string) {
   return prisma.repairOrder.findUnique({
-    where: { id },
+    where: { id, businessId },
     include: {
+      // Slug público del negocio de la orden: QR de rastreo brandeado.
+      business: { select: { slug: true, isActive: true } },
       intakeBranch: true,
       currentBranch: true,
       assignedTo: { select: { name: true } },
@@ -62,6 +66,7 @@ export default async function TicketPage({
 }) {
   const adminCheck = await requireAdmin()
   if (adminCheck.error) redirect("/login")
+  const businessId = businessIdOf(getSession(adminCheck)!)
 
   const { tipo, id } = await params
   
@@ -78,7 +83,7 @@ export default async function TicketPage({
   if (tipo === "venta") {
     // Documento de venta nuevo (Sale con líneas y pagos); fallback al movimiento heredado.
     const saleDoc = await prisma.sale.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: {
         items: { include: { product: true } },
         payments: { orderBy: { createdAt: "asc" } },
@@ -108,7 +113,7 @@ export default async function TicketPage({
       }
     } else {
       const sale = await prisma.inventoryMovement.findUnique({
-        where: { id },
+        where: { id, businessId },
         include: {
           product: true,
           user: true, // admin que la hizo
@@ -137,7 +142,7 @@ export default async function TicketPage({
   } else if (tipo === "reserva") {
     // Buscar reserva completada
     const res = await prisma.reservation.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: {
         product: true,
         user: true
@@ -167,7 +172,7 @@ export default async function TicketPage({
   } else if (tipo === "abono") {
     // Buscar movimiento de crédito
     const mov = await prisma.creditMovement.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: { user: true }
     })
 
@@ -198,7 +203,7 @@ export default async function TicketPage({
     // refacciones e historial; es el documento de trabajo del técnico.
     // cotizacion = documento formal para el cliente con el desglose del
     // presupuesto y las refacciones autorizadas.
-    const order = await loadRepairOrder(id)
+    const order = await loadRepairOrder(id, businessId)
 
     if (order) {
       const conditions = (order.functionalConditions ?? "")
@@ -216,15 +221,12 @@ export default async function TicketPage({
       const evidenceUrl = order.uploadToken ? `${base}/evidencia/${order.uploadToken}` : undefined
 
       if (tipo === "reparacion") {
-        // QR de rastreo brandeado: con business_slug apunta a la vitrina
-        // /<slug>/order-status; sin slug cae al /seguimiento global. En
-        // ambos casos el folio y los últimos 4 dígitos del teléfono van
+        // QR de rastreo brandeado: con Business.slug activo apunta a la
+        // vitrina /<slug>/order-status; sin slug cae al /seguimiento global.
+        // En ambos casos el folio y los últimos 4 dígitos del teléfono van
         // prellenados (?folio=…&t=…): el cliente solo toca "Consultar".
-        const slugRow = await prisma.systemSettings.findUnique({
-          where: { key: "business_slug" },
-          select: { value: true },
-        })
-        const trackingSlug = normalizeSlug(slugRow?.value ?? "")
+        const businessSlug = order.business.isActive ? order.business.slug : ""
+        const trackingSlug = isValidSlug(businessSlug) ? businessSlug : ""
         const phone4 = order.customerPhone.replace(/\D/g, "").slice(-4)
         const trackingQuery = `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
         const trackingUrl = trackingSlug
@@ -369,15 +371,11 @@ export default async function TicketPage({
   }
 
   // Load ticket customization settings
-  const [ticketBusinessName, ticketSubtitle, ticketFooter] = await Promise.all([
-    prisma.systemSettings.findUnique({ where: { key: "ticket_business_name" } }),
-    prisma.systemSettings.findUnique({ where: { key: "ticket_subtitle" } }),
-    prisma.systemSettings.findUnique({ where: { key: "ticket_footer" } }),
-  ])
+  const ticketSettings = await getBusinessSettingsMap(businessId, ["ticket_business_name", "ticket_subtitle", "ticket_footer"])
 
-  const businessName = ticketBusinessName?.value || "PROSOLUTIONS"
-  const subtitle = ticketSubtitle?.value || "Venta de refacciones y\nReparación profesional"
-  const footer = ticketFooter?.value || "¡Gracias por tu preferencia!"
+  const businessName = ticketSettings.get("ticket_business_name") || "PROSOLUTIONS"
+  const subtitle = ticketSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional"
+  const footer = ticketSettings.get("ticket_footer") || "¡Gracias por tu preferencia!"
 
   if (workshopData) {
     return <WorkshopSheetView data={{ ...workshopData, businessName }} />

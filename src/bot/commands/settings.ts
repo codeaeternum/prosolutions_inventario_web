@@ -2,12 +2,22 @@ import { Markup } from 'telegraf'
 import { message } from 'telegraf/filters'
 import type { BotContext } from '../lib/types'
 import { requireAdmin } from '../lib/guards'
+import { getBusinessSetting, getDefaultBusinessId, setBusinessSetting } from '../../lib/settings'
 
 export function registerSettings({ bot, prisma, sessions }: BotContext) {
+    // Resuelve el negocio del usuario de Telegram que invoca el comando.
+    async function businessIdOfTelegramUser(telegramId: string): Promise<string> {
+        const me = await prisma.user.findUnique({
+            where: { telegramId },
+            select: { businessId: true }
+        })
+        return me?.businessId ?? (await getDefaultBusinessId())
+    }
+
     // Helper to get setting value
-    async function getSetting(key: string, defaultValue: string): Promise<string> {
-        const setting = await prisma.systemSettings.findUnique({ where: { key } })
-        return setting?.value || defaultValue
+    async function getSetting(businessId: string, key: string, defaultValue: string): Promise<string> {
+        const setting = await getBusinessSetting(businessId, key)
+        return setting || defaultValue
     }
 
     // Text handler for settings input (must be registered before other text handlers)
@@ -19,11 +29,7 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
             const newValue = ctx.message.text.trim()
 
             try {
-                await prisma.systemSettings.upsert({
-                    where: { key: session.key },
-                    update: { value: newValue },
-                    create: { key: session.key, value: newValue }
-                })
+                await setBusinessSetting(session.businessId, session.key, newValue)
 
                 delete sessions.settings[telegramId]
                 await ctx.reply(`✅ *Ajuste guardado correctamente.*`, { parse_mode: 'Markdown' })
@@ -41,9 +47,10 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
     bot.command('ajustes', async (ctx) => {
         if (!(await requireAdmin(ctx))) return
 
-        const usd = await getSetting('usd_rate', '20.00')
-        const hours = await getSetting('reservation_hours', '24')
-        const bank = await getSetting('bank_info', 'BBVA | ProSolutions SA | 0123456789')
+        const businessId = await businessIdOfTelegramUser(ctx.from.id.toString())
+        const usd = await getSetting(businessId, 'usd_rate', '20.00')
+        const hours = await getSetting(businessId, 'reservation_hours', '24')
+        const bank = await getSetting(businessId, 'bank_info', 'BBVA | ProSolutions SA | 0123456789')
 
         await ctx.reply(`⚙️ *Ajustes del Sistema*
 
@@ -79,7 +86,7 @@ _Selecciona qué deseas modificar:_`, {
         const action = ctx.match[0]
         const key = keyMap[action]
 
-        sessions.settings[telegramId] = { key }
+        sessions.settings[telegramId] = { key, businessId: await businessIdOfTelegramUser(telegramId) }
 
         await ctx.reply(`✏️ *Ingresa el nuevo valor para ${labelMap[action]}:*`)
         await ctx.answerCbQuery()

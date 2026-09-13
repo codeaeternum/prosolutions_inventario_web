@@ -3,6 +3,8 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'
 import bcrypt from 'bcryptjs'
 
+const DEFAULT_BUSINESS_ID = 'biz-default'
+
 const connectionString = process.env.DATABASE_URL ||
   'postgresql://prosolutions:prosolutions123@localhost:5432/prosolutions_db'
 
@@ -251,10 +253,24 @@ async function main() {
 
   const hashedPassword = await bcrypt.hash(adminPassword, 12)
 
+  // Negocio por defecto: todos los registros del seed cuelgan de este tenant.
+  const business = await prisma.business.upsert({
+    where: { id: DEFAULT_BUSINESS_ID },
+    update: {},
+    create: {
+      id: DEFAULT_BUSINESS_ID,
+      name: 'ProSolutions',
+      slug: 'prosolutions',
+    },
+  })
+
+  console.log(`Business: ${business.id}`)
+
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
     create: {
+      businessId: business.id,
       email: adminEmail,
       password: hashedPassword,
       name: 'Administrador',
@@ -272,6 +288,7 @@ async function main() {
     update: {},
     create: {
       id: 'default',
+      businessId: business.id,
       tempReservationMinutes: 30,
       depositPercentage: 50,
       depositReservationHours: 48,
@@ -311,7 +328,7 @@ async function main() {
     await prisma.category.upsert({
       where: { slug: category.slug },
       update: {},
-      create: category,
+      create: { ...category, businessId: business.id },
     })
   }
 
@@ -325,6 +342,7 @@ async function main() {
       where: { slug: brandName.toLowerCase().replace(/\s+/g, '-') },
       update: {},
       create: {
+        businessId: business.id,
         name: brandName,
         slug: brandName.toLowerCase().replace(/\s+/g, '-'),
       },
@@ -342,6 +360,7 @@ async function main() {
         where: { brandId_slug: { brandId: brand.id, slug: modelSlug } },
         update: {},
         create: {
+          businessId: business.id,
           name: modelData.name,
           slug: modelSlug,
           brandId: brand.id,

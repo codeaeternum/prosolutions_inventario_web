@@ -34,7 +34,7 @@ export function registerReports({ bot, prisma }: BotContext) {
         try {
             const adminUser = await prisma.user.findUnique({
                 where: { telegramId: ctx.from!.id.toString() },
-                select: { id: true, homeBranchId: true }
+                select: { id: true, businessId: true, homeBranchId: true }
             })
             if (!adminUser) return ctx.reply('Cuenta no disponible.')
 
@@ -50,7 +50,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             if (!product) return ctx.reply('❌ Producto no encontrado.')
             const diff = newStock - (current?.quantity ?? 0)
             if (diff === 0) return ctx.reply(`ℹ️ ${product.name} ya tiene ${newStock} en ${branch.name}.`)
-            const result = await moveInventory(prisma, adminUser.id, {
+            const result = await moveInventory(prisma, adminUser.id, adminUser.businessId, {
                 idempotencyKey: `bot-stock-${ctx.from!.id}-${Date.now()}-${randomUUID()}`,
                 items: [{
                     productId, type: diff > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
@@ -405,7 +405,7 @@ Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
                 return ctx.reply('⚠️ Esta reserva ya no se puede cancelar.')
             }
 
-            await changeReservation(prisma, user.id, reservationId, { action: 'cancel' })
+            await changeReservation(prisma, user.id, user.businessId, reservationId, { action: 'cancel' })
 
             await ctx.editMessageText(`❌ *Reserva Cancelada*\n\n📦 ${reservation.product.name}\nEstado: Cancelado por usuario`, { parse_mode: 'Markdown' })
 

@@ -7,12 +7,13 @@ import * as fs from 'fs'
 import type { BotContext } from '../lib/types'
 import { isAdmin } from '../lib/notify'
 import { requirePrisma } from '../lib/guards'
+import { getBusinessSetting, getDefaultBusinessId } from '../../lib/settings'
 
 export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: BotContext) {
     // Helper: getSetting (duplicated here for independence; in production use a shared module)
-    async function getSetting(key: string, defaultValue: string): Promise<string> {
-        const setting = await prisma.systemSettings.findUnique({ where: { key } })
-        return setting?.value || defaultValue
+    async function getSetting(businessId: string, key: string, defaultValue: string): Promise<string> {
+        const setting = await getBusinessSetting(businessId, key)
+        return setting || defaultValue
     }
 
     // /categorias
@@ -241,7 +242,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
             return ctx.reply('⏳ Tu cuenta está pendiente de verificación.')
         }
 
-        const product = await prisma.product.findUnique({ where: { id: productId } })
+        const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
         if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
 
         await ctx.reply(`🛒 *Reservar: ${product.name}*
@@ -282,8 +283,10 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
 
         session.step = 'PROOF_UPLOAD'
         const total = (session.price * (session.quantity || 1)).toLocaleString()
-        const bankTransferRaw = await getSetting('bank_transfer_info', '')
-        const bankCashRaw = await getSetting('bank_cash_info', '')
+        const me = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
+        const businessId = me?.businessId ?? (await getDefaultBusinessId())
+        const bankTransferRaw = await getSetting(businessId, 'bank_transfer_info', '')
+        const bankCashRaw = await getSetting(businessId, 'bank_cash_info', '')
 
         if (!bankTransferRaw && !bankCashRaw) return ctx.reply('El taller aún no ha configurado sus datos de pago. Consulta en recepción antes de transferir.')
         await ctx.reply(`🏦 *Opciones de Pago*
@@ -314,7 +317,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
             }
 
             session.operationKey ??= randomUUID()
-            const result = await createReservations(prisma, user.id, {
+            const result = await createReservations(prisma, user.id, user.businessId, {
                 idempotencyKey: session.operationKey, productId: session.productId,
                 quantity: session.quantity, paymentMethod: method, paymentProofUrl: proofUrl,
                 type: method === 'TRANSFER' ? 'DEPOSIT' : 'TEMPORARY',

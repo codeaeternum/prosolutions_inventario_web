@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
@@ -44,10 +45,11 @@ export async function POST(req: Request) {
     const { name, email, phone, password, customerType: requestedType } = parseResult.data
     const emailOrNull = email?.trim() || null
     const phoneOrNull = phone?.trim() || null
+    const businessId = await getDefaultBusinessId()
 
     if (emailOrNull) {
       const existingByEmail = await prisma.user.findUnique({
-        where: { email: emailOrNull },
+        where: { email: emailOrNull, businessId },
       })
       if (existingByEmail) {
         return NextResponse.json(
@@ -59,7 +61,7 @@ export async function POST(req: Request) {
 
     if (phoneOrNull) {
       const existingByPhone = await prisma.user.findFirst({
-        where: { phone: phoneOrNull },
+        where: { phone: phoneOrNull, businessId },
       })
       if (existingByPhone) {
         return NextResponse.json(
@@ -77,6 +79,7 @@ export async function POST(req: Request) {
     // customerType se establece como RETAIL por defecto (admin puede cambiarlo)
     const user = await prisma.user.create({
       data: {
+        businessId,
         name,
         email: emailOrNull,
         phone: phoneOrNull,

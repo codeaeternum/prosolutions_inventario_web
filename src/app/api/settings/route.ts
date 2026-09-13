@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { DEFAULT_SETTINGS as DEFAULTS } from "@/lib/settings"
+import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, getDefaultBusinessId, setBusinessSetting } from "@/lib/settings"
 
 const DEFAULT_SETTINGS = {
   id: "default",
@@ -12,15 +13,16 @@ const DEFAULT_SETTINGS = {
 // GET - Obtener configuración
 export async function GET() {
   try {
-    let settings = await prisma.settings.findUnique({
-      where: { id: "default" },
+    const businessId = await getDefaultBusinessId()
+    let settings = await prisma.settings.findFirst({
+      where: { businessId },
     })
 
     // Si no existe, crear con valores por defecto
     if (!settings) {
       settings = await prisma.settings.create({
         data: {
-          id: "default",
+          businessId,
           tempReservationMinutes: DEFAULTS.tempReservationMinutes,
           depositPercentage: DEFAULTS.depositPercentage,
           depositReservationHours: DEFAULTS.depositReservationHours,
@@ -30,31 +32,18 @@ export async function GET() {
       })
     }
 
-    const bankTransferInfoSetting = await prisma.systemSettings.findUnique({
-      where: { key: "bank_transfer_info" }
-    })
-    
-    const bankCashInfoSetting = await prisma.systemSettings.findUnique({
-      where: { key: "bank_cash_info" }
-    })
-
-    const ticketBusinessName = await prisma.systemSettings.findUnique({
-      where: { key: "ticket_business_name" }
-    })
-    const ticketSubtitle = await prisma.systemSettings.findUnique({
-      where: { key: "ticket_subtitle" }
-    })
-    const ticketFooter = await prisma.systemSettings.findUnique({
-      where: { key: "ticket_footer" }
-    })
+    const systemSettings = await getBusinessSettingsMap(businessId, [
+      "bank_transfer_info", "bank_cash_info",
+      "ticket_business_name", "ticket_subtitle", "ticket_footer",
+    ])
 
     return NextResponse.json({
       ...settings,
-      bankTransferInfo: bankTransferInfoSetting?.value || DEFAULTS.bankTransferInfo,
-      bankCashInfo: bankCashInfoSetting?.value || DEFAULTS.bankCashInfo,
-      ticketBusinessName: ticketBusinessName?.value || "PROSOLUTIONS",
-      ticketSubtitle: ticketSubtitle?.value || "Venta de refacciones y\nReparación profesional",
-      ticketFooter: ticketFooter?.value || "¡Gracias por tu preferencia!",
+      bankTransferInfo: systemSettings.get("bank_transfer_info") || DEFAULTS.bankTransferInfo,
+      bankCashInfo: systemSettings.get("bank_cash_info") || DEFAULTS.bankCashInfo,
+      ticketBusinessName: systemSettings.get("ticket_business_name") || "PROSOLUTIONS",
+      ticketSubtitle: systemSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional",
+      ticketFooter: systemSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",
     })
   } catch (error: unknown) {
     // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
@@ -76,6 +65,7 @@ export async function PATCH(req: Request) {
   try {
     const result = await requireAdmin()
     if (result.error) return result.error
+    const businessId = businessIdOf(getSession(result)!)
 
     const body = await req.json()
     const {
@@ -91,39 +81,33 @@ export async function PATCH(req: Request) {
       ticketFooter,
     } = body
 
-    const settings = await prisma.settings.upsert({
-      where: { id: "default" },
-      create: {
-        id: "default",
-        tempReservationMinutes: tempReservationMinutes ?? 30,
-        depositPercentage: depositPercentage ?? 50,
-        depositReservationHours: depositReservationHours ?? 48,
-        pendingVerificationHours: pendingVerificationHours ?? 24,
-        exchangeRate: exchangeRate ?? 17.50,
-      },
-      update: {
-        ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
-        ...(depositPercentage !== undefined && { depositPercentage }),
-        ...(depositReservationHours !== undefined && { depositReservationHours }),
-        ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
-        ...(exchangeRate !== undefined && { exchangeRate }),
-      },
-    })
+    const updateData = {
+      ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
+      ...(depositPercentage !== undefined && { depositPercentage }),
+      ...(depositReservationHours !== undefined && { depositReservationHours }),
+      ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
+      ...(exchangeRate !== undefined && { exchangeRate }),
+    }
+    const existing = await prisma.settings.findFirst({ where: { businessId }, select: { id: true } })
+    const settings = existing
+      ? await prisma.settings.update({ where: { id: existing.id }, data: updateData })
+      : await prisma.settings.create({
+          data: {
+            businessId,
+            tempReservationMinutes: tempReservationMinutes ?? 30,
+            depositPercentage: depositPercentage ?? 50,
+            depositReservationHours: depositReservationHours ?? 48,
+            pendingVerificationHours: pendingVerificationHours ?? 24,
+            exchangeRate: exchangeRate ?? 17.50,
+          },
+        })
 
     if (bankTransferInfo !== undefined) {
-      await prisma.systemSettings.upsert({
-        where: { key: "bank_transfer_info" },
-        create: { key: "bank_transfer_info", value: bankTransferInfo ?? DEFAULTS.bankTransferInfo },
-        update: { value: bankTransferInfo ?? DEFAULTS.bankTransferInfo },
-      })
+      await setBusinessSetting(businessId, "bank_transfer_info", bankTransferInfo ?? DEFAULTS.bankTransferInfo)
     }
 
     if (bankCashInfo !== undefined) {
-      await prisma.systemSettings.upsert({
-        where: { key: "bank_cash_info" },
-        create: { key: "bank_cash_info", value: bankCashInfo ?? DEFAULTS.bankCashInfo },
-        update: { value: bankCashInfo ?? DEFAULTS.bankCashInfo },
-      })
+      await setBusinessSetting(businessId, "bank_cash_info", bankCashInfo ?? DEFAULTS.bankCashInfo)
     }
 
     // Ticket customization
@@ -133,11 +117,7 @@ export async function PATCH(req: Request) {
       ["ticket_footer", ticketFooter],
     ] as const) {
       if (val !== undefined) {
-        await prisma.systemSettings.upsert({
-          where: { key },
-          create: { key, value: val },
-          update: { value: val },
-        })
+        await setBusinessSetting(businessId, key, val)
       }
     }
 

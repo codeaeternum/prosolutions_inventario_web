@@ -3,7 +3,7 @@ import { Suspense } from "react"
 import { notFound } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
-import { resolveSlug } from "@/lib/public-slug"
+import { resolvePublicSlug } from "@/lib/public-slug"
 import { PublicShell } from "@/components/public/public-shell"
 import { TrackOrder } from "@/components/public/track-order"
 
@@ -16,7 +16,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) {
     return { title: "Rastrea tu reparación", robots: { index: false, follow: false } }
   }
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 // clientes del taller viven en este mismo sistema.
 export default async function PublicOrderStatusPage({ params }: PageProps) {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) notFound()
 
   return (

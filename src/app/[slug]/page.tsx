@@ -5,14 +5,14 @@ import {
   ArrowRight, BadgeCheck, MapPin, PackageSearch, Sparkles, Store, Wrench,
 } from "lucide-react"
 import { prisma } from "@/lib/prisma"
-import { getBusinessName, resolveSlug, type SlugTarget } from "@/lib/public-slug"
+import { resolvePublicSlug, type SlugTarget } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PublicShell } from "@/components/public/public-shell"
 import { WhatsAppButton } from "@/components/public/whatsapp-button"
 
-// El slug vive en BD (SystemSettings/User): nada que cachear estáticamente.
+// El slug vive en BD (Business/User): nada que cachear estáticamente.
 export const dynamic = "force-dynamic"
 
 interface PageProps {
@@ -21,7 +21,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) {
     return { title: "Página no encontrada", robots: { index: false, follow: false } }
   }
@@ -39,7 +39,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PublicSlugPage({ params }: PageProps) {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) notFound()
 
   return target.kind === "business"
@@ -201,8 +201,9 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
 
 type WorkshopTarget = Extract<SlugTarget, { kind: "workshop" }>
 
-async function WorkshopLanding({ target }: { target: WorkshopTarget }) {
-  const businessName = await getBusinessName()
+function WorkshopLanding({ target }: { target: WorkshopTarget }) {
+  // Nombre del negocio del taller (Business del user), para "Taller aliado de X".
+  const businessName = target.businessName
 
   return (
     <PublicShell

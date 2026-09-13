@@ -45,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       const order = await tx.repairOrder.findUnique({
         where: { quoteToken: token },
         select: {
-          id: true, number: true, version: true, status: true,
+          id: true, number: true, version: true, status: true, businessId: true,
           quoteCents: true, approvedQuoteCents: true, quoteApprovedAt: true,
           createdById: true, equipmentType: true, brand: true, model: true,
         },
@@ -87,6 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
 
       await tx.repairEvent.create({
         data: {
+          businessId: order.businessId,
           actorId: order.createdById,
           orderId: order.id,
           type: "NOTE",
@@ -98,6 +99,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       })
       await tx.repairEvent.create({
         data: {
+          businessId: order.businessId,
           actorId: order.createdById,
           orderId: order.id,
           type: "NOTE",

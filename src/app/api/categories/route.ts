@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { generateSlug } from "@/lib/utils"
 
@@ -12,6 +14,7 @@ const createCategorySchema = z.object({
 export async function GET() {
   try {
     const categories = await prisma.category.findMany({
+      where: { businessId: await getDefaultBusinessId() },
       include: {
         _count: { select: { products: true } },
       },
@@ -36,11 +39,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 })
     }
     const { name, icon } = parseResult.data
+    const businessId = businessIdOf(getSession(result)!)
 
     const slug = generateSlug(name)
 
     const existingCategory = await prisma.category.findFirst({
-      where: { OR: [{ name }, { slug }] },
+      where: { businessId, OR: [{ name }, { slug }] },
     })
 
     if (existingCategory) {
@@ -48,7 +52,7 @@ export async function POST(req: Request) {
     }
 
     const category = await prisma.category.create({
-      data: { name, slug, icon: icon || null },
+      data: { businessId, name, slug, icon: icon || null },
     })
 
     return NextResponse.json(category)

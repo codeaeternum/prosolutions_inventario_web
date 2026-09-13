@@ -33,7 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     const { token } = await params
     const order = await prisma.repairOrder.findUnique({
       where: { uploadToken: token },
-      select: { id: true, createdById: true },
+      select: { id: true, createdById: true, businessId: true },
     })
     if (!order) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
 
@@ -54,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     }
 
     const photo = await prisma.repairPhoto.create({
-      data: { orderId: order.id, filePath: "pending", label: label || null, uploadedById: null },
+      data: { businessId: order.businessId, orderId: order.id, filePath: "pending", label: label || null, uploadedById: null },
     })
     try {
       const filePath = await writeRepairPhoto(order.id, photo.id, bytes)
@@ -62,7 +62,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       // El evento usa como actor a quien recibió la orden: actorId es requerido
       // y no hay sesión en el enlace público.
       await prisma.repairEvent.create({
-        data: { actorId: order.createdById, orderId: order.id, type: "PHOTO", detail: "Evidencia subida desde enlace público" },
+        data: { businessId: order.businessId, actorId: order.createdById, orderId: order.id, type: "PHOTO", detail: "Evidencia subida desde enlace público" },
       })
       return NextResponse.json(
         { photo: { id: saved.id, label: saved.label, createdAt: saved.createdAt } },

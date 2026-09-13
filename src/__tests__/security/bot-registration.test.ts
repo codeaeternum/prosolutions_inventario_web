@@ -11,6 +11,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/bot/lib/notify", () => ({ notifyAdmins: mocks.notifyAdmins, isAdmin: mocks.isAdmin }))
 vi.mock("@/bot/lib/guards", () => ({ requireAdmin: mocks.requireAdmin, requirePrisma: mocks.requirePrisma }))
 vi.mock("@/lib/domain/reservations", () => ({ createReservations: mocks.createReservations, expireReservations: vi.fn() }))
+vi.mock("@/lib/settings", () => ({
+  getBusinessSetting: vi.fn(async () => null),
+  getBusinessSettingsMap: vi.fn(async () => new Map()),
+  setBusinessSetting: vi.fn(async () => {}),
+  getDefaultBusinessId: vi.fn(async () => "biz-test"),
+  DEFAULT_BUSINESS_ID: "biz-default",
+}))
 
 import { registerUsers } from "@/bot/commands/users"
 import { registerProducts } from "@/bot/commands/products"
@@ -206,7 +213,7 @@ describe("Telegram reservation requires approval revalidated at confirmation (SE
   it("an approved customer still completes the reservation", async () => {
     const { bot, action } = makeBot()
     const prisma = makePrisma()
-    prisma.user.findUnique.mockResolvedValue({ id: "u1", role: "CUSTOMER", status: "APPROVED" } as any)
+    prisma.user.findUnique.mockResolvedValue({ id: "u1", role: "CUSTOMER", status: "APPROVED", businessId: "biz-test" } as any)
     mocks.createReservations.mockResolvedValue({ reservations: [{ id: "res-1", qrCode: "QR1", totalPrice: 200 }], total: 200 })
     const sessions = makeSessions()
     sessions.reservation["555"] = reservationSession()
@@ -214,7 +221,7 @@ describe("Telegram reservation requires approval revalidated at confirmation (SE
     const { callback } = action("pay_store")
     const ctx = actionCtx(555, null)
     await callback(ctx)
-    expect(mocks.createReservations).toHaveBeenCalledWith(prisma, "u1", expect.objectContaining({ productId: "p1", quantity: 2, paymentMethod: "STORE" }))
+    expect(mocks.createReservations).toHaveBeenCalledWith(prisma, "u1", "biz-test", expect.objectContaining({ productId: "p1", quantity: 2, paymentMethod: "STORE" }))
     expect(sessions.reservation["555"]).toBeUndefined()
   })
 })

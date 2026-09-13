@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError } from "@/lib/domain/operations"
@@ -12,10 +13,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { id } = await params
 
-    const order = await prisma.repairOrder.findUnique({ where: { id }, select: { id: true } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { id: true } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
 
     const form = await req.formData()
@@ -31,13 +34,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Se crea el registro primero para usar su cuid como nombre de archivo;
     // si el disco falla, el registro se revierte.
     const photo = await prisma.repairPhoto.create({
-      data: { orderId: id, filePath: "pending", label: label || null, uploadedById: actorId },
+      data: { businessId, orderId: id, filePath: "pending", label: label || null, uploadedById: actorId },
     })
     try {
       const filePath = await writeRepairPhoto(id, photo.id, bytes)
       const saved = await prisma.repairPhoto.update({ where: { id: photo.id }, data: { filePath } })
       await prisma.repairEvent.create({
-        data: { actorId, orderId: id, type: "PHOTO", detail: `Evidencia agregada${label ? `: ${label}` : ""}` },
+        data: { businessId, actorId, orderId: id, type: "PHOTO", detail: `Evidencia agregada${label ? `: ${label}` : ""}` },
       })
       return NextResponse.json({ photo: saved }, { status: 201 })
     } catch (error) {
@@ -52,20 +55,22 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    const actorId = getSession(auth)!.user.id
+    const session = getSession(auth)!
+    const actorId = session.user.id
+    const businessId = businessIdOf(session)
     const { id } = await params
 
     const body = await req.json().catch(() => null) as { photoId?: unknown } | null
     const photoId = typeof body?.photoId === "string" ? body.photoId : ""
     if (!photoId) throw new BusinessError("Indica la foto a eliminar.")
 
-    const photo = await prisma.repairPhoto.findFirst({ where: { id: photoId, orderId: id } })
+    const photo = await prisma.repairPhoto.findFirst({ where: { id: photoId, orderId: id, businessId } })
     if (!photo) throw new BusinessError("La evidencia no pertenece a esta orden.", 404)
 
     await prisma.repairPhoto.delete({ where: { id: photo.id } })
     await deleteRepairPhotoFile(photo.filePath).catch(() => {})
     await prisma.repairEvent.create({
-      data: { actorId, orderId: id, type: "PHOTO", detail: `Evidencia eliminada${photo.label ? `: ${photo.label}` : ""}` },
+      data: { businessId, actorId, orderId: id, type: "PHOTO", detail: `Evidencia eliminada${photo.label ? `: ${photo.label}` : ""}` },
     })
     return NextResponse.json({ ok: true })
   } catch (error) { return businessFailure(error) }

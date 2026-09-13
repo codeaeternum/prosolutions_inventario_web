@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation"
 import { ArrowLeft, ChevronLeft, ChevronRight, PackageSearch, Search, Store, X } from "lucide-react"
 import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
-import { resolveSlug } from "@/lib/public-slug"
+import { resolvePublicSlug } from "@/lib/public-slug"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,7 +23,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target || target.kind !== "business") {
     return { title: "Mercado", robots: { index: false, follow: false } }
   }
@@ -46,7 +46,7 @@ function marketHref(slug: string, opts: { q?: string; categoria?: string; pagina
 
 export default async function PublicMarketPage({ params, searchParams }: PageProps) {
   const [{ slug }, sp] = await Promise.all([params, searchParams])
-  const target = await resolveSlug(slug)
+  const target = await resolvePublicSlug(slug)
   if (!target) notFound()
   // El mercado público es vitrina del negocio; un taller aliado compra en su
   // mercado B2B (logueado), así que se regresa a su perfil.

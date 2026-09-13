@@ -7,6 +7,8 @@ export type CurrentUser = {
   status: "PENDING" | "APPROVED" | "REJECTED";
   customerType: "NORMAL" | "STORE" | "TECHNICIAN"; password: string | null;
   jobTitle: string | null
+  businessId: string
+  isSuperAdmin: boolean
 }
 
 /** A cookie proves identity; authorization always comes from the current database row. */
@@ -18,6 +20,6 @@ export function refreshSessionToken(token: JWT, current: CurrentUser | null, sig
   return {
     ...token, id: current.id, name: current.name, email: current.email ?? current.phone ?? "",
     role: current.role, status: current.status, customerType: current.customerType, passwordVersion,
-    jobTitle: current.jobTitle,
+    jobTitle: current.jobTitle, businessId: current.businessId, isSuperAdmin: current.isSuperAdmin,
   }
 }

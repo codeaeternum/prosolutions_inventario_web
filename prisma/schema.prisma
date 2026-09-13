@@ -14,17 +14,60 @@ datasource db {
 
 // ==================== ENUMS ====================
 
+model Business {
+  id                  String               @id @default(cuid())
+  name                String
+  slug                String               @unique
+  category            String               @default("electronics-repair")
+  phone               String?
+  address             String?
+  logoUrl             String?
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  users               User[]
+  brands              Brand[]
+  models              Model[]
+  categories          Category[]
+  products            Product[]
+  priceHistory        PriceHistory[]
+  productModels       ProductModel[]
+  reservations        Reservation[]
+  creditMovements     CreditMovement[]
+  settings            Settings[]
+  pushSubscriptions   PushSubscription[]
+  cashRegisters       CashRegister[]
+  cashMovements       CashMovement[]
+  systemSettings      SystemSettings[]
+  businessOperations  BusinessOperation[]
+  branches            Branch[]
+  branchStocks        BranchStock[]
+  sales               Sale[]
+  saleItems           SaleItem[]
+  payments            Payment[]
+  repairOrders        RepairOrder[]
+  repairParts         RepairPart[]
+  repairEvents        RepairEvent[]
+  cashRequests        CashRequest[]
+  repairPhotos        RepairPhoto[]
+  workshopServices    WorkshopService[]
+  marketplaceRequests MarketplaceRequest[]
+  inventoryMovements  InventoryMovement[]
+
+  @@index([isActive])
+}
+
 enum UserRole {
   ADMIN
   EMPLOYEE
   CUSTOMER
-  WORKSHOP  // Taller aliado: solo ve el mercado B2B y sus solicitudes
+  WORKSHOP // Taller aliado: solo ve el mercado B2B y sus solicitudes
 }
 
 enum CustomerType {
-  TECHNICIAN  // Técnico de reparación
-  STORE       // Local de venta de refacciones
-  NORMAL      // Cliente particular
+  TECHNICIAN // Técnico de reparación
+  STORE // Local de venta de refacciones
+  NORMAL // Cliente particular
 }
 
 enum UserStatus {
@@ -34,19 +77,19 @@ enum UserStatus {
 }
 
 enum ReservationStatus {
-  PENDING           // Esperando acción
-  PENDING_PAYMENT   // Esperando comprobante de pago (transferencia)
-  DEPOSIT_VERIFIED  // Depósito verificado por admin
-  APPROVED          // Aprobada y lista para recoger
-  REJECTED          // Rechazada por admin
-  COMPLETED         // Entregada al cliente
-  CANCELLED         // Cancelada por cliente
-  EXPIRED           // Expirada automáticamente
+  PENDING // Esperando acción
+  PENDING_PAYMENT // Esperando comprobante de pago (transferencia)
+  DEPOSIT_VERIFIED // Depósito verificado por admin
+  APPROVED // Aprobada y lista para recoger
+  REJECTED // Rechazada por admin
+  COMPLETED // Entregada al cliente
+  CANCELLED // Cancelada por cliente
+  EXPIRED // Expirada automáticamente
 }
 
 enum ReservationType {
-  TEMPORARY  // Reserva temporal sin pago (expira en X minutos)
-  DEPOSIT    // Reserva con depósito del 50% (expira en X horas si no se recoge)
+  TEMPORARY // Reserva temporal sin pago (expira en X minutos)
+  DEPOSIT // Reserva con depósito del 50% (expira en X horas si no se recoge)
 }
 
 enum MovementType {
@@ -54,16 +97,18 @@ enum MovementType {
   OUT
   ADJUSTMENT
   RETURN
-  TRANSFER  // salida en una sucursal + entrada espejo en otra (mismo movimiento con toBranchId)
+  TRANSFER // salida en una sucursal + entrada espejo en otra (mismo movimiento con toBranchId)
 }
 
 model InventoryMovement {
-  businessVersion Int @default(0)
-  paymentMethod String?
-  customerId String?
-  reservationId String?
-  saleId       String?
-  id            String       @id @default(cuid())
+  businessVersion Int      @default(0)
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  paymentMethod   String?
+  customerId      String?
+  reservationId   String?
+  saleId          String?
+  id              String   @id @default(cuid())
 
   type          MovementType
   quantity      Int
@@ -72,253 +117,283 @@ model InventoryMovement {
   reason        String?
   notes         String?
 
-  unitPrice     Float?
-  totalPrice    Float?
+  unitPrice  Float?
+  totalPrice Float?
 
-  productId     String
-  userId        String?
+  productId String
+  userId    String?
 
   // Sucursal donde ocurrió el movimiento; en TRANSFER, toBranchId es el destino.
-  branchId      String?
-  branch        Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  toBranchId    String?
-  toBranch      Branch?      @relation("TransferDestination", fields: [toBranchId], references: [id], onDelete: SetNull)
+  branchId   String?
+  branch     Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  toBranchId String?
+  toBranch   Branch? @relation("TransferDestination", fields: [toBranchId], references: [id], onDelete: SetNull)
 
-  relatedId     String?      // ID de movimiento relacionado (ej: devolución de una venta)
-  related       InventoryMovement? @relation("RelatedMovement", fields: [relatedId], references: [id])
-  relatedTo     InventoryMovement[] @relation("RelatedMovement")
+  relatedId String? // ID de movimiento relacionado (ej: devolución de una venta)
+  related   InventoryMovement?  @relation("RelatedMovement", fields: [relatedId], references: [id])
+  relatedTo InventoryMovement[] @relation("RelatedMovement")
 
-  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  createdAt     DateTime     @default(now())
+  createdAt DateTime @default(now())
 
   @@index([productId])
   @@index([createdAt])
   @@index([relatedId])
   @@index([branchId, createdAt])
   @@index([saleId])
+  @@index([businessId])
 }
 
 model User {
   id                    String       @id @default(cuid())
-  email                 String?      @unique  // Opcional para permitir registro solo con teléfono
-  telegramId            String?      @unique  // ID de Telegram para usuarios del bot
-  qrCode                String?      @unique  // Código QR único para identificación en tienda
-  password              String?      // Opcional si solo se registra por Bot
+  businessId            String
+  business              Business     @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  email                 String?      @unique // Opcional para permitir registro solo con teléfono
+  telegramId            String?      @unique // ID de Telegram para usuarios del bot
+  qrCode                String?      @unique // Código QR único para identificación en tienda
+  password              String? // Opcional si solo se registra por Bot
   name                  String
-  businessName          String?      // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
-  phone                 String?      @unique  // Único si se proporciona
+  businessName          String? // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
+  phone                 String?      @unique // Único si se proporciona
   role                  UserRole     @default(CUSTOMER)
-  jobTitle              String?      // Puesto visible del staff: "Técnico", "Recepción", "Dueño"…
+  isSuperAdmin          Boolean      @default(false)
+  jobTitle              String? // Puesto visible del staff: "Técnico", "Recepción", "Dueño"…
   publicSlug            String?      @unique // Slug público del taller aliado: /t/<slug> y /<slug>/order-status
-  quickPin              String?      // Hash bcrypt del PIN de 4-6 dígitos para cambio rápido de usuario
+  quickPin              String? // Hash bcrypt del PIN de 4-6 dígitos para cambio rápido de usuario
   customerType          CustomerType @default(NORMAL)
-  requestedCustomerType CustomerType @default(NORMAL)  // Tipo solicitado al registrarse
+  requestedCustomerType CustomerType @default(NORMAL) // Tipo solicitado al registrarse
   status                UserStatus   @default(PENDING)
 
   // Sucursal base del empleado (ventas/caja operan sobre ella); null en clientes.
   homeBranchId String?
   homeBranch   Branch? @relation("HomeBranch", fields: [homeBranchId], references: [id], onDelete: SetNull)
-  
+
   // Metas de compra
-  monthlyPurchaseGoal   Float?       // Meta mensual de compra en pesos
-  totalPurchases        Float        @default(0)  // Total de compras acumuladas
-  currentMonthPurchases Float        @default(0)  // Compras del mes actual
-  lastPurchaseReset     DateTime?    // Último reinicio del contador mensual
+  monthlyPurchaseGoal   Float? // Meta mensual de compra en pesos
+  totalPurchases        Float     @default(0) // Total de compras acumuladas
+  currentMonthPurchases Float     @default(0) // Compras del mes actual
+  lastPurchaseReset     DateTime? // Último reinicio del contador mensual
 
   // Crédito (pago diferido)
-  creditLimit   Float?   // Límite en pesos; null = sin línea de crédito
-  creditBalance Float    @default(0) // Saldo deudor actual (lo que debe el cliente)
+  creditLimit   Float? // Límite en pesos; null = sin línea de crédito
+  creditBalance Float  @default(0) // Saldo deudor actual (lo que debe el cliente)
 
-  assignedRepairs RepairOrder[] @relation("RepairAssignedTo")
-  createdRepairs RepairOrder[] @relation("RepairCreatedBy")
-  repairParts RepairPart[] @relation("RepairPartCreatedBy")
-  repairEvents RepairEvent[]
-  businessOperations BusinessOperation[]
-  reservations     Reservation[]
-  movements        InventoryMovement[]
-  creditMovements  CreditMovement[]
-  priceChanges     PriceHistory[]  @relation("PriceChanges")
-  cashRegistersOpened CashRegister[] @relation("RegisterOpenedBy")
-  cashRegistersClosed CashRegister[] @relation("RegisterClosedBy")
-  cashRequestsRequested CashRequest[] @relation("CashRequestRequestedBy")
-  cashRequestsDecided   CashRequest[] @relation("CashRequestDecidedBy")
+  assignedRepairs       RepairOrder[]        @relation("RepairAssignedTo")
+  createdRepairs        RepairOrder[]        @relation("RepairCreatedBy")
+  repairParts           RepairPart[]         @relation("RepairPartCreatedBy")
+  repairEvents          RepairEvent[]
+  businessOperations    BusinessOperation[]
+  reservations          Reservation[]
+  movements             InventoryMovement[]
+  creditMovements       CreditMovement[]
+  priceChanges          PriceHistory[]       @relation("PriceChanges")
+  cashRegistersOpened   CashRegister[]       @relation("RegisterOpenedBy")
+  cashRegistersClosed   CashRegister[]       @relation("RegisterClosedBy")
+  cashRequestsRequested CashRequest[]        @relation("CashRequestRequestedBy")
+  cashRequestsDecided   CashRequest[]        @relation("CashRequestDecidedBy")
   repairPhotos          RepairPhoto[]
-  repairPartsDecided    RepairPart[]  @relation("RepairPartDecidedBy")
+  repairPartsDecided    RepairPart[]         @relation("RepairPartDecidedBy")
   marketplaceRequested  MarketplaceRequest[] @relation("MarketplaceRequestedBy")
   marketplaceDecided    MarketplaceRequest[] @relation("MarketplaceDecidedBy")
-  cashMovements       CashMovement[]
-  salesMade      Sale[]       @relation("SaleSeller")
-  salesAsCustomer Sale[]      @relation("SaleCustomer")
-  paymentsMade   Payment[]    @relation("PaymentCreatedBy")
-
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-}
-
-model Brand {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  slug      String   @unique
-  logo      String?
-
-  models    Model[]
+  cashMovements         CashMovement[]
+  salesMade             Sale[]               @relation("SaleSeller")
+  salesAsCustomer       Sale[]               @relation("SaleCustomer")
+  paymentsMade          Payment[]            @relation("PaymentCreatedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([businessId])
+}
+
+model Brand {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name       String   @unique
+  slug       String   @unique
+  logo       String?
+
+  models Model[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, name])
+  @@unique([businessId, slug])
+  @@index([businessId])
 }
 
 model Model {
-  id        String    @id @default(cuid())
-  name      String              // Ej: "Galaxy S25 Ultra"
-  slug      String
-  brandId   String
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name       String // Ej: "Galaxy S25 Ultra"
+  slug       String
+  brandId    String
 
+  brand    Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  products ProductModel[] // Relación muchos a muchos con productos
 
-  brand     Brand          @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  products  ProductModel[] // Relación muchos a muchos con productos
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([brandId, slug])
   @@index([name])
+  @@index([businessId])
 }
 
-
 model Category {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  slug      String    @unique
-  icon      String?
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name       String   @unique
+  slug       String   @unique
+  icon       String?
 
-  products  Product[]
+  products Product[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, name])
+  @@unique([businessId, slug])
+  @@index([businessId])
 }
 
 model Product {
-  id             String    @id @default(cuid())
-  name           String
-  description    String?
-  barcode        String?   @unique
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name        String
+  description String?
+  barcode     String?
 
-  retailPrice    Float     // Precio menudeo
-  wholesalePrice Float     // Precio mayoreo
-  costPrice      Float?    // Precio de costo (cuánto costó adquirirlo)
+  retailPrice    Float // Precio menudeo
+  wholesalePrice Float // Precio mayoreo
+  costPrice      Float? // Precio de costo (cuánto costó adquirirlo)
 
-  stock          Int       @default(0)
-  minStock       Int       @default(1)
+  stock    Int @default(0)
+  minStock Int @default(1)
 
-  images         String[]  // Array de URLs
+  images String[] // Array de URLs
 
-  isActive       Boolean   @default(true)
-  isUniversal    Boolean   @default(false)  // Producto universal (aparece en todos los modelos)
+  isActive           Boolean @default(true)
+  isUniversal        Boolean @default(false) // Producto universal (aparece en todos los modelos)
   marketplaceVisible Boolean @default(true) // Visible en el marketplace B2B para talleres aliados
 
-  categoryId     String
+  categoryId String
 
   // Relación muchos a muchos con modelos
-  models         ProductModel[]
-  category       Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  models   ProductModel[]
+  category Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
-  reservations   Reservation[]
-  movements      InventoryMovement[]
-  priceHistory   PriceHistory[]
-  stocks         BranchStock[]
-  saleItems      SaleItem[]
-  repairParts    RepairPart[]
+  reservations        Reservation[]
+  movements           InventoryMovement[]
+  priceHistory        PriceHistory[]
+  stocks              BranchStock[]
+  saleItems           SaleItem[]
+  repairParts         RepairPart[]
   marketplaceRequests MarketplaceRequest[]
 
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@unique([businessId, barcode])
   @@index([categoryId])
   @@index([barcode])
   @@index([isUniversal])
   @@index([marketplaceVisible])
+  @@index([businessId])
 }
 
 // Historial de cambios de precio
 model PriceHistory {
-  id           String   @id @default(cuid())
-  productId    String
-  field        String   // "retailPrice", "wholesalePrice", "costPrice"
-  oldValue     Float
-  newValue     Float
-  changedById  String?
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  productId   String
+  field       String // "retailPrice", "wholesalePrice", "costPrice"
+  oldValue    Float
+  newValue    Float
+  changedById String?
 
-  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  changedBy    User?    @relation("PriceChanges", fields: [changedById], references: [id])
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation("PriceChanges", fields: [changedById], references: [id])
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([productId])
+  @@index([businessId])
 }
 
 // Tabla intermedia para relación muchos a muchos entre Product y Model
 model ProductModel {
-  id        String   @id @default(cuid())
-  productId String
-  modelId   String
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  productId  String
+  modelId    String
 
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  model   Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
   @@unique([productId, modelId])
   @@index([productId])
   @@index([modelId])
+  @@index([businessId])
 }
 
 model Reservation {
   // 0 preserves legacy records; 1 uses transactional reservation accounting.
-  businessVersion Int @default(0)
-  id              String            @id @default(cuid())
-  qrCode          String            @unique @default(cuid()) // Código QR único para verificación
+  businessVersion Int      @default(0)
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  id              String   @id @default(cuid())
+  qrCode          String   @unique @default(cuid()) // Código QR único para verificación
 
-  quantity        Int
-  totalPrice      Float
-  depositAmount   Float?            // Monto de anticipo (50% si aplica)
-  depositPaid     Boolean           @default(false)
+  quantity      Int
+  totalPrice    Float
+  depositAmount Float? // Monto de anticipo (50% si aplica)
+  depositPaid   Boolean @default(false)
 
   // Tipo de reserva
-  type            ReservationType   @default(TEMPORARY)  // TEMPORARY = sin pago, DEPOSIT = con anticipo
+  type ReservationType @default(TEMPORARY) // TEMPORARY = sin pago, DEPOSIT = con anticipo
 
-  status          ReservationStatus @default(PENDING)
+  status ReservationStatus @default(PENDING)
 
-  paymentProofUrl String?           // URL del comprobante de pago
-  paymentMethod   String?           // "transferencia", "oxxo", "efectivo"
+  paymentProofUrl String? // URL del comprobante de pago
+  paymentMethod   String? // "transferencia", "oxxo", "efectivo"
   adminNotes      String?
 
-  expiresAt       DateTime          // Fecha/hora de expiración de la reserva
+  expiresAt DateTime // Fecha/hora de expiración de la reserva
 
-  userId          String
-  productId       String
+  userId    String
+  productId String
 
   // Sucursal que reserva/entrega la pieza. Las históricas quedan en null hasta conciliar.
-  branchId        String?
-  branch          Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([productId])
   @@index([status])
   @@index([expiresAt])
+  @@index([businessId])
 }
-
-
 
 // Movimientos de crédito (deuda y abonos)
 enum CreditMovementType {
   REVERSAL // Reducción de deuda sin entrada de dinero
-  DEBT    // Venta/reserva a crédito → aumenta saldo deudor
+  DEBT // Venta/reserva a crédito → aumenta saldo deudor
   PAYMENT // Abono del cliente → disminuye saldo deudor
 }
 
@@ -330,116 +405,140 @@ enum CreditReferenceType {
 
 model CreditMovement {
   id            String               @id @default(cuid())
-  amount        Float                 // Positivo = deuda, negativo = abono (siempre guardamos positivo y usamos type)
+  businessId    String
+  business      Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  amount        Float // Positivo = deuda, negativo = abono (siempre guardamos positivo y usamos type)
   type          CreditMovementType
   referenceType CreditReferenceType?
-  referenceId   String?               // ID de Reservation o InventoryMovement
+  referenceId   String? // ID de Reservation o InventoryMovement
   notes         String?
 
-  userId        String
-  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt     DateTime             @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([createdAt])
+  @@index([businessId])
 }
 
 model Settings {
-  id                        String  @id @default("default")
-  
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+
   // Configuración de reservas temporales (sin pago)
-  tempReservationMinutes    Int     @default(30)     // Minutos que dura una reserva temporal
-  
+  tempReservationMinutes Int @default(30) // Minutos que dura una reserva temporal
+
   // Configuración de reservas con depósito
-  depositPercentage         Int     @default(50)     // Porcentaje de anticipo requerido
-  depositReservationHours   Int     @default(48)     // Horas para recoger después de verificar depósito
-  
+  depositPercentage       Int @default(50) // Porcentaje de anticipo requerido
+  depositReservationHours Int @default(48) // Horas para recoger después de verificar depósito
+
   // Configuración de expiración pendiente de verificación
-  pendingVerificationHours  Int     @default(24)     // Horas para que admin verifique el depósito
+  pendingVerificationHours Int @default(24) // Horas para que admin verifique el depósito
 
   // Configuración de moneda
-  exchangeRate              Float   @default(17.50)  // Tipo de cambio MXN a USD
+  exchangeRate Float @default(17.50) // Tipo de cambio MXN a USD
 
-  updatedAt                 DateTime @updatedAt
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId])
 }
 
-
 model PushSubscription {
-  id        String   @id @default(cuid())
-  endpoint  String   @unique
-  keys      String   // JSON stringified
-  userId    String?
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  endpoint   String   @unique
+  keys       String // JSON stringified
+  userId     String?
 
   createdAt DateTime @default(now())
+
+  @@index([businessId])
 }
 
 model CashRegister {
-  id              String   @id @default(cuid())
-  openedAt        DateTime @default(now())
-  closedAt        DateTime?
+  id         String    @id @default(cuid())
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  openedAt   DateTime  @default(now())
+  closedAt   DateTime?
 
-  initialAmount   Float    @default(0) // Dinero en caja al abrir
-  finalAmount     Float?               // Dinero físico contado al cerrar
+  initialAmount Float  @default(0) // Dinero en caja al abrir
+  finalAmount   Float? // Dinero físico contado al cerrar
 
-  status          String   @default("OPEN") // OPEN, CLOSED
+  status String @default("OPEN") // OPEN, CLOSED
 
   // Una caja por sucursal; las históricas quedan null hasta conciliar.
-  branchId        String?
-  branch          Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
-  openedById      String
-  openedBy        User     @relation("RegisterOpenedBy", fields: [openedById], references: [id])
+  openedById String
+  openedBy   User   @relation("RegisterOpenedBy", fields: [openedById], references: [id])
 
-  closedById      String?
-  closedBy        User?    @relation("RegisterClosedBy", fields: [closedById], references: [id])
+  closedById String?
+  closedBy   User?   @relation("RegisterClosedBy", fields: [closedById], references: [id])
 
-  notes           String?
+  notes String?
 
-  movements       CashMovement[]
+  movements CashMovement[]
 
   @@index([branchId, status])
+  @@index([businessId])
 }
 
 enum CashMovementType {
-  IN      // Entrada de dinero (ventas, abonos)
-  OUT     // Salida de dinero (gastos, retiros, devoluciones)
+  IN // Entrada de dinero (ventas, abonos)
+  OUT // Salida de dinero (gastos, retiros, devoluciones)
 }
 
 model CashMovement {
-  id              String   @id @default(cuid())
-  amount          Float
-  type            CashMovementType
-  description     String
-  
+  id          String           @id @default(cuid())
+  businessId  String
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  amount      Float
+  type        CashMovementType
+  description String
+
   // Referencias a otros módulos (opcional)
-  referenceType   String?  // Ej: "SALE", "RESERVATION", "CREDIT_PAYMENT", "EXPENSE"
-  referenceId     String?  // El ID del movimiento asociado
-  
-  registerId      String
-  register        CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
+  referenceType String? // Ej: "SALE", "RESERVATION", "CREDIT_PAYMENT", "EXPENSE"
+  referenceId   String? // El ID del movimiento asociado
 
-  payment         Payment?   // vínculo al pago documentado cuando aplica
-  cashRequest     CashRequest? // solicitud de gasto autorizada que originó este movimiento
+  registerId String
+  register   CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
 
-  userId          String
-  user            User     @relation(fields: [userId], references: [id])
+  payment     Payment? // vínculo al pago documentado cuando aplica
+  cashRequest CashRequest? // solicitud de gasto autorizada que originó este movimiento
 
-  createdAt       DateTime @default(now())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId])
 }
 
 // Configuraciones del Sistema (Dólar, Tiempos, Banco)
 model SystemSettings {
-  id        Int      @id @default(autoincrement())
-  key       String   @unique
-  value     String
-  type      String   @default("STRING") // STRING, NUMBER, JSON
-  updatedAt DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  key        String
+  value      String
+  type       String   @default("STRING") // STRING, NUMBER, JSON
+  updatedAt  DateTime @updatedAt
+
+  @@unique([businessId, key])
+  @@index([businessId])
 }
 
 // Durable receipt for retries; never delete while its business records exist.
 model BusinessOperation {
   id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
   key         String   @unique
   actorId     String
   kind        String
@@ -449,6 +548,7 @@ model BusinessOperation {
   actor       User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
   @@index([actorId, createdAt])
+  @@index([businessId])
 }
 
 // Workshop pilot: reception and custody only. Cash/stock remain separate until branch accounting is implemented.
@@ -462,45 +562,52 @@ enum RepairStatus {
   READY
   DELIVERED
   CANCELLED
-  NOT_REPAIRED   // No quedó: irreparable, se devuelve al cliente
+  NOT_REPAIRED // No quedó: irreparable, se devuelve al cliente
   NOT_AUTHORIZED // El cliente no autorizó el presupuesto
-  EXTERNAL_LAB   // Enviado a laboratorio/proveedor externo
-  WARRANTY       // Reingreso por garantía de una reparación previa
+  EXTERNAL_LAB // Enviado a laboratorio/proveedor externo
+  WARRANTY // Reingreso por garantía de una reparación previa
 }
 
 // Sucursal física del negocio (locales). El nombre de tabla se conserva por
 // compatibilidad con el piloto de taller ya desplegado.
 model Branch {
-  id String @id @default(cuid())
-  name String @unique
-  isActive Boolean @default(true)
-  receivedOrders RepairOrder[] @relation("IntakeBranch")
-  heldOrders RepairOrder[] @relation("CurrentBranch")
-  stocks BranchStock[]
-  cashRegisters CashRegister[]
-  sales Sale[]
-  homeStaff User[] @relation("HomeBranch")
-  reservations Reservation[]
-  movements InventoryMovement[]
+  id                String              @id @default(cuid())
+  businessId        String
+  business          Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name              String
+  isActive          Boolean             @default(true)
+  receivedOrders    RepairOrder[]       @relation("IntakeBranch")
+  heldOrders        RepairOrder[]       @relation("CurrentBranch")
+  stocks            BranchStock[]
+  cashRegisters     CashRegister[]
+  sales             Sale[]
+  homeStaff         User[]              @relation("HomeBranch")
+  reservations      Reservation[]
+  movements         InventoryMovement[]
   transfersReceived InventoryMovement[] @relation("TransferDestination")
-  cashRequests CashRequest[]
-  createdAt DateTime @default(now())
+  cashRequests      CashRequest[]
+  createdAt         DateTime            @default(now())
 
+  @@unique([businessId, name])
+  @@index([businessId])
   @@map("WorkshopBranch")
 }
 
 // Existencias por sucursal. Product.stock queda como total cacheado para el
 // catálogo; BranchStock es la fuente de verdad por local.
 model BranchStock {
-  id        String  @id @default(cuid())
-  productId String
-  branchId  String
-  quantity  Int     @default(0)
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  branch    Branch  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  productId  String
+  branchId   String
+  quantity   Int      @default(0)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
 
   @@unique([productId, branchId])
   @@index([branchId, quantity])
+  @@index([businessId])
 }
 
 // ==================== DOCUMENTO DE VENTA ====================
@@ -525,170 +632,190 @@ enum PaymentStatus {
 }
 
 model Sale {
-  id         String     @id @default(cuid())
-  number     Int        @unique @default(autoincrement())
-  version    Int        @default(1)
-  status     SaleStatus @default(COMPLETED)
-  total      Float
-  branchId   String
-  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  sellerId   String
-  seller     User       @relation("SaleSeller", fields: [sellerId], references: [id], onDelete: Restrict)
-  customerId String?
-  customer   User?      @relation("SaleCustomer", fields: [customerId], references: [id], onDelete: SetNull)
-  items      SaleItem[]
-  payments   Payment[]
+  id                 String              @id @default(cuid())
+  businessId         String
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  number             Int                 @unique @default(autoincrement())
+  version            Int                 @default(1)
+  status             SaleStatus          @default(COMPLETED)
+  total              Float
+  branchId           String
+  branch             Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sellerId           String
+  seller             User                @relation("SaleSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  customerId         String?
+  customer           User?               @relation("SaleCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  items              SaleItem[]
+  payments           Payment[]
   marketplaceRequest MarketplaceRequest?
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@index([branchId, createdAt])
   @@index([customerId, createdAt])
   @@index([status, createdAt])
+  @@index([businessId])
 }
 
 model SaleItem {
-  id               String  @id @default(cuid())
+  id               String   @id @default(cuid())
+  businessId       String
+  business         Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
   saleId           String
-  sale             Sale    @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  sale             Sale     @relation(fields: [saleId], references: [id], onDelete: Restrict)
   productId        String
-  product          Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantity         Int
-  returnedQuantity Int     @default(0)
+  returnedQuantity Int      @default(0)
   unitPrice        Float
   totalPrice       Float
 
   @@index([saleId])
   @@index([productId])
+  @@index([businessId])
 }
 
 // Pago cobrado: una venta puede pagarse en varios medios (p. ej. parte efectivo
 // y parte tarjeta). CREDIT no genera efectivo: crea cuenta por cobrar.
 model Payment {
-  id             String         @id @default(cuid())
+  id             String        @id @default(cuid())
+  businessId     String
+  business       Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
   saleId         String?
-  sale           Sale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  sale           Sale?         @relation(fields: [saleId], references: [id], onDelete: Restrict)
   // Cobros de taller: anticipo (ADVANCE), abono (ABONO) o liquidación (SETTLEMENT).
   repairOrderId  String?
-  repairOrder    RepairOrder?   @relation(fields: [repairOrderId], references: [id], onDelete: Restrict)
+  repairOrder    RepairOrder?  @relation(fields: [repairOrderId], references: [id], onDelete: Restrict)
   purpose        String?
   method         PaymentMethod
   amount         Float
-  status         PaymentStatus  @default(CONFIRMED)
-  proofUrl       String?        // comprobante privado cuando aplica
-  reference      String?        // folio/autorización de la terminal o SPEI
-  cashMovementId String?        @unique // asiento de caja cuando method = CASH
-  cashMovement   CashMovement?  @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
+  status         PaymentStatus @default(CONFIRMED)
+  proofUrl       String? // comprobante privado cuando aplica
+  reference      String? // folio/autorización de la terminal o SPEI
+  cashMovementId String?       @unique // asiento de caja cuando method = CASH
+  cashMovement   CashMovement? @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
   createdById    String
-  createdBy      User           @relation("PaymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy      User          @relation("PaymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   notes          String?
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime      @default(now())
 
   @@index([saleId])
   @@index([repairOrderId])
   @@index([method, createdAt])
+  @@index([businessId])
 }
 
 model RepairOrder {
-  id String @id @default(cuid())
-  number Int @unique @default(autoincrement())
-  version Int @default(1)
-  status RepairStatus @default(RECEIVED)
-  customerName String
-  customerPhone String
+  id                   String        @id @default(cuid())
+  businessId           String
+  business             Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  number               Int           @unique @default(autoincrement())
+  version              Int           @default(1)
+  status               RepairStatus  @default(RECEIVED)
+  customerName         String
+  customerPhone        String
   // Segundo contacto opcional (familiar, trabajo, otro responsable).
-  customerPhoneAlt String?
-  equipmentType String
-  brand String?
-  model String?
-  serialNumber String?
-  equipmentColor String?
-  accessories String?
+  customerPhoneAlt     String?
+  equipmentType        String
+  brand                String?
+  model                String?
+  serialNumber         String?
+  equipmentColor       String?
+  accessories          String?
   // NONE | PATTERN | PIN | PASSWORD — deviceAccessValue se considera dato sensible
-  deviceAccessType String?
-  deviceAccessValue String?
-  intakeCondition String?
+  deviceAccessType     String?
+  deviceAccessValue    String?
+  intakeCondition      String?
   // Condiciones funcionales (flags separados por coma: ENCENDIDO,APAGADO,MOJADO,
   // MANIPULADO,ROTO,INCOMPLETO) y estética cosmética (BUENO | REGULAR | MALO).
   functionalConditions String?
-  aesthetics String?
+  aesthetics           String?
   // Anaquel/mesa/caja donde quedó físicamente el equipo.
-  location String?
+  location             String?
   // Agenda del técnico: distinta de la fecha prometida al cliente.
-  scheduledAt DateTime?
-  reportedIssue String
-  diagnosis String?
-  quoteCents Int?
-  approvedQuoteCents Int?
-  quoteApprovedAt DateTime?
-  qualityCheck String?
-  deliveredTo String?
-  promisedAt DateTime?
+  scheduledAt          DateTime?
+  reportedIssue        String
+  diagnosis            String?
+  quoteCents           Int?
+  approvedQuoteCents   Int?
+  quoteApprovedAt      DateTime?
+  qualityCheck         String?
+  deliveredTo          String?
+  promisedAt           DateTime?
   // Firma del cliente al recibir (PNG base64). Autorización de condiciones.
-  signatureData String?
+  signatureData        String?
   // Token público para subir evidencias por QR sin login (se puede rotar).
-  uploadToken String @unique @default(cuid())
-  quoteToken  String @unique @default(cuid()) // Token público para ver/aprobar la cotización
-  photos RepairPhoto[]
-  intakeBranchId String
-  currentBranchId String
-  intakeBranch Branch @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
-  currentBranch Branch @relation("CurrentBranch", fields: [currentBranchId], references: [id], onDelete: Restrict)
-  assignedToId String?
-  assignedTo User? @relation("RepairAssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
-  createdById String
-  createdBy User @relation("RepairCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  events RepairEvent[]
-  parts  RepairPart[]
-  payments Payment[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  uploadToken          String        @unique @default(cuid())
+  quoteToken           String        @unique @default(cuid()) // Token público para ver/aprobar la cotización
+  photos               RepairPhoto[]
+  intakeBranchId       String
+  currentBranchId      String
+  intakeBranch         Branch        @relation("IntakeBranch", fields: [intakeBranchId], references: [id], onDelete: Restrict)
+  currentBranch        Branch        @relation("CurrentBranch", fields: [currentBranchId], references: [id], onDelete: Restrict)
+  assignedToId         String?
+  assignedTo           User?         @relation("RepairAssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdById          String
+  createdBy            User          @relation("RepairCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  events               RepairEvent[]
+  parts                RepairPart[]
+  payments             Payment[]
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
   @@index([currentBranchId, status, createdAt])
   @@index([assignedToId, status])
   @@index([customerPhone])
+  @@index([businessId])
 }
 
 // Refacción o insumo registrado contra una orden de reparación.
 model RepairPart {
-  id             String   @id @default(cuid())
+  id             String      @id @default(cuid())
+  businessId     String
+  business       Business    @relation(fields: [businessId], references: [id], onDelete: Restrict)
   orderId        String
   order          RepairOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
   productId      String?
-  product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  product        Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
   description    String
-  qty            Int      @default(1)
-  unitCostCents  Int      @default(0)
-  unitPriceCents Int      @default(0)
+  qty            Int         @default(1)
+  unitCostCents  Int         @default(0)
+  unitPriceCents Int         @default(0)
   createdById    String
-  createdBy      User     @relation("RepairPartCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy      User        @relation("RepairPartCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   // REQUESTED = pedida por técnico pendiente de autorización; APPROVED/REJECTED.
-  status         PartStatus @default(APPROVED)
+  status         PartStatus  @default(APPROVED)
   decidedById    String?
-  decidedBy      User?    @relation("RepairPartDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedBy      User?       @relation("RepairPartDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
   decidedAt      DateTime?
   decisionNote   String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime    @default(now())
 
   @@index([orderId])
   @@index([status])
+  @@index([businessId])
 }
 
 model RepairEvent {
-  id String @id @default(cuid())
-  orderId String
-  order RepairOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  actorId String
-  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
-  type String
-  detail String
+  id         String      @id @default(cuid())
+  businessId String
+  business   Business    @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  orderId    String
+  order      RepairOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId    String
+  actor      User        @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  type       String
+  detail     String
   // Notas visibles para el cliente en el rastreo público (solo type=NOTE).
-  isPublic Boolean @default(false)
-  createdAt DateTime @default(now())
+  isPublic   Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+
   @@index([orderId, createdAt])
+  @@index([businessId])
 }
 
 enum PartStatus {
-  REQUESTED  // Técnico la pidió; pendiente de autorización del admin
+  REQUESTED // Técnico la pidió; pendiente de autorización del admin
   APPROVED
   REJECTED
 }
@@ -703,6 +830,8 @@ enum CashRequestStatus {
 // CashMovement OUT. El admin decide; el solicitante nunca se auto-aprueba.
 model CashRequest {
   id             String            @id @default(cuid())
+  businessId     String
+  business       Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
   branchId       String
   branch         Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
   amountCents    Int
@@ -717,13 +846,17 @@ model CashRequest {
   cashMovementId String?           @unique
   cashMovement   CashMovement?     @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
   createdAt      DateTime          @default(now())
+
   @@index([branchId, status])
+  @@index([businessId])
 }
 
 // Evidencia fotográfica de una orden (estado al recibir, avance, resultado).
 // filePath es relativo al almacenamiento local; se sirve por /api/evidence.
 model RepairPhoto {
   id           String      @id @default(cuid())
+  businessId   String
+  business     Business    @relation(fields: [businessId], references: [id], onDelete: Restrict)
   orderId      String
   order        RepairOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   filePath     String
@@ -731,7 +864,9 @@ model RepairPhoto {
   uploadedById String?
   uploadedBy   User?       @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   createdAt    DateTime    @default(now())
+
   @@index([orderId])
+  @@index([businessId])
 }
 
 // Catálogo de modelos de equipo para autocompletar al recibir
@@ -743,6 +878,7 @@ model DeviceModel {
   code      String?
   type      String   @default("SMARTPHONE")
   createdAt DateTime @default(now())
+
   @@unique([brand, model])
   @@index([brand])
 }
@@ -750,40 +886,45 @@ model DeviceModel {
 // Catálogo de servicios del taller (cambio de pantalla, liberación, etc.) con
 // precio sugerido; se usa como autocomplete al recibir equipos.
 model WorkshopService {
-  id String @id @default(cuid())
-  name String
-  description String?
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  name          String
+  description   String?
   // null = el precio depende del dispositivo; se cotiza al recibir.
-  priceCents Int?
+  priceCents    Int?
   equipmentType String?
-  isActive Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([isActive, name])
+  @@index([businessId])
 }
 
-
 model MarketplaceRequest {
-  id           String   @id @default(cuid())
-  product      Product  @relation(fields: [productId], references: [id])
-  productId    String
-  qty          Int      @default(1)
-  tallerName   String   // Nombre del taller aliado que solicita
-  contactName  String?
-  contactPhone String?
-  note         String?
-  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED, FULFILLED
+  id            String    @id @default(cuid())
+  businessId    String
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  product       Product   @relation(fields: [productId], references: [id])
+  productId     String
+  qty           Int       @default(1)
+  tallerName    String // Nombre del taller aliado que solicita
+  contactName   String?
+  contactPhone  String?
+  note          String?
+  status        String    @default("PENDING") // PENDING, APPROVED, REJECTED, FULFILLED
   requestedById String?
-  requestedBy  User?    @relation("MarketplaceRequestedBy", fields: [requestedById], references: [id])
-  decidedById  String?
-  decidedBy    User?    @relation("MarketplaceDecidedBy", fields: [decidedById], references: [id])
-  decidedAt    DateTime?
-  decisionNote String?
-  saleId       String?  @unique // Venta generada al surtir la solicitud
-  sale         Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  createdAt    DateTime @default(now())
+  requestedBy   User?     @relation("MarketplaceRequestedBy", fields: [requestedById], references: [id])
+  decidedById   String?
+  decidedBy     User?     @relation("MarketplaceDecidedBy", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  decisionNote  String?
+  saleId        String?   @unique // Venta generada al surtir la solicitud
+  sale          Sale?     @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
 
   @@index([status])
   @@index([productId])
+  @@index([businessId])
 }

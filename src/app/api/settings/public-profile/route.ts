@@ -1,29 +1,20 @@
 import { NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { getBusinessSettingsMap } from "@/lib/settings"
 import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
 import * as fs from "fs"
 import * as path from "path"
 
-// Perfil público del negocio en SystemSettings. "business_slug" define el
-// namespace reficio.app/<slug>; los demás datos alimentan la vitrina pública
-// (/<slug>, /<slug>/market, /<slug>/order-status).
-const KEY_SLUG = "business_slug"
-const KEY_PHONE = "public_phone"
+// Perfil público del negocio. La identidad vive en la tabla Business (slug,
+// phone, address, logoUrl, name); la descripción y el nombre de tickets siguen
+// en SystemSettings scoped por businessId. Business.slug define el namespace
+// reficio.app/<slug> que alimenta la vitrina (/<slug>, /<slug>/market,
+// /<slug>/order-status).
 const KEY_DESCRIPTION = "public_description"
-const KEY_ADDRESS = "public_address"
 const KEY_BUSINESS_NAME = "ticket_business_name"
-const KEY_LOGO = "public_logo"
 
-const PROFILE_KEYS = [
-  KEY_SLUG,
-  KEY_PHONE,
-  KEY_DESCRIPTION,
-  KEY_ADDRESS,
-  KEY_BUSINESS_NAME,
-  KEY_LOGO,
-] as const
-
+const MAX_NAME = 120
 const MAX_PHONE = 30
 const MAX_DESCRIPTION = 500
 const MAX_ADDRESS = 200
@@ -52,20 +43,32 @@ function publicUrls(slug: string) {
   }
 }
 
-async function readProfile() {
-  const rows = await prisma.systemSettings.findMany({
-    where: { key: { in: [...PROFILE_KEYS] } },
-    select: { key: true, value: true },
-  })
-  const map = new Map(rows.map(row => [row.key, row.value]))
-  const slug = normalizeSlug(map.get(KEY_SLUG) ?? "")
-  const logo = map.get(KEY_LOGO) ?? ""
+/** Prisma P2002 (unique violado): Business.slug chocó con otro negocio. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: unknown }).code === "P2002"
+  )
+}
+
+async function readProfile(businessId: string) {
+  const [business, settings] = await Promise.all([
+    prisma.business.findUnique({
+      where: { id: businessId },
+      select: { name: true, slug: true, phone: true, address: true, logoUrl: true },
+    }),
+    getBusinessSettingsMap(businessId, [KEY_DESCRIPTION, KEY_BUSINESS_NAME]),
+  ])
+  const slug = normalizeSlug(business?.slug ?? "")
+  const logo = business?.logoUrl ?? ""
   return {
     slug,
-    phone: map.get(KEY_PHONE) ?? "",
-    description: map.get(KEY_DESCRIPTION) ?? "",
-    address: map.get(KEY_ADDRESS) ?? "",
-    businessName: map.get(KEY_BUSINESS_NAME) ?? "",
+    phone: business?.phone ?? "",
+    description: settings.get(KEY_DESCRIPTION) ?? "",
+    address: business?.address ?? "",
+    businessName: settings.get(KEY_BUSINESS_NAME) || business?.name || "",
     logo: LOGO_PATH_RE.test(logo) ? logo : "",
     urls: publicUrls(slug),
   }
@@ -76,7 +79,7 @@ export async function GET() {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    return NextResponse.json(await readProfile(), {
+    return NextResponse.json(await readProfile(auth.session.user.businessId), {
       headers: { "Cache-Control": "private, no-store" },
     })
   } catch (error) {
@@ -89,20 +92,25 @@ export async function GET() {
 }
 
 // POST - Guardar perfil público (solo admin)
-// body: { slug?, phone?, description?, address?, logo? } — slug vacío quita el
-// link, logo vacío quita el logo. `logo` es el path devuelto por /api/upload/logo.
+// body: { slug?, phone?, description?, address?, logo?, businessName? } —
+// `logo` es el path devuelto por /api/upload/logo (vacío/null quita el logo).
+// `businessName` actualiza Business.name Y ticket_business_name scoped.
+// El slug no puede quedar vacío: Business.slug es obligatorio.
 export async function POST(req: Request) {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
+    const businessId = auth.session.user.businessId
 
     const body = await req.json().catch(() => null)
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Cuerpo de la solicitud inválido" }, { status: 400 })
     }
-    const { slug, phone, description, address, logo } = body as Record<string, unknown>
+    const { slug, phone, description, address, logo, businessName } = body as Record<string, unknown>
 
-    const upserts: { key: string; value: string }[] = []
+    // Campos de la tabla Business (nullables salvo slug/name) y settings scoped.
+    const businessUpdate: { slug?: string; name?: string; phone?: string | null; address?: string | null; logoUrl?: string | null } = {}
+    const settingUpserts: { key: string; value: string }[] = []
     let newLogo: string | null = null
 
     if (slug !== undefined) {
@@ -110,40 +118,83 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "El slug debe ser texto" }, { status: 400 })
       }
       const clean = normalizeSlug(slug)
-      if (clean) {
-        if (clean.length < 3) {
-          return NextResponse.json(
-            { error: "El slug debe tener al menos 3 caracteres" },
-            { status: 400 }
-          )
-        }
-        if (!isValidSlug(clean)) {
-          return NextResponse.json(
-            { error: "Slug inválido o reservado: usa minúsculas, números y guiones internos" },
-            { status: 400 }
-          )
-        }
-        // Un taller aliado ya reclamó ese namespace (User.publicSlug es único).
-        const taken = await prisma.user.findFirst({
+      // Business.slug es obligatorio: ya no se puede "apagar" la vitrina
+      // dejándolo vacío como antes con SystemSettings.
+      if (!clean) {
+        return NextResponse.json(
+          { error: "El link público no puede quedar vacío: elige un slug para tu vitrina" },
+          { status: 400 }
+        )
+      }
+      if (clean.length < 3) {
+        return NextResponse.json(
+          { error: "El slug debe tener al menos 3 caracteres" },
+          { status: 400 }
+        )
+      }
+      if (!isValidSlug(clean)) {
+        return NextResponse.json(
+          { error: "Slug inválido o reservado: usa minúsculas, números y guiones internos" },
+          { status: 400 }
+        )
+      }
+      // Colisiones del namespace: otro negocio (Business.slug es único — el
+      // pre-check da un mensaje claro y la tx atrapa P2002 por carreras) o un
+      // taller aliado (User.publicSlug, único global).
+      const [otherBusiness, takenByWorkshop] = await Promise.all([
+        prisma.business.findFirst({
+          where: { slug: clean, NOT: { id: businessId } },
+          select: { id: true },
+        }),
+        prisma.user.findFirst({
           where: { publicSlug: clean },
           select: { id: true },
-        })
-        if (taken) {
-          return NextResponse.json(
-            { error: "Ese slug ya lo usa un taller aliado" },
-            { status: 409 }
-          )
-        }
+        }),
+      ])
+      if (otherBusiness) {
+        return NextResponse.json(
+          { error: "Ese slug ya lo usa otro negocio" },
+          { status: 409 }
+        )
       }
-      upserts.push({ key: KEY_SLUG, value: clean })
+      if (takenByWorkshop) {
+        return NextResponse.json(
+          { error: "Ese slug ya lo usa un taller aliado" },
+          { status: 409 }
+        )
+      }
+      businessUpdate.slug = clean
     }
 
-    const textFields: [unknown, string, number, string][] = [
-      [phone, KEY_PHONE, MAX_PHONE, "El teléfono"],
-      [description, KEY_DESCRIPTION, MAX_DESCRIPTION, "La descripción"],
-      [address, KEY_ADDRESS, MAX_ADDRESS, "La dirección"],
+    if (businessName !== undefined) {
+      if (typeof businessName !== "string") {
+        return NextResponse.json({ error: "El nombre del negocio debe ser texto" }, { status: 400 })
+      }
+      const value = businessName.trim()
+      if (!value) {
+        return NextResponse.json(
+          { error: "El nombre del negocio no puede quedar vacío" },
+          { status: 400 }
+        )
+      }
+      if (value.length > MAX_NAME) {
+        return NextResponse.json(
+          { error: `El nombre del negocio no puede exceder ${MAX_NAME} caracteres` },
+          { status: 400 }
+        )
+      }
+      // Nombre público: Business.name (vitrina) + ticket_business_name (tickets).
+      businessUpdate.name = value
+      settingUpserts.push({ key: KEY_BUSINESS_NAME, value })
+    }
+
+    // Campos de texto: phone/address van a Business (nullable), description a
+    // SystemSettings scoped.
+    const businessTextFields: [unknown, "phone" | "address", number, string][] = [
+      [phone, "phone", MAX_PHONE, "El teléfono"],
+      [address, "address", MAX_ADDRESS, "La dirección"],
     ]
-    for (const [field, key, max, label] of textFields) {
+    for (const [field, column, max, label] of businessTextFields) {
       if (field === undefined) continue
       if (typeof field !== "string") {
         return NextResponse.json({ error: `${label} debe ser texto` }, { status: 400 })
@@ -155,7 +206,21 @@ export async function POST(req: Request) {
           { status: 400 }
         )
       }
-      upserts.push({ key, value })
+      businessUpdate[column] = value || null
+    }
+
+    if (description !== undefined) {
+      if (typeof description !== "string") {
+        return NextResponse.json({ error: "La descripción debe ser texto" }, { status: 400 })
+      }
+      const value = description.trim()
+      if (value.length > MAX_DESCRIPTION) {
+        return NextResponse.json(
+          { error: `La descripción no puede exceder ${MAX_DESCRIPTION} caracteres` },
+          { status: 400 }
+        )
+      }
+      settingUpserts.push({ key: KEY_DESCRIPTION, value })
     }
 
     if (logo !== undefined) {
@@ -169,37 +234,52 @@ export async function POST(req: Request) {
           { status: 400 }
         )
       }
-      newLogo = value
-      upserts.push({ key: KEY_LOGO, value })
+      newLogo = value || null
+      businessUpdate.logoUrl = newLogo
     }
 
-    if (upserts.length === 0) {
+    if (Object.keys(businessUpdate).length === 0 && settingUpserts.length === 0) {
       return NextResponse.json({ error: "No hay cambios por guardar" }, { status: 400 })
     }
 
-    // Logo anterior para borrar el archivo huérfano tras el upsert.
+    // Logo anterior para borrar el archivo huérfano tras el update.
     let oldLogo = ""
     if (logo !== undefined) {
-      const row = await prisma.systemSettings.findUnique({
-        where: { key: KEY_LOGO },
-        select: { value: true },
+      const current = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { logoUrl: true },
       })
-      oldLogo = row?.value ?? ""
+      oldLogo = current?.logoUrl ?? ""
     }
 
-    for (const { key, value } of upserts) {
-      await prisma.systemSettings.upsert({
-        where: { key },
-        create: { key, value },
-        update: { value },
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (Object.keys(businessUpdate).length > 0) {
+          await tx.business.update({ where: { id: businessId }, data: businessUpdate })
+        }
+        for (const { key, value } of settingUpserts) {
+          await tx.systemSettings.upsert({
+            where: { businessId_key: { businessId, key } },
+            create: { businessId, key, value },
+            update: { value },
+          })
+        }
       })
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return NextResponse.json(
+          { error: "Ese slug ya lo usa otro negocio" },
+          { status: 409 }
+        )
+      }
+      throw error
     }
 
     if (logo !== undefined && oldLogo && oldLogo !== newLogo) {
       removeLogoFile(oldLogo)
     }
 
-    return NextResponse.json(await readProfile())
+    return NextResponse.json(await readProfile(businessId))
   } catch (error) {
     console.error("Error updating public profile:", error)
     return NextResponse.json(

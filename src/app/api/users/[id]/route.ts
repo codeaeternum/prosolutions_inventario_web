@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "../slug-utils"
 import bcrypt from "bcryptjs"
@@ -12,13 +13,14 @@ export async function PATCH(
     const result = await requireAdmin()
     if (result.error) return result.error
     const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const { id } = await params
     const body = await req.json()
     const { status, customerType, role, homeBranchId, jobTitle, quickPin, publicSlug } = body
 
     const existingUser = await prisma.user.findUnique({
-      where: { id },
+      where: { id, businessId },
       select: { id: true, role: true },
     })
     if (!existingUser) {
@@ -47,7 +49,7 @@ export async function PATCH(
     }
 
     if (homeBranchId) {
-      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId } })
+      const branch = await prisma.branch.findUnique({ where: { id: homeBranchId, businessId } })
       if (!branch || !branch.isActive) {
         return NextResponse.json({ error: "Sucursal inválida" }, { status: 400 })
       }
@@ -75,7 +77,7 @@ export async function PATCH(
     let publicSlugUpdate: string | null | undefined
     if (targetRole === "WORKSHOP") {
       if (publicSlug !== undefined) {
-        const resolved = await resolveWorkshopSlug(publicSlug, id)
+        const resolved = await resolveWorkshopSlug(publicSlug, businessId, id)
         if (resolved instanceof NextResponse) return resolved
         publicSlugUpdate = resolved
       }
@@ -84,7 +86,7 @@ export async function PATCH(
     }
 
     const user = await prisma.user.update({
-      where: { id },
+      where: { id, businessId },
       data: {
         ...(status && { status }),
         ...(customerType && { customerType }),
@@ -125,7 +127,7 @@ export async function DELETE(
     const { id } = await params
 
     await prisma.user.delete({
-      where: { id },
+      where: { id, businessId: businessIdOf(getSession(result)!) },
     })
 
     return NextResponse.json({ success: true })

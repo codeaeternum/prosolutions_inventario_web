@@ -22,3 +22,10 @@ async function requireRoles(roles: string[]): Promise<AuthResult> {
 export async function requireAdmin(): Promise<AuthResult> { return requireRoles(["ADMIN"]) }
 export async function requireAdminOrEmployee(): Promise<AuthResult> { return requireRoles(["ADMIN", "EMPLOYEE"]) }
 export async function requireMarketplaceViewer(): Promise<AuthResult> { return requireRoles(["ADMIN", "EMPLOYEE", "WORKSHOP"]) }
+/** Operador de plataforma: ve y administra TODAS las empresas (consola Reficio). */
+export async function requireSuperAdmin(): Promise<AuthResult> {
+  const result = await requireAuth()
+  if (result.error) return result
+  if (!result.session.user.isSuperAdmin) return { error: NextResponse.json({ error: "Acceso denegado" }, { status: 403 }) }
+  return result
+}

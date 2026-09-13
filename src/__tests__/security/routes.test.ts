@@ -10,6 +10,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   product: { findMany: mocks.findProduct, findUnique: mocks.findProduct, count: mocks.productCount },
   reservation: { findFirst: mocks.findReservation },
   user: { findMany: mocks.findUser },
+  business: { findFirst: vi.fn(async () => ({ id: "biz-test" })) },
 } }))
 import { GET as fixPreview, POST as fixApply } from "@/app/api/fix-catalog/route"
 import { GET as products } from "@/app/api/products/route"

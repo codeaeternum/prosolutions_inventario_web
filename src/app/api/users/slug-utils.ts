@@ -9,6 +9,7 @@ import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
  */
 export async function resolveWorkshopSlug(
   raw: unknown,
+  businessId: string,
   excludeUserId?: string
 ): Promise<string | null | NextResponse> {
   const slug = normalizeSlug(typeof raw === "string" ? raw : "")
@@ -19,15 +20,14 @@ export async function resolveWorkshopSlug(
       { status: 400 }
     )
   }
-  const [takenByUser, businessSlugRow] = await Promise.all([
+  // El namespace de slugs es global: Business.slug y User.publicSlug comparten
+  // /<slug>/*. Las colisiones se verifican contra TODAS las empresas/talleres.
+  const [takenByUser, takenByBusiness] = await Promise.all([
     prisma.user.findFirst({
       where: { publicSlug: slug, ...(excludeUserId && { NOT: { id: excludeUserId } }) },
       select: { id: true },
     }),
-    prisma.systemSettings.findUnique({
-      where: { key: "business_slug" },
-      select: { value: true },
-    }),
+    prisma.business.findFirst({ where: { slug }, select: { id: true } }),
   ])
   if (takenByUser) {
     return NextResponse.json(
@@ -35,9 +35,9 @@ export async function resolveWorkshopSlug(
       { status: 409 }
     )
   }
-  if (businessSlugRow && normalizeSlug(businessSlugRow.value) === slug) {
+  if (takenByBusiness) {
     return NextResponse.json(
-      { error: "Ese slug es el link público del negocio" },
+      { error: "Ese slug es el link público de un negocio" },
       { status: 409 }
     )
   }

@@ -14,6 +14,8 @@ declare module "next-auth" {
     role: UserRole
     customerType: CustomerType
     status: UserStatus
+    businessId: string
+    isSuperAdmin?: boolean
   }
 
   interface Session {
@@ -24,6 +26,8 @@ declare module "next-auth" {
       role: UserRole
       customerType: CustomerType
       status: UserStatus
+      businessId: string
+      isSuperAdmin?: boolean
       jobTitle?: string | null
       // Id del staff que inició esta sesión vía cambio rápido de usuario.
       impersonator?: string | null
@@ -38,13 +42,15 @@ declare module "@auth/core/jwt" {
     role: UserRole
     customerType: CustomerType
     status: UserStatus
+    businessId: string
+    isSuperAdmin?: boolean
     jobTitle?: string | null
     impersonator?: string | null
   }
 }
 
 // Rutas públicas (no requieren login)
-const PUBLIC_PATHS = ["/", "/login", "/register", "/api/auth", "/catalogo", "/seguimiento", "/evidencia", "/cotizacion"]
+const PUBLIC_PATHS = ["/", "/login", "/register", "/registro", "/api/auth", "/api/signup", "/catalogo", "/seguimiento", "/evidencia", "/cotizacion"]
 // Rutas legacy que sin login redirigen a /?redirect=bot
 const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)
@@ -162,6 +168,8 @@ export const authConfig: NextAuthConfig = {
         token.role = user.role
         token.customerType = user.customerType
         token.status = user.status
+        token.businessId = user.businessId
+        token.isSuperAdmin = user.isSuperAdmin ?? false
       }
       return token
     },
@@ -171,6 +179,8 @@ export const authConfig: NextAuthConfig = {
         session.user.role = token.role
         session.user.customerType = token.customerType
         session.user.status = token.status
+        session.user.businessId = token.businessId
+        session.user.isSuperAdmin = token.isSuperAdmin ?? false
         session.user.jobTitle = token.jobTitle ?? null
         session.user.impersonator = token.impersonator ?? null
       }

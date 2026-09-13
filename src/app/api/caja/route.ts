@@ -2,6 +2,7 @@ import { changeCash } from "@/lib/domain/cash"
 import { businessFailure } from "@/lib/domain/http"
 import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import prisma from "@/lib/prisma"
 
 export async function GET(req: Request) {
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    return NextResponse.json(await changeCash(prisma, getSession(auth)!.user.id, await req.json()))
+    const session = getSession(auth)!
+    return NextResponse.json(await changeCash(prisma, session.user.id, businessIdOf(session), await req.json()))
   } catch (error) { return businessFailure(error) }
 }

@@ -2,6 +2,7 @@ import { moveInventory } from "@/lib/domain/inventory"
 import { businessFailure } from "@/lib/domain/http"
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { MovementType } from "@prisma/client"
 
@@ -134,8 +135,9 @@ export async function POST(request: NextRequest) {
     try {
         const auth = await requireAdminOrEmployee()
         if (auth.error) return auth.error
+        const session = getSession(auth)!
         const body = await request.json()
-        const result = await moveInventory(prisma, getSession(auth)!.user.id, { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
+        const result = await moveInventory(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
         return NextResponse.json(body.items ? result : { ...result.movements[0], operationId: result.operationId }, { status: 201 })
     } catch (error) { return businessFailure(error) }
 }

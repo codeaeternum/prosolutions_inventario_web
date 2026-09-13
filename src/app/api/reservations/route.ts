@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAuth } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS, createReservations } from "@/lib/domain/reservations"
 import { businessFailure } from "@/lib/domain/http"
@@ -25,6 +26,7 @@ export async function GET(req: Request) {
     const type = query.get("type")
     if (type && !["TEMPORARY", "DEPOSIT"].includes(type)) return NextResponse.json({ error: "Tipo inválido" }, { status: 400 })
     const where: Prisma.ReservationWhereInput = {
+      businessId: businessIdOf(session),
       ...(session.user.role !== "ADMIN" ? { userId: session.user.id } : {}),
       ...(status ? { status: status as ReservationStatus } : view === "active" ? { status: { in: [...ACTIVE_RESERVATIONS] } } : view === "history" ? { status: { in: [...TERMINAL_RESERVATIONS] } } : {}),
       ...(type ? { type: type as "TEMPORARY" | "DEPOSIT" } : {}),
@@ -41,8 +43,9 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAuth()
     if (auth.error) return auth.error
+    const session = getSession(auth)!
     const body = await req.json()
-    const result = await createReservations(prisma, getSession(auth)!.user.id, { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") })
+    const result = await createReservations(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") })
     return NextResponse.json(body.items ? result : { ...result.reservations[0], operationId: result.operationId }, { status: 201 })
   } catch (error) { return businessFailure(error) }
 }
