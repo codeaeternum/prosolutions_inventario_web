@@ -27,6 +27,9 @@ export interface DirectoryBusiness {
   category: string
   logoUrl: string | null
   address: string | null
+  /** Coordenadas públicas del negocio (alimentan el mapa de /mercado). */
+  lat: number | null
+  lng: number | null
   counts: {
     products: number
     workshopServices: number
@@ -59,6 +62,8 @@ export async function listDirectoryBusinesses(): Promise<DirectoryBusiness[]> {
       category: true,
       logoUrl: true,
       address: true,
+      lat: true,
+      lng: true,
       _count: {
         select: {
           // Mismos filtros de visibilidad que la vitrina /<slug>/market.
@@ -77,6 +82,8 @@ export async function listDirectoryBusinesses(): Promise<DirectoryBusiness[]> {
       category: b.category,
       logoUrl: publicLogo(b.logoUrl),
       address: publicText(b.address),
+      lat: b.lat,
+      lng: b.lng,
       counts: {
         products: b._count.products,
         workshopServices: b._count.workshopServices,

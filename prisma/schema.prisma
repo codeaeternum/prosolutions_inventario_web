@@ -25,6 +25,8 @@ model Business {
   logoUrl             String?
   isActive            Boolean              @default(true)
   showInDirectory     Boolean              @default(true) // Aparecer en el directorio público /mercado
+  lat                 Float?               // Ubicación para el mapa del directorio
+  lng                 Float?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   users               User[]

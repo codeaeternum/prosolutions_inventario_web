@@ -2,9 +2,11 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { ArrowRight, MapPin, PackageSearch, Sparkles, Store, Wrench } from "lucide-react"
 import { listDirectoryBusinesses, type DirectoryBusiness } from "@/lib/directory"
+import { directoryCategoryLabel } from "@/lib/directory-categories"
 import { PublicShell } from "@/components/public/public-shell"
 import { Button } from "@/components/ui/button"
 import { MercadoSearch } from "./mercado-search"
+import { MercadoMap } from "./mercado-map"
 
 // Directorio vivo (altas de negocios y catálogos cambian): siempre dinámico.
 // La API detrás tiene su propio s-maxage para el CDN.
@@ -18,21 +20,10 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 }
 
-// Business.category es libre; etiqueta amigable para los valores conocidos.
-const CATEGORY_LABELS: Record<string, string> = {
-  "electronics-repair": "Reparación de electrónica",
-}
-
-function categoryLabel(value: string): string {
-  const known = CATEGORY_LABELS[value]
-  if (known) return known
-  const humanized = value.replace(/[-_]+/g, " ").trim()
-  if (!humanized) return "Negocio"
-  return humanized.charAt(0).toUpperCase() + humanized.slice(1)
-}
-
 export default async function MercadoPage() {
   const businesses = await listDirectoryBusinesses()
+  // Solo negocios con ambas coordenadas salen en el mapa.
+  const mapped = businesses.filter(b => b.lat != null && b.lng != null)
 
   return (
     <PublicShell
@@ -65,8 +56,27 @@ export default async function MercadoPage() {
         </div>
       </section>
 
-      {/* Buscador + resultados (o grid de negocios) */}
+      {/* Buscador + resultados (o mapa + grid de negocios) */}
       <MercadoSearch>
+        {mapped.length > 0 && (
+          <section className="container mx-auto max-w-5xl px-4 pt-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <MapPin className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">En el mapa</h2>
+                <p className="text-sm text-muted-foreground">
+                  {mapped.length === 1
+                    ? "1 negocio con ubicación"
+                    : `${mapped.length} negocios con ubicación`}
+                </p>
+              </div>
+            </div>
+            <MercadoMap businesses={mapped} />
+          </section>
+        )}
+
         <section className="container mx-auto max-w-5xl px-4 pb-16 pt-8">
           <div className="flex items-center gap-3 mb-6">
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -142,7 +152,7 @@ function BusinessCard({ business }: { business: DirectoryBusiness }) {
         )}
         <div className="min-w-0">
           <h3 className="font-semibold leading-snug truncate">{business.name}</h3>
-          <p className="text-xs text-muted-foreground">{categoryLabel(business.category)}</p>
+          <p className="text-xs text-muted-foreground">{directoryCategoryLabel(business.category)}</p>
         </div>
       </div>
 

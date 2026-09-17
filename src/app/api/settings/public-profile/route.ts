@@ -57,7 +57,7 @@ async function readProfile(businessId: string) {
   const [business, settings] = await Promise.all([
     prisma.business.findUnique({
       where: { id: businessId },
-      select: { name: true, slug: true, phone: true, address: true, logoUrl: true, showInDirectory: true },
+      select: { name: true, slug: true, phone: true, address: true, logoUrl: true, showInDirectory: true, lat: true, lng: true },
     }),
     getBusinessSettingsMap(businessId, [KEY_DESCRIPTION, KEY_BUSINESS_NAME]),
   ])
@@ -71,6 +71,8 @@ async function readProfile(businessId: string) {
     businessName: settings.get(KEY_BUSINESS_NAME) || business?.name || "",
     logo: LOGO_PATH_RE.test(logo) ? logo : "",
     showInDirectory: business?.showInDirectory ?? true,
+    lat: business?.lat ?? null,
+    lng: business?.lng ?? null,
     urls: publicUrls(slug),
   }
 }
@@ -97,6 +99,8 @@ export async function GET() {
 // `logo` es el path devuelto por /api/upload/logo (vacío/null quita el logo).
 // `businessName` actualiza Business.name Y ticket_business_name scoped.
 // `showInDirectory` controla si el negocio aparece en el directorio /mercado.
+// `lat`/`lng` ubican el negocio en el mapa de /mercado: llegan juntos, ambos
+// números en rango, o ambos null para quitar la ubicación.
 // El slug no puede quedar vacío: Business.slug es obligatorio.
 export async function POST(req: Request) {
   try {
@@ -108,10 +112,10 @@ export async function POST(req: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Cuerpo de la solicitud inválido" }, { status: 400 })
     }
-    const { slug, phone, description, address, logo, businessName, showInDirectory } = body as Record<string, unknown>
+    const { slug, phone, description, address, logo, businessName, showInDirectory, lat, lng } = body as Record<string, unknown>
 
     // Campos de la tabla Business (nullables salvo slug/name) y settings scoped.
-    const businessUpdate: { slug?: string; name?: string; phone?: string | null; address?: string | null; logoUrl?: string | null; showInDirectory?: boolean } = {}
+    const businessUpdate: { slug?: string; name?: string; phone?: string | null; address?: string | null; logoUrl?: string | null; showInDirectory?: boolean; lat?: number | null; lng?: number | null } = {}
     const settingUpserts: { key: string; value: string }[] = []
     let newLogo: string | null = null
 
@@ -230,6 +234,33 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "showInDirectory debe ser booleano" }, { status: 400 })
       }
       businessUpdate.showInDirectory = showInDirectory
+    }
+
+    // Ubicación del mapa: lat y lng siempre viajan juntos. null+null quita
+    // la ubicación (el negocio deja de salir en el mapa de /mercado).
+    if (lat !== undefined || lng !== undefined) {
+      if (lat === null && lng === null) {
+        businessUpdate.lat = null
+        businessUpdate.lng = null
+      } else {
+        if (
+          typeof lat !== "number" || typeof lng !== "number" ||
+          !Number.isFinite(lat) || !Number.isFinite(lng)
+        ) {
+          return NextResponse.json(
+            { error: "La ubicación debe ser lat y lng numéricos (o ambos null para quitarla)" },
+            { status: 400 }
+          )
+        }
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          return NextResponse.json(
+            { error: "Coordenadas fuera de rango: lat entre -90 y 90, lng entre -180 y 180" },
+            { status: 400 }
+          )
+        }
+        businessUpdate.lat = lat
+        businessUpdate.lng = lng
+      }
     }
 
     if (logo !== undefined) {

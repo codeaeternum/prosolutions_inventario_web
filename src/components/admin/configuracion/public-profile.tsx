@@ -1,10 +1,11 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import QRCode from "qrcode"
 import {
-  Copy, Download, ExternalLink, Globe, ImagePlus, Info, Loader2, Printer,
-  QrCode, Save, Trash2, Upload,
+  Copy, Download, ExternalLink, Globe, ImagePlus, Info, Loader2, LocateFixed,
+  MapPin, Printer, QrCode, Save, Trash2, Upload,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -28,6 +29,8 @@ interface PublicProfile {
   businessName: string
   logo: string
   showInDirectory: boolean
+  lat: number | null
+  lng: number | null
 }
 
 const EMPTY_PROFILE: PublicProfile = {
@@ -38,6 +41,8 @@ const EMPTY_PROFILE: PublicProfile = {
   businessName: "",
   logo: "",
   showInDirectory: true,
+  lat: null,
+  lng: null,
 }
 
 // QRs del mostrador: violeta oscuro sobre blanco — contraste que imprime bien.
@@ -50,6 +55,35 @@ const QR_OPTIONS = {
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024
 const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"]
+
+// Formatos aceptados para "Ubicación en el mapa": link de Google Maps con
+// !3d LAT !4d LNG (posición exacta del pin) o @lat,lng (centro del mapa), o
+// "lat,lng" directo.
+const GOOGLE_PLACE_RE = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/
+const GOOGLE_AT_RE = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/
+const PLAIN_COORDS_RE = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/
+
+function toCoords(latRaw: string, lngRaw: string): { lat: number; lng: number } | null {
+  const lat = Number(latRaw)
+  const lng = Number(lngRaw)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
+  return { lat, lng }
+}
+
+function parseLocationInput(raw: string): { lat: number; lng: number } | null {
+  const text = raw.trim()
+  if (!text) return null
+  // !3d/!4d primero: en links de "lugar" es la posición exacta del negocio;
+  // @lat,lng es solo el centro del viewport donde se abrió el mapa.
+  const place = text.match(GOOGLE_PLACE_RE)
+  if (place) return toCoords(place[1], place[2])
+  const at = text.match(GOOGLE_AT_RE)
+  if (at) return toCoords(at[1], at[2])
+  const plain = text.match(PLAIN_COORDS_RE)
+  if (plain) return toCoords(plain[1], plain[2])
+  return null
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -97,6 +131,11 @@ export function PublicProfileCard() {
   const [qrCodes, setQrCodes] = useState<Record<string, string>>({})
   // Último slug confirmado por el servidor: de él salen los chips de links.
   const [savedSlug, setSavedSlug] = useState("")
+  // Captura de ubicación: texto libre (link de Maps o "lat,lng"), modo
+  // "cambiar" cuando ya hay coords y geocoding de la dirección en curso.
+  const [locationInput, setLocationInput] = useState("")
+  const [editingLocation, setEditingLocation] = useState(false)
+  const [geocoding, setGeocoding] = useState(false)
   const inFlight = useRef(false)
   const logoInputRef = useRef<HTMLInputElement>(null)
   const host = usePublicHost()
@@ -115,6 +154,8 @@ export function PublicProfileCard() {
           businessName: data.businessName ?? "",
           logo: data.logo ?? "",
           showInDirectory: data.showInDirectory ?? true,
+          lat: typeof data.lat === "number" ? data.lat : null,
+          lng: typeof data.lng === "number" ? data.lng : null,
         }
         setProfile(next)
         setInitial(next)
@@ -137,7 +178,9 @@ export function PublicProfileCard() {
     profile.phone !== initial.phone ||
     profile.description !== initial.description ||
     profile.address !== initial.address ||
-    profile.showInDirectory !== initial.showInDirectory
+    profile.showInDirectory !== initial.showInDirectory ||
+    profile.lat !== initial.lat ||
+    profile.lng !== initial.lng
 
   async function save() {
     if (inFlight.current) return
@@ -163,6 +206,8 @@ export function PublicProfileCard() {
           description: profile.description,
           address: profile.address,
           showInDirectory: profile.showInDirectory,
+          lat: profile.lat,
+          lng: profile.lng,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -178,6 +223,8 @@ export function PublicProfileCard() {
         businessName: data.businessName ?? profile.businessName,
         logo: data.logo ?? profile.logo,
         showInDirectory: data.showInDirectory ?? profile.showInDirectory,
+        lat: typeof data.lat === "number" ? data.lat : null,
+        lng: typeof data.lng === "number" ? data.lng : null,
       }
       setProfile(next)
       setInitial(next)
@@ -188,6 +235,55 @@ export function PublicProfileCard() {
     } finally {
       inFlight.current = false
       setSaving(false)
+    }
+  }
+
+  // Las coordenadas se guardan con "Guardar perfil público" junto al resto
+  // del formulario; aquí solo se detectan/resuelven.
+  function applyLocationInput() {
+    const coords = parseLocationInput(locationInput)
+    if (!coords) {
+      toast.error(
+        "No reconocimos la ubicación: pega un link de Google Maps o escribe lat,lng"
+      )
+      return
+    }
+    setProfile(prev => ({ ...prev, lat: coords.lat, lng: coords.lng }))
+    setLocationInput("")
+    setEditingLocation(false)
+    toast.success("Ubicación lista. Guarda el perfil para publicarla.")
+  }
+
+  function clearLocation() {
+    setProfile(prev => ({ ...prev, lat: null, lng: null }))
+    setLocationInput("")
+    setEditingLocation(false)
+  }
+
+  // Geocodifica la dirección pública del formulario vía /api/settings/geocode
+  // (Nominatim server-side; el cliente nunca llama OSM directo).
+  async function geocodeAddress() {
+    const q = profile.address.trim()
+    if (q.length < 3) {
+      toast.error("Escribe tu dirección pública arriba para ubicarla")
+      return
+    }
+    setGeocoding(true)
+    try {
+      const res = await fetch(`/api/settings/geocode?q=${encodeURIComponent(q)}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || typeof data.lat !== "number" || typeof data.lng !== "number") {
+        toast.error(data.error || "No pudimos ubicar esa dirección")
+        return
+      }
+      setProfile(prev => ({ ...prev, lat: data.lat, lng: data.lng }))
+      setLocationInput("")
+      setEditingLocation(false)
+      toast.success("Ubicación encontrada. Guarda el perfil para publicarla.")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setGeocoding(false)
     }
   }
 
@@ -392,6 +488,114 @@ export function PublicProfileCard() {
                   disabled={saving}
                 />
               </div>
+            </div>
+
+            {/* Ubicación en el mapa de /mercado */}
+            <div className="space-y-3 rounded-lg border px-4 py-3">
+              <div className="space-y-1">
+                <Label htmlFor="map-location" className="text-sm font-medium">
+                  Ubicación en el mapa
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Con coordenadas tu negocio aparece en el mapa de reficio.app/mercado.
+                </p>
+              </div>
+
+              {profile.lat !== null && profile.lng !== null && !editingLocation ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
+                    <MapPin className="h-3.5 w-3.5" aria-hidden />
+                    {profile.lat.toFixed(4)}, {profile.lng.toFixed(4)}
+                  </span>
+                  <Button type="button" variant="ghost" size="sm" asChild>
+                    <Link href="/mercado" target="_blank" rel="noopener noreferrer">
+                      Ver en mapa
+                      <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={saving}
+                    onClick={() => setEditingLocation(true)}
+                  >
+                    Cambiar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={saving}
+                    onClick={clearLocation}
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    Quitar
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="map-location"
+                      value={locationInput}
+                      onChange={(e) => setLocationInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          applyLocationInput()
+                        }
+                      }}
+                      placeholder="Link de Google Maps o lat,lng (ej: 20.1234, -98.5678)"
+                      disabled={saving || geocoding}
+                      className="flex-1"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={saving || geocoding || !locationInput.trim()}
+                        onClick={applyLocationInput}
+                      >
+                        Aplicar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={saving || geocoding || profile.address.trim().length < 3}
+                        onClick={() => void geocodeAddress()}
+                      >
+                        {geocoding ? (
+                          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                        ) : (
+                          <LocateFixed className="mr-1.5 h-4 w-4" />
+                        )}
+                        Buscar mi dirección
+                      </Button>
+                      {editingLocation && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={saving || geocoding}
+                          onClick={() => {
+                            setEditingLocation(false)
+                            setLocationInput("")
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Pega el link de Google Maps de tu negocio, escribe lat,lng o busca por
+                    tu dirección pública.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex items-start justify-between gap-4 rounded-lg border px-4 py-3">
