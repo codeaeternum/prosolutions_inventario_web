@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { applyCount, cancelCount, countFolio, getCount } from "@/lib/domain/counts"
+import { applyCount, cancelCount, countForClient, countFolio, getCount } from "@/lib/domain/counts"
 import { businessFailure } from "@/lib/domain/http"
 
 /** Detalle de una sesión de conteo con sus items y producto. */
@@ -15,12 +15,14 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     const count = await getCount(prisma, businessId, id)
     if (!count) return NextResponse.json({ error: "Conteo no encontrado." }, { status: 404 })
+    const blindOpen = count.blind && count.status === "OPEN"
     return NextResponse.json(
       {
         count: {
-          ...count,
+          // Conteo ciego en captura: items salen con expectedQty = null.
+          ...countForClient(count),
           folio: countFolio(count.number),
-          diffCount: count.items.filter(i => i.countedQty !== i.expectedQty).length,
+          diffCount: blindOpen ? null : count.items.filter(i => i.countedQty !== i.expectedQty).length,
         },
       },
       { headers: { "Cache-Control": "private, no-store" } },

@@ -21,6 +21,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
+import { Checkbox } from "@/components/ui/checkbox"
 import { EmptyState } from "@/components/admin/empty-state"
 import { TraspasoDialog } from "@/components/admin/inventario/traspaso-dialog"
 import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
@@ -98,6 +99,7 @@ export function ExistenciasPanel() {
     const [countDialogOpen, setCountDialogOpen] = useState(false)
     const [countBranchId, setCountBranchId] = useState("")
     const [countNotes, setCountNotes] = useState("")
+    const [countBlind, setCountBlind] = useState(false)
     const [creatingCount, setCreatingCount] = useState(false)
     const [focusCountId, setFocusCountId] = useState<string | null>(null)
     const [countsRefreshKey, setCountsRefreshKey] = useState(0)
@@ -145,13 +147,14 @@ export function ExistenciasPanel() {
     const openCountDialog = () => {
         setCountBranchId(branches[0]?.id ?? "")
         setCountNotes("")
+        setCountBlind(false)
         setCountDialogOpen(true)
     }
 
     const createCount = async () => {
         if (creatingCount) return
         if (!countBranchId) return toast.error("Selecciona la sucursal a contar.")
-        const payload = { branchId: countBranchId, notes: countNotes.trim() || undefined }
+        const payload = { branchId: countBranchId, notes: countNotes.trim() || undefined, blind: countBlind }
         createOp.current = getClientOperationKey(createOp.current, payload)
         setCreatingCount(true)
         try {
@@ -405,6 +408,16 @@ export function ExistenciasPanel() {
                                 onChange={(e) => setCountNotes(e.target.value)}
                                 maxLength={1000}
                             />
+                        </div>
+                        <div className="flex items-start gap-2">
+                            <Checkbox
+                                id="conteo-blind"
+                                checked={countBlind}
+                                onCheckedChange={(v) => setCountBlind(v === true)}
+                            />
+                            <Label htmlFor="conteo-blind" className="text-sm font-normal leading-tight cursor-pointer">
+                                Conteo ciego — el contador no ve el stock esperado
+                            </Label>
                         </div>
                     </div>
 

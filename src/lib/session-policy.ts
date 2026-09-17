@@ -9,11 +9,16 @@ export type CurrentUser = {
   jobTitle: string | null
   businessId: string
   isSuperAdmin: boolean
+  /** Cargada por auth.ts para revocar sesiones cuando la empresa se suspende. */
+  business?: { isActive: boolean } | null
 }
 
 /** A cookie proves identity; authorization always comes from the current database row. */
 export function refreshSessionToken(token: JWT, current: CurrentUser | null, signingIn = false): JWT | null {
   if (!current || current.status === "REJECTED") return null
+  // Empresa suspendida: revoca la sesión de sus usuarios en el próximo
+  // request. Los superadmins de plataforma conservan acceso a la consola.
+  if (current.business?.isActive === false && !current.isSuperAdmin) return null
   const passwordVersion = createHash("sha256").update(current.password ?? "").digest("hex")
   // Old cookies without a credential version must sign in again once after this upgrade.
   if (!signingIn && token.passwordVersion !== passwordVersion) return null

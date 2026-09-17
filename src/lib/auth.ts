@@ -1,10 +1,19 @@
-import NextAuth from "next-auth"
+import NextAuth, { CredentialsSignin } from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 import bcrypt from "bcryptjs"
 import { prisma } from "./prisma"
 import { authConfig } from "./auth.config"
 import { refreshSessionToken } from "./session-policy"
 import { checkAndRecord } from "./rate-limit"
+
+/**
+ * Empresa suspendida (Business.isActive=false): las credenciales son válidas
+ * pero el tenant está dado de baja. El `code` viaja al login como
+ * ?code=empresa_suspendida para mostrar un mensaje claro.
+ */
+class BusinessSuspendedError extends CredentialsSignin {
+  code = "empresa_suspendida"
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -13,7 +22,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       const id = user?.id ?? token.id
       if (!id) return null
-      const current = await prisma.user.findUnique({ where: { id } })
+      const current = await prisma.user.findUnique({
+        where: { id },
+        include: { business: { select: { isActive: true } } },
+      })
       return refreshSessionToken(token, current, !!user)
     },
   },
@@ -33,14 +45,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // Account limit cannot be bypassed by a forged proxy header or encoded form field.
         if (!checkAndRecord("login-account", identifier.toLowerCase(), 15 * 60 * 1000, 10)) return null
 
-        // Try to find user by email or phone
+        // Try to find user by email or phone (con su empresa para el chequeo de suspensión)
         const user = await prisma.user.findFirst({
           where: {
             OR: [
               { email: identifier },
               { phone: identifier }
             ]
-          }
+          },
+          include: { business: { select: { isActive: true } } }
         })
 
         if (!user) {
@@ -63,6 +76,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (user.status === "REJECTED") {
           return null
+        }
+
+        // Empresa suspendida: sus usuarios no pueden iniciar sesión. El
+        // superadmin de plataforma sí entra (opera la consola Reficio).
+        if (user.business?.isActive === false && !user.isSuperAdmin) {
+          throw new BusinessSuspendedError()
         }
 
         return {

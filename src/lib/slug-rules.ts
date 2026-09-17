@@ -23,6 +23,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "registro",
   "signup",
   "plataforma",
+  "platform",
   "superadmin",
   "pending",
   "mercado",

@@ -34,6 +34,8 @@ interface AdminShellUser {
   customerType: CustomerType
   status: UserStatus
   jobTitle?: string | null
+  // Operador de plataforma: habilita el acceso a la consola /platform.
+  isSuperAdmin?: boolean
   // Id del staff que originó la sesión cuando hay cambio rápido de usuario.
   impersonator?: string | null
 }
@@ -80,7 +82,7 @@ export function AdminShell({ user, homeBranchId, children }: AdminShellProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <AdminSidebar user={{ role: user.role }} collapsed={collapsed} />
+      <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin }} collapsed={collapsed} />
       <div className={cn("transition-all duration-300", collapsed ? "lg:pl-20" : "lg:pl-64")}>
         <AdminHeader
           user={user}

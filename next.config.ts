@@ -16,6 +16,18 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  async redirects() {
+    return [
+      // Dominio retirado: todo tráfico del host viejo migra a reficio.app
+      // conservando la ruta (QRs impresos y links viejos siguen sirviendo).
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "prosolutions.ascnex.com" }],
+        destination: "https://reficio.app/:path*",
+        permanent: true,
+      },
+    ]
+  },
   async headers() {
     const securityHeaders = [
       { key: "X-Frame-Options", value: "SAMEORIGIN" },

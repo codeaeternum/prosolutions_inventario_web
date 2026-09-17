@@ -1061,6 +1061,8 @@ model InventoryCount {
   branchId    String
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
   status      CountStatus          @default(OPEN)
+  // Conteo ciego: el capturador no ve expectedQty hasta que el conteo se aplica.
+  blind       Boolean              @default(false)
   notes       String?
   createdById String
   createdBy   User                 @relation(fields: [createdById], references: [id], onDelete: Restrict)

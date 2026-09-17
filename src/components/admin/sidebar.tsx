@@ -26,6 +26,7 @@ import {
   Warehouse,
   BookOpen,
   Store,
+  Shield,
 } from "lucide-react"
 
 const navigationGroups = [
@@ -83,7 +84,16 @@ const bottomBarItems = [
 const ALL_NAV_HREFS = [
   ...navigationGroups.flatMap(g => g.items.map(i => i.href)),
   ...bottomBarItems.map(i => i.href),
+  "/platform",
 ]
+
+// Consola de plataforma: solo la ve el superadmin (operador Reficio).
+const platformGroup = {
+  name: "Plataforma",
+  items: [
+    { name: "Consola", href: "/platform", icon: Shield },
+  ]
+}
 
 // Un ítem está activo solo si su href es el prefijo MÁS LARGO del menú que
 // coincide con la ruta — así /admin/taller/catalogo marca "Catálogo de
@@ -101,6 +111,7 @@ function isNavItemActive(pathname: string, href: string): boolean {
 interface AdminSidebarProps {
   user: {
     role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"
+    isSuperAdmin?: boolean
   }
   collapsed?: boolean
 }
@@ -126,6 +137,10 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
       }
       return true
     })
+
+  if (user.isSuperAdmin) {
+    filteredNavigation.push(platformGroup)
+  }
 
   // Bottom bar móvil: el taller aliado solo necesita el Mercado
   const visibleBottomBarItems = user.role === "WORKSHOP"

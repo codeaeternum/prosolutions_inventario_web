@@ -36,11 +36,21 @@ const countryCodes = [
 
 type LoginMethod = "email" | "phone"
 
+// Códigos de error de signIn (error=CredentialsSignin&code=...) → mensaje claro.
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  credentials: "Correo/teléfono o contraseña incorrectos.",
+  CredentialsSignin: "Correo/teléfono o contraseña incorrectos.",
+  empresa_suspendida: "Esta empresa está suspendida. Contacta a soporte de Reficio para reactivar el acceso.",
+  SessionRequired: "Inicia sesión para continuar.",
+}
+const loginErrorMessage = (code: string | null | undefined) =>
+  code ? (LOGIN_ERROR_MESSAGES[code] ?? "No se pudo iniciar sesión. Intenta de nuevo.") : ""
+
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = safeRedirectPath(searchParams.get("callbackUrl"))
-  const error = searchParams.get("error")
+  const errorCode = searchParams.get("code") ?? searchParams.get("error")
 
   const [loginMethod, setLoginMethod] = useState<LoginMethod>("email")
   const [email, setEmail] = useState("")
@@ -49,7 +59,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [errorMsg, setErrorMsg] = useState(error || "")
+  const [errorMsg, setErrorMsg] = useState(loginErrorMessage(errorCode))
 
   // Country code dropdown
   const [showCountryDropdown, setShowCountryDropdown] = useState(false)
@@ -93,7 +103,7 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        setErrorMsg(result.error)
+        setErrorMsg(loginErrorMessage(result.code ?? result.error) || "No se pudo iniciar sesión. Intenta de nuevo.")
       } else {
         router.push(callbackUrl)
         router.refresh()

@@ -1,38 +1,21 @@
 import { NextResponse } from "next/server"
 import { requireSuperAdmin } from "@/lib/api-auth"
-import { prisma } from "@/lib/prisma"
+import { listPlatformBusinesses } from "@/lib/platform"
 
 /**
  * GET /api/platform/businesses — Consola Reficio (solo superadmin).
  *
- * Lista TODAS las empresas de la instancia con el conteo de sus recursos
- * principales. Es la semilla de la futura consola de plataforma: de momento
- * solo lectura, sin datos sensibles (sin correos ni teléfonos de usuarios).
+ * Lista TODAS las empresas de la instancia con conteos de sus recursos
+ * (usuarios, productos, órdenes, ventas, sucursales), ventas acumuladas
+ * (suma de Sale.total en ventas COMPLETED) y última actividad operativa.
+ * Sin datos sensibles: no incluye correos ni teléfonos de usuarios.
  */
 export async function GET() {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
 
   try {
-    const businesses = await prisma.business.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        category: true,
-        isActive: true,
-        createdAt: true,
-        _count: {
-          select: {
-            users: true,
-            products: true,
-            repairOrders: true,
-            sales: true,
-          },
-        },
-      },
-    })
+    const businesses = await listPlatformBusinesses()
 
     return NextResponse.json(
       { businesses },

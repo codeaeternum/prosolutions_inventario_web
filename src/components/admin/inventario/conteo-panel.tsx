@@ -31,6 +31,13 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
 import { CheckCircle2, ClipboardList, History, Loader2, Save, Search, XCircle } from "lucide-react"
 import { formatDate } from "@/lib/utils"
 import { toast } from "sonner"
@@ -41,20 +48,23 @@ interface CountSummary {
     id: string
     folio: string
     status: CountStatus
+    blind: boolean
     notes: string | null
     branch: { id: string; name: string }
     createdBy: { id: string; name: string } | null
     appliedAt: string | null
     createdAt: string
     itemCount: number
-    diffCount: number
+    /** null mientras un conteo ciego sigue abierto (las diferencias se ocultan). */
+    diffCount: number | null
 }
 
 interface CountDetail extends Omit<CountSummary, "itemCount"> {
     items: {
         id: string
         productId: string
-        expectedQty: number
+        /** null en conteo ciego abierto: el capturador no ve lo esperado. */
+        expectedQty: number | null
         countedQty: number
         product: { id: string; name: string; barcode: string | null }
     }[]
@@ -64,7 +74,8 @@ interface EditableRow {
     productId: string
     name: string
     barcode: string | null
-    expected: number
+    /** null en conteo ciego: sin existencia del sistema visible. */
+    expected: number | null
     counted: string
     dirty: boolean
 }
@@ -82,9 +93,16 @@ const STATUS_CONFIG: Record<CountStatus, { label: string; className: string }> =
     CANCELLED: { label: "Cancelado", className: "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300" },
 }
 
-function diffOf(row: EditableRow): number | null {
+/** Cantidad contada válida (entero >= 0) o null si la captura está incompleta. */
+function countedQtyOf(row: EditableRow): number | null {
     const counted = parseInt(row.counted)
     if (!Number.isInteger(counted) || counted < 0) return null
+    return counted
+}
+
+function diffOf(row: EditableRow): number | null {
+    const counted = countedQtyOf(row)
+    if (counted === null || row.expected === null) return null
     return counted - row.expected
 }
 
@@ -118,6 +136,10 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
     const [confirmCancel, setConfirmCancel] = useState(false)
     const saveOp = useRef<ClientOperationKey | null>(null)
     const actOp = useRef<ClientOperationKey | null>(null)
+
+    // Detalle de un conteo cerrado (aplicado/cancelado) desde el historial.
+    const [historyDetail, setHistoryDetail] = useState<CountDetail | null>(null)
+    const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null)
 
     const fetchCounts = useCallback(async (signal?: AbortSignal) => {
         setLoading(true)
@@ -217,6 +239,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
     }, [search, detail?.branch.id, searchProducts])
 
     const addProduct = (product: SearchProduct) => {
+        const blind = detail?.blind ?? false
         setRows(prev => {
             if (prev.some(r => r.productId === product.id)) {
                 toast.info(`${product.name} ya está en el conteo.`)
@@ -226,8 +249,10 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                 productId: product.id,
                 name: product.name,
                 barcode: product.barcode,
-                expected: product.stock,
-                counted: String(product.stock),
+                // En conteo ciego no se pre-carga ni muestra el stock del sistema:
+                // la captura arranca vacía para que sea un número real.
+                expected: blind ? null : product.stock,
+                counted: blind ? "" : String(product.stock),
                 dirty: true,
             }]
         })
@@ -239,13 +264,31 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
         setRows(prev => prev.map(r => r.productId === productId ? { ...r, counted: value, dirty: true } : r))
     }
 
+    /** Abre el detalle de un conteo cerrado: esperado y diferencia ya visibles. */
+    const openHistoryDetail = async (id: string) => {
+        if (historyLoadingId) return
+        setHistoryLoadingId(id)
+        try {
+            const res = await fetch(`/api/inventory/counts/${id}`)
+            const data = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(data?.error || "Error al cargar el conteo")
+            setHistoryDetail(data?.count as CountDetail)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Error al cargar el conteo")
+        } finally {
+            setHistoryLoadingId(null)
+        }
+    }
+
     const hasDirty = rows.some(r => r.dirty)
-    const allValid = rows.every(r => diffOf(r) !== null)
+    const allValid = rows.every(r => countedQtyOf(r) !== null)
     const diffRows = rows.filter(r => (diffOf(r) ?? 0) !== 0)
+    // Conteo ciego aún abierto: ni esperado ni diferencias se muestran al capturar.
+    const isBlindOpen = Boolean(detail?.blind && detail?.status === "OPEN")
     // Para el resumen del confirm se usan los items persistidos (lo que aplicará el servidor).
-    const savedDiffs = detail?.items.filter(i => i.countedQty !== i.expectedQty) ?? []
-    const savedPositive = savedDiffs.reduce((sum, i) => sum + Math.max(0, i.countedQty - i.expectedQty), 0)
-    const savedNegative = savedDiffs.reduce((sum, i) => sum + Math.max(0, i.expectedQty - i.countedQty), 0)
+    const savedDiffs = detail?.items.filter(i => i.expectedQty !== null && i.countedQty !== i.expectedQty) ?? []
+    const savedPositive = savedDiffs.reduce((sum, i) => sum + Math.max(0, i.countedQty - (i.expectedQty ?? 0)), 0)
+    const savedNegative = savedDiffs.reduce((sum, i) => sum + Math.max(0, (i.expectedQty ?? 0) - i.countedQty), 0)
 
     const saveRows = useCallback(async (): Promise<boolean> => {
         if (!detail || saving) return false
@@ -339,10 +382,17 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                 <CardTitle className="text-lg flex items-center gap-2">
                                     <ClipboardList className="h-5 w-5 text-blue-600" />
                                     Conteo abierto — {detail?.branch.name ?? openCounts[0].branch.name}
+                                    {detail?.blind && (
+                                        <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300">
+                                            Ciego
+                                        </Badge>
+                                    )}
                                 </CardTitle>
                                 <CardDescription>
                                     {detail
-                                        ? `${detail.folio} · ${rows.length} producto${rows.length === 1 ? "" : "s"} capturado${rows.length === 1 ? "" : "s"}, ${diffRows.length} con diferencia`
+                                        ? isBlindOpen
+                                            ? `${detail.folio} · ${rows.length} producto${rows.length === 1 ? "" : "s"} capturado${rows.length === 1 ? "" : "s"} · conteo ciego: sin stock del sistema a la vista`
+                                            : `${detail.folio} · ${rows.length} producto${rows.length === 1 ? "" : "s"} capturado${rows.length === 1 ? "" : "s"}, ${diffRows.length} con diferencia`
                                         : "Cargando captura…"}
                                     {detail?.createdBy && ` · por ${detail.createdBy.name}`}
                                     {detail && ` · ${formatDate(detail.createdAt)}`}
@@ -407,9 +457,12 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                                         <p className="font-medium truncate">{p.name}</p>
                                                         <p className="text-xs text-muted-foreground">{p.barcode || "Sin código"}</p>
                                                     </div>
-                                                    <span className="text-xs bg-muted px-2 py-1 rounded shrink-0">
-                                                        En {detail.branch.name}: {p.stock}
-                                                    </span>
+                                                    {/* En conteo ciego no se muestra el stock del sistema. */}
+                                                    {!isBlindOpen && (
+                                                        <span className="text-xs bg-muted px-2 py-1 rounded shrink-0">
+                                                            En {detail.branch.name}: {p.stock}
+                                                        </span>
+                                                    )}
                                                 </button>
                                             ))}
                                         </div>
@@ -444,7 +497,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                                                 <p className="text-xs text-muted-foreground">{row.barcode || "Sin código"}</p>
                                                             </TableCell>
                                                             <TableCell className="text-center tabular-nums text-muted-foreground">
-                                                                {row.expected}
+                                                                {row.expected ?? "—"}
                                                             </TableCell>
                                                             <TableCell className="text-center">
                                                                 <Input
@@ -523,7 +576,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                             Conteos anteriores
                         </CardTitle>
                         <CardDescription>
-                            Sesiones de conteo físico aplicadas o canceladas
+                            Sesiones de conteo físico aplicadas o canceladas — toca una fila para ver el detalle
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -544,8 +597,24 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                     {history.map(c => {
                                         const config = STATUS_CONFIG[c.status]
                                         return (
-                                            <TableRow key={c.id}>
-                                                <TableCell className="font-medium whitespace-nowrap">{c.folio}</TableCell>
+                                            <TableRow
+                                                key={c.id}
+                                                className="cursor-pointer hover:bg-muted/50"
+                                                onClick={() => void openHistoryDetail(c.id)}
+                                            >
+                                                <TableCell className="font-medium whitespace-nowrap">
+                                                    <span className="inline-flex items-center gap-2">
+                                                        {historyLoadingId === c.id
+                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                            : null}
+                                                        {c.folio}
+                                                        {c.blind && (
+                                                            <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300">
+                                                                Ciego
+                                                            </Badge>
+                                                        )}
+                                                    </span>
+                                                </TableCell>
                                                 <TableCell>{c.branch.name}</TableCell>
                                                 <TableCell className="text-center tabular-nums">{c.itemCount}</TableCell>
                                                 <TableCell className="text-center tabular-nums">
@@ -583,7 +652,12 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                     El stock de {detail?.branch.name} quedará en lo contado físicamente
                                     y cada diferencia quedará registrada como ajuste auditado.
                                 </p>
-                                {savedDiffs.length === 0 ? (
+                                {isBlindOpen ? (
+                                    <p>
+                                        Conteo ciego: las cantidades del sistema y las diferencias
+                                        se revelan al aplicar.
+                                    </p>
+                                ) : savedDiffs.length === 0 ? (
                                     <p>No hay diferencias: el inventario ya coincide con el conteo.</p>
                                 ) : (
                                     <ul className="list-disc pl-5 space-y-1">
@@ -604,6 +678,79 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Detalle de un conteo cerrado: esperado y diferencia ya revelados */}
+            <Dialog open={historyDetail !== null} onOpenChange={(open) => { if (!open) setHistoryDetail(null) }}>
+                <DialogContent className="sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            Conteo {historyDetail?.folio} — {historyDetail?.branch.name}
+                            {historyDetail?.blind && (
+                                <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300">
+                                    Ciego
+                                </Badge>
+                            )}
+                        </DialogTitle>
+                        <DialogDescription>
+                            {historyDetail && STATUS_CONFIG[historyDetail.status].label}
+                            {historyDetail?.createdBy && ` · capturado por ${historyDetail.createdBy.name}`}
+                            {historyDetail && ` · ${formatDate(historyDetail.appliedAt ?? historyDetail.createdAt)}`}
+                            {historyDetail?.diffCount != null && ` · ${historyDetail.diffCount} con diferencia`}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {historyDetail && (
+                        <div className="space-y-3">
+                            {historyDetail.notes && (
+                                <p className="text-sm text-muted-foreground">Notas: {historyDetail.notes}</p>
+                            )}
+                            <div className="rounded-md border overflow-auto max-h-[55vh]">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="min-w-[200px]">Producto</TableHead>
+                                            <TableHead className="text-center">Sistema</TableHead>
+                                            <TableHead className="text-center">Contado</TableHead>
+                                            <TableHead className="text-center">Diferencia</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {historyDetail.items.map(i => {
+                                            const diff = i.expectedQty === null ? null : i.countedQty - i.expectedQty
+                                            return (
+                                                <TableRow key={i.id}>
+                                                    <TableCell>
+                                                        <p className="font-medium leading-tight">{i.product.name}</p>
+                                                        <p className="text-xs text-muted-foreground">{i.product.barcode || "Sin código"}</p>
+                                                    </TableCell>
+                                                    <TableCell className="text-center tabular-nums text-muted-foreground">
+                                                        {i.expectedQty ?? "—"}
+                                                    </TableCell>
+                                                    <TableCell className="text-center tabular-nums">{i.countedQty}</TableCell>
+                                                    <TableCell className="text-center">
+                                                        {diff === null ? (
+                                                            <Badge variant="outline" className="text-muted-foreground">—</Badge>
+                                                        ) : diff === 0 ? (
+                                                            <Badge variant="outline" className="text-muted-foreground">0</Badge>
+                                                        ) : diff > 0 ? (
+                                                            <Badge variant="outline" className="bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300">
+                                                                +{diff}
+                                                            </Badge>
+                                                        ) : (
+                                                            <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300">
+                                                                {diff}
+                                                            </Badge>
+                                                        )}
+                                                    </TableCell>
+                                                </TableRow>
+                                            )
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
 
             {/* Confirmación: cancelar conteo */}
             <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>

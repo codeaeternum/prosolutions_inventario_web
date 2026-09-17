@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client"
 import { PrismaPg } from "@prisma/adapter-pg"
 import { Pool } from "pg"
 import { randomUUID } from "node:crypto"
-import { applyCount, cancelCount, countFolio, createCount, getCount, listCounts, setCountItems } from "../src/lib/domain/counts"
+import { applyCount, cancelCount, countForClient, countFolio, createCount, getCount, listCounts, setCountItems } from "../src/lib/domain/counts"
 
 const url = process.env.DATABASE_URL
 if (!url) throw new Error("DATABASE_URL requerida")
@@ -97,6 +97,27 @@ check("aislamiento por negocio", foreign === null)
 const list = await listCounts(db, biz.id, { status: "APPLIED" })
 check("listCounts filtra APPLIED", list.length === 1 && list[0].id === c1.count.id)
 check("folio CC", countFolio(1) === "CC-000001" && countFolio(42) === "CC-000042")
+
+// 12) Conteo ciego: expectedQty se oculta al cliente mientras está OPEN
+const prodC = await mkProduct(7, 7)
+const blindCount = await createCount(db, admin.id, biz.id, { branchId: branch.id, blind: true, notes: "ciego", idempotencyKey: key() })
+check("createCount persiste blind", blindCount.count.blind === true)
+await setCountItems(db, admin.id, biz.id, blindCount.count.id, { items: [{ productId: prodC.id, countedQty: 9 }], idempotencyKey: key() })
+const blindOpen = await getCount(db, biz.id, blindCount.count.id)
+check("BD conserva expectedQty en ciego", blindOpen!.items[0].expectedQty === 7, `expected=${blindOpen!.items[0].expectedQty}`)
+const masked = countForClient(blindOpen!)
+check("ciego OPEN oculta expectedQty", masked.items[0].expectedQty === null && masked.items[0].countedQty === 9)
+// Un conteo NO ciego sí expone expectedQty durante la captura (c3 sigue OPEN en branch2)
+await setCountItems(db, admin.id, biz.id, c3.count.id, { items: [{ productId: prodC.id, countedQty: 1 }], idempotencyKey: key() })
+const normalOpen = countForClient((await getCount(db, biz.id, c3.count.id))!)
+check("no ciego expone expectedQty en OPEN", normalOpen.items[0].expectedQty === 0, `expected=${normalOpen.items[0].expectedQty}`)
+// Al aplicar, el ciego revela esperado y diferencia reales
+const appliedBlind = await applyCount(db, admin.id, biz.id, blindCount.count.id, { idempotencyKey: key() })
+check("applyCount ciego aplica", appliedBlind.status === "APPLIED" && appliedBlind.adjustments === 1, `adjustments=${appliedBlind.adjustments}`)
+const revealed = countForClient((await getCount(db, biz.id, blindCount.count.id))!)
+check("ciego APPLIED revela expectedQty", revealed.items[0].expectedQty === 7 && revealed.items[0].countedQty === 9, `expected=${revealed.items[0].expectedQty}`)
+const stockC = await db.branchStock.findUnique({ where: { productId_branchId: { productId: prodC.id, branchId: branch.id } } })
+check("conteo ciego ajusta stock", stockC?.quantity === 9, `C=${stockC?.quantity}`)
 
 console.log(failures === 0 ? "\nTODO OK" : `\n${failures} FALLAS`)
 await db.$disconnect()

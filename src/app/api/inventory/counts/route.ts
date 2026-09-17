@@ -28,13 +28,15 @@ export async function GET(request: NextRequest) {
           number: c.number,
           folio: countFolio(c.number),
           status: c.status,
+          blind: c.blind,
           notes: c.notes,
           branch: c.branch,
           createdBy: c.createdBy,
           appliedAt: c.appliedAt,
           createdAt: c.createdAt,
           itemCount: c.items.length,
-          diffCount: c.items.filter(i => i.countedQty !== i.expectedQty).length,
+          // Conteo ciego en captura: no se expone ni el agregado de diferencias.
+          diffCount: c.blind && c.status === "OPEN" ? null : c.items.filter(i => i.countedQty !== i.expectedQty).length,
         })),
       },
       { headers: { "Cache-Control": "private, no-store" } },
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** Crea una sesión de conteo OPEN: { branchId, notes? }. */
+/** Crea una sesión de conteo OPEN: { branchId, notes?, blind? }. */
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAdminOrEmployee()

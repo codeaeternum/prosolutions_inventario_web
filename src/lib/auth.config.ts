@@ -56,7 +56,7 @@ const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)
 const PROTECTED_PATHS = ["/mis-reservas", "/perfil", "/carrito"]
 
-type AuthSession = { user?: { role: UserRole; status: UserStatus } } | null
+type AuthSession = { user?: { role: UserRole; status: UserStatus; isSuperAdmin?: boolean } } | null
 
 function isPublicPath(pathname: string): boolean {
   return (
@@ -125,6 +125,19 @@ export function getAuthRedirect(
       }
     }
     
+    return null
+  }
+
+  // 2.3) /platform: consola de plataforma; exige login aprobado + superadmin.
+  // La página también lo valida server-side por si el middleware no corre.
+  if (pathname.startsWith("/platform")) {
+    if (!isLoggedIn) {
+      return Response.redirect(new URL("/login", nextUrl))
+    }
+    if (status !== "APPROVED") return Response.redirect(new URL("/pending", nextUrl))
+    if (!auth?.user?.isSuperAdmin) {
+      return Response.redirect(new URL("/", nextUrl))
+    }
     return null
   }
 

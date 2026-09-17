@@ -11,6 +11,8 @@ const createSchema = z.object({
   idempotencyKey: operationKeySchema,
   branchId: z.string().min(1),
   notes: z.string().trim().max(1000).optional(),
+  // Conteo ciego: el capturador no ve la existencia esperada hasta aplicar.
+  blind: z.boolean().optional(),
 })
 
 /**
@@ -30,7 +32,7 @@ export async function createCount(db: PrismaClient, actorId: string, businessId:
       throw new BusinessError(`Ya hay un conteo abierto (${countFolio(open.number)}) en ${branch.name}. Aplícalo o cancélalo antes de iniciar otro.`, 409)
     }
     const count = await tx.inventoryCount.create({
-      data: { businessId, branchId: branch.id, notes: input.notes || null, createdById: actorId },
+      data: { businessId, branchId: branch.id, notes: input.notes || null, blind: input.blind ?? false, createdById: actorId },
       include: { branch: { select: { id: true, name: true } } },
     })
     return { count, folio: countFolio(count.number) }
@@ -193,4 +195,18 @@ export function getCount(db: PrismaClient, businessId: string, id: string) {
       },
     },
   })
+}
+
+/**
+ * Versión del conteo segura para el cliente: en un conteo CIEGO aún OPEN la
+ * cantidad esperada sale como null para no contaminar la captura. Al aplicar
+ * (o cancelar) el conteo, expectedQty vuelve a ser visible en los resultados.
+ * El cálculo de ajustes no se ve afectado: trabaja sobre la fila en BD.
+ */
+export function countForClient<T extends { status: CountStatus; blind: boolean; items: { expectedQty: number }[] }>(count: T) {
+  const hideExpected = count.blind && count.status === "OPEN"
+  return {
+    ...count,
+    items: count.items.map(item => ({ ...item, expectedQty: hideExpected ? null : item.expectedQty })),
+  }
 }

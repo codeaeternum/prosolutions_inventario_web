@@ -23,6 +23,8 @@ vi.mock("next-auth", () => ({
     mocks.config = config
     return { auth: vi.fn(), handlers: { GET: vi.fn(), POST: vi.fn() }, signIn: vi.fn(), signOut: vi.fn() }
   }),
+  // auth.ts define BusinessSuspendedError extends CredentialsSignin.
+  CredentialsSignin: class CredentialsSignin extends Error { code = "credentials" },
 }))
 vi.mock("next-auth/providers/credentials", () => ({ default: vi.fn((provider: unknown) => provider) }))
 vi.mock("bcryptjs", () => ({ default: { compare: mocks.bcryptCompare } }))
@@ -90,6 +92,15 @@ describe("jwt callback revalidates the database row on every call", () => {
     expect(await jwtCallback({ token: {} as JWT })).toBeNull()
     expect(mocks.findUnique).not.toHaveBeenCalled()
   })
+
+  it("suspending a business revokes its users' sessions; superadmins keep theirs", async () => {
+    const token = await signInToken()
+    mocks.findUnique.mockResolvedValueOnce({ ...adminRow, business: { isActive: false } })
+    expect(await jwtCallback({ token })).toBeNull()
+    // El operador de plataforma conserva su sesión aunque su empresa esté suspendida.
+    mocks.findUnique.mockResolvedValueOnce({ ...adminRow, isSuperAdmin: true, business: { isActive: false } })
+    expect(await jwtCallback({ token })).not.toBeNull()
+  })
 })
 
 describe("authorize applies a per-account attempt limit (SEC-07)", () => {
@@ -130,5 +141,26 @@ describe("authorize applies a per-account attempt limit (SEC-07)", () => {
     mocks.bcryptCompare.mockResolvedValue(true)
     const user = await authorize({ identifier: "ok@test.invalid", password: "secret" })
     expect(user).toMatchObject({ id: adminRow.id, role: "ADMIN", status: "APPROVED" })
+  })
+
+  it("users of a suspended business get a clear error, not a silent rejection", async () => {
+    mocks.findFirst.mockResolvedValue({ ...adminRow, business: { isActive: false } })
+    mocks.bcryptCompare.mockResolvedValue(true)
+    await expect(authorize({ identifier: "staff@test.invalid", password: "secret" }))
+      .rejects.toMatchObject({ code: "empresa_suspendida" })
+  })
+
+  it("a suspended business still blocks logins after a wrong password attempt", async () => {
+    // La suspensión solo se revela DESPUÉS de validar la contraseña.
+    mocks.findFirst.mockResolvedValue({ ...adminRow, business: { isActive: false } })
+    mocks.bcryptCompare.mockResolvedValue(false)
+    expect(await authorize({ identifier: "staff@test.invalid", password: "wrong" })).toBeNull()
+  })
+
+  it("platform superadmins can still sign in when their business is suspended", async () => {
+    mocks.findFirst.mockResolvedValue({ ...adminRow, isSuperAdmin: true, business: { isActive: false } })
+    mocks.bcryptCompare.mockResolvedValue(true)
+    expect(await authorize({ identifier: "op@test.invalid", password: "secret" }))
+      .toMatchObject({ id: adminRow.id, isSuperAdmin: true })
   })
 })
