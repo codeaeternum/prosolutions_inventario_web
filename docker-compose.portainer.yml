@@ -19,6 +19,7 @@ services:
       NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_EMAIL: ${VAPID_EMAIL:-mailto:admin@prosolutions.com}
+      REFICIO_SIGNUP_ENABLED: ${REFICIO_SIGNUP_ENABLED:-false}
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs
