@@ -63,6 +63,35 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(target.address)}`
     : null
 
+  // Datos estructurados (schema.org): RepairShop es subtipo de LocalBusiness.
+  // Solo campos ya públicos en la vitrina — misma regla que el directorio.
+  const siteUrl = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
+  const pageUrl = `${siteUrl}/${target.slug}`
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "RepairShop",
+    "@id": pageUrl,
+    name: target.name,
+    url: pageUrl,
+    description:
+      target.description ??
+      `Refacciones, accesorios y servicio de reparación en ${target.name}.`,
+    ...(target.address
+      ? { address: { "@type": "PostalAddress", streetAddress: target.address } }
+      : {}),
+    ...(target.phone ? { telephone: target.phone } : {}),
+    ...(target.lat != null && target.lng != null
+      ? {
+          geo: {
+            "@type": "GeoCoordinates",
+            latitude: target.lat,
+            longitude: target.lng,
+          },
+        }
+      : {}),
+    ...(target.logo ? { image: `${siteUrl}${target.logo}` } : {}),
+  }
+
   const cards = [
     {
       href: `/${target.slug}/market`,
@@ -95,6 +124,14 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
         </Button>
       }
     >
+      {/* JSON-LD LocalBusiness: escapamos "<" por defensiva (datos de BD). */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
+        }}
+      />
+
       {/* Hero */}
       <section className="container mx-auto max-w-4xl px-4 pt-14 pb-12 text-center">
         <div className="space-y-6">

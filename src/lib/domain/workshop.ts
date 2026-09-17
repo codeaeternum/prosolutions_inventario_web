@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema } from "./operations"
+import { linkCustomerByPhone } from "./customers"
 import { repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 
 const text = z.string().trim().min(1).max(500)
@@ -51,7 +52,12 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true, businessId } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId } })) throw new BusinessError("La persona asignada no está habilitada.")
-    const order = await tx.repairOrder.create({ data: { ...input, businessId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    // FK al directorio de clientes cuando el teléfono capturado empata con una
+    // cuenta CUSTOMER del negocio (primero el principal, luego el alterno).
+    // Sin match la orden queda con customerId null y la 360 la cubre por teléfono.
+    const customerId = await linkCustomerByPhone(tx, businessId, input.customerPhone)
+      ?? await linkCustomerByPhone(tx, businessId, input.customerPhoneAlt)
+    const order = await tx.repairOrder.create({ data: { ...input, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
     if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.` } })
     if (advance && advance.amountCents > 0) {
@@ -237,6 +243,15 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       detail = `Refacción retirada: ${part.description}${stockNote(removedStock, part.qty)}`
     } else if (input.action === "NOTE") {
       eventPublic = input.noteIsPublic
+    }
+    // Órdenes históricas sin ligar (customerId null: anteriores a la FK o
+    // recibidas antes del alta del cliente) se ligan al vuelo en cuanto el
+    // teléfono empata con el directorio. No existe edición de customerPhone,
+    // así que la re-liga solo ocurre aquí y al crear.
+    if (order.customerId === null) {
+      const linked = await linkCustomerByPhone(tx, businessId, order.customerPhone)
+        ?? await linkCustomerByPhone(tx, businessId, order.customerPhoneAlt)
+      if (linked) data.customerId = linked
     }
     const result = await tx.repairOrder.updateMany({ where: { id, businessId, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)

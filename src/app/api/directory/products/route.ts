@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { DIRECTORY_SEARCH_LIMIT, DIRECTORY_SEARCH_MIN } from "@/lib/directory"
+import { recordDirectoryEvent } from "@/lib/directory-events"
 import { browseDirectoryProducts } from "@/lib/directory-filters"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
@@ -43,6 +44,14 @@ export async function GET(req: Request) {
     }
 
     const products = await browseDirectoryProducts(q, cat || null)
+
+    // Telemetría: solo búsquedas con resultados (las vacías aportan poco y
+    // el mínimo de caracteres ya filtra ruido). Fire-and-forget — nunca
+    // bloquea ni rompe la respuesta.
+    if (products.length > 0) {
+      void recordDirectoryEvent("search", { query: q || cat })
+    }
+
     return NextResponse.json({ products }, { headers: CACHE })
   } catch (error) {
     console.error("[directory] Error al buscar productos:", error)

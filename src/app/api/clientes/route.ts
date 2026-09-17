@@ -7,8 +7,8 @@ import { CustomerType } from "@prisma/client"
 
 /**
  * Directorio de clientes (role=CUSTOMER, status=APPROVED) con agregados de
- * actividad: reservas, ventas como cliente y órdenes de taller (que se
- * identifican por teléfono porque RepairOrder no tiene userId).
+ * actividad: reservas, ventas como cliente y órdenes de taller (ligadas por
+ * customerId, con respaldo por teléfono para las históricas sin ligar).
  */
 export async function GET(req: Request) {
   try {
@@ -68,15 +68,25 @@ export async function GET(req: Request) {
       prisma.user.count({ where }),
     ])
 
-    // Las órdenes de taller no tienen FK a User: se ligan por teléfono
-    // normalizado (customerPhone o customerPhoneAlt). Se deduplica por orden
-    // porque el mismo número puede estar capturado en ambos campos.
+    // Las órdenes de taller se ligan por FK (customerId) y, como respaldo para
+    // las históricas sin ligar, por teléfono normalizado (customerPhone o
+    // customerPhoneAlt). Se deduplica por orden: el mismo número puede estar
+    // en ambos campos y una orden puede llegar por los dos caminos.
     const orderPhones = await prisma.repairOrder.findMany({
       where: { businessId },
-      select: { id: true, customerPhone: true, customerPhoneAlt: true },
+      select: { id: true, customerId: true, customerPhone: true, customerPhoneAlt: true },
     })
     const repairsByPhone = new Map<string, Set<string>>()
+    const repairsByCustomer = new Map<string, Set<string>>()
     for (const order of orderPhones) {
+      if (order.customerId) {
+        let set = repairsByCustomer.get(order.customerId)
+        if (!set) {
+          set = new Set()
+          repairsByCustomer.set(order.customerId, set)
+        }
+        set.add(order.id)
+      }
       for (const raw of [order.customerPhone, order.customerPhoneAlt]) {
         const norm = normalizePhone(raw)
         if (!norm) continue
@@ -93,7 +103,10 @@ export async function GET(req: Request) {
       ...u,
       reservationsCount: _count.reservations,
       salesCount: _count.salesAsCustomer,
-      repairsCount: repairsByPhone.get(normalizePhone(u.phone))?.size ?? 0,
+      repairsCount: new Set([
+        ...(repairsByPhone.get(normalizePhone(u.phone)) ?? []),
+        ...(repairsByCustomer.get(u.id) ?? []),
+      ]).size,
     }))
 
     const totalPages = Math.ceil(total / limit) || 1

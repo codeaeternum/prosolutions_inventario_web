@@ -30,6 +30,9 @@ export type SlugTarget =
       phone?: string
       description?: string
       address?: string
+      /** Coordenadas públicas (mapa del directorio + JSON-LD geo). */
+      lat?: number
+      lng?: number
     }
   | {
       kind: "workshop"
@@ -76,7 +79,10 @@ export const resolvePublicSlug = cache(async (rawSlug: string): Promise<SlugTarg
   try {
     const business = await prisma.business.findUnique({
       where: { slug, isActive: true },
-      select: { id: true, name: true, slug: true, phone: true, address: true, logoUrl: true },
+      select: {
+        id: true, name: true, slug: true, phone: true, address: true, logoUrl: true,
+        lat: true, lng: true,
+      },
     })
     if (business) {
       return {
@@ -88,6 +94,8 @@ export const resolvePublicSlug = cache(async (rawSlug: string): Promise<SlugTarg
         phone: clean(business.phone),
         description: clean(await getBusinessSetting(business.id, "public_description")),
         address: clean(business.address),
+        lat: business.lat ?? undefined,
+        lng: business.lng ?? undefined,
       }
     }
 

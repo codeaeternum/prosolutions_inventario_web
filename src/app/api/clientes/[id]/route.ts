@@ -10,10 +10,12 @@ import { ReservationStatus, SaleStatus, CreditMovementType } from "@prisma/clien
  * Vista 360 del cliente: perfil, KPIs y un timeline unificado con todo lo que
  * ha hecho en el negocio (taller, ventas, reservas y crédito).
  *
- * Las RepairOrder no tienen FK a User: guardan customerName/customerPhone tal
- * como se capturaron en recepción. El empalme se hace por teléfono
- * normalizado (últimos 10 dígitos, ver normalizePhone) tanto sobre
- * customerPhone como customerPhoneAlt — sin migrar datos históricos.
+ * Las RepairOrder ligan al cliente por FK (customerId, estampado en recepción
+ * por linkCustomerByPhone). Las históricas anteriores a la FK —o capturadas
+ * antes del alta de la cuenta— quedan con customerId null, así que el empalme
+ * conserva el respaldo por teléfono normalizado (últimos 10 dígitos, ver
+ * normalizePhone) sobre customerPhone y customerPhoneAlt. Ambos conjuntos se
+ * unen y deduplican por id de orden.
  */
 
 const reservationLabels: Record<ReservationStatus, string> = {
@@ -95,7 +97,16 @@ export async function GET(
     if (!user) return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 })
 
     const phoneNorm = normalizePhone(user.phone)
-    const repairIds = phoneNorm ? await repairOrderIdsByPhone(businessId, phoneNorm) : []
+    // Unión FK + teléfono: las ligadas por customerId primero y, como respaldo,
+    // las históricas que solo empatan por teléfono normalizado.
+    const [linkedOrders, phoneIds] = await Promise.all([
+      prisma.repairOrder.findMany({
+        where: { businessId, customerId: id },
+        select: { id: true },
+      }),
+      phoneNorm ? repairOrderIdsByPhone(businessId, phoneNorm) : Promise.resolve([]),
+    ])
+    const repairIds = [...new Set([...linkedOrders.map((o) => o.id), ...phoneIds])]
 
     const [repairs, sales, salesAgg, reservations, reservationsCount, credits, creditsCount, repairPaidAgg] =
       await Promise.all([

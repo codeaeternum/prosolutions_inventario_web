@@ -2,10 +2,28 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { Loader2, Package, PackageSearch, Search, Store } from "lucide-react"
-import { cn, formatPrice } from "@/lib/utils"
+import {
+  CheckCircle2,
+  Loader2,
+  Megaphone,
+  Package,
+  PackageSearch,
+  Search,
+  Store,
+} from "lucide-react"
+import { cn, formatPrice, normalizePhone } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 const MIN_CHARS = 2
 const DEBOUNCE_MS = 300
@@ -41,11 +59,74 @@ type CategoriesResult =
  * - Chips de categoría: browse con ?cat=, sola o combinada con el texto.
  * Sin ninguno se muestra el grid de negocios (children, render del servidor).
  */
+// Estado del formulario "Solicitud de refacción" (POST /api/part-requests).
+type RequestStatus = "idle" | "sending" | "done" | "error" | "limited"
+
 export function MercadoSearch({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState("")
   const [category, setCategory] = useState<string | null>(null)
   const [result, setResult] = useState<SearchResult | null>(null)
   const [categories, setCategories] = useState<CategoriesResult>({ status: "loading" })
+
+  // Solicitud de refacción: el visitante pide algo que nadie publicó.
+  const [requestOpen, setRequestOpen] = useState(false)
+  const [requestName, setRequestName] = useState("")
+  const [requestDetail, setRequestDetail] = useState("")
+  const [requestPhone, setRequestPhone] = useState("")
+  const [requestStatus, setRequestStatus] = useState<RequestStatus>("idle")
+  const [requestError, setRequestError] = useState<string | null>(null)
+
+  const openRequestForm = (prefill: string) => {
+    setRequestName(prefill)
+    setRequestDetail("")
+    setRequestPhone("")
+    setRequestStatus("idle")
+    setRequestError(null)
+    setRequestOpen(true)
+  }
+
+  const submitRequest = async () => {
+    const name = requestName.trim()
+    const phone = normalizePhone(requestPhone)
+    if (name.length < 2) {
+      setRequestError("Describe qué refacción buscas.")
+      setRequestStatus("error")
+      return
+    }
+    if (phone.length < 10) {
+      setRequestError("Ingresa tu WhatsApp a 10 dígitos para que te contacten.")
+      setRequestStatus("error")
+      return
+    }
+
+    setRequestStatus("sending")
+    setRequestError(null)
+    try {
+      const res = await fetch("/api/part-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          detail: requestDetail.trim() || undefined,
+          phone,
+        }),
+      })
+      if (res.status === 429) {
+        setRequestStatus("limited")
+        return
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setRequestError(typeof data.error === "string" ? data.error : "Revisa los datos e intenta de nuevo.")
+        setRequestStatus("error")
+        return
+      }
+      setRequestStatus("done")
+    } catch {
+      setRequestError("No pudimos enviar tu solicitud. Revisa tu conexión e intenta de nuevo.")
+      setRequestStatus("error")
+    }
+  }
 
   const q = query.trim()
   // El texto solo participa a partir de MIN_CHARS; la categoría basta sola.
@@ -152,6 +233,15 @@ export function MercadoSearch({ children }: { children: ReactNode }) {
             ? "Buscando en todos los negocios del directorio…"
             : "Escribe al menos 2 letras o elige una categoría para explorar."}
       </p>
+      <p className="mt-1 text-center">
+        <button
+          type="button"
+          onClick={() => openRequestForm("")}
+          className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+        >
+          ¿No encuentras una refacción? Solicítala
+        </button>
+      </p>
 
       {/* Filtro por tipo de producto — si falla la carga se oculta la fila y
           el buscador sigue funcionando normal. */}
@@ -237,6 +327,15 @@ export function MercadoSearch({ children }: { children: ReactNode }) {
               <p className="text-sm text-muted-foreground max-w-sm mx-auto">
                 {emptyMessage}
               </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => openRequestForm(term)}
+              >
+                <Megaphone className="mr-2 h-4 w-4" />
+                ¿No la encuentras? Pídela a los negocios
+              </Button>
             </div>
           ) : (
             <>
@@ -252,6 +351,114 @@ export function MercadoSearch({ children }: { children: ReactNode }) {
       ) : (
         children
       )}
+
+      {/* Solicitud de refacción — la ven los negocios en /admin/mercado y
+          contactan por WhatsApp al interesado. */}
+      <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pide la refacción a los negocios</DialogTitle>
+            <DialogDescription>
+              Dinos qué buscas y tu WhatsApp. Los negocios del directorio la
+              buscarán por ti y te contactan directo.
+            </DialogDescription>
+          </DialogHeader>
+
+          {requestStatus === "done" ? (
+            <div className="mt-4 flex flex-col items-center gap-3 rounded-lg border border-success/30 bg-success/5 p-6 text-center">
+              <CheckCircle2 className="h-8 w-8 text-success" />
+              <p className="text-sm font-medium">
+                ¡Solicitud enviada! Los negocios la buscarán por ti y te
+                contactan por WhatsApp.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setRequestOpen(false)}
+              >
+                Cerrar
+              </Button>
+            </div>
+          ) : (
+            <form
+              className="mt-4 space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (requestStatus !== "sending") void submitRequest()
+              }}
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="part-request-name">¿Qué refacción buscas?</Label>
+                <Input
+                  id="part-request-name"
+                  value={requestName}
+                  onChange={(e) => setRequestName(e.target.value)}
+                  placeholder="Ej. Pantalla para iPhone 13"
+                  maxLength={120}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="part-request-detail">
+                  Detalle <span className="text-muted-foreground font-normal">(opcional)</span>
+                </Label>
+                <Textarea
+                  id="part-request-detail"
+                  value={requestDetail}
+                  onChange={(e) => setRequestDetail(e.target.value)}
+                  placeholder="Modelo exacto, color, calidad, urgencia…"
+                  maxLength={300}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="part-request-phone">Tu WhatsApp</Label>
+                <Input
+                  id="part-request-phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={requestPhone}
+                  onChange={(e) => setRequestPhone(e.target.value)}
+                  placeholder="Ej. 811 234 5678"
+                  maxLength={30}
+                  required
+                />
+              </div>
+
+              {requestStatus === "limited" && (
+                <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+                  Enviaste varias solicitudes seguidas. Espera unos minutos e
+                  intenta de nuevo.
+                </p>
+              )}
+              {requestStatus === "error" && requestError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {requestError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setRequestOpen(false)}
+                  disabled={requestStatus === "sending"}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={requestStatus === "sending"}>
+                  {requestStatus === "sending" && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  Enviar solicitud
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

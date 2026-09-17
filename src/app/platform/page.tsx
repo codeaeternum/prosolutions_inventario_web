@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { BusinessesPanel } from "@/components/platform/businesses-panel"
+import { DirectoryPanel } from "@/components/platform/directory-panel"
 
 // Consola viva: siempre datos frescos de la base.
 export const dynamic = "force-dynamic"
@@ -11,5 +12,10 @@ export const metadata: Metadata = {
 }
 
 export default function PlatformPage() {
-  return <BusinessesPanel />
+  return (
+    <div className="space-y-12">
+      <BusinessesPanel />
+      <DirectoryPanel />
+    </div>
+  )
 }

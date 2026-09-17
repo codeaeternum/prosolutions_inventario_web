@@ -239,3 +239,130 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     })),
   }
 }
+
+/* ---------- Telemetría del directorio público (/mercado) ---------- */
+
+export interface PlatformDirectoryTopQuery {
+  query: string
+  count: number
+}
+
+export interface PlatformDirectoryTopBusiness {
+  businessId: string
+  name: string
+  slug: string
+  clicks: number
+}
+
+export interface PlatformDirectoryDay {
+  /** YYYY-MM-DD (UTC) — llave estable para el mini-gráfico. */
+  date: string
+  searches: number
+  clicks: number
+  requests: number
+  total: number
+}
+
+export interface PlatformDirectoryStats {
+  /** Tamaño de la ventana medida (días hacia atrás desde hoy). */
+  windowDays: number
+  totals: { searches: number; clicks: number; requests: number }
+  /** Términos/categorías más buscados (top 10, query no nulo). */
+  topQueries: PlatformDirectoryTopQuery[]
+  /** Vitrinas con más clicks (top 10, con nombre y slug del negocio). */
+  topBusinesses: PlatformDirectoryTopBusiness[]
+  /** Eventos por día, más viejo → más reciente (rellena días sin eventos). */
+  daily: PlatformDirectoryDay[]
+}
+
+const utcDay = (d: Date) => d.toISOString().slice(0, 10)
+
+/**
+ * Métricas del directorio para la consola: qué busca la gente, a qué
+ * vitrinas entra y cuántas solicitudes se generan en los últimos `days`
+ * días. DirectoryEvent es global (sin tenant) — esta vista es justamente
+ * la inteligencia de mercado que ningún tenant puede ver por su cuenta.
+ */
+export async function platformDirectoryStats(days = 30): Promise<PlatformDirectoryStats> {
+  const windowDays = Math.max(1, Math.min(days, 365))
+  // Medianoche UTC de hace `days` días: ventana alineada al mini-gráfico.
+  const since = new Date()
+  since.setUTCHours(0, 0, 0, 0)
+  since.setUTCDate(since.getUTCDate() - (windowDays - 1))
+  const inWindow = { createdAt: { gte: since } }
+
+  const [searches, clicks, requests, topQueryRows, topBusinessRows, timeline] =
+    await Promise.all([
+      prisma.directoryEvent.count({ where: { kind: "search", ...inWindow } }),
+      prisma.directoryEvent.count({ where: { kind: "click", ...inWindow } }),
+      prisma.directoryEvent.count({ where: { kind: "request", ...inWindow } }),
+      prisma.directoryEvent.groupBy({
+        by: ["query"],
+        where: { kind: "search", ...inWindow, query: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { query: "desc" } },
+        take: 10,
+      }),
+      prisma.directoryEvent.groupBy({
+        by: ["businessId"],
+        where: { kind: "click", ...inWindow, businessId: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { businessId: "desc" } },
+        take: 10,
+      }),
+      // Solo timestamp+kind: se agrega por día en memoria (volumen chico).
+      prisma.directoryEvent.findMany({
+        where: inWindow,
+        select: { createdAt: true, kind: true },
+      }),
+    ])
+
+  // Join defensivo de nombres: un negocio borrado conserva sus clicks
+  // (onDelete: SetNull) pero ya no aparece con nombre.
+  const businessIds = topBusinessRows
+    .map(r => r.businessId)
+    .filter((id): id is string => id !== null)
+  const businesses = businessIds.length
+    ? await prisma.business.findMany({
+        where: { id: { in: businessIds } },
+        select: { id: true, name: true, slug: true },
+      })
+    : []
+  const businessMap = new Map(businesses.map(b => [b.id, b]))
+
+  const byDay = new Map<string, PlatformDirectoryDay>()
+  for (const event of timeline) {
+    const date = utcDay(event.createdAt)
+    const day = byDay.get(date) ?? { date, searches: 0, clicks: 0, requests: 0, total: 0 }
+    if (event.kind === "search") day.searches++
+    else if (event.kind === "click") day.clicks++
+    else if (event.kind === "request") day.requests++
+    day.total++
+    byDay.set(date, day)
+  }
+  // Rellena días sin eventos para que la gráfica no tenga huecos falsos.
+  const daily: PlatformDirectoryDay[] = []
+  for (let i = 0; i < windowDays; i++) {
+    const d = new Date(since)
+    d.setUTCDate(since.getUTCDate() + i)
+    const date = utcDay(d)
+    daily.push(byDay.get(date) ?? { date, searches: 0, clicks: 0, requests: 0, total: 0 })
+  }
+
+  return {
+    windowDays,
+    totals: { searches, clicks, requests },
+    topQueries: topQueryRows
+      .filter((r): r is typeof r & { query: string } => r.query !== null)
+      .map(r => ({ query: r.query, count: r._count._all })),
+    topBusinesses: topBusinessRows
+      .filter((r): r is typeof r & { businessId: string } => r.businessId !== null)
+      .map(r => ({
+        businessId: r.businessId,
+        name: businessMap.get(r.businessId)?.name ?? "Negocio eliminado",
+        slug: businessMap.get(r.businessId)?.slug ?? "",
+        clicks: r._count._all,
+      })),
+    daily,
+  }
+}

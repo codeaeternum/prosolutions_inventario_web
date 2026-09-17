@@ -14,12 +14,14 @@ import {
 import { MarketplacePurchasesPanel } from "@/components/admin/marketplace/purchases-panel"
 import { MarketplaceRequestDialog } from "@/components/admin/marketplace/request-dialog"
 import { MarketplaceRequestsPanel } from "@/components/admin/marketplace/requests-panel"
+import { PartRequestsPanel } from "@/components/admin/mercado/solicitudes-panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
 import {
   ClipboardList,
   EyeOff,
+  Globe,
   Handshake,
   Info,
   Search,
@@ -56,11 +58,13 @@ export default function MercadoPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
   // Solicitudes de talleres aliados ("compras" solo existe para cuentas WORKSHOP)
-  const [tab, setTab] = useState<"catalogo" | "solicitudes" | "compras">("catalogo")
+  const [tab, setTab] = useState<"catalogo" | "solicitudes" | "compras" | "solicitudes-web">("catalogo")
   const [requestTarget, setRequestTarget] = useState<MarketplaceProduct | null>(null)
   const [requestDialogOpen, setRequestDialogOpen] = useState(false)
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0)
   const [pendingCount, setPendingCount] = useState(0)
+  // Solicitudes de refacción del público en /mercado (feed global de plataforma)
+  const [openPartRequests, setOpenPartRequests] = useState(0)
 
   const openRequestDialog = (product: MarketplaceProduct) => {
     setRequestTarget(product)
@@ -180,7 +184,7 @@ export default function MercadoPage() {
 
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes" | "compras")}
+        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes" | "compras" | "solicitudes-web")}
         className="gap-6"
       >
         <TabsList>
@@ -197,6 +201,19 @@ export default function MercadoPage() {
               </span>
             )}
           </TabsTrigger>
+          {/* Pedidos del público en /mercado — solo staff (ADMIN/EMPLOYEE);
+              cuentas WORKSHOP no tienen acceso al feed. */}
+          {!isWorkshop && (
+            <TabsTrigger value="solicitudes-web" className="px-4">
+              <Globe className="h-4 w-4" />
+              Solicitudes web
+              {openPartRequests > 0 && (
+                <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
+                  {openPartRequests}
+                </span>
+              )}
+            </TabsTrigger>
+          )}
           {/* Historial de compras surtidas — solo portal del taller aliado */}
           {isWorkshop && (
             <TabsTrigger value="compras" className="px-4">
@@ -351,6 +368,12 @@ export default function MercadoPage() {
             formatPrice={formatPrice}
           />
         </TabsContent>
+
+        {!isWorkshop && (
+          <TabsContent value="solicitudes-web">
+            <PartRequestsPanel onOpenCount={setOpenPartRequests} />
+          </TabsContent>
+        )}
 
         {isWorkshop && (
           <TabsContent value="compras">

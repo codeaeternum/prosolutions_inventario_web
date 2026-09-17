@@ -3,6 +3,8 @@ import Link from "next/link"
 export const dynamic = 'force-dynamic'
 
 import { auth } from "@/lib/auth"
+import { listDirectoryBusinesses, type DirectoryBusiness } from "@/lib/directory"
+import { directoryCategoryLabel } from "@/lib/directory-categories"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import {
@@ -153,6 +155,15 @@ const navLinks = [
 export default async function HomePage() {
   const session = await auth()
 
+  // Vitrinas reales para "Negocios que ya usan Reficio". Si la BD falla o no
+  // hay negocios listados, la landing se renderiza sin la sección.
+  let directoryBusinesses: DirectoryBusiness[] = []
+  try {
+    directoryBusinesses = (await listDirectoryBusinesses()).slice(0, 6)
+  } catch {
+    directoryBusinesses = []
+  }
+
   const isLoggedIn = !!session
   const canAccessAdmin =
     session?.user?.role === "ADMIN" || session?.user?.role === "EMPLOYEE"
@@ -196,8 +207,8 @@ export default async function HomePage() {
             ) : (
               <>
                 {!isLoggedIn && (
-                  <Button variant="ghost" size="sm" asChild className="hidden sm:inline-flex">
-                    <Link href="/login">Acceso interno</Link>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href="/login">Iniciar sesión</Link>
                   </Button>
                 )}
                 <Button size="sm" asChild className="shadow-sm shadow-primary/25">
@@ -772,6 +783,68 @@ export default async function HomePage() {
           </div>
         </section>
 
+        {/* ===================== Negocios ===================== */}
+        {directoryBusinesses.length > 0 && (
+          <section className="border-t">
+            <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-20">
+              <div className="text-center mb-10">
+                <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
+                  Vitrinas reales
+                </p>
+                <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
+                  Negocios que ya usan Reficio
+                </h2>
+                <p className="text-muted-foreground mt-3 max-w-xl mx-auto">
+                  Cada uno tiene su vitrina pública en reficio.app — visítalos y
+                  mira cómo se ve la tuya.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 max-w-5xl mx-auto">
+                {directoryBusinesses.map((business) => (
+                  <Link
+                    key={business.slug}
+                    href={`/${business.slug}`}
+                    className="group flex flex-col items-center gap-3 rounded-2xl border bg-card p-5 text-center transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5"
+                  >
+                    {business.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
+                      <img
+                        src={business.logoUrl}
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded-xl object-contain bg-primary/5"
+                      />
+                    ) : (
+                      <div
+                        aria-hidden
+                        className="h-12 w-12 shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg"
+                      >
+                        {business.name.trim().charAt(0).toUpperCase() || "N"}
+                      </div>
+                    )}
+                    <div className="min-w-0 w-full">
+                      <p className="text-sm font-semibold truncate">{business.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {directoryCategoryLabel(business.category)}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+
+              <p className="text-center mt-8">
+                <Link
+                  href="/mercado"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                >
+                  Ver todos en el mercado
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </p>
+            </div>
+          </section>
+        )}
+
         {/* ===================== CTA final ===================== */}
         <section className="border-t">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
@@ -842,7 +915,7 @@ export default async function HomePage() {
                 Rastrea tu reparación
               </Link>
               <Link href="/login" className="hover:text-foreground transition-colors">
-                Acceso interno
+                Iniciar sesión
               </Link>
             </nav>
           </div>

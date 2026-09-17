@@ -63,6 +63,7 @@ model Business {
   supplierPayments    SupplierPayment[]
   inventoryCounts     InventoryCount[]
   inventoryCountItems InventoryCountItem[]
+  directoryEvents     DirectoryEvent[]
 
   @@index([isActive])
 }
@@ -192,6 +193,7 @@ model User {
 
   assignedRepairs       RepairOrder[]        @relation("RepairAssignedTo")
   createdRepairs        RepairOrder[]        @relation("RepairCreatedBy")
+  customerRepairs       RepairOrder[]        @relation("RepairCustomer")
   repairParts           RepairPart[]         @relation("RepairPartCreatedBy")
   repairEvents          RepairEvent[]
   businessOperations    BusinessOperation[]
@@ -733,6 +735,8 @@ model RepairOrder {
   customerPhone        String
   // Segundo contacto opcional (familiar, trabajo, otro responsable).
   customerPhoneAlt     String?
+  customerId           String?
+  customer             User?          @relation("RepairCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   equipmentType        String
   brand                String?
   model                String?
@@ -782,6 +786,7 @@ model RepairOrder {
   @@index([currentBranchId, status, createdAt])
   @@index([assignedToId, status])
   @@index([customerPhone])
+  @@index([customerId])
   @@index([businessId])
 }
 
@@ -1092,5 +1097,39 @@ model InventoryCountItem {
   countedQty  Int
 
   @@unique([countId, productId])
+  @@index([businessId])
+}
+
+// Solicitud de refacción del directorio público: un visitante de /mercado
+// pide algo que ningún negocio tiene publicado. Es dato a nivel plataforma
+// (compartido entre tenants que participan en el mercado).
+enum PartRequestStatus {
+  OPEN
+  CONTACTED
+  CLOSED
+}
+
+model PartRequest {
+  id        String            @id @default(cuid())
+  name      String // Qué refacción/equipo busca el visitante
+  detail    String?
+  phone     String // WhatsApp del interesado para que el negocio lo contacte
+  status    PartRequestStatus @default(OPEN)
+  createdAt DateTime          @default(now())
+
+  @@index([status, createdAt])
+}
+
+// Telemetría del directorio: búsquedas, clicks a vitrinas y solicitudes.
+// Alimenta el panel de /platform (inteligencia de mercado).
+model DirectoryEvent {
+  id         String    @id @default(cuid())
+  kind       String // "search" | "click" | "request"
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  query      String? // Término buscado o categoría filtrada
+  createdAt  DateTime  @default(now())
+
+  @@index([kind, createdAt])
   @@index([businessId])
 }

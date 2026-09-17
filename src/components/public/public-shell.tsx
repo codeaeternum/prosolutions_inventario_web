@@ -21,6 +21,9 @@ interface PublicShellProps {
  */
 export function PublicShell({ brandName, homeHref, logoUrl, headerRight, children }: PublicShellProps) {
   const initial = brandName.trim().charAt(0).toUpperCase() || "R"
+  // En páginas globales (/mercado) la marca del header ya es Reficio → "/";
+  // el link extra solo se muestra en vitrinas de negocio (homeHref="/<slug>").
+  const showReficioHeaderLink = homeHref !== "/"
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
@@ -46,6 +49,21 @@ export function PublicShell({ brandName, homeHref, logoUrl, headerRight, childre
           </Link>
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {headerRight}
+            {showReficioHeaderLink && (
+              <Link
+                href="/"
+                title="Hecho con Reficio — crea tu vitrina en reficio.app"
+                className="flex items-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <span
+                  aria-hidden
+                  className="h-5 w-5 rounded bg-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground"
+                >
+                  R
+                </span>
+                <span className="hidden sm:inline">Reficio</span>
+              </Link>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -56,19 +74,27 @@ export function PublicShell({ brandName, homeHref, logoUrl, headerRight, childre
       </main>
 
       <footer className="border-t py-6">
-        <div className="container mx-auto max-w-4xl px-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span
-            aria-hidden
-            className="h-5 w-5 rounded bg-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground"
+        <div className="container mx-auto max-w-4xl px-4 flex flex-col items-center justify-center gap-1.5 text-center">
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span
+              aria-hidden
+              className="h-5 w-5 rounded bg-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground"
+            >
+              R
+            </span>
+            <span>
+              Powered by{" "}
+              <Link href="/" className="font-semibold text-foreground hover:text-primary transition-colors">
+                Reficio
+              </Link>
+            </span>
+          </span>
+          <Link
+            href="/"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            R
-          </span>
-          <span>
-            Powered by{" "}
-            <Link href="/" className="font-semibold text-foreground hover:text-primary transition-colors">
-              Reficio
-            </Link>
-          </span>
+            Crea la vitrina de tu negocio en reficio.app
+          </Link>
         </div>
       </footer>
     </div>
