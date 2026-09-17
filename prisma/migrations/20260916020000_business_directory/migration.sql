@@ -1,0 +1,1 @@
+ALTER TABLE "Business" ADD COLUMN "showInDirectory" BOOLEAN NOT NULL DEFAULT true;

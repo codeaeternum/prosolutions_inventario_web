@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/admin/empty-state"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
-import { Ban, Banknote, CalendarClock, History, Loader2, Mail, Pencil, Phone, Plus, Truck } from "lucide-react"
+import { Ban, Banknote, CalendarClock, ChevronDown, ChevronUp, History, Loader2, Mail, Pencil, Phone, Plus, Truck, X } from "lucide-react"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -50,6 +50,22 @@ interface SupplierBalance {
     ocsPendientes: PendingPurchase[]
 }
 
+interface AgingRow {
+    supplierId: string
+    name: string
+    current: number
+    d1_15: number
+    d16_30: number
+    d31_60: number
+    d60plus: number
+    total: number
+}
+
+interface SupplierAging {
+    suppliers: AgingRow[]
+    totals: Omit<AgingRow, "supplierId" | "name">
+}
+
 interface SupplierPaymentRow {
     id: string
     amountCents: number
@@ -61,6 +77,15 @@ interface SupplierPaymentRow {
 }
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" }
+
+/** Celda monetaria de la tabla de antigüedad: guion cuando el bucket está en cero. */
+function AgingCell({ value, className }: { value: number; className?: string }) {
+    return (
+        <td className={`px-2 py-1.5 text-right tabular-nums ${className ?? ""}`}>
+            {value > 0 ? formatPrice(value / 100) : <span className="text-muted-foreground/40">—</span>}
+        </td>
+    )
+}
 
 export function ProveedoresPanel() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -81,12 +106,18 @@ export function ProveedoresPanel() {
     const [historySupplier, setHistorySupplier] = useState<Supplier | null>(null)
     const [payments, setPayments] = useState<SupplierPaymentRow[] | null>(null)
 
+    // Antigüedad de saldos (aging de cuentas por pagar).
+    const [aging, setAging] = useState<SupplierAging | null>(null)
+    const [agingOpen, setAgingOpen] = useState<boolean | null>(null) // null = auto (abierto si hay pocos)
+    const [focusSupplierId, setFocusSupplierId] = useState<string | null>(null)
+
     const fetchSuppliers = useCallback(async () => {
         setError(null)
         try {
-            const [supRes, balRes] = await Promise.all([
+            const [supRes, balRes, agingRes] = await Promise.all([
                 fetch("/api/suppliers"),
                 fetch("/api/suppliers/balances"),
+                fetch("/api/suppliers/aging"),
             ])
             const data = await supRes.json().catch(() => null)
             if (!supRes.ok) throw new Error(data?.error || "Error al cargar proveedores")
@@ -96,6 +127,9 @@ export function ProveedoresPanel() {
             const map: Record<string, SupplierBalance> = {}
             for (const b of (balData?.balances ?? []) as SupplierBalance[]) map[b.supplier.id] = b
             setBalances(map)
+            // La antigüedad también es complementaria.
+            const agingData = agingRes.ok ? await agingRes.json().catch(() => null) : null
+            setAging(agingData && Array.isArray(agingData.suppliers) ? (agingData as SupplierAging) : null)
         } catch (e) {
             setError(e instanceof Error ? e.message : "Error al cargar proveedores")
         } finally {
@@ -193,6 +227,11 @@ export function ProveedoresPanel() {
         )
     }
 
+    // Click en una fila de antigüedad enfoca la tarjeta de ese proveedor.
+    const focusedSupplier = focusSupplierId ? suppliers.find(s => s.id === focusSupplierId) ?? null : null
+    const visibleSuppliers = focusedSupplier ? [focusedSupplier] : suppliers
+    const agingExpanded = agingOpen ?? ((aging?.suppliers.length ?? 0) <= 6)
+
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
@@ -212,6 +251,94 @@ export function ProveedoresPanel() {
                 </div>
             )}
 
+            {aging && aging.suppliers.length > 0 && (
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 py-3">
+                        <button
+                            type="button"
+                            onClick={() => setAgingOpen(!agingExpanded)}
+                            className="flex items-center gap-2 text-left"
+                            aria-expanded={agingExpanded}
+                        >
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                                Antigüedad de saldos
+                            </CardTitle>
+                            {agingExpanded
+                                ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                                : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                        </button>
+                        <span className="text-sm font-semibold text-red-600 tabular-nums">
+                            Debes {formatPrice(aging.totals.total / 100)}
+                        </span>
+                    </CardHeader>
+                    {agingExpanded && (
+                        <CardContent className="pt-0">
+                            <div className="overflow-x-auto">
+                                <table className="w-full min-w-[560px] text-sm">
+                                    <thead>
+                                        <tr className="border-b text-xs text-muted-foreground">
+                                            <th className="px-2 py-1.5 text-left font-medium">Proveedor</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">Al día</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">1-15</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">16-30</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">31-60</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">60+</th>
+                                            <th className="px-2 py-1.5 text-right font-medium">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {aging.suppliers.map(row => (
+                                            <tr
+                                                key={row.supplierId}
+                                                onClick={() => setFocusSupplierId(cur => (cur === row.supplierId ? null : row.supplierId))}
+                                                className={`border-b last:border-0 cursor-pointer transition-colors hover:bg-muted/50 ${focusSupplierId === row.supplierId ? "bg-muted/60" : ""}`}
+                                                title="Ver detalle del proveedor"
+                                            >
+                                                <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{row.name}</td>
+                                                <AgingCell value={row.current} className="text-green-600" />
+                                                <AgingCell value={row.d1_15} className="text-amber-600" />
+                                                <AgingCell value={row.d16_30} className="text-orange-600" />
+                                                <AgingCell value={row.d31_60} className="text-red-600" />
+                                                <AgingCell value={row.d60plus} className="text-red-700 font-semibold" />
+                                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                                                    {formatPrice(row.total / 100)}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="border-t text-xs font-semibold">
+                                            <td className="px-2 py-1.5">Totales</td>
+                                            <AgingCell value={aging.totals.current} className="text-green-600" />
+                                            <AgingCell value={aging.totals.d1_15} className="text-amber-600" />
+                                            <AgingCell value={aging.totals.d16_30} className="text-orange-600" />
+                                            <AgingCell value={aging.totals.d31_60} className="text-red-600" />
+                                            <AgingCell value={aging.totals.d60plus} className="text-red-700" />
+                                            <td className="px-2 py-1.5 text-right tabular-nums">
+                                                {formatPrice(aging.totals.total / 100)}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </CardContent>
+                    )}
+                </Card>
+            )}
+
+            {focusedSupplier && (
+                <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="gap-1.5">
+                        Mostrando: {focusedSupplier.name}
+                    </Badge>
+                    <Button variant="ghost" size="sm" onClick={() => setFocusSupplierId(null)}>
+                        <X className="mr-1 h-3.5 w-3.5" />
+                        Ver todos
+                    </Button>
+                </div>
+            )}
+
             {!error && suppliers.length === 0 ? (
                 <EmptyState
                     icon={Truck}
@@ -220,7 +347,7 @@ export function ProveedoresPanel() {
                 />
             ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {suppliers.map(s => {
+                    {visibleSuppliers.map(s => {
                         const bal = balances[s.id]
                         return (
                             <Card key={s.id} className={s.isActive ? "" : "opacity-60"}>

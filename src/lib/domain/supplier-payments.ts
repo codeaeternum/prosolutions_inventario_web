@@ -158,6 +158,131 @@ export async function supplierBalances(db: PrismaClient, businessId: string) {
   })
 }
 
+/** Buckets de antigüedad en centavos. */
+export interface AgingBuckets {
+  current: number // no vencida o sin fecha de vencimiento
+  d1_15: number
+  d16_30: number
+  d31_60: number
+  d60plus: number
+}
+
+export interface SupplierAgingRow extends AgingBuckets {
+  supplierId: string
+  name: string
+  total: number
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+/** Orden del waterfall: los abonos a cuenta general cubren primero lo más viejo. */
+const BUCKETS_OLDEST_FIRST = ["d60plus", "d31_60", "d16_30", "d1_15", "current"] as const
+
+/**
+ * Reparte saldos pendientes en buckets de antigüedad según los días de atraso
+ * contra `dueAt` (sin fecha o aún no vencida = corriente) y luego descuenta
+ * los abonos a cuenta general del bucket MÁS VIEJO primero (waterfall).
+ * Los buckets nunca quedan negativos: un excedente de abonos generales es
+ * saldo a favor del negocio y no se refleja en la antigüedad.
+ */
+export function agingBuckets(
+  debts: { remainingCents: number; dueAt: Date | null }[],
+  generalPaymentCents: number,
+  now: Date = new Date(),
+): AgingBuckets {
+  const buckets: AgingBuckets = { current: 0, d1_15: 0, d16_30: 0, d31_60: 0, d60plus: 0 }
+  for (const debt of debts) {
+    if (debt.remainingCents <= 0) continue
+    const overdueDays = debt.dueAt ? Math.floor((now.getTime() - debt.dueAt.getTime()) / MS_PER_DAY) : 0
+    const key =
+      overdueDays <= 0 ? "current"
+        : overdueDays <= 15 ? "d1_15"
+          : overdueDays <= 30 ? "d16_30"
+            : overdueDays <= 60 ? "d31_60"
+              : "d60plus"
+    buckets[key] += debt.remainingCents
+  }
+
+  let remaining = Math.max(0, generalPaymentCents)
+  for (const key of BUCKETS_OLDEST_FIRST) {
+    if (remaining <= 0) break
+    const applied = Math.min(buckets[key], remaining)
+    buckets[key] -= applied
+    remaining -= applied
+  }
+  return buckets
+}
+
+/**
+ * Antigüedad de cuentas por pagar por proveedor.
+ *
+ * La deuda de cada OC (ORDERED|RECEIVED) = totalCents - abonos ligados a ella
+ * (SupplierPayment.purchaseId). Los abonos sin OC (a cuenta general) y los
+ * abonos ligados a OCs que ya no son pagaderas (ej. canceladas después de
+ * abonar) descuentan del bucket más viejo primero. Devuelve solo proveedores
+ * con deuda (total > 0), ordenados por nombre, más los totales generales.
+ */
+export async function supplierAging(db: PrismaClient, businessId: string, now: Date = new Date()) {
+  const [suppliers, openPurchases, payments] = await Promise.all([
+    db.supplier.findMany({ where: { businessId }, select: { id: true, name: true } }),
+    db.purchase.findMany({
+      where: { businessId, supplierId: { not: null }, status: { in: PAYABLE_STATUSES } },
+      select: { id: true, supplierId: true, totalCents: true, dueAt: true },
+    }),
+    db.supplierPayment.findMany({
+      where: { businessId },
+      select: { supplierId: true, purchaseId: true, amountCents: true },
+    }),
+  ])
+
+  const payableIds = new Set(openPurchases.map(p => p.id))
+  const paidByPurchase = new Map<string, number>()
+  const generalBySupplier = new Map<string, number>()
+  for (const p of payments) {
+    if (p.purchaseId && payableIds.has(p.purchaseId)) {
+      paidByPurchase.set(p.purchaseId, (paidByPurchase.get(p.purchaseId) ?? 0) + p.amountCents)
+    } else {
+      // Sin OC, o ligado a una OC que ya no es pagadera: actúa como cuenta general.
+      generalBySupplier.set(p.supplierId, (generalBySupplier.get(p.supplierId) ?? 0) + p.amountCents)
+    }
+  }
+
+  const debtsBySupplier = new Map<string, { remainingCents: number; dueAt: Date | null }[]>()
+  for (const purchase of openPurchases) {
+    if (!purchase.supplierId) continue
+    const remainingCents = purchase.totalCents - (paidByPurchase.get(purchase.id) ?? 0)
+    if (remainingCents <= 0) continue
+    const list = debtsBySupplier.get(purchase.supplierId) ?? []
+    list.push({ remainingCents, dueAt: purchase.dueAt })
+    debtsBySupplier.set(purchase.supplierId, list)
+  }
+
+  const rows: SupplierAgingRow[] = []
+  for (const supplier of suppliers) {
+    const buckets = agingBuckets(
+      debtsBySupplier.get(supplier.id) ?? [],
+      generalBySupplier.get(supplier.id) ?? 0,
+      now,
+    )
+    const total = buckets.current + buckets.d1_15 + buckets.d16_30 + buckets.d31_60 + buckets.d60plus
+    if (total <= 0) continue
+    rows.push({ supplierId: supplier.id, name: supplier.name, ...buckets, total })
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name, "es"))
+
+  const totals = rows.reduce<AgingBuckets & { total: number }>(
+    (acc, row) => ({
+      current: acc.current + row.current,
+      d1_15: acc.d1_15 + row.d1_15,
+      d16_30: acc.d16_30 + row.d16_30,
+      d31_60: acc.d31_60 + row.d31_60,
+      d60plus: acc.d60plus + row.d60plus,
+      total: acc.total + row.total,
+    }),
+    { current: 0, d1_15: 0, d16_30: 0, d31_60: 0, d60plus: 0, total: 0 },
+  )
+  return { suppliers: rows, totals }
+}
+
 /** Historial de abonos de un proveedor del tenant, más reciente primero. */
 export async function listSupplierPayments(db: PrismaClient, businessId: string, supplierId: string) {
   const supplier = await db.supplier.findFirst({ where: { id: supplierId, businessId } })

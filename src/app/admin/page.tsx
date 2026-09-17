@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
+import { OnboardingCard } from "@/components/admin/onboarding-card"
 
 async function getDashboardStats() {
   try {
@@ -164,6 +165,7 @@ async function getLowStockProducts() {
 }
 
 export default async function AdminDashboard() {
+  const session = await auth()
   const stats = await getDashboardStats()
   const lowStockProducts = await getLowStockProducts()
 
@@ -239,6 +241,9 @@ export default async function AdminDashboard() {
           Resumen general y métricas de operación
         </p>
       </div>
+
+      {/* Checklist de onboarding: solo ADMIN; se auto-oculta con dismissed */}
+      {session?.user?.role === "ADMIN" && <OnboardingCard />}
 
       {/* Accesos rápidos */}
       <Card>

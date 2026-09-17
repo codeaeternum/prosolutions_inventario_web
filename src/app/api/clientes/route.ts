@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
+import { normalizePhone } from "@/lib/utils"
 import { CustomerType } from "@prisma/client"
 
 /**
@@ -67,22 +68,32 @@ export async function GET(req: Request) {
       prisma.user.count({ where }),
     ])
 
-    // Las órdenes de taller se ligan al cliente por customerPhone.
-    const phones = users.map((u) => u.phone).filter((p): p is string => !!p)
-    const repairsByPhone = phones.length
-      ? await prisma.repairOrder.groupBy({
-          by: ["customerPhone"],
-          where: { businessId, customerPhone: { in: phones } },
-          _count: { _all: true },
-        })
-      : []
-    const repairsMap = new Map(repairsByPhone.map((r) => [r.customerPhone, r._count._all]))
+    // Las órdenes de taller no tienen FK a User: se ligan por teléfono
+    // normalizado (customerPhone o customerPhoneAlt). Se deduplica por orden
+    // porque el mismo número puede estar capturado en ambos campos.
+    const orderPhones = await prisma.repairOrder.findMany({
+      where: { businessId },
+      select: { id: true, customerPhone: true, customerPhoneAlt: true },
+    })
+    const repairsByPhone = new Map<string, Set<string>>()
+    for (const order of orderPhones) {
+      for (const raw of [order.customerPhone, order.customerPhoneAlt]) {
+        const norm = normalizePhone(raw)
+        if (!norm) continue
+        let set = repairsByPhone.get(norm)
+        if (!set) {
+          set = new Set()
+          repairsByPhone.set(norm, set)
+        }
+        set.add(order.id)
+      }
+    }
 
     const clientes = users.map(({ _count, ...u }) => ({
       ...u,
       reservationsCount: _count.reservations,
       salesCount: _count.salesAsCustomer,
-      repairsCount: u.phone ? repairsMap.get(u.phone) ?? 0 : 0,
+      repairsCount: repairsByPhone.get(normalizePhone(u.phone))?.size ?? 0,
     }))
 
     const totalPages = Math.ceil(total / limit) || 1

@@ -264,9 +264,9 @@ export default async function HomePage() {
                     </Link>
                   </Button>
                   <Button size="lg" variant="outline" className="h-12 px-7 text-base gap-2 bg-card/60 backdrop-blur" asChild>
-                    <Link href="/catalogo">
+                    <Link href="/mercado">
                       <Store className="h-5 w-5" />
-                      Ver demo en vivo
+                      Explorar el mercado
                     </Link>
                   </Button>
                 </div>
@@ -811,7 +811,7 @@ export default async function HomePage() {
                     className="h-12 px-8 text-base gap-2 border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"
                     asChild
                   >
-                    <Link href="/catalogo">Ver demo en vivo</Link>
+                    <Link href="/mercado">Explorar el mercado</Link>
                   </Button>
                 </div>
               </div>

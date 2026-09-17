@@ -57,7 +57,7 @@ async function readProfile(businessId: string) {
   const [business, settings] = await Promise.all([
     prisma.business.findUnique({
       where: { id: businessId },
-      select: { name: true, slug: true, phone: true, address: true, logoUrl: true },
+      select: { name: true, slug: true, phone: true, address: true, logoUrl: true, showInDirectory: true },
     }),
     getBusinessSettingsMap(businessId, [KEY_DESCRIPTION, KEY_BUSINESS_NAME]),
   ])
@@ -70,6 +70,7 @@ async function readProfile(businessId: string) {
     address: business?.address ?? "",
     businessName: settings.get(KEY_BUSINESS_NAME) || business?.name || "",
     logo: LOGO_PATH_RE.test(logo) ? logo : "",
+    showInDirectory: business?.showInDirectory ?? true,
     urls: publicUrls(slug),
   }
 }
@@ -92,9 +93,10 @@ export async function GET() {
 }
 
 // POST - Guardar perfil público (solo admin)
-// body: { slug?, phone?, description?, address?, logo?, businessName? } —
+// body: { slug?, phone?, description?, address?, logo?, businessName?, showInDirectory? } —
 // `logo` es el path devuelto por /api/upload/logo (vacío/null quita el logo).
 // `businessName` actualiza Business.name Y ticket_business_name scoped.
+// `showInDirectory` controla si el negocio aparece en el directorio /mercado.
 // El slug no puede quedar vacío: Business.slug es obligatorio.
 export async function POST(req: Request) {
   try {
@@ -106,10 +108,10 @@ export async function POST(req: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Cuerpo de la solicitud inválido" }, { status: 400 })
     }
-    const { slug, phone, description, address, logo, businessName } = body as Record<string, unknown>
+    const { slug, phone, description, address, logo, businessName, showInDirectory } = body as Record<string, unknown>
 
     // Campos de la tabla Business (nullables salvo slug/name) y settings scoped.
-    const businessUpdate: { slug?: string; name?: string; phone?: string | null; address?: string | null; logoUrl?: string | null } = {}
+    const businessUpdate: { slug?: string; name?: string; phone?: string | null; address?: string | null; logoUrl?: string | null; showInDirectory?: boolean } = {}
     const settingUpserts: { key: string; value: string }[] = []
     let newLogo: string | null = null
 
@@ -221,6 +223,13 @@ export async function POST(req: Request) {
         )
       }
       settingUpserts.push({ key: KEY_DESCRIPTION, value })
+    }
+
+    if (showInDirectory !== undefined) {
+      if (typeof showInDirectory !== "boolean") {
+        return NextResponse.json({ error: "showInDirectory debe ser booleano" }, { status: 400 })
+      }
+      businessUpdate.showInDirectory = showInDirectory
     }
 
     if (logo !== undefined) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatDate, formatPrice, generateSlug } from "@/lib/utils"
+import { formatDate, formatPrice, generateSlug, normalizePhone } from "@/lib/utils"
 
 describe("formatDate", () => {
   it("formats a date string in es-MX locale", () => {
@@ -19,6 +19,40 @@ describe("formatPrice", () => {
   it("formats number as MXN currency", () => {
     expect(formatPrice(100)).toMatch(/\$?\s*100/)
     expect(formatPrice(0)).toMatch(/0/)
+  })
+})
+
+describe("normalizePhone", () => {
+  it("strips formatting from 10-digit numbers", () => {
+    expect(normalizePhone("811 234 5678")).toBe("8112345678")
+    expect(normalizePhone("(811) 234-5678")).toBe("8112345678")
+    expect(normalizePhone("811-234-5678")).toBe("8112345678")
+  })
+
+  it("strips +52 country code", () => {
+    expect(normalizePhone("+52 811 234 5678")).toBe("8112345678")
+    expect(normalizePhone("528112345678")).toBe("8112345678")
+  })
+
+  it("strips +52 1 mobile prefix", () => {
+    expect(normalizePhone("+52 1 811 234 5678")).toBe("8112345678")
+  })
+
+  it("keeps short local numbers as digits only", () => {
+    expect(normalizePhone("123-4567")).toBe("1234567")
+  })
+
+  it("matches numbers regardless of capture format", () => {
+    const a = normalizePhone("811 234 5678")
+    const b = normalizePhone("+52 1 (811) 234-5678")
+    expect(a).toBe(b)
+  })
+
+  it("returns empty string for null/undefined/empty", () => {
+    expect(normalizePhone(null)).toBe("")
+    expect(normalizePhone(undefined)).toBe("")
+    expect(normalizePhone("")).toBe("")
+    expect(normalizePhone("   ")).toBe("")
   })
 })
 

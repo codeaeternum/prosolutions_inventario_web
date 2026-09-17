@@ -304,8 +304,8 @@ export default function LoginPage() {
               </Link>
             </p>
             <p className="text-sm text-muted-foreground text-center">
-              <Link href="/catalogo" className="text-primary hover:underline">
-                Ver catálogo sin iniciar sesión →
+              <Link href="/mercado" className="text-primary hover:underline">
+                Explorar negocios en reficio.app →
               </Link>
             </p>
           </CardFooter>

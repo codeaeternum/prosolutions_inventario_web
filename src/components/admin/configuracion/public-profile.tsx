@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import {
   SlugField,
@@ -26,6 +27,7 @@ interface PublicProfile {
   address: string
   businessName: string
   logo: string
+  showInDirectory: boolean
 }
 
 const EMPTY_PROFILE: PublicProfile = {
@@ -35,6 +37,7 @@ const EMPTY_PROFILE: PublicProfile = {
   address: "",
   businessName: "",
   logo: "",
+  showInDirectory: true,
 }
 
 // QRs del mostrador: violeta oscuro sobre blanco — contraste que imprime bien.
@@ -111,6 +114,7 @@ export function PublicProfileCard() {
           address: data.address ?? "",
           businessName: data.businessName ?? "",
           logo: data.logo ?? "",
+          showInDirectory: data.showInDirectory ?? true,
         }
         setProfile(next)
         setInitial(next)
@@ -132,7 +136,8 @@ export function PublicProfileCard() {
     profile.slug !== initial.slug ||
     profile.phone !== initial.phone ||
     profile.description !== initial.description ||
-    profile.address !== initial.address
+    profile.address !== initial.address ||
+    profile.showInDirectory !== initial.showInDirectory
 
   async function save() {
     if (inFlight.current) return
@@ -157,6 +162,7 @@ export function PublicProfileCard() {
           phone: profile.phone,
           description: profile.description,
           address: profile.address,
+          showInDirectory: profile.showInDirectory,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -171,6 +177,7 @@ export function PublicProfileCard() {
         address: data.address ?? profile.address.trim(),
         businessName: data.businessName ?? profile.businessName,
         logo: data.logo ?? profile.logo,
+        showInDirectory: data.showInDirectory ?? profile.showInDirectory,
       }
       setProfile(next)
       setInitial(next)
@@ -385,6 +392,28 @@ export function PublicProfileCard() {
                   disabled={saving}
                 />
               </div>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-lg border px-4 py-3">
+              <div className="space-y-1">
+                <Label htmlFor="show-in-directory" className="text-sm font-medium">
+                  Aparecer en el directorio reficio.app/mercado
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Tu negocio se lista en el directorio público y tus productos
+                  visibles aparecen en la búsqueda global. Si lo apagas, tu
+                  vitrina sigue funcionando por su link directo.
+                </p>
+              </div>
+              <Switch
+                id="show-in-directory"
+                checked={profile.showInDirectory}
+                onCheckedChange={(checked) =>
+                  setProfile(prev => ({ ...prev, showInDirectory: checked === true }))
+                }
+                disabled={saving}
+                aria-label="Aparecer en el directorio reficio.app/mercado"
+              />
             </div>
 
             <div className="space-y-2">

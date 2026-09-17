@@ -1,0 +1,48 @@
+import { NextResponse } from "next/server"
+import {
+  DIRECTORY_SEARCH_LIMIT,
+  DIRECTORY_SEARCH_MIN,
+  searchDirectoryProducts,
+} from "@/lib/directory"
+import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+
+// GET /api/directory/products?q= — Búsqueda pública de productos a través de
+// TODAS las empresas del directorio (isActive && showInDirectory). Solo
+// productos que la vitrina ya mostraría: isActive && marketplaceVisible
+// (la misma flag de /<slug>/market). Se exponen nombre, precio de menudeo,
+// imagen, disponibilidad binaria y el negocio (nombre + slug) — nunca costos,
+// mayoreo ni stock exacto.
+const CACHE = {
+  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+} as const
+
+const WINDOW_MS = 60_000
+const MAX_ATTEMPTS = 30
+
+export async function GET(req: Request) {
+  try {
+    if (!checkAndRecord("directory-products", getClientIp(req), WINDOW_MS, MAX_ATTEMPTS)) {
+      return NextResponse.json(
+        { error: "Demasiadas búsquedas. Intenta de nuevo en un minuto." },
+        { status: 429, headers: { "Cache-Control": "no-store" } },
+      )
+    }
+
+    const q = (new URL(req.url).searchParams.get("q") ?? "").trim().slice(0, 60)
+    if (q.length < DIRECTORY_SEARCH_MIN) {
+      return NextResponse.json(
+        { products: [], limit: DIRECTORY_SEARCH_LIMIT, minChars: DIRECTORY_SEARCH_MIN },
+        { headers: CACHE },
+      )
+    }
+
+    const products = await searchDirectoryProducts(q)
+    return NextResponse.json({ products }, { headers: CACHE })
+  } catch (error) {
+    console.error("[directory] Error al buscar productos:", error)
+    return NextResponse.json(
+      { error: "No pudimos buscar productos. Intenta más tarde." },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    )
+  }
+}

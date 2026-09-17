@@ -33,6 +33,18 @@ export function formatPrice(price: number): string {
   }).format(price)
 }
 
+/**
+ * Normaliza un teléfono a sus últimos 10 dígitos para empalmar formatos
+ * distintos del mismo número: "811 234 5678", "+52 811 234 5678" y
+ * "+52 1 811 234 5678" terminan como "8112345678". Números cortos
+ * (locales, extensiones) devuelven solo sus dígitos sin recortar.
+ */
+export function normalizePhone(phone: string | null | undefined): string {
+  if (!phone) return ""
+  const digits = phone.replace(/\D/g, "")
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
 export function generateSlug(text: string): string {
   return text
     .toLowerCase()

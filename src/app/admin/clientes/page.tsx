@@ -45,6 +45,7 @@ import {
   ChevronRight,
   ArrowUpRight,
   ArrowDownRight,
+  History,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
@@ -429,6 +430,13 @@ export default function ClientesPage() {
           </SheetHeader>
           {selected && (
             <div className="space-y-6 mt-6">
+              <Button variant="outline" size="sm" asChild className="w-full">
+                <Link href={`/admin/clientes/${selected.id}`}>
+                  <History className="mr-2 h-4 w-4" />
+                  Ver cliente 360
+                </Link>
+              </Button>
+
               {/* Contacto */}
               <div className="p-3 bg-muted rounded-lg space-y-1.5 text-sm">
                 {selected.businessName && (
