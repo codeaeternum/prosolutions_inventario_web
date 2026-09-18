@@ -66,6 +66,16 @@ describe("orderTotalCents", () => {
     const order = { status: "CANCELLED", quoteCents: 50000, approvedQuoteCents: 50000, diagnosticFeeCents: 5000 }
     expect(orderTotalCents(order, [part(1, 10000)])).toBe(0)
   })
+
+  it("closedWithoutRepair cobra solo el diagnóstico aunque el status ya sea DELIVERED", () => {
+    const order = { status: "DELIVERED", quoteCents: 90000, approvedQuoteCents: 90000, diagnosticFeeCents: 20000, closedWithoutRepair: true }
+    expect(orderTotalCents(order, [part(2, 30000)])).toBe(20000)
+  })
+
+  it("closedWithoutRepair sin cargo definido → 0", () => {
+    const order = { status: "DELIVERED", quoteCents: 90000, approvedQuoteCents: 90000, diagnosticFeeCents: null, closedWithoutRepair: true }
+    expect(orderTotalCents(order, [part(1, 10000)])).toBe(0)
+  })
 })
 
 describe("orderHeldCents", () => {
@@ -122,5 +132,14 @@ describe("orderBalanceCents / orderOverpaidCents", () => {
     const payments = [{ amount: 500, status: "CONFIRMED" }] // anticipo mayor al cargo
     expect(orderBalanceCents(rejected, [part(1, 30000)], payments)).toBe(0)
     expect(orderOverpaidCents(rejected, [part(1, 30000)], payments)).toBe(30000)
+  })
+
+  it("tras entregar sin reparación el excedente sigue devolvible (status DELIVERED + marca)", () => {
+    // La cotización de $900 no "resucita" como saldo fantasma: el total sigue
+    // siendo el diagnóstico de $200 y el anticipo de $500 deja $300 a favor.
+    const delivered = { status: "DELIVERED", quoteCents: 90000, approvedQuoteCents: 90000, diagnosticFeeCents: 20000, closedWithoutRepair: true }
+    const payments = [{ amount: 500, status: "CONFIRMED" }]
+    expect(orderBalanceCents(delivered, [part(2, 30000)], payments)).toBe(0)
+    expect(orderOverpaidCents(delivered, [part(2, 30000)], payments)).toBe(30000)
   })
 })

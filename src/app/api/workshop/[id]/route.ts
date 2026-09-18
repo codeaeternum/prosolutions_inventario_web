@@ -34,7 +34,10 @@ async function readySideEffects(order: { id: string; number: number; status: str
   const digits = order.customerPhone.replace(/\D/g, "")
   // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
   const phone = digits.length === 10 ? `52${digits}` : digits
-  const text = `Hola ${order.customerName}, tu equipo ${folio} ya está listo para recoger. Sigue tu orden aquí: ${base}/seguimiento?folio=${folio}`
+  // El link lleva folio + últimos 4 dígitos (?t=): el cliente no teclea nada.
+  const phone4 = digits.slice(-4)
+  const tracking = `${base}/seguimiento?folio=${folio}${phone4 ? `&t=${phone4}` : ""}`
+  const text = `Hola ${order.customerName}, tu equipo ${folio} ya está listo para recoger. Sigue tu orden aquí: ${tracking}`
   const notifyWhatsApp = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` : undefined
   return { notifyWhatsApp }
 }

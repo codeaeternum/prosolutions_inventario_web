@@ -263,6 +263,7 @@ export default async function TicketPage({
             { label: "Estado físico", value: order.intakeCondition ?? "" },
             { label: "Condiciones", value: conditions },
             { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
+            { label: "Servicio", value: order.serviceName ?? "" },
             // Referencia de custodia interna: solo se imprime si existe.
             { label: "Ubicación", value: order.location ?? "" },
           ].filter(row => row.value !== ""),
@@ -297,6 +298,7 @@ export default async function TicketPage({
             { label: "Marca", value: order.brand ?? "" },
             { label: "Modelo", value: order.model ?? "" },
             { label: "Color", value: order.equipmentColor ?? "" },
+            { label: "Servicio", value: order.serviceName ?? "" },
           ].filter(row => row.value !== ""),
           issue: order.reportedIssue,
           diagnosis: order.diagnosis ?? undefined,
@@ -337,6 +339,7 @@ export default async function TicketPage({
             { label: "Estado físico", value: order.intakeCondition ?? "" },
             { label: "Condiciones", value: conditions },
             { label: "Estética", value: order.aesthetics ? (AESTHETICS_LABELS[order.aesthetics] ?? order.aesthetics) : "" },
+            { label: "Servicio", value: order.serviceName ?? "" },
             { label: "Ubicación física", value: order.location ?? "" },
           ].filter(row => row.value !== ""),
           accessType: order.deviceAccessType ?? undefined,

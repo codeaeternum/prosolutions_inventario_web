@@ -21,6 +21,10 @@ interface QuoteApprovalProps {
   quoteApprovedAt: string | null
   // Importe total mostrado en la confirmación (mano de obra + refacciones).
   totalCents: number | null
+  // Mano de obra que el cliente VE en el documento: viaja al POST como
+  // expectedLaborCents — si el taller cambió el presupuesto, la API responde
+  // 409 QUOTE_CHANGED en vez de autorizar una cifra distinta (anti-TOCTOU).
+  laborCents: number | null
   // Sin presupuesto ni refacciones no hay nada que autorizar todavía.
   hasQuote: boolean
 }
@@ -34,7 +38,7 @@ function initialDecision(status: string, quoteApprovedAt: string | null): Decisi
 
 // Bloque de decisión que ve el cliente debajo del documento de cotización.
 // El token del enlace es el secreto: la decisión se registra sin sesión.
-export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCents, hasQuote }: QuoteApprovalProps) {
+export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCents, laborCents, hasQuote }: QuoteApprovalProps) {
   const [decision, setDecision] = useState<Decision>(() => initialDecision(status, quoteApprovedAt))
   const [approvedAt, setApprovedAt] = useState<string | null>(quoteApprovedAt)
   const [signerName, setSignerName] = useState("")
@@ -49,14 +53,25 @@ export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCent
       const res = await fetch(`/api/cotizacion/${encodeURIComponent(token)}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, signerName: signerName.trim() || undefined }),
+        body: JSON.stringify({
+          action,
+          signerName: signerName.trim() || undefined,
+          expectedLaborCents: laborCents ?? 0,
+        }),
       })
       const data = await res.json().catch(() => null) as {
         decision?: "APPROVED" | "REJECTED"
         quoteApprovedAt?: string | null
         error?: string
+        code?: string
       } | null
       if (res.status === 409) {
+        if (data?.code === "QUOTE_CHANGED") {
+          // El presupuesto cambió desde que se cargó la página: mensaje
+          // visible y el cliente reabre el link para ver la cifra nueva.
+          setError(data.error ?? "La cotización cambió; vuelve a abrir el link.")
+          return
+        }
         // Ya fue decidida (otro dispositivo o el taller): no insistir.
         setDecision("DECIDED")
         return

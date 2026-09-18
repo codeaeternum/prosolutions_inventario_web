@@ -80,6 +80,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
       })
 
     if (!order || !order.business.isActive) return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
+    // Vigencia real: el documento dice "Válida por 15 días" y la cotización
+    // muere con la orden — entregada o cancelada ya no es visible aunque el
+    // token siga circulando en un WhatsApp viejo.
+    if (order.status === "DELIVERED" || order.status === "CANCELLED") {
+      return NextResponse.json(
+        { error: "Esta cotización ya no está vigente." },
+        { status: 410, headers: NO_STORE },
+      )
+    }
     const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
 
     const { service, issue } = parseIssue(order.reportedIssue)

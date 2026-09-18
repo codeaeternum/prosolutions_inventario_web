@@ -204,7 +204,8 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
             <DialogTitle>Importar modelos de equipo</DialogTitle>
             <DialogDescription>
               Sube un CSV con columnas <span className="font-mono text-xs">marca,modelo,codigo,tipo</span> (código y
-              tipo opcionales). Si marca + modelo ya existen, se actualiza el registro.
+              tipo opcionales). Se importa al catálogo global de la plataforma: si marca + modelo ya existen, se
+              actualiza el registro.
             </DialogDescription>
           </DialogHeader>
 

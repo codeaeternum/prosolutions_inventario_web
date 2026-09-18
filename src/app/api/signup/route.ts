@@ -5,13 +5,15 @@ import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
 import { generateSlug, normalizePhone } from "@/lib/utils"
+import { SUGGESTED_SERVICES } from "@/lib/workshop-service-suggestions"
 
 /**
  * POST /api/signup — Alta pública de una empresa nueva (multi-tenant).
  *
  * En una sola transacción crea: el Business (con slug único del namespace
  * público /<slug>), su primer User ADMIN + APPROVED, el SystemSettings semilla
- * (ticket_business_name) y la sucursal "Principal". TODO o nada.
+ * (ticket_business_name), la sucursal "Principal" y el catálogo sugerido de
+ * servicios de taller. TODO o nada.
  *
  * Cerrado por defecto: requiere REFICIO_SIGNUP_ENABLED=true en el entorno.
  * Se abre cuando el aislamiento multi-tenant esté completo (fase 2).
@@ -204,6 +206,16 @@ export async function POST(req: Request) {
         })
         await tx.branch.create({
           data: { businessId: business.id, name: "Principal", isActive: true },
+        })
+        // Catálogo inicial de servicios de taller: precio null = "según
+        // dispositivo". El negocio los edita/desactiva desde el catálogo.
+        await tx.workshopService.createMany({
+          data: SUGGESTED_SERVICES.map((service) => ({
+            businessId: business.id,
+            name: service.name,
+            equipmentType: service.equipmentType,
+            priceCents: null,
+          })),
         })
       })
     } catch (error) {

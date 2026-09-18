@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, type ReactNode } from "react"
+import { useEffect, type ReactNode, type Ref } from "react"
 import { Input } from "@/components/ui/input"
 
 // Mismo estilo de inputClass del asistente, con ancho fijo compacto para la lada.
@@ -53,10 +53,12 @@ type PhoneInputProps = {
   onDialCode: (dial: string) => void
   label?: string
   required?: boolean
+  /** Ref del contenedor: permite detectar clics fuera del campo y sus sugerencias. */
+  containerRef?: Ref<HTMLDivElement>
   children?: ReactNode
 }
 
-export function PhoneInput({ value, onChange, dialCode, onDialCode, label, required, children }: PhoneInputProps) {
+export function PhoneInput({ value, onChange, dialCode, onDialCode, label, required, containerRef, children }: PhoneInputProps) {
   const parsed = parsePhone(value)
 
   // Si el valor ya trae un código de país (p. ej. al autocompletar un cliente),
@@ -73,7 +75,7 @@ export function PhoneInput({ value, onChange, dialCode, onDialCode, label, requi
     : [{ code: dialCode, flag: "🏳️", name: dialCode }, ...DIAL_CODES]
 
   return (
-    <div className="relative space-y-2 text-sm">
+    <div ref={containerRef} className="relative space-y-2 text-sm">
       {label ? <p>{label}{required ? " *" : ""}</p> : null}
       <div className="flex items-center gap-2">
         <select aria-label="Código de país" className={dialSelectClass} value={dialCode} onChange={event => onDialCode(event.target.value)}>

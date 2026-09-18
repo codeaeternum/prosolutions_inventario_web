@@ -30,6 +30,10 @@ export type OrderMoneyLike = {
   quoteCents: number | null
   approvedQuoteCents: number | null
   diagnosticFeeCents?: number | null
+  // La orden se entregó sin reparación (SETTLE_DELIVER desde NOT_AUTHORIZED /
+  // NOT_REPAIRED): tras la entrega el status ya es DELIVERED y esta marca es
+  // lo que conserva que el cobro real fue solo el cargo de diagnóstico.
+  closedWithoutRepair?: boolean | null
 }
 
 /** Estados donde la orden se entrega sin reparación: no se cobra la
@@ -42,6 +46,11 @@ const NO_REPAIR_STATUSES: readonly string[] = ["NOT_AUTHORIZED", "NOT_REPAIRED"]
  *  ÚNICA fuente de verdad para "cuánto cuesta la orden". */
 export function orderTotalCents(order: OrderMoneyLike, parts: readonly PartLike[] = []): number {
   if (order.status === "CANCELLED") return 0
+  // El cierre sin reparación persiste en closedWithoutRepair: una vez
+  // entregada la orden el status es DELIVERED, pero el cargo sigue siendo
+  // solo el diagnóstico — así el excedente queda devolvible (REFUND) y el
+  // saldo no "resucita" la cotización rechazada.
+  if (order.closedWithoutRepair === true) return order.diagnosticFeeCents ?? 0
   if (order.status !== null && order.status !== undefined && NO_REPAIR_STATUSES.includes(order.status)) {
     return order.diagnosticFeeCents ?? 0
   }

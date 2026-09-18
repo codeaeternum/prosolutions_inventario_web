@@ -64,6 +64,7 @@ model Business {
   inventoryCounts     InventoryCount[]
   inventoryCountItems InventoryCountItem[]
   directoryEvents     DirectoryEvent[]
+  deviceModels        DeviceModel[]
 
   @@index([isActive])
 }
@@ -756,6 +757,8 @@ model RepairOrder {
   // Agenda del técnico: distinta de la fecha prometida al cliente.
   scheduledAt          DateTime?
   reportedIssue        String
+  // Servicio elegido del catálogo al recibir (opcional; el texto libre va en reportedIssue).
+  serviceName          String?
   diagnosis            String?
   // quoteCents/approvedQuoteCents son SOLO mano de obra; las RepairPart
   // aprobadas se cobran además.
@@ -765,6 +768,9 @@ model RepairOrder {
   // Cargo por diagnóstico/revisión cobrado al entregar sin reparación
   // (NOT_AUTHORIZED / NOT_REPAIRED): la cotización rechazada no se cobra.
   diagnosticFeeCents   Int?
+  // La orden se entregó sin reparación: tras DELIVERED el status se pierde,
+  // esta marca conserva que el cobro real fue solo el diagnóstico.
+  closedWithoutRepair  Boolean       @default(false)
   qualityCheck         String?
   deliveredTo          String?
   promisedAt           DateTime?
@@ -899,14 +905,22 @@ model RepairPhoto {
 // Catálogo de modelos de equipo para autocompletar al recibir
 // (ej. brand=Samsung, model=Galaxy A21, code=SM-A245M).
 model DeviceModel {
-  id        String   @id @default(cuid())
-  brand     String
-  model     String
-  code      String?
-  type      String   @default("SMARTPHONE")
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  // null = catálogo global de plataforma (solo superadmin escribe);
+  // con valor = modelo privado del tenant (staff lo da de alta al vuelo).
+  businessId String?
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  brand      String
+  model      String
+  code       String?
+  type       String    @default("SMARTPHONE")
+  createdAt  DateTime  @default(now())
 
-  @@unique([brand, model])
+  // Dedup por tenant. Las filas globales (businessId NULL) NO deduplican con
+  // este índice (NULL != NULL en Postgres) — la migración agrega un índice
+  // único parcial WHERE "businessId" IS NULL para ellas.
+  @@unique([businessId, brand, model])
+  @@index([businessId])
   @@index([brand])
 }
 

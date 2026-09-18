@@ -70,7 +70,7 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
         </Button>
       }
     >
-      {order ? (
+      {order && order.status !== "DELIVERED" && order.status !== "CANCELLED" ? (
         <QuoteDocument order={order} businessName={target.name} token={token} />
       ) : (
         <QuoteNotFound trackingHref={`/${target.slug}/order-status`} />

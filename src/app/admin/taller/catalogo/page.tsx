@@ -16,6 +16,7 @@ import {
   Printer,
   Search,
   Smartphone,
+  Sparkles,
   Tablet,
   Trash2,
   Watch,
@@ -42,11 +43,13 @@ type Service = {
   equipmentType: string | null; isActive: boolean
 }
 type ServiceForm = { name: string; price: string; equipmentType: string; description: string }
-type DeviceModelRow = { id: string; brand: string; model: string; code: string | null; type: string }
+// businessId null = fila del catálogo global de plataforma; con valor =
+// modelo privado del tenant (solo esos los puede borrar el staff del tenant).
+type DeviceModelRow = { id: string; businessId: string | null; brand: string; model: string; code: string | null; type: string }
 type DeviceModelForm = { brand: string; model: string; code: string; type: string }
 
 const emptyModelForm: DeviceModelForm = { brand: "", model: "", code: "", type: "" }
-const DEVICE_MODEL_TYPES = ["SMARTPHONE", "TABLET", "LAPTOP", "CONSOLA", "SMARTWATCH", "PANTALLA", "OTRO"]
+const DEVICE_MODEL_TYPES = ["SMARTPHONE", "TABLET", "LAPTOP", "CONSOLA", "SMARTWATCH", "TV", "PANTALLA", "OTRO"]
 
 const emptyForm: ServiceForm = { name: "", price: "", equipmentType: "", description: "" }
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
@@ -69,8 +72,8 @@ export default function WorkshopCatalogPage() {
   // El catálogo se puede consultar como staff, pero crear/editar/desactivar
   // servicios, importar o eliminar modelos y editar las listas es admin-only.
   const isAdmin = session?.user?.role === "ADMIN"
-  // Los modelos de equipo son un catálogo GLOBAL compartido entre empresas:
-  // darlos de alta, importarlos o borrarlos es solo del superadmin de plataforma.
+  // El catálogo de modelos mezcla global (plataforma) y privado del tenant:
+  // importar la base global o borrar modelos globales es solo del superadmin.
   const isSuperAdmin = session?.user?.isSuperAdmin === true
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
@@ -218,7 +221,9 @@ export default function WorkshopCatalogPage() {
     if (!brand || !model) { toast.error("Marca y modelo son obligatorios."); return }
     inFlight.current = true; setSaving(true)
     try {
-      await post("/api/device-models", { brand, model, code, type })
+      // El superadmin siembra el catálogo global; el staff del tenant crea
+      // modelos privados de su negocio (la API estampa el businessId).
+      await post("/api/device-models", { brand, model, code, type, ...(isSuperAdmin ? { global: true } : {}) })
       toast.success("Modelo de equipo guardado")
       setModelForm(emptyModelForm)
       await loadModels()
@@ -237,6 +242,21 @@ export default function WorkshopCatalogPage() {
       await loadModels()
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio.") }
     finally { inFlight.current = false; setSaving(false); setToDeleteModel(null) }
+  }
+
+  // Carga el catálogo sugerido de servicios; el endpoint omite los nombres
+  // que ya existen en el negocio (dedup case-insensitive).
+  async function seedSuggested() {
+    if (inFlight.current) return
+    inFlight.current = true; setSaving(true)
+    try {
+      const data = await post("/api/workshop-services/seed-suggested", {})
+      toast.success(data.created > 0
+        ? `${data.created} ${data.created === 1 ? "servicio agregado" : "servicios agregados"}${data.skipped > 0 ? ` · ${data.skipped} ya ${data.skipped === 1 ? "existía" : "existían"}` : ""}`
+        : "Ya tenías todos los servicios sugeridos")
+      await loadServices()
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
   }
 
   async function toggleService(service: Service) {
@@ -330,6 +350,12 @@ export default function WorkshopCatalogPage() {
                 <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} className="h-4 w-4 rounded border" />
                 Mostrar inactivos
               </label>
+              {isAdmin && (
+                <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => void seedSuggested()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                  Cargar servicios sugeridos
+                </Button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -365,7 +391,13 @@ export default function WorkshopCatalogPage() {
               <div className="p-12 text-center">
                 <BookOpen className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
                 <h2 className="text-lg font-semibold">{services.length === 0 ? "Aún no hay servicios" : "Sin resultados"}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? (isAdmin ? "Crea el primero con el formulario de arriba." : "Un administrador aún no registra servicios.") : "Prueba con otro nombre o ajusta los filtros."}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? (isAdmin ? "Crea el primero con el formulario de arriba o carga el catálogo sugerido." : "Un administrador aún no registra servicios.") : "Prueba con otro nombre o ajusta los filtros."}</p>
+                {isAdmin && services.length === 0 && (
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => void seedSuggested()} disabled={saving}>
+                    {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                    Cargar servicios sugeridos
+                  </Button>
+                )}
               </div>
             ) : (
               <Table>
@@ -427,14 +459,18 @@ export default function WorkshopCatalogPage() {
         </TabsContent>
 
         <TabsContent value="modelos" className="space-y-6 pt-4">
-          {!isSuperAdmin && (
-            <p className="rounded-lg border border-dashed bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
-              Catálogo global de la plataforma: los modelos alimentan el autocompletado de recepción de todas las empresas. Solo el administrador de Reficio puede agregarlos o borrarlos — si falta uno, solicítalo.
-            </p>
-          )}
-          {isSuperAdmin && <section className="rounded-xl border bg-card p-5 sm:p-6">
+          <p className="rounded-lg border border-dashed bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+            {isSuperAdmin
+              ? "Catálogo global de la plataforma: los modelos que agregues o importes alimentan el autocompletado de recepción de todas las empresas."
+              : "Los modelos que agregues son privados de tu negocio y se suman al catálogo global de la plataforma en el autocompletado de recepción. Los modelos marcados como Global solo los administra Reficio."}
+          </p>
+          <section className="rounded-xl border bg-card p-5 sm:p-6">
             <h2 className="mb-1 font-semibold">Nuevo modelo de equipo</h2>
-            <p className="mb-4 text-xs text-muted-foreground">Alimentan el autocompletado de marca y modelo al recibir equipos. Si marca + modelo ya existen, se actualiza su código y tipo.</p>
+            <p className="mb-4 text-xs text-muted-foreground">
+              {isSuperAdmin
+                ? "Se guarda en el catálogo global. Si marca + modelo ya existen, se actualiza su código y tipo."
+                : "Se guarda como modelo privado de tu negocio. Si marca + modelo ya existen en tu catálogo, se actualiza su código y tipo."}
+            </p>
             <form onSubmit={submitModel} className="grid gap-4 sm:grid-cols-2">
               <label className="block space-y-2 text-sm">Marca *
                 <Input value={modelForm.brand} onChange={event => setModelForm(previous => ({ ...previous, brand: event.target.value }))} maxLength={60} placeholder="Ej. Samsung" autoComplete="off" required />
@@ -455,7 +491,7 @@ export default function WorkshopCatalogPage() {
                 </Button>
               </div>
             </form>
-          </section>}
+          </section>
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative min-w-56 flex-1 sm:max-w-xs">
@@ -485,23 +521,35 @@ export default function WorkshopCatalogPage() {
                     <TableHead>Modelo</TableHead>
                     <TableHead className="hidden sm:table-cell">Código</TableHead>
                     <TableHead className="hidden md:table-cell">Tipo</TableHead>
-                    {isSuperAdmin && <TableHead className="text-right">Acciones</TableHead>}
+                    <TableHead className="hidden sm:table-cell">Origen</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {deviceModels.map(item => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.brand}</TableCell>
-                      <TableCell>{item.model}</TableCell>
-                      <TableCell className="hidden font-mono text-xs sm:table-cell">{item.code || "—"}</TableCell>
-                      <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{item.type}</Badge></TableCell>
-                      {isSuperAdmin && <TableCell className="text-right">
-                        <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
-                          <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
-                        </Button>
-                      </TableCell>}
-                    </TableRow>
-                  ))}
+                  {deviceModels.map(item => {
+                    // Globales: solo superadmin los borra. Del tenant: su staff.
+                    const canDelete = item.businessId === null ? isSuperAdmin : true
+                    return (
+                      <TableRow key={item.id}>
+                        <TableCell className="font-medium">{item.brand}</TableCell>
+                        <TableCell>{item.model}</TableCell>
+                        <TableCell className="hidden font-mono text-xs sm:table-cell">{item.code || "—"}</TableCell>
+                        <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{item.type}</Badge></TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {item.businessId === null
+                            ? <Badge variant="secondary" className="font-normal">Global</Badge>
+                            : <Badge variant="outline" className="font-normal">Propio</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {canDelete && (
+                            <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
+                              <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             )}

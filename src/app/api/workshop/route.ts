@@ -47,6 +47,10 @@ export async function GET(req: Request) {
       // Refacciones autorizadas: se cobran además de la mano de obra.
       parts: { where: { status: "APPROVED" as const }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },
     }
+    // El listado nunca serializa secretos ni datos pesados de la hoja interna:
+    // PIN/patrón del equipo, firma de recepción (~300KB base64) y los tokens
+    // públicos. El detalle por id (/api/workshop/[id]) sí los devuelve.
+    const listOmit = { deviceAccessValue: true, signatureData: true, uploadToken: true, quoteToken: true }
     const orderBy = [{ createdAt: "desc" as const }, { id: "desc" as const }]
     if (view === "debt") {
       // El adeudo = total de la orden (mano de obra + refacciones autorizadas,
@@ -55,7 +59,7 @@ export async function GET(req: Request) {
       // de paginar — el filtro post-paginación inflaba total/totalPages y
       // escondía las órdenes sin ningún cobro registrado.
       const [candidates, paidRows, branches, staff] = await Promise.all([
-        prisma.repairOrder.findMany({ where, orderBy, select: { id: true, status: true, quoteCents: true, approvedQuoteCents: true, diagnosticFeeCents: true } }),
+        prisma.repairOrder.findMany({ where, orderBy, select: { id: true, status: true, quoteCents: true, approvedQuoteCents: true, diagnosticFeeCents: true, closedWithoutRepair: true } }),
         prisma.payment.groupBy({ by: ["repairOrderId"], where: { repairOrderId: { not: null }, businessId, ...paymentWhere }, _sum: { amount: true } }),
         prisma.branch.findMany({ where: { isActive: true, businessId }, orderBy: { name: "asc" } }),
         prisma.user.findMany({ where: { status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId }, select: { id: true, name: true } }),
@@ -70,13 +74,13 @@ export async function GET(req: Request) {
       }
       const owing = candidates.filter(order => orderTotalCents(order, partsByOrder.get(order.id) ?? []) - (paidByOrder.get(order.id) ?? 0) > 0)
       const pageIds = new Set(owing.slice((page - 1) * 20, page * 20).map(order => order.id))
-      const pageOrders = await prisma.repairOrder.findMany({ where: { id: { in: [...pageIds] } }, include: orderInclude })
+      const pageOrders = await prisma.repairOrder.findMany({ where: { id: { in: [...pageIds] } }, include: orderInclude, omit: listOmit })
       const byId = new Map(pageOrders.map(order => [order.id, order]))
       const orders = owing.slice((page - 1) * 20, page * 20).map(order => byId.get(order.id)).filter((order): order is NonNullable<typeof order> => order !== undefined)
       return NextResponse.json({ orders, total: owing.length, branches, staff, page, totalPages: Math.max(1, Math.ceil(owing.length / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
     }
     const [orders, total, branches, staff] = await Promise.all([
-      prisma.repairOrder.findMany({ where, take: 20, skip: (Math.floor(page) - 1) * 20, orderBy, include: orderInclude }),
+      prisma.repairOrder.findMany({ where, take: 20, skip: (Math.floor(page) - 1) * 20, orderBy, include: orderInclude, omit: listOmit }),
       prisma.repairOrder.count({ where }), prisma.branch.findMany({ where: { isActive: true, businessId }, orderBy: { name: "asc" } }),
       prisma.user.findMany({ where: { status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId }, select: { id: true, name: true } }),
     ])

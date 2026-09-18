@@ -13,6 +13,7 @@ import { PhoneInput, parsePhone } from "@/components/admin/taller/phone-input"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
+import { formatAccessPattern } from "@/lib/utils"
 import { repairFolio } from "@/lib/workshop-labels"
 
 type Branch = { id: string; name: string }
@@ -130,6 +131,7 @@ export default function ReceiveEquipmentPage() {
   const [searchedTerm, setSearchedTerm] = useState("")
   const [suggestions, setSuggestions] = useState<CustomerHit[]>([])
   const [searching, setSearching] = useState(false)
+  const [lookupDown, setLookupDown] = useState(false)
   const [matchedCustomer, setMatchedCustomer] = useState<CustomerHit | null>(null)
   const [equipmentTypes, setEquipmentTypes] = useState<string[]>(DEFAULT_EQUIPMENT_TYPES)
   const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS)
@@ -152,12 +154,18 @@ export default function ReceiveEquipmentPage() {
   const brandVersion = useRef(0)
   const modelVersion = useRef(0)
   const serviceBoxRef = useRef<HTMLDivElement | null>(null)
+  const nameBoxRef = useRef<HTMLLabelElement | null>(null)
+  const phoneBoxRef = useRef<HTMLDivElement | null>(null)
+  const brandBoxRef = useRef<HTMLLabelElement | null>(null)
+  const modelBoxRef = useRef<HTMLLabelElement | null>(null)
 
-  const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setForm(previous => ({ ...previous, ...changes })) }
+  // Cualquier captura limpia el aviso de validación del paso: el usuario ya está corrigiendo.
+  const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setStepError(""); setForm(previous => ({ ...previous, ...changes })) }
 
   // Al cambiar la lada se reescribe el teléfono con el nuevo código y el mismo número local.
   const setPhoneDial = (phoneField: "customerPhone" | "customerPhoneAlt") => (dial: string) => {
     setDirty(true)
+    setStepError("")
     setForm(previous => {
       const local = parsePhone(previous[phoneField]).local
       const combined = local ? `${dial} ${local}` : ""
@@ -219,18 +227,67 @@ export default function ReceiveEquipmentPage() {
     return () => clearTimeout(timer)
   }, [serviceQuery])
 
-  // Cierra la lista de servicios al hacer clic fuera del buscador.
+  // Cierra la lista de servicios al hacer clic fuera del buscador o con Escape.
   useEffect(() => {
     if (!serviceResults.length) return
+    const close = () => { setServiceResults([]); setServiceSearched("") }
     const closeOnOutsideClick = (event: PointerEvent) => {
-      if (serviceBoxRef.current && !serviceBoxRef.current.contains(event.target as Node)) {
-        setServiceResults([])
-        setServiceSearched("")
-      }
+      if (serviceBoxRef.current && !serviceBoxRef.current.contains(event.target as Node)) close()
     }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") close() }
     document.addEventListener("pointerdown", closeOnOutsideClick)
-    return () => document.removeEventListener("pointerdown", closeOnOutsideClick)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
   }, [serviceResults.length])
+
+  // Cierra las sugerencias de cliente al hacer clic fuera del campo activo o con Escape.
+  useEffect(() => {
+    if (!suggestions.length) return
+    const close = () => { setSuggestions([]); setSearchedTerm("") }
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const box = (lookupField === "customerPhone" ? phoneBoxRef : nameBoxRef).current
+      if (box && !box.contains(event.target as Node)) close()
+    }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") close() }
+    document.addEventListener("pointerdown", closeOnOutsideClick)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [suggestions.length, lookupField])
+
+  // Cierra las sugerencias de marca/modelo al hacer clic fuera o con Escape.
+  useEffect(() => {
+    if (!brandHits.length) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (brandBoxRef.current && !brandBoxRef.current.contains(event.target as Node)) setBrandHits([])
+    }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setBrandHits([]) }
+    document.addEventListener("pointerdown", closeOnOutsideClick)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [brandHits.length])
+
+  useEffect(() => {
+    if (!modelHits.length) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (modelBoxRef.current && !modelBoxRef.current.contains(event.target as Node)) setModelHits([])
+    }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setModelHits([]) }
+    document.addEventListener("pointerdown", closeOnOutsideClick)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick)
+      document.removeEventListener("keydown", closeOnEscape)
+    }
+  }, [modelHits.length])
 
   useEffect(() => {
     const term = brandTerm.trim()
@@ -283,18 +340,40 @@ export default function ReceiveEquipmentPage() {
     return () => clearTimeout(timer)
   }, [modelTerm, form.brand])
 
+  // Aviso de recepción sin guardar: beforeunload cubre recargar/cerrar y el clic
+  // en captura intercepta la navegación interna por <Link>/<a> (SPA).
   useEffect(() => {
     if (!dirty || created) return
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
+    const confirmInternalNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null
+      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return
+      const href = anchor.getAttribute("href") ?? ""
+      if (!href || href.startsWith("#")) return
+      let url: URL
+      try { url = new URL(href, window.location.href) } catch { return }
+      if (url.origin !== window.location.origin || url.href === window.location.href) return
+      if (!window.confirm("Hay una recepción sin guardar. ¿Salir y perder los datos?")) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
     window.addEventListener("beforeunload", warnBeforeUnload)
-    return () => window.removeEventListener("beforeunload", warnBeforeUnload)
+    document.addEventListener("click", confirmInternalNavigation, true)
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeUnload)
+      document.removeEventListener("click", confirmInternalNavigation, true)
+    }
   }, [dirty, created])
 
   useEffect(() => {
-    const term = lookupTerm.trim()
+    // Por teléfono se busca solo con los dígitos locales: User.phone está
+    // normalizado a 10 dígitos y la lada ("+52 667…") nunca empata como texto.
+    const term = lookupField === "customerPhone" ? parsePhone(lookupTerm).local : lookupTerm.trim()
     if (term.length < 3) {
       searchVersion.current += 1
-      const timer = setTimeout(() => { setSuggestions([]); setSearchedTerm(""); setSearching(false) }, 0)
+      const timer = setTimeout(() => { setSuggestions([]); setSearchedTerm(""); setLookupDown(false); setSearching(false) }, 0)
       return () => clearTimeout(timer)
     }
     const timer = setTimeout(async () => {
@@ -306,15 +385,16 @@ export default function ReceiveEquipmentPage() {
         const data = await response.json().catch(() => ({}))
         if (version !== searchVersion.current) return
         setSuggestions(response.ok ? data.clientes ?? [] : [])
+        setLookupDown(!response.ok)
         setSearchedTerm(term)
       } catch {
-        if (version === searchVersion.current) { setSuggestions([]); setSearchedTerm(term) }
+        if (version === searchVersion.current) { setSuggestions([]); setLookupDown(true); setSearchedTerm(term) }
       } finally {
         if (version === searchVersion.current) setSearching(false)
       }
     }, 300)
     return () => clearTimeout(timer)
-  }, [lookupTerm])
+  }, [lookupTerm, lookupField])
 
   const pickCustomer = (hit: CustomerHit) => {
     searchVersion.current += 1
@@ -327,9 +407,18 @@ export default function ReceiveEquipmentPage() {
     setSuggestions([])
     setLookupTerm("")
     setSearchedTerm("")
+    setLookupDown(false)
   }
 
   const trackLookup = (field: LookupField, value: string) => {
+    if (field !== lookupField) {
+      // Al cambiar de campo se invalidan las respuestas en vuelo y se limpia la
+      // lista: las sugerencias del campo anterior no deben pintarse en el nuevo.
+      searchVersion.current += 1
+      setSuggestions([])
+      setSearchedTerm("")
+      setLookupDown(false)
+    }
     setLookupField(field)
     setLookupTerm(value)
     setMatchedCustomer(null)
@@ -359,10 +448,14 @@ export default function ReceiveEquipmentPage() {
 
   const pickDeviceModel = (device: DeviceModel) => {
     modelVersion.current += 1
+    brandVersion.current += 1
     // Se guarda el nombre del modelo; el código (SM-XXXX) queda como referencia visible.
     update({ brand: device.brand, model: device.model })
     setModelTerm("")
     setModelHits([])
+    // La marca queda escrita por el modelo: restos de la búsqueda de marca no aplican.
+    setBrandTerm("")
+    setBrandHits([])
     setPickedModel(device)
   }
 
@@ -389,13 +482,20 @@ export default function ReceiveEquipmentPage() {
       if (form.accessType === "PATTERN" && form.pattern.length < 4) return "Dibuja el patrón con al menos 4 puntos, o elige otro tipo de bloqueo."
       if ((form.accessType === "PIN" || form.accessType === "PASSWORD") && !form.accessValue.trim()) return "Escribe el PIN o la contraseña, o cambia el tipo de bloqueo."
       if (form.accessories.includes("Otro") && !form.accessoryOther.trim()) return "Describe el accesorio en el campo Otro."
-      if (!reportedIssueText) return "Describe la falla que reporta el cliente."
+      // El servicio del catálogo es un dato aparte; la falla exige texto propio del cliente.
+      if (!form.reportedIssue.trim()) return "Describe la falla que reporta el cliente."
+      if (reportedIssueText.length > 500) return `La falla junto con Otro servicio suma ${reportedIssueText.length} caracteres y el límite es 500. Acorta alguno de los dos campos.`
     }
     if (index === 3) {
+      const startOfToday = new Date()
+      startOfToday.setHours(0, 0, 0, 0)
+      if (form.promisedAt) {
+        const when = new Date(form.promisedAt)
+        if (Number.isNaN(when.getTime())) return "Revisa la fecha promesa de entrega."
+        if (when < startOfToday) return "La fecha promesa de entrega no puede ser anterior a hoy."
+      }
       if (form.scheduledAt) {
         const when = new Date(form.scheduledAt)
-        const startOfToday = new Date()
-        startOfToday.setHours(0, 0, 0, 0)
         if (Number.isNaN(when.getTime())) return "Revisa la fecha programada de reparación."
         if (when < startOfToday) return "La fecha programada de reparación no puede ser anterior a hoy."
       }
@@ -408,17 +508,32 @@ export default function ReceiveEquipmentPage() {
     return null
   }
 
+  // Al cambiar de paso no quedan listas desplegadas ni búsquedas a medias.
+  const closeDropdowns = () => {
+    setSuggestions([])
+    setSearchedTerm("")
+    setServiceResults([])
+    setServiceSearched("")
+    setBrandHits([])
+    setModelHits([])
+  }
+
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" })
+
   const goNext = () => {
     const error = validateStep(step)
     if (error) { setStepError(error); toast.error(error); return }
     setStepError("")
+    closeDropdowns()
     setStep(current => current + 1)
+    scrollToTop()
   }
-  const goBack = () => { setStepError(""); setStep(current => current - 1) }
+  const goBack = () => { setStepError(""); closeDropdowns(); setStep(current => current - 1); scrollToTop() }
 
   const accessoryText = form.accessories.map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item).join(" · ")
   const equipmentLabel = form.equipmentType === "Otro" ? form.equipmentTypeOther.trim() : form.equipmentType
-  const reportedIssueText = [form.serviceName, form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
+  // serviceName viaja en su propio campo del payload; no se repite dentro de la falla.
+  const reportedIssueText = [form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
   const advanceAmountNumber = Number.parseFloat(form.advanceAmount)
   const advanceCents = form.advanceEnabled && Number.isFinite(advanceAmountNumber) ? Math.round(advanceAmountNumber * 100) : 0
   const advanceMethodLabel = ADVANCE_METHODS.find(method => method.value === form.advanceMethod)?.label ?? ""
@@ -439,6 +554,7 @@ export default function ReceiveEquipmentPage() {
       model: form.model.trim(),
       equipmentColor: form.equipmentColor.trim(),
       serialNumber: form.serialNumber.trim(),
+      serviceName: form.serviceName.trim(),
       deviceAccessType: form.accessType,
       deviceAccessValue: accessValue,
       accessories: accessoryText,
@@ -487,6 +603,7 @@ export default function ReceiveEquipmentPage() {
     setMatchedCustomer(null)
     setLookupTerm("")
     setSearchedTerm("")
+    setLookupDown(false)
     setServiceQuery("")
     setServiceResults([])
     setServiceSearched("")
@@ -497,9 +614,13 @@ export default function ReceiveEquipmentPage() {
     setModelHits([])
     setPickedModel(null)
     operationKey.current = null
+    scrollToTop()
   }
 
-  const showNewCustomerNote = searchedTerm.length >= 3 && suggestions.length === 0 && !matchedCustomer && lookupTerm.trim().length >= 3
+  // Mismo término normalizado que viaja a /api/clientes (dígitos si es teléfono).
+  const lookupTermSearched = lookupField === "customerPhone" ? parsePhone(lookupTerm).local : lookupTerm.trim()
+  const lookupFailed = lookupDown && searchedTerm === lookupTermSearched && searchedTerm.length >= 3
+  const showNewCustomerNote = !lookupDown && searchedTerm === lookupTermSearched && searchedTerm.length >= 3 && suggestions.length === 0 && !matchedCustomer
   const profile = deviceProfileFor(form.equipmentType)
   // Sugerencias del perfil + lo ya seleccionado aunque no aplique al tipo + "Otro" libre.
   const accessoryChips = [...new Set([...profile.accessorySuggestions, ...form.accessories, "Otro"])]
@@ -507,6 +628,9 @@ export default function ReceiveEquipmentPage() {
   const conditionHints = form.functionalConditions.map(condition => CONDITION_HINTS[condition]).filter((hint): hint is string => Boolean(hint))
   const accessOption = ACCESS_OPTIONS.find(option => option.value === form.accessType)
   const accessLabel = accessOption?.label ?? "Sin bloqueo"
+  // El resumen muestra el valor de acceso al staff; el patrón se cuenta 1-9 como lo dibujó el cliente.
+  const accessValueLabel = form.accessType === "PATTERN" ? "Patrón" : form.accessType === "PIN" ? "PIN" : "Contraseña"
+  const accessValueSummary = form.accessType === "PATTERN" ? formatAccessPattern(form.pattern.join("-")) : form.accessValue.trim()
   const branchName = branches.find(branch => branch.id === form.intakeBranchId)?.name ?? ""
   const staffName = form.assignedToId ? staff.find(person => person.id === form.assignedToId)?.name ?? "" : "Asignar después"
   const promisedLabel = form.promisedAt ? new Date(form.promisedAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }) : ""
@@ -518,7 +642,7 @@ export default function ReceiveEquipmentPage() {
   const toLocalInputValue = (date: Date) => { const copy = new Date(date); copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset()); return copy.toISOString().slice(0, 16) }
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
-  const scheduledMin = toLocalInputValue(startOfToday)
+  const minDateTime = toLocalInputValue(startOfToday)
   const conditionChips = form.functionalConditions.length ? (
     <span className="flex flex-wrap gap-1.5">
       {form.functionalConditions.map(value => {
@@ -568,11 +692,11 @@ export default function ReceiveEquipmentPage() {
 
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2">
-                  <label className="relative block space-y-2 text-sm">Nombre del cliente *
+                  <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
                     <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </label>
-                  <PhoneInput label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
+                  <PhoneInput containerRef={phoneBoxRef} label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
                     {lookupField === "customerPhone" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </PhoneInput>
                   {form.phoneAltVisible || form.customerPhoneAlt ? (
@@ -585,11 +709,12 @@ export default function ReceiveEquipmentPage() {
                       <button type="button" onClick={() => update({ phoneAltVisible: true })} className="text-xs font-medium text-primary transition hover:underline">Agregar otro contacto</button>
                     </div>
                   )}
-                  {(searching || matchedCustomer || showNewCustomerNote) && (
+                  {(searching || matchedCustomer || showNewCustomerNote || lookupFailed) && (
                     <div className="sm:col-span-2" aria-live="polite">
                       {searching && <p className="text-xs text-muted-foreground">Buscando clientes…</p>}
                       {!searching && matchedCustomer && <p className="text-xs font-medium text-primary">Cliente existente — datos autocompletados.</p>}
-                      {!searching && showNewCustomerNote && <p className="text-xs text-muted-foreground">Cliente nuevo — se registrará al crear la orden.</p>}
+                      {!searching && lookupFailed && <p className="text-xs text-muted-foreground">No se pudo buscar clientes. Puedes continuar; la orden se vinculará por teléfono.</p>}
+                      {!searching && !lookupFailed && showNewCustomerNote && <p className="text-xs text-muted-foreground">Cliente nuevo — se vinculará por teléfono.</p>}
                     </div>
                   )}
                   <label className="block space-y-2 text-sm">Sucursal de recepción *
@@ -621,8 +746,11 @@ export default function ReceiveEquipmentPage() {
                         const Icon = EQUIPMENT_ICONS[value] ?? Package
                         return (
                           <button key={value} type="button" aria-pressed={form.equipmentType === value} onClick={() => {
+                            if (value === form.equipmentType) return
                             const next = deviceProfileFor(value)
-                            update(next.accessTypes.includes(form.accessType) ? { equipmentType: value } : { equipmentType: value, accessType: "NONE" })
+                            // Otro equipo = otro bloqueo: el patrón/PIN capturado no se hereda.
+                            const resetAccess = { pattern: [] as number[], accessValue: "" }
+                            update(next.accessTypes.includes(form.accessType) ? { equipmentType: value, ...resetAccess } : { equipmentType: value, accessType: "NONE", ...resetAccess })
                           }} className={chipClass(form.equipmentType === value)}>
                             <Icon size={15} />{value}
                           </button>
@@ -685,26 +813,26 @@ export default function ReceiveEquipmentPage() {
                     </label>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
-                    <label className="relative block space-y-2 text-sm">Marca
+                    <label ref={brandBoxRef} className="relative block space-y-2 text-sm">Marca
                       <Input value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
                       {brandOptions.length > 0 && (
                         <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                           {brandOptions.map(option => (
                             <li key={option}>
-                              <button type="button" onMouseDown={event => { event.preventDefault(); pickBrand(option) }} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">{option}</button>
+                              <button type="button" onClick={() => pickBrand(option)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">{option}</button>
                             </li>
                           ))}
                         </ul>
                       )}
                       {brandSearching && <span className="block text-xs text-muted-foreground">Buscando marcas…</span>}
                     </label>
-                    <label className="relative block space-y-2 text-sm">Modelo
+                    <label ref={modelBoxRef} className="relative block space-y-2 text-sm">Modelo
                       <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
                       {modelHits.length > 0 && (
                         <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                           {modelHits.map(device => (
                             <li key={device.id}>
-                              <button type="button" onMouseDown={event => { event.preventDefault(); pickDeviceModel(device) }} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
+                              <button type="button" onClick={() => pickDeviceModel(device)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
                                 <span className="block font-medium">{device.model}{device.code ? ` · ${device.code}` : ""}</span>
                                 <span className="block text-xs text-muted-foreground">{device.brand}{device.type ? ` · ${device.type}` : ""}</span>
                               </button>
@@ -744,7 +872,7 @@ export default function ReceiveEquipmentPage() {
                     <p className="text-sm">Bloqueo del equipo</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Tipo de bloqueo">
                       {allowedAccessOptions.map(({ value, label, icon: Icon }) => (
-                        <button key={value} type="button" role="radio" aria-checked={form.accessType === value} onClick={() => update({ accessType: value })} className={`flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-sm transition ${form.accessType === value ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>
+                        <button key={value} type="button" role="radio" aria-checked={form.accessType === value} onClick={() => { if (value !== form.accessType) update({ accessType: value, pattern: [], accessValue: "" }) }} className={`flex flex-col items-center gap-1.5 rounded-lg border px-3 py-3 text-sm transition ${form.accessType === value ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>
                           <Icon size={18} />{label}
                         </button>
                       ))}
@@ -818,10 +946,10 @@ export default function ReceiveEquipmentPage() {
                 <div className="space-y-6">
                   <div className="grid gap-5 sm:grid-cols-2">
                     <label className="block space-y-2 text-sm">Fecha promesa de entrega
-                      <Input type="datetime-local" value={form.promisedAt} onChange={event => update({ promisedAt: event.target.value })} />
+                      <Input type="datetime-local" value={form.promisedAt} min={minDateTime} onChange={event => update({ promisedAt: event.target.value })} />
                     </label>
                     <label className="block space-y-2 text-sm">Fecha programada de reparación
-                      <Input type="datetime-local" value={form.scheduledAt} min={scheduledMin} onChange={event => update({ scheduledAt: event.target.value })} />
+                      <Input type="datetime-local" value={form.scheduledAt} min={minDateTime} onChange={event => update({ scheduledAt: event.target.value })} />
                       <span className="block text-xs text-muted-foreground">Cuándo trabajará el técnico en el equipo. Opcional.</span>
                     </label>
                     <label className="block space-y-2 text-sm sm:col-span-2">Locación física del equipo
@@ -861,6 +989,11 @@ export default function ReceiveEquipmentPage() {
                             ))}
                           </div>
                         </div>
+                        {budgetCents > 0 && advanceCents > budgetCents && (
+                          <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:col-span-2">
+                            El anticipo supera el presupuesto estimado ({budgetLabel}). Confirma el monto con el cliente.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -888,6 +1021,7 @@ export default function ReceiveEquipmentPage() {
                     ]} />
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[
                       ["Bloqueo del equipo", accessLabel],
+                      ...(form.accessType !== "NONE" ? [[accessValueLabel, accessValueSummary] as [string, ReactNode]] : []),
                       ["Accesorios recibidos", accessoryText],
                     ]} />
                     <SummaryGroup title="Estado" icon={ShieldCheck} items={[

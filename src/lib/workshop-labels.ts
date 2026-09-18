@@ -6,6 +6,9 @@ export const repairLabels = {
   WARRANTY: "En garantía",
 } as const
 export type RepairStage = keyof typeof repairLabels
+// DELIVERED no aparece como destino: la entrega física solo ocurre por la
+// acción SETTLE_DELIVER, que cobra el saldo y libera las refacciones. Un
+// STATUS→DELIVERED directo entregaría sin cobrar ni reponer inventario.
 export const repairNextStages: Record<RepairStage, RepairStage[]> = {
   RECEIVED: ["DIAGNOSIS", "CANCELLED"], DIAGNOSIS: ["EXTERNAL_LAB", "CANCELLED"],
   WAITING_APPROVAL: ["DIAGNOSIS", "NOT_AUTHORIZED", "CANCELLED"],
@@ -13,9 +16,12 @@ export const repairNextStages: Record<RepairStage, RepairStage[]> = {
   IN_REPAIR: ["WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "NOT_REPAIRED", "CANCELLED"],
   EXTERNAL_LAB: ["IN_REPAIR", "QUALITY_CHECK", "NOT_REPAIRED"],
   QUALITY_CHECK: ["IN_REPAIR", "READY", "NOT_REPAIRED"],
-  READY: ["QUALITY_CHECK", "DELIVERED"],
-  NOT_REPAIRED: ["DELIVERED"], NOT_AUTHORIZED: ["DIAGNOSIS", "DELIVERED"],
+  READY: ["QUALITY_CHECK"],
+  NOT_REPAIRED: [], NOT_AUTHORIZED: ["DIAGNOSIS"],
   DELIVERED: ["WARRANTY"], WARRANTY: ["IN_REPAIR", "NOT_REPAIRED"],
   CANCELLED: [],
 }
+/** Etapas desde las que SETTLE_DELIVER puede entregar el equipo (con cobro y
+ *  cierre de refacciones): lista para entregar, o cierre sin reparación. */
+export const repairDeliverableStages: readonly RepairStage[] = ["READY", "NOT_REPAIRED", "NOT_AUTHORIZED"]
 export const repairFolio = (number: number) => `OT-${String(number).padStart(6, "0")}`

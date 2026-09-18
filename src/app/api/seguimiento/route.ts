@@ -26,9 +26,16 @@ function publicDetail(detail: string): string {
     .replace(/Presupuesto\s+[\d.,]+\s*MXN\.?/i, "Presupuesto registrado.")
     .replace(/Autorización registrada por el operador para\s+[\d.,]+\s*MXN\.?/i, "Presupuesto autorizado.")
     .replace(/Responsable:\s*[^.\n]+\.?/i, "Técnico asignado.")
+    // El detalle de entrega interno lleva "Entrega a: <nombre del receptor>".
+    .replace(/Entrega a:\s*[^.\n]+\.?/i, "Entrega registrada.")
     .replace(/,?\s*locación\s+[^.,\n]+/gi, "")
     .replace(/\$?\s*\d[\d,]*(\.\d{1,2})?\s*MXN/gi, "")
     .replace(/\$\s*\d[\d,]*(\.\d{1,2})?/g, "")
+    // Tras el saneado, lo público termina en la primera frase: transiciones
+    // "X → Y." y las frases de presupuesto — lo que sigue es nota interna del
+    // staff (diagnóstico, comentarios) que no debe verse en seguimiento.
+    .replace(/^([^.\n]*→[^.\n]*)\.[\s\S]*$/, "$1.")
+    .replace(/^(Presupuesto (?:registrado|autorizado|estimado en recepción:?)\.?)[\s\S]*$/i, "$1")
     .replace(/ {2,}/g, " ")
     .trim()
 }
@@ -108,10 +115,10 @@ export async function GET(req: Request) {
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
     // Nunca: nombre/teléfono completo, presupuesto sin autorizar (quoteCents),
     // IDs internos, location, aesthetics ni functionalConditions (custodia
-    // interna). Las notas type=NOTE solo salen si el taller las marcó
-    // isPublic: las privadas son bitácora interna (pueden traer locación o
-    // datos de plan). quoteToken solo se expone mientras la orden espera la
-    // autorización del cliente — es justo cuando el enlace le sirve.
+    // interna). Solo salen eventos isPublic: notas que el taller marcó para
+    // el cliente y mensajes públicos del flujo (listo, aprobada, rechazada);
+    // el resto es bitácora interna. quoteToken solo se expone mientras la
+    // orden espera la autorización del cliente — es justo cuando el enlace le sirve.
     return NextResponse.json(
       {
         order: {
@@ -121,6 +128,7 @@ export async function GET(req: Request) {
           brand: order.brand,
           model: order.model,
           reportedIssue: publicIssue(order.reportedIssue),
+          serviceName: order.serviceName,
           promisedAt: order.promisedAt,
           createdAt: order.createdAt,
           branch: order.currentBranch.name,
@@ -132,8 +140,13 @@ export async function GET(req: Request) {
           paidCents,
           quoteToken: order.status === "WAITING_APPROVAL" ? order.quoteToken : null,
           photos: order.photos,
+          // Whitelist estricta: SOLO eventos marcados isPublic por el dominio.
+          // El filtro anterior (type ≠ NOTE) filtraba por tipo y publicaba
+          // detalles de texto libre del staff — nombre de quien recibe la
+          // entrega, niveles de stock, locación interna. publicDetail queda
+          // como segunda capa de saneado sobre lo ya autorizado.
           events: order.events
-            .filter(e => e.type !== "NOTE" || e.isPublic)
+            .filter(e => e.isPublic)
             .map(e => ({
               id: e.id,
               detail: publicDetail(e.detail),

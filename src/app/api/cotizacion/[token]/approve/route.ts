@@ -19,10 +19,16 @@ const MAX_DECISIONS = 10 // por hora por IP; el flujo real necesita 1-2 intentos
 
 const PUBLIC_APPROVED = "El cliente aprobó la cotización."
 const PUBLIC_REJECTED = "El cliente no autorizó la cotización."
+// Monto visto ≠ monto vigente: el cliente reabre el link y vuelve a decidir.
+const QUOTE_CHANGED = "La cotización cambió; vuelve a abrir el link"
 
 const bodySchema = z.object({
   action: z.enum(["APPROVE", "REJECT"]),
   signerName: z.string().trim().max(80).optional(),
+  // Anti-TOCTOU: la mano de obra que el cliente vio en pantalla. Si el taller
+  // cambió el presupuesto entre la carga y el POST, se rechaza la decisión
+  // en vez de comprometer una cifra que el cliente nunca autorizó.
+  expectedLaborCents: z.number().int().min(0).max(100000000),
   // Parte del contrato para una futura captura de firma; hoy no se persiste:
   // RepairOrder.signatureData guarda la firma de RECEPCIÓN y no debe mezclarse.
   signatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
@@ -61,9 +67,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       if (order.quoteApprovedAt) throw new BusinessError("Esta cotización ya fue decidida.", 409)
       if (order.status === "NOT_AUTHORIZED") throw new BusinessError("Esta cotización ya no está vigente.", 409)
       if (order.status === "CANCELLED" || order.status === "DELIVERED") throw new BusinessError("La orden ya está cerrada; la cotización no puede modificarse.", 409)
+      // La decisión pública solo existe sobre una cotización formalmente
+      // presentada (WAITING_APPROVAL la fija la acción QUOTE con importe).
+      // Antes se aceptaban RECEIVED/DIAGNOSIS con quoteCents: un estimado
+      // informal de recepción se convertía en cobro autorizado.
+      if (order.status !== "WAITING_APPROVAL" || order.quoteCents === null) {
+        throw new BusinessError("Esta cotización no está pendiente de autorización.", 409)
+      }
+      // El cliente aprueba la cifra que VIO, no la vigente al llegar el POST.
+      if (approving && input.expectedLaborCents !== order.quoteCents) {
+        throw new BusinessError(QUOTE_CHANGED, 409, "QUOTE_CHANGED")
+      }
 
-      // Un RECHAZO sin cambio de etapa (la orden ya avanzó) no deja rastro en
-      // status ni en quoteApprovedAt: el evento público es la marca de la decisión.
+      // Idempotencia defensiva: el rechazo también marca NOT_AUTHORIZED, pero
+      // si un intento anterior solo alcanzó a escribir el evento, no duplicar.
       if (!approving) {
         const already = await tx.repairEvent.findFirst({
           where: { orderId: order.id, detail: PUBLIC_REJECTED },
@@ -83,9 +100,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         // Directo a reparación, igual que la autorización en mostrador
         // (workshop.ts APPROVE). Antes fijaba DIAGNOSIS y la orden quedaba
         // varada: DIAGNOSIS no tiene transición a IN_REPAIR en repairNextStages.
-        // Si la orden ya avanzó, solo queda el registro de la aprobación.
-        if (order.status === "WAITING_APPROVAL" || (order.status === "DIAGNOSIS" && order.quoteCents !== null)) data.status = "IN_REPAIR"
-      } else if (order.status === "WAITING_APPROVAL") {
+        // La guardia de arriba ya garantiza status === WAITING_APPROVAL.
+        data.status = "IN_REPAIR"
+      } else {
         data.status = "NOT_AUTHORIZED"
       }
 
@@ -149,7 +166,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     )
   } catch (error) {
     if (error instanceof BusinessError) {
-      return NextResponse.json({ error: error.message }, { status: error.status, headers: NO_STORE })
+      // El código viaja para que la UI distinga "cotización cambió" (mensaje
+      // + recargar) de "ya fue decidida" (pantalla de estado final).
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status, headers: NO_STORE })
     }
     if (error instanceof ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ error: "Datos inválidos." }, { status: 400, headers: NO_STORE })

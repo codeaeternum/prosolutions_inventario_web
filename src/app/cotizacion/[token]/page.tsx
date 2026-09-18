@@ -62,7 +62,9 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
   const { token } = await params
   const order = await loadQuoteByToken(token)
 
-  if (!order) {
+  // Igual que la API pública: una vez entregada o cancelada la cotización ya
+  // no es un documento vigente — no debe seguir mostrando montos ni datos.
+  if (!order || order.status === "DELIVERED" || order.status === "CANCELLED") {
     return (
       <PageShell>
         <QuoteNotFound trackingHref="/seguimiento" />

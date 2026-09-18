@@ -239,6 +239,7 @@ export function QuoteDocument({ order, businessName, token }: {
         status={order.status}
         quoteApprovedAt={order.quoteApprovedAt?.toISOString() ?? null}
         totalCents={hasQuote ? totalCents : null}
+        laborCents={laborCents}
         hasQuote={hasQuote}
       />
     </section>

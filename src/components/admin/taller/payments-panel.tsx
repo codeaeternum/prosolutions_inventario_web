@@ -47,8 +47,10 @@ export const orderBalanceCents = (order: OrderMoneyLike & { payments?: PaymentLi
 
 export function PaymentsPanel(props: {
   status: string; quoteCents: number | null; approvedQuoteCents: number | null; diagnosticFeeCents: number | null
+  /** Persistido al entregar sin reparación: tras DELIVERED el total sigue siendo solo el cargo de diagnóstico. */
+  closedWithoutRepair?: boolean | null
   parts?: PartLike[]; payments: WorkshopPayment[] | undefined
-  canCharge: boolean; canDeliver: boolean; disabled: boolean
+  canCharge: boolean; canDeliver: boolean; canRefund: boolean; disabled: boolean
   paymentForm: PaymentForm; onPaymentChange: (form: PaymentForm) => void; onPaymentSubmit: (event: React.FormEvent<HTMLFormElement>) => void
   settleOpen: boolean; onSettleOpenChange: (open: boolean) => void
   settleForm: SettleForm; onSettleChange: (form: SettleForm) => void; onSettleSubmit: (event: React.FormEvent<HTMLFormElement>) => void
@@ -57,8 +59,11 @@ export function PaymentsPanel(props: {
 }) {
   const payments = props.payments ?? []
   const parts = props.parts ?? []
-  const withoutRepair = NO_REPAIR_STATUSES.includes(props.status)
-  const order = { status: props.status, quoteCents: props.quoteCents, approvedQuoteCents: props.approvedQuoteCents, diagnosticFeeCents: props.diagnosticFeeCents }
+  // El cargo de diagnóstico es editable solo antes de entregar (status aún
+  // NOT_AUTHORIZED/NOT_REPAIRED); tras la entrega manda closedWithoutRepair.
+  const feeEditable = NO_REPAIR_STATUSES.includes(props.status)
+  const withoutRepair = feeEditable || props.closedWithoutRepair === true
+  const order = { status: props.status, quoteCents: props.quoteCents, approvedQuoteCents: props.approvedQuoteCents, diagnosticFeeCents: props.diagnosticFeeCents, closedWithoutRepair: props.closedWithoutRepair }
   const total = orderTotalCents(order, parts)
   const partsCents = approvedPartsTotal(parts).priceCents
   const paid = orderHeldCents(payments)
@@ -67,13 +72,14 @@ export function PaymentsPanel(props: {
   const uncosted = !withoutRepair && props.approvedQuoteCents === null && props.quoteCents === null && partsCents === 0
   return <section className="space-y-4 rounded-xl border bg-card p-5">
     <div className="flex justify-between"><h2 className="font-semibold">Presupuesto y pagos</h2><span className="text-sm text-muted-foreground">{payments.length} {payments.length === 1 ? "cobro" : "cobros"}</span></div>
-    <dl className="grid grid-cols-3 gap-3 text-sm">
+    <dl className={`grid gap-3 text-sm ${overpaid > 0 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
       <div><dt className="text-xs text-muted-foreground">{withoutRepair ? "Cargo diagnóstico" : "Total"}</dt><dd className="text-lg font-semibold">{uncosted ? "Sin cotizar" : money(total)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Abonado</dt><dd className="text-lg font-semibold">{money(paid)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Saldo</dt><dd className={`text-lg font-semibold ${balance > 0 ? "text-rose-600 dark:text-rose-400" : ""}`}>{money(balance)}</dd></div>
+      {overpaid > 0 && <div><dt className="text-xs text-muted-foreground">A devolver</dt><dd className="text-lg font-semibold text-amber-600 dark:text-amber-400">{money(overpaid)}</dd></div>}
     </dl>
     {!withoutRepair && partsCents > 0 && <p className="text-xs text-muted-foreground">Mano de obra {money(props.approvedQuoteCents ?? props.quoteCents ?? 0)} + refacciones autorizadas {money(partsCents)}.</p>}
-    {overpaid > 0 && <p className="rounded-lg border border-amber-300/70 bg-amber-50/60 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">El cliente pagó de más: {money(overpaid)} a favor. Registra el reembolso abajo.</p>}
+    {overpaid > 0 && <p className="rounded-lg border border-amber-300/70 bg-amber-50/60 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">El cliente pagó de más: {money(overpaid)} pendiente de devolver.{props.canRefund ? " Registra el reembolso abajo." : " La devolución la registra un administrador."}</p>}
     {payments.length === 0 ? <p className="text-sm text-muted-foreground">Sin cobros registrados.</p>
       : <ul className="space-y-2">{payments.map(payment => <li key={payment.id} className="rounded-lg border p-3 text-sm">
         <p className="flex flex-wrap items-center gap-2">
@@ -84,7 +90,7 @@ export function PaymentsPanel(props: {
         <p className="mt-1 text-xs text-muted-foreground">{payment.createdBy.name} · {date(payment.createdAt)}</p>
         {payment.notes && <p className="mt-1 text-xs">{payment.notes}</p>}
       </li>)}</ul>}
-    {withoutRepair && <form onSubmit={props.onFeeSubmit} className="space-y-3 rounded-lg border border-dashed p-3">
+    {feeEditable && <form onSubmit={props.onFeeSubmit} className="space-y-3 rounded-lg border border-dashed p-3">
       <p className="flex items-center gap-1.5 text-xs font-medium"><Stethoscope size={14} />Cargo por diagnóstico/revisión</p>
       <p className="text-xs text-muted-foreground">La cotización no se cobra: al entregar solo aplica este cargo (0 para entregar gratis).</p>
       <fieldset disabled={props.disabled} className="flex flex-wrap items-end gap-3">
@@ -101,7 +107,7 @@ export function PaymentsPanel(props: {
       </fieldset>
       <Button size="sm" disabled={props.disabled || !props.paymentForm.amount || !props.paymentForm.method}>{props.disabled ? "Guardando…" : "Registrar abono"}</Button>
     </form>}
-    {overpaid > 0 && <form onSubmit={props.onRefundSubmit} className="space-y-3 rounded-lg border border-dashed border-rose-300/70 p-3 dark:border-rose-800">
+    {overpaid > 0 && props.canRefund && <form onSubmit={props.onRefundSubmit} className="space-y-3 rounded-lg border border-dashed border-rose-300/70 p-3 dark:border-rose-800">
       <p className="flex items-center gap-1.5 text-xs font-medium"><Undo2 size={14} />Devolver excedente al cliente</p>
       <fieldset disabled={props.disabled} className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs">Monto MXN<Input type="number" min={0} max={overpaid / 100} step="0.01" required value={props.refundForm.amount} onChange={e => props.onRefundChange({ ...props.refundForm, amount: e.target.value })} placeholder="0.00" className="mt-1" /></label>
@@ -122,6 +128,6 @@ export function PaymentsPanel(props: {
           <Button size="sm" variant="outline" type="button" disabled={props.disabled} onClick={() => props.onSettleOpenChange(false)}>Cancelar</Button>
         </div>
       </form>
-      : <Button type="button" className="w-full" disabled={props.disabled} onClick={() => props.onSettleOpenChange(true)}><PackageCheck className="mr-2 h-4 w-4" />Entregar y liquidar{balance > 0 ? ` · ${money(balance)}` : ""}</Button>)}
+      : <Button type="button" className="w-full" disabled={props.disabled} onClick={() => props.onSettleOpenChange(true)}><PackageCheck className="mr-2 h-4 w-4" />Entregar y cobrar{balance > 0 ? ` · ${money(balance)}` : ""}</Button>)}
   </section>
 }

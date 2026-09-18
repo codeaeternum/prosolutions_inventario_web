@@ -6,6 +6,13 @@ import { businessFailure } from "@/lib/domain/http"
 import { BusinessError } from "@/lib/domain/operations"
 import { deleteRepairPhotoFile, evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
 
+// Órdenes en estado terminal: la evidencia es parte del expediente cerrado.
+// Solo ADMIN puede agregar (p. ej. garantía) o borrar en ellas; el técnico
+// solo en órdenes abiertas — no puede borrar evidencia de lo ya entregado.
+const TERMINAL_STAGES = ["DELIVERED", "CANCELLED", "NOT_AUTHORIZED", "NOT_REPAIRED"]
+const closedForEmployee = (status: string, role: string | undefined) =>
+  TERMINAL_STAGES.includes(status) && role !== "ADMIN"
+
 // Sube una evidencia (jpeg/png/webp, ≤5 MB) a una orden de reparación.
 // El archivo queda en data/uploads/repairs/<orderId>/<photoId>.<ext> y se
 // sirve por /api/evidence?id=<photoId> (los ids son cuid no adivinables).
@@ -18,8 +25,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const businessId = businessIdOf(session)
     const { id } = await params
 
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { id: true } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { id: true, status: true } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    if (closedForEmployee(order.status, session.user.role)) {
+      throw new BusinessError("La orden está cerrada; solo un administrador puede agregar evidencia.", 403)
+    }
 
     const form = await req.formData()
     const file = form.get("file")
@@ -42,7 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await prisma.repairEvent.create({
         data: { businessId, actorId, orderId: id, type: "PHOTO", detail: `Evidencia agregada${label ? `: ${label}` : ""}` },
       })
-      return NextResponse.json({ photo: saved }, { status: 201 })
+      return NextResponse.json({ photo: saved }, { status: 201, headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       await prisma.repairPhoto.delete({ where: { id: photo.id } }).catch(() => {})
       throw error
@@ -64,6 +74,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const photoId = typeof body?.photoId === "string" ? body.photoId : ""
     if (!photoId) throw new BusinessError("Indica la foto a eliminar.")
 
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { status: true } })
+    if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    if (closedForEmployee(order.status, session.user.role)) {
+      throw new BusinessError("La orden está cerrada; solo un administrador puede eliminar evidencia.", 403)
+    }
+
     const photo = await prisma.repairPhoto.findFirst({ where: { id: photoId, orderId: id, businessId } })
     if (!photo) throw new BusinessError("La evidencia no pertenece a esta orden.", 404)
 
@@ -72,6 +88,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     await prisma.repairEvent.create({
       data: { businessId, actorId, orderId: id, type: "PHOTO", detail: `Evidencia eliminada${photo.label ? `: ${photo.label}` : ""}` },
     })
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }

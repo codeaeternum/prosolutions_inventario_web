@@ -38,6 +38,8 @@ export interface PublicOrder {
   brand: string | null
   model: string | null
   reportedIssue: string
+  // Servicio del catálogo elegido en recepción (nuevo campo; órdenes viejas: null).
+  serviceName: string | null
   promisedAt: string | null
   createdAt: string
   branch: string | null
@@ -225,7 +227,10 @@ export function OrderResult({ order, business }: { order: PublicOrder; business:
   const timeline = buildTimeline(order)
   const special = SPECIAL[order.status]
   const equipment = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")
-  const { service, issue } = splitIssue(order.reportedIssue)
+  const { service: legacyService, issue } = splitIssue(order.reportedIssue)
+  // El servicio del catálogo ya viaja estructurado en serviceName; el split
+  // de reportedIssue solo cubre órdenes anteriores a ese campo.
+  const service = order.serviceName ?? legacyService
   const headerNote = HEADER_NOTE[order.status]
   const waHref = waMeHref(business.phone, `Hola, consulto por mi orden ${order.folio}.`)
 

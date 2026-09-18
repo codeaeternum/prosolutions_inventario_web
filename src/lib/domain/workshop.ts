@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
-import { repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
+import { repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
@@ -24,6 +24,8 @@ const createSchema = z.object({
   deviceAccessType: z.enum(["NONE", "PATTERN", "PIN", "PASSWORD"]).optional(),
   deviceAccessValue: z.string().trim().max(100).optional(),
   accessories: optionalText, intakeCondition: optionalText, reportedIssue: text,
+  // Servicio elegido del catálogo al recibir (opcional; el detalle libre va en reportedIssue).
+  serviceName: optionalText,
   functionalConditions: z.array(conditionFlag).max(6).optional(),
   aesthetics: z.enum(["BUENO", "REGULAR", "MALO"]).optional(),
   location: z.string().trim().max(80).optional(),
@@ -41,16 +43,21 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
   amountCents: number; method: "CASH" | "CARD" | "TRANSFER"; purpose: "ADVANCE" | "ABONO" | "SETTLEMENT"; note?: string
 }) {
-  const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
-  let cashNote = ""
+  // Cobrar en efectivo exige caja abierta (misma regla que el reembolso): sin
+  // asiento de caja el cobro quedaría fuera del corte del turno. Tarjeta y
+  // transferencia no pasan por caja y pueden cobrarse sin ella.
+  let register: { id: string } | null = null
   if (args.method === "CASH") {
-    const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: args.branchId, businessId: args.businessId }, orderBy: { openedAt: "desc" } })
-    if (register) {
-      const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller OT-${String(args.orderNumber).padStart(6, "0")} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
-      await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
-    } else cashNote = " Sin caja abierta en la sucursal: quedó documentado sin asiento de caja."
+    const registers = await tx.cashRegister.findMany({ where: { status: "OPEN", branchId: args.branchId, businessId: args.businessId }, take: 2 })
+    if (registers.length !== 1) throw new BusinessError(registers.length ? "Hay más de una caja abierta en la sucursal; requiere revisión." : "Abre la caja antes de cobrar en efectivo.", 409, "REGISTER_REQUIRED")
+    register = registers[0]
   }
-  return { payment, cashNote }
+  const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
+  if (register) {
+    const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller OT-${String(args.orderNumber).padStart(6, "0")} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
+    await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
+  }
+  return { payment }
 }
 export async function createRepair(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const { idempotencyKey, promisedAt, scheduledAt, functionalConditions, advance, ...input } = createSchema.parse(raw)
@@ -64,11 +71,11 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     const customerId = await linkCustomerByPhone(tx, businessId, input.customerPhone)
       ?? await linkCustomerByPhone(tx, businessId, input.customerPhoneAlt)
     const order = await tx.repairOrder.create({ data: { ...input, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
-    await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.` } })
-    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.` } })
+    await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
+    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.`, isPublic: true } })
     if (advance && advance.amountCents > 0) {
-      const { cashNote } = await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, businessId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
-      await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).${cashNote}` } })
+      await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, businessId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).` } })
     }
     return { order }
   })
@@ -129,6 +136,34 @@ const stockNote = (result: { deducted: number; stock: number } | null, qty: numb
   result === null ? ""
     : result.deducted <= 0 ? " — sin existencias en la sucursal; no se descontó inventario"
     : ` — stock quedó en ${result.stock}${result.deducted < qty ? ` (faltan ${qty - result.deducted} sin existencias registradas)` : ""}`
+/** La orden se cierra sin cobrar refacciones (cancelación, "no quedó" o
+ *  entrega sin reparación): las piezas APPROVED regresan al stock — solo se
+ *  repone lo descontado y no repuesto antes, así es seguro repetirlo — y las
+ *  APPROVED/REQUESTED quedan REJECTED con la razón en decisionNote.
+ *  Devuelve fragmentos de texto para el detalle del evento. */
+async function releaseOrderParts(tx: Prisma.TransactionClient, args: {
+  order: { id: string; number: number; currentBranchId: string }
+  parts: ReadonlyArray<{ id: string; productId: string | null; description: string; qty: number; unitPriceCents: number; status: string }>
+  actorId: string; businessId: string; note: string
+}): Promise<string[]> {
+  const tail: string[] = []
+  const released: string[] = []
+  for (const part of args.parts.filter(row => row.status === "APPROVED")) {
+    const result = await syncPartStock(tx, { order: args.order, part, actorId: args.actorId, businessId: args.businessId, type: "RETURN" })
+    if (result && result.deducted > 0) released.push(`${result.deducted} × ${part.description}`)
+  }
+  if (released.length) tail.push(`Refacciones liberadas a inventario: ${released.join(", ")}.`)
+  const rejected = await tx.repairPart.updateMany({
+    where: { orderId: args.order.id, status: { in: ["APPROVED", "REQUESTED"] } },
+    data: { status: "REJECTED", decidedById: args.actorId, decidedAt: new Date(), decisionNote: args.note },
+  })
+  if (rejected.count > 0) tail.push(`${rejected.count} refacción(es) marcadas como no cobradas.`)
+  return tail
+}
+/** Estados terminales para el ciclo de refacciones: la orden ya no admite
+ *  agregar ni autorizar piezas (CANCELLED/DELIVERED ya las bloquean por el
+ *  cierre general; NOT_AUTHORIZED/NOT_REPAIRED son cierres sin reparación). */
+const PART_CLOSED_STATUSES: readonly string[] = ["NOT_AUTHORIZED", "NOT_REPAIRED", "CANCELLED", "DELIVERED"]
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
@@ -149,7 +184,9 @@ const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "S
 export async function updateRepair(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: "staff", payload: { id, ...input } }, async tx => {
+  // REFUND es salida de dinero: solo admin (alineado con cash.ts, que exige
+  // ADMIN para el OUT manual). El resto de acciones son de mostrador (staff).
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: input.action === "REFUND" ? "admin" : "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
@@ -165,20 +202,40 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     // (filas REFUNDED con amount negativo, misma convención que ventas).
     const heldCents = async () => Math.round(((await tx.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: id, status: { in: ["CONFIRMED", "REFUNDED"] } } }))._sum.amount ?? 0) * 100)
     const orderParts = () => tx.repairPart.findMany({ where: { orderId: id }, select: { id: true, productId: true, description: true, qty: true, unitCostCents: true, unitPriceCents: true, status: true } })
+    // Ciclo de refacciones cerrado en estados terminales (incluye los cierres
+    // sin reparación, que el bloqueo general de cerradas no alcanza): no se
+    // agregan ni se autorizan piezas sobre una orden que ya no se cobra así.
+    if (["PART_REQUEST", "PART_ADD", "PART_DECIDE"].includes(input.action) && PART_CLOSED_STATUSES.includes(order.status)) {
+      throw new BusinessError("La orden está cerrada; las refacciones ya no se pueden agregar ni resolver.", 409)
+    }
     if (input.action === "QUOTE") {
       if (!["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) || input.quoteCents === undefined) throw new BusinessError("Registra el diagnóstico e importe antes de solicitar autorización.", 409)
       Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL" })
       detail = `Presupuesto ${(input.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
+      eventPublic = true
     } else if (input.action === "APPROVE") {
       if (order.status !== "WAITING_APPROVAL" || order.quoteCents === null) throw new BusinessError("No hay presupuesto pendiente de autorizar.", 409)
       Object.assign(data, { approvedQuoteCents: order.quoteCents, quoteApprovedAt: new Date(), status: "IN_REPAIR" })
       detail = `Autorización registrada por el operador para ${(order.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
+      eventPublic = true
     } else if (input.action === "STATUS") {
+      // DELIVERED no es destino válido de STATUS: la entrega física solo
+      // ocurre por SETTLE_DELIVER, que cobra el saldo y cierra refacciones.
       if (!input.status || !repairNextStages[order.status].includes(input.status)) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
       data.status = input.status
       if (input.status === "READY") data.qualityCheck = input.detail
-      if (input.status === "DELIVERED") data.deliveredTo = input.detail
       detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}. ${input.detail}`
+      // El cambio de etapa es el progreso que ve el cliente en seguimiento;
+      // el texto libre del staff va después del punto y se trunca al publicar.
+      eventPublic = true
+      if (input.status === "CANCELLED" || input.status === "NOT_REPAIRED") {
+        // Cierre sin cobrar refacciones: las APPROVED regresan al stock y
+        // todas quedan REJECTED — una cancelada ya no admite PART_REMOVE, así
+        // que sin esta reposición el inventario quedaría descontado para
+        // siempre. En NOT_AUTHORIZED la liberación ocurre al entregar.
+        const tail = await releaseOrderParts(tx, { order, parts: await orderParts(), actorId, businessId, note: input.status === "CANCELLED" ? "La orden se canceló; no se cobra." : "La orden se cerró sin reparación; no se cobra." })
+        if (tail.length) detail = `${detail} ${tail.join(" ")}`
+      }
     } else if (input.action === "ASSIGN") {
       const assignee = input.assignedToId ? await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId } }) : null
       if (!assignee) throw new BusinessError("Selecciona una persona habilitada.")
@@ -205,9 +262,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // cargo de diagnóstico en cierres sin reparación — menos lo retenido).
       const pendingCents = orderTotalCents(order, await orderParts()) - await heldCents()
       if (input.paymentCents > pendingCents) throw new BusinessError(`El abono excede el saldo pendiente de ${(Math.max(0, pendingCents) / 100).toFixed(2)} MXN.`, 409)
-      const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
+      await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
       eventType = "PAYMENT"
-      detail = `Abono ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} ${input.detail ?? ""}`.trim()
+      detail = `Abono ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}). ${input.detail ?? ""}`.trim()
     } else if (input.action === "REFUND") {
       if (input.paymentCents === undefined || input.paymentCents <= 0) throw new BusinessError("Indica el monto a devolver.")
       if (!input.paymentMethod) throw new BusinessError("Selecciona el método de devolución.")
@@ -230,7 +287,10 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       eventType = "PAYMENT"
       detail = `Reembolso ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}). ${input.detail}`
     } else if (input.action === "SETTLE_DELIVER") {
-      if (!repairNextStages[order.status].includes("DELIVERED")) throw new BusinessError("La orden aún no está lista para entregarse.", 409)
+      // Única vía de entrega: cobra el saldo y cierra las refacciones. Las
+      // etapas entregables viven en repairDeliverableStages (STATUS nunca
+      // llega a DELIVERED por sí solo).
+      if (!repairDeliverableStages.includes(order.status)) throw new BusinessError("La orden aún no está lista para entregarse.", 409)
       const withoutRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
       const parts = await orderParts()
       const held = await heldCents()
@@ -243,36 +303,24 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       if (balanceCents > 0 && !input.paymentMethod) throw new BusinessError(`Restan ${(balanceCents / 100).toFixed(2)} MXN por cobrar. Selecciona el método.`, 409)
       const tail: string[] = []
       if (withoutRepair) {
-        // Las refacciones no se cobran. NOT_AUTHORIZED: la reparación nunca
-        // corrió (solo se llega desde WAITING_APPROVAL) — las piezas
-        // autorizadas no salieron del anaquel: se reponen a inventario y
-        // quedan rechazadas. NOT_REPAIRED: las piezas pudieron quedar dentro
-        // del equipo devuelto, así que su stock no se repone aquí; si se
-        // recuperaron físicamente, el administrador las retira con
-        // PART_REMOVE antes de entregar. Las REQUESTED mueren en ambos casos.
-        if (order.status === "NOT_AUTHORIZED") {
-          const released: string[] = []
-          for (const part of parts.filter(row => row.status === "APPROVED")) {
-            const result = await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN" })
-            if (result && result.deducted > 0) released.push(`${result.deducted} × ${part.description}`)
-          }
-          if (released.length) tail.push(`Refacciones liberadas a inventario: ${released.join(", ")}.`)
-        }
-        const rejected = await tx.repairPart.updateMany({
-          where: { orderId: id, ...(order.status === "NOT_AUTHORIZED" ? { status: { in: ["APPROVED", "REQUESTED"] } } : { status: "REQUESTED" }) },
-          data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: "La orden se entregó sin reparación; no se cobra." },
-        })
-        if (rejected.count > 0) tail.push(`${rejected.count} refacción(es) marcadas como no cobradas.`)
+        // Las refacciones no se cobran: las APPROVED regresan al stock y
+        // quedan REJECTED junto con las REQUESTED. Es idempotente — quien
+        // llegó a NOT_REPAIRED por STATUS ya liberó su inventario ahí; esto
+        // además cubre órdenes anteriores a esa regla.
+        tail.push(...await releaseOrderParts(tx, { order, parts, actorId, businessId, note: "La orden se entregó sin reparación; no se cobra." }))
       }
       if (balanceCents > 0) {
-        const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
-        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} Entrega a: ${input.detail}`
+        await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
+        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${input.detail}`
       } else detail = `Sin saldo pendiente. Entrega a: ${input.detail}`
       // Si el cliente pagó de más (anticipo mayor al cargo final) el excedente
       // queda documentado para registrar el reembolso con la acción REFUND.
-      if (overpaidCents > 0) tail.push(`Excedente a devolver al cliente: ${(overpaidCents / 100).toFixed(2)} MXN.`)
+      if (overpaidCents > 0) tail.push(`Excedente pendiente de devolver al cliente: ${(overpaidCents / 100).toFixed(2)} MXN.`)
       if (tail.length) detail = `${detail} ${tail.join(" ")}`
-      Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail })
+      // El cierre sin reparación persiste en closedWithoutRepair: el status
+      // pasa a DELIVERED, pero el total de la orden sigue siendo solo el
+      // cargo de diagnóstico (workshop-money) y el excedente es devolvible.
+      Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail, ...(withoutRepair ? { closedWithoutRepair: true } : {}) })
       eventType = "PAYMENT"
     } else if (input.action === "DIAGNOSTIC_FEE") {
       // Cargo por diagnóstico/revisión: lo único cobrable al entregar sin
@@ -342,6 +390,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     const result = await tx.repairOrder.updateMany({ where: { id, businessId, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
+    if (input.action === "SETTLE_DELIVER") {
+      // La entrega queda como evento PAYMENT (privado: lleva montos y el nombre
+      // del receptor). Este segundo evento limpio es el que el cliente ve en
+      // seguimiento y el que marca "Entregado" en su timeline.
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "STATUS", detail: `${repairLabels[order.status]} → ${repairLabels.DELIVERED}. Entrega registrada.`, isPublic: true } })
+    }
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
 }

@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireSuperAdmin } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 
@@ -21,25 +22,45 @@ const rowSchema = z.object({
 const bodySchema = z.object({
   rows: z.array(z.unknown()).max(MAX_ROWS).optional(),
   mode: z.enum(["upsert", "bundled"]).default("upsert"),
+  // "global" (default) = catálogo de plataforma, solo superadmin;
+  // "tenant" = catálogo privado del negocio del admin que importa.
+  scope: z.enum(["global", "tenant"]).default("global"),
 })
 
 // Separador NUL: no puede aparecer en texto CSV y evita colisiones al
 // concatenar marca+modelo en la clave de deduplicación.
 const keyOf = (brand: string, model: string) => `${brand}\u0000${model}`
 
-// POST /api/device-models/import — importación masiva del catálogo GLOBAL de
-// modelos de equipo (solo superadmin de plataforma: el catálogo es compartido
-// por todos los tenants y un admin de tenant no debe pisarlo).
+// POST /api/device-models/import — importación masiva de modelos de equipo.
+// scope="global" (default): catálogo compartido por todos los tenants, solo
+// superadmin de plataforma. scope="tenant": catálogo privado del negocio del
+// admin autenticado.
 // mode="upsert": body.rows trae las filas ya parseadas
 // (máx. 20,000). mode="bundled": lee prisma/seed-data/device-models.json del
 // disco del servidor, útil para resembrar la base incluida sin correr el script.
-// Upsert por la clave única (brand, model) en transacciones de 500 filas.
 export async function POST(req: Request) {
   try {
-    const auth = await requireSuperAdmin()
+    // Primero staff autenticado; el scope decide la elevación después.
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
+    const session = getSession(auth)!
 
-    const { rows, mode } = bodySchema.parse(await req.json())
+    const { rows, mode, scope } = bodySchema.parse(await req.json())
+
+    // scope="global": solo superadmin de plataforma. scope="tenant": solo el
+    // admin del negocio — su businessId sale de la sesión, nunca del body.
+    let businessId: string | null
+    if (scope === "tenant") {
+      if (session.user.role !== "ADMIN") {
+        return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+      }
+      businessId = businessIdOf(session)
+    } else {
+      if (session.user.isSuperAdmin !== true) {
+        return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+      }
+      businessId = null
+    }
 
     let source: unknown[]
     if (mode === "bundled") {
@@ -93,38 +114,72 @@ export async function POST(req: Request) {
       })
     })
 
-    // Por lotes de 500: primero se consultan las claves (brand, model) ya
-    // presentes para distinguir creados de actualizados, luego se hace upsert
-    // de todo el lote en una sola transacción.
+    // Por lotes de 500.
+    // Scope tenant: upsert por la clave compuesta (businessId, brand, model) —
+    // primero se consultan las claves ya presentes para distinguir creados de
+    // actualizados.
+    // Scope global: businessId NULL hace que @@unique no deduplique (Postgres
+    // NULL != NULL); hay que hacer findFirst + create/update por fila dentro
+    // de la transacción — el índice parcial DeviceModel_global_brand_model_key
+    // protege la carrera.
     let created = 0
     let updated = 0
     for (let i = 0; i < valid.length; i += BATCH_SIZE) {
       const batch = valid.slice(i, i + BATCH_SIZE)
-      const existing = await prisma.deviceModel.findMany({
-        where: {
-          brand: { in: [...new Set(batch.map(row => row.brand))] },
-          model: { in: [...new Set(batch.map(row => row.model))] },
-        },
-        select: { brand: true, model: true },
-      })
-      const existingKeys = new Set(existing.map(item => keyOf(item.brand, item.model)))
-      await prisma.$transaction(
-        batch.map(row => {
-          if (existingKeys.has(keyOf(row.brand, row.model))) updated += 1
-          else created += 1
-          return prisma.deviceModel.upsert({
-            where: { brand_model: { brand: row.brand, model: row.model } },
-            create: { brand: row.brand, model: row.model, code: row.code, type: row.type ?? "SMARTPHONE" },
-            // En actualización solo se pisan código/tipo si la fila los trae,
-            // para no borrar datos cuando el CSV solo tiene marca y modelo.
-            update: {
-              ...(row.code !== null ? { code: row.code } : {}),
-              ...(row.type !== null ? { type: row.type } : {}),
-            },
-          })
-        }),
-        { timeout: 30_000 },
-      )
+      if (businessId === null) {
+        await prisma.$transaction(async tx => {
+          for (const row of batch) {
+            const found = await tx.deviceModel.findFirst({
+              where: { businessId: null, brand: row.brand, model: row.model },
+              select: { id: true },
+            })
+            if (found) {
+              updated += 1
+              await tx.deviceModel.update({
+                where: { id: found.id },
+                // En actualización solo se pisan código/tipo si la fila los
+                // trae, para no borrar datos cuando el CSV solo tiene
+                // marca y modelo.
+                data: {
+                  ...(row.code !== null ? { code: row.code } : {}),
+                  ...(row.type !== null ? { type: row.type } : {}),
+                },
+              })
+            } else {
+              created += 1
+              await tx.deviceModel.create({
+                data: { businessId: null, brand: row.brand, model: row.model, code: row.code, type: row.type ?? "SMARTPHONE" },
+              })
+            }
+          }
+        }, { timeout: 30_000 })
+      } else {
+        const tenantId: string = businessId
+        const existing = await prisma.deviceModel.findMany({
+          where: {
+            businessId: tenantId,
+            brand: { in: [...new Set(batch.map(row => row.brand))] },
+            model: { in: [...new Set(batch.map(row => row.model))] },
+          },
+          select: { brand: true, model: true },
+        })
+        const existingKeys = new Set(existing.map(item => keyOf(item.brand, item.model)))
+        await prisma.$transaction(
+          batch.map(row => {
+            if (existingKeys.has(keyOf(row.brand, row.model))) updated += 1
+            else created += 1
+            return prisma.deviceModel.upsert({
+              where: { businessId_brand_model: { businessId: tenantId, brand: row.brand, model: row.model } },
+              create: { businessId: tenantId, brand: row.brand, model: row.model, code: row.code, type: row.type ?? "SMARTPHONE" },
+              update: {
+                ...(row.code !== null ? { code: row.code } : {}),
+                ...(row.type !== null ? { type: row.type } : {}),
+              },
+            })
+          }),
+          { timeout: 30_000 },
+        )
+      }
     }
 
     return NextResponse.json({ created, updated, skipped, errors })

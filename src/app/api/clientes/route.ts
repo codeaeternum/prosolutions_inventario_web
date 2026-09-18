@@ -113,7 +113,7 @@ export async function GET(req: Request) {
     }))
 
     const totalPages = Math.ceil(total / limit) || 1
-    return NextResponse.json({ clientes, total, page, limit, totalPages })
+    return NextResponse.json({ clientes, total, page, limit, totalPages }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     console.error("Error fetching clientes:", error)
     return NextResponse.json({ error: "Error al obtener clientes" }, { status: 500 })
