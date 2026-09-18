@@ -2,7 +2,7 @@ import { sell } from "../../lib/domain/sales"
 import { actor, BusinessError, transaction } from "../../lib/domain/operations"
 import { Markup } from 'telegraf'
 import type { BotContext, CartItem } from '../lib/types'
-import { requireAdmin, requirePrisma } from '../lib/guards'
+import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { notifyAdmins } from '../lib/notify'
 
 export function registerSales({ bot, prisma, sessions, isDev }: BotContext) {
@@ -28,8 +28,11 @@ _O usa /agregarc para vender varios en el carrito._`, { parse_mode: 'Markdown' }
         }
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
+                    businessId: actor.businessId,
                     OR: [
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
@@ -94,8 +97,14 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         const number = parseInt(ctx.match[2])
 
         try {
+            const adminUser = await prisma.user.findUnique({
+                where: { telegramId },
+                select: { id: true, businessId: true }
+            })
+            if (!adminUser) return ctx.reply('Cuenta no disponible.')
+
             const product = await prisma.product.findUnique({
-                where: { id: productId },
+                where: { id: productId, businessId: adminUser.businessId },
                 select: { id: true, name: true, stock: true, retailPrice: true }
             })
 
@@ -105,12 +114,6 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
                 return ctx.editMessageText('❌ Stock insuficiente.')
             }
 
-            const adminUser = await prisma.user.findUnique({
-                where: { telegramId },
-                select: { id: true, businessId: true }
-            })
-
-            if (!adminUser) return ctx.reply('Cuenta no disponible.')
             const result = await sell(prisma, adminUser.id, adminUser.businessId, {
                 idempotencyKey: `bot-sale:${telegramId}:${ctx.callbackQuery.message?.message_id ?? ctx.update.update_id}`,
                 items: [{ productId, quantity: number }], paymentMethod: 'EFECTIVO',
@@ -128,7 +131,7 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
             await ctx.answerCbQuery('Venta confirmada')
             await ctx.editMessageText(successMsg, { parse_mode: 'Markdown' })
 
-            notifyAdmins(bot, `📢 *Nueva Venta (Bot)*
+            notifyAdmins(bot, adminUser.businessId, `📢 *Nueva Venta (Bot)*
         
 👤 Por: Admin
 ${successMsg}`)
@@ -146,13 +149,14 @@ ${successMsg}`)
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
 
+        const telegramId = ctx.from.id.toString()
+        const actor = await getBotAccount(prisma, telegramId)
+        if (!actor) return ctx.reply('Cuenta no disponible.')
         const product = await prisma.product.findUnique({
-            where: { id: productId },
+            where: { id: productId, businessId: actor.businessId },
             select: { id: true, name: true, stock: true, retailPrice: true }
         })
         if (!product || product.stock < 1) return ctx.reply('❌ Sin stock.')
-
-        const telegramId = ctx.from.id.toString()
         sessions.sale[telegramId] = {
             step: 'CONFIRM',
             selectedProduct: product,

@@ -12,6 +12,7 @@ const mocked = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ default: mocked.prisma, prisma: mocked.prisma }))
 vi.mock("@/lib/api-auth", () => ({
   requireAdmin: async () => ({ session: { user: { id: "admin", role: "ADMIN", businessId: "biz-test" } } }),
+  requireAdminOrEmployee: async () => ({ session: { user: { id: "admin", role: "ADMIN", businessId: "biz-test" } } }),
   requireAuth: vi.fn(),
   getSession: vi.fn((result: { session?: unknown }) => result.session ?? null),
 }))

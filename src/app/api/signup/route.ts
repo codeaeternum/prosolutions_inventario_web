@@ -4,7 +4,7 @@ import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
-import { generateSlug } from "@/lib/utils"
+import { generateSlug, normalizePhone } from "@/lib/utils"
 
 /**
  * POST /api/signup — Alta pública de una empresa nueva (multi-tenant).
@@ -109,7 +109,15 @@ export async function POST(req: Request) {
 
     const { businessName, slug: rawSlug, adminName, email, phone, password } = parseResult.data
     const emailNorm = email.trim().toLowerCase()
-    const phoneOrNull = phone?.trim() || null
+    // User.phone es único GLOBAL: se guarda normalizado (últimos 10 dígitos)
+    // para que "+52 811 234 5678" y "811 234 5678" choquen en vez de evadirlo.
+    const phoneOrNull = normalizePhone(phone) || null
+    if (phone?.trim() && !phoneOrNull) {
+      return NextResponse.json(
+        { error: "El teléfono no tiene dígitos válidos" },
+        { status: 400 }
+      )
+    }
 
     // Slug: explícito (validado; 409 si está ocupado) o derivado del nombre.
     const requestedSlug = normalizeSlug(typeof rawSlug === "string" ? rawSlug : "")
@@ -139,12 +147,14 @@ export async function POST(req: Request) {
       slug = derived
     }
 
-    // User.email y User.phone son únicos GLOBALES (no por negocio).
-    const [existingEmail, existingPhone] = await Promise.all([
+    // User.email y User.phone son únicos GLOBALES (no por negocio). El teléfono
+    // se compara normalizado en memoria — filas legacy guardadas como "+52…" no
+    // empatan con la búsqueda exacta (volumen de piloto, cf. customers.ts).
+    const [existingEmail, phoneCandidates] = await Promise.all([
       prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
       phoneOrNull
-        ? prisma.user.findFirst({ where: { phone: phoneOrNull }, select: { id: true } })
-        : Promise.resolve(null),
+        ? prisma.user.findMany({ where: { phone: { not: null } }, select: { phone: true } })
+        : Promise.resolve([]),
     ])
     if (existingEmail) {
       return NextResponse.json(
@@ -152,7 +162,7 @@ export async function POST(req: Request) {
         { status: 409 }
       )
     }
-    if (existingPhone) {
+    if (phoneCandidates.some((u) => normalizePhone(u.phone) === phoneOrNull)) {
       return NextResponse.json(
         { error: "Ya existe una cuenta con ese teléfono" },
         { status: 409 }

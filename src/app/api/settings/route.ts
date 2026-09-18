@@ -11,28 +11,27 @@ const DEFAULT_SETTINGS = {
   updatedAt: new Date().toISOString(),
 }
 
-// GET - Obtener configuración
+// GET - Obtener configuración.
+// Anónimo (checkout público /carrito): solo los campos que la reserva pública
+// necesita — nunca datos bancarios (CLABE/cuentas) ni textos del ticket.
+// Con sesión: respuesta completa para la pantalla de configuración.
+// El GET es de solo lectura: si el negocio no tiene fila Settings todavía se
+// responde con los defaults sin crearla (un GET anónimo no debe escribir).
 export async function GET() {
   try {
-    // Con sesión se responde la configuración de SU empresa; sin sesión el
-    // comportamiento público histórico usa el negocio por defecto.
     const session = await auth()
     const businessId = session ? businessIdOf(session) : await getDefaultBusinessId()
-    let settings = await prisma.settings.findFirst({
+    const settings = await prisma.settings.findFirst({
       where: { businessId },
     })
 
-    // Si no existe, crear con valores por defecto
-    if (!settings) {
-      settings = await prisma.settings.create({
-        data: {
-          businessId,
-          tempReservationMinutes: DEFAULTS.tempReservationMinutes,
-          depositPercentage: DEFAULTS.depositPercentage,
-          depositReservationHours: DEFAULTS.depositReservationHours,
-          pendingVerificationHours: DEFAULTS.pendingVerificationHours,
-          exchangeRate: DEFAULTS.exchangeRate,
-        },
+    if (!session) {
+      return NextResponse.json({
+        tempReservationMinutes: settings?.tempReservationMinutes ?? DEFAULTS.tempReservationMinutes,
+        depositPercentage: settings?.depositPercentage ?? DEFAULTS.depositPercentage,
+        depositReservationHours: settings?.depositReservationHours ?? DEFAULTS.depositReservationHours,
+        pendingVerificationHours: settings?.pendingVerificationHours ?? DEFAULTS.pendingVerificationHours,
+        exchangeRate: settings?.exchangeRate ?? DEFAULTS.exchangeRate,
       })
     }
 
@@ -42,7 +41,17 @@ export async function GET() {
     ])
 
     return NextResponse.json({
-      ...settings,
+      ...(settings ?? {
+        id: "default",
+        businessId,
+        tempReservationMinutes: DEFAULTS.tempReservationMinutes,
+        depositPercentage: DEFAULTS.depositPercentage,
+        depositReservationHours: DEFAULTS.depositReservationHours,
+        pendingVerificationHours: DEFAULTS.pendingVerificationHours,
+        exchangeRate: DEFAULTS.exchangeRate,
+        createdAt: null,
+        updatedAt: null,
+      }),
       bankTransferInfo: systemSettings.get("bank_transfer_info") || DEFAULTS.bankTransferInfo,
       bankCashInfo: systemSettings.get("bank_cash_info") || DEFAULTS.bankCashInfo,
       ticketBusinessName: systemSettings.get("ticket_business_name") || "PROSOLUTIONS",

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee, requireSuperAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -46,9 +46,13 @@ export async function GET(req: Request) {
   } catch (error) { return businessFailure(error) }
 }
 
+// POST/upsert: DeviceModel es catálogo GLOBAL compartido — cualquier staff
+// podía pisar marca+modelo de otro tenant. Solo el superadmin de plataforma
+// escribe; los tenants solo leen (GET sigue libre para staff: es
+// autocompletado compartido).
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireSuperAdmin()
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id

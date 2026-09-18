@@ -1,10 +1,9 @@
 import { submitRegistration, escapeHtml } from "../lib/registration"
 import { Markup } from 'telegraf'
 import type { BotContext } from '../lib/types'
-import { isAdmin, notifyAdmins } from '../lib/notify'
-import { requireAdmin, requirePrisma } from '../lib/guards'
-import { generateQRCode, normalizePhone } from '../lib/utils'
-import { customerTypeLabels } from '../lib/types'
+import { isAdmin } from '../lib/notify'
+import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { normalizePhone } from '../lib/utils'
 
 export function registerUsers({ bot, prisma, sessions }: BotContext) {
     // /admin panel
@@ -54,8 +53,13 @@ _Usa /cancelar para salir de cualquier proceso._`, { parse_mode: 'Markdown' })
         const identifier = args[1].trim()
 
         try {
+            // Multi-tenant: solo puede promover usuarios de SU negocio.
+            const actor = await getBotAccount(prisma, ctx.from.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
+
             const user = await prisma.user.findFirst({
                 where: {
+                    businessId: actor.businessId,
                     OR: [
                         { phone: { contains: identifier } },
                         { telegramId: identifier }
@@ -108,8 +112,13 @@ Usa /admin para ver el panel de administración.`, { parse_mode: 'Markdown' }).c
         const identifier = args[1].trim()
 
         try {
+            // Multi-tenant: solo puede degradar admins de SU negocio.
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.reply('Cuenta no disponible.')
+
             const user = await prisma.user.findFirst({
                 where: {
+                    businessId: actor.businessId,
                     OR: [
                         { phone: { contains: identifier } },
                         { telegramId: identifier }
@@ -235,8 +244,17 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
         }
 
         try {
+            // Multi-tenant: un admin solo aprueba solicitudes de SU negocio.
+            const actor = await getBotAccount(prisma, ctx.from.id.toString())
+            if (!actor) return ctx.answerCbQuery('Cuenta no disponible')
+            const target = await prisma.user.findFirst({ where: { id: userId, businessId: actor.businessId } })
+            if (!target) {
+                await ctx.answerCbQuery('Usuario no encontrado')
+                return ctx.editMessageText('❌ Solicitud no encontrada en tu negocio.')
+            }
+
             const user = await prisma.user.update({
-                where: { id: userId },
+                where: { id: target.id },
                 data: { status: 'APPROVED' }
             })
 
@@ -260,8 +278,17 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
         }
 
         try {
+            // Multi-tenant: un admin solo rechaza solicitudes de SU negocio.
+            const actor = await getBotAccount(prisma, ctx.from.id.toString())
+            if (!actor) return ctx.answerCbQuery('Cuenta no disponible')
+            const target = await prisma.user.findFirst({ where: { id: userId, businessId: actor.businessId } })
+            if (!target) {
+                await ctx.answerCbQuery('Usuario no encontrado')
+                return ctx.editMessageText('❌ Solicitud no encontrada en tu negocio.')
+            }
+
             const user = await prisma.user.update({
-                where: { id: userId },
+                where: { id: target.id },
                 data: { status: 'REJECTED' }
             })
 

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma"
 import { repairFolio } from "@/lib/workshop-labels"
+import { orderTotalCents } from "@/lib/workshop-money"
 
 /**
  * Datos de la consola de plataforma (consola Reficio, solo superadmin).
@@ -192,6 +193,9 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
         createdAt: true,
         quoteCents: true,
         approvedQuoteCents: true,
+        diagnosticFeeCents: true,
+        // Refacciones autorizadas: se cobran además de la mano de obra.
+        parts: { where: { status: "APPROVED" }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },
       },
     }),
     prisma.sale.findMany({
@@ -228,7 +232,9 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
       folio: repairFolio(o.number),
       status: o.status,
       createdAt: o.createdAt,
-      totalCents: o.approvedQuoteCents ?? o.quoteCents,
+      // Total real de la orden: mano de obra + refacciones autorizadas (o el
+      // cargo de diagnóstico en cierres sin reparación) — workshop-money.
+      totalCents: orderTotalCents(o, o.parts),
     })),
     recentSales: sales.map(s => ({
       id: s.id,

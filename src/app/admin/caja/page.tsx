@@ -37,6 +37,7 @@ interface Register {
     initialAmount: number
     calculatedTotal: number
     openedAt: string
+    openedById: string
     openedBy: { name: string }
     movements: Movement[]
 }
@@ -446,13 +447,22 @@ export default function CajaPage() {
                             >
                                 <ArrowDownCircle className="w-4 h-4 mr-2" /> Ingreso
                             </Button>
+                            {/* La salida directa de efectivo es solo de admin; el empleado
+                                solicita el gasto y otro admin lo autoriza (panel de abajo). */}
                             <Button 
                                 variant={movType === "OUT" ? "destructive" : "outline"} 
-                                onClick={() => setMovType("OUT")}
+                                onClick={() => { if (isAdmin) setMovType("OUT") }}
+                                disabled={!isAdmin}
+                                title={isAdmin ? undefined : "Requiere aprobación — usa Solicitar gasto"}
                             >
                                 <ArrowUpCircle className="w-4 h-4 mr-2" /> Retiro / Gasto
                             </Button>
                         </div>
+                        {!isAdmin && (
+                            <p className="text-xs text-muted-foreground -mt-1">
+                                Los retiros de efectivo requieren autorización de un administrador — usa «Solicitar gasto» más abajo.
+                            </p>
+                        )}
                         <div className="space-y-2">
                             <Label>Monto</Label>
                             <Input type="number" placeholder="0.00" value={movAmount} onChange={e => setMovAmount(e.target.value)} />
@@ -485,7 +495,13 @@ export default function CajaPage() {
                             <Label>Notas (Opcional)</Label>
                             <Input placeholder="Justificación de faltantes/sobrantes" value={closeNotes} onChange={e => setCloseNotes(e.target.value)} />
                         </div>
-                        <Button variant="destructive" className="w-full mt-4" onClick={handleClose} disabled={submitting}>
+                        <Button
+                            variant="destructive"
+                            className="w-full mt-4"
+                            onClick={handleClose}
+                            disabled={submitting || (!isAdmin && register.openedById !== userId)}
+                            title={!isAdmin && register.openedById !== userId ? "Solo un administrador o quien abrió el turno puede cerrarlo" : undefined}
+                        >
                             Confirmar Cierre de Caja
                         </Button>
                     </CardContent>

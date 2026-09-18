@@ -20,10 +20,15 @@ export interface RepairTicketData {
   issue: string
   // Cobros confirmados (anticipo/abonos/liquidación) y presupuesto en pesos.
   payments?: { label: string; amount: number; method: string }[]
-  // Presupuesto estimado original: solo llega cuando un presupuesto
-  // autorizado distinto ya lo reemplazó en la línea "Presupuesto".
+  // Mano de obra estimada original: solo llega cuando una mano de obra
+  // autorizada distinta ya la reemplazó en la línea "Mano de obra".
   estimatedQuote?: number
-  quote?: number
+  // Desglose pedido por el cliente: mano de obra y refacciones por separado;
+  // en cierres sin reparación solo hay diagnosticFee.
+  laborQuote?: number
+  partsTotal?: number
+  diagnosticFee?: number
+  totalOrder?: number
   balance?: number
   qrCode?: string
   trackingHint?: string
@@ -120,16 +125,19 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
           <p className="text-xs leading-snug">{data.issue}</p>
         </div>
 
-        {/* Cobros y presupuesto (solo si existen) */}
-        {((data.payments?.length ?? 0) > 0 || data.quote !== undefined) && (
+        {/* Cobros y desglose (solo si existen) */}
+        {((data.payments?.length ?? 0) > 0 || data.totalOrder !== undefined) && (
           <div className="mb-3">
             <h3 className="text-[10px] uppercase text-gray-500 mb-1">Cobros</h3>
             <div className="text-xs space-y-0.5">
               {data.payments?.map((p, idx) => (
                 <p key={idx}>{p.label}: {formatPrice(p.amount)} ({p.method})</p>
               ))}
-              {data.estimatedQuote !== undefined && <p>Presupuesto estimado: {formatPrice(data.estimatedQuote)}</p>}
-              {data.quote !== undefined && <p>{data.estimatedQuote !== undefined ? "Presupuesto autorizado" : "Presupuesto"}: {formatPrice(data.quote)}</p>}
+              {data.estimatedQuote !== undefined && <p>Mano de obra estimada: {formatPrice(data.estimatedQuote)}</p>}
+              {data.laborQuote !== undefined && <p>{data.estimatedQuote !== undefined ? "Mano de obra autorizada" : "Mano de obra"}: {formatPrice(data.laborQuote)}</p>}
+              {data.partsTotal !== undefined && <p>Refacciones: {formatPrice(data.partsTotal)}</p>}
+              {data.diagnosticFee !== undefined && <p>Cargo por diagnóstico: {formatPrice(data.diagnosticFee)}</p>}
+              {data.totalOrder !== undefined && <p className="font-bold">Total a pagar: {formatPrice(data.totalOrder)}</p>}
               {data.balance !== undefined && <p className="font-bold">Saldo: {formatPrice(data.balance)}</p>}
             </div>
           </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Loader2, PackageCheck } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -99,6 +100,7 @@ interface FulfillFormProps {
 
 function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillFormProps) {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("EFECTIVO")
+  const [reference, setReference] = useState("") // folio SPEI/autorización; requerido en transferencia
   // Si la pidió una cuenta WORKSHOP, esa es la cuenta del taller por defecto.
   const [customerId, setCustomerId] = useState(
     request.requestedBy?.role === "WORKSHOP" ? request.requestedBy.id : ""
@@ -116,7 +118,8 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
 
   const total = request.product.wholesalePrice * request.qty
   const needsAccount = paymentMethod === "CREDITO"
-  const canSubmit = (!needsAccount || customerId !== "") && !sending
+  const needsReference = paymentMethod === "TRANSFERENCIA"
+  const canSubmit = (!needsAccount || customerId !== "") && (!needsReference || reference.trim() !== "") && !sending
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -130,6 +133,7 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
         body: JSON.stringify({
           action: "FULFILL",
           paymentMethod,
+          reference: reference.trim() || undefined,
           customerId: customerId || undefined,
           branchId: branchId || undefined,
           decisionNote: note.trim() || undefined,
@@ -179,6 +183,19 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
           </SelectContent>
         </Select>
       </div>
+
+      {needsReference && (
+        <div className="space-y-1.5">
+          <Label htmlFor="mful-ref">Referencia de la transferencia *</Label>
+          <Input
+            id="mful-ref"
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            placeholder="Folio SPEI / clave de rastreo"
+            maxLength={200}
+          />
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label>

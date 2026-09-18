@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto"
 import { moveInventory } from "@/lib/domain/inventory"
 import { createReservations, changeReservation } from "@/lib/domain/reservations"
 import { sell, returnSaleItems } from "@/lib/domain/sales"
-import { PRINCIPAL_BRANCH_ID } from "@/lib/domain/operations"
 
 const enabled = process.env.RUN_DATABASE_TESTS === "1"
 const url = process.env.DATABASE_URL ?? "postgresql://audit:audit-isolated-only@127.0.0.1:55433/hardening"
@@ -16,11 +15,11 @@ if (enabled) {
 }
 const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
 const prefix = `refund-test-${randomUUID()}`
-let admin: string, customer: string, category: string, biz: string
+let admin: string, customer: string, category: string, branchA: string, biz: string
 
 async function product(stock = 1) {
   const row = await db.product.create({ data: { businessId: biz, name: prefix, categoryId: category, stock: 0, retailPrice: 100, wholesalePrice: 100, images: [] } })
-  if (stock > 0) await db.branchStock.create({ data: { businessId: biz, productId: row.id, branchId: PRINCIPAL_BRANCH_ID, quantity: stock } })
+  if (stock > 0) await db.branchStock.create({ data: { businessId: biz, productId: row.id, branchId: branchA, quantity: stock } })
   return db.product.update({ where: { id: row.id }, data: { stock } })
 }
 
@@ -30,7 +29,9 @@ describe.skipIf(!enabled)("deposit refund safety in PostgreSQL", () => {
     admin = (await db.user.create({ data: { businessId: biz, name: prefix, role: "ADMIN", status: "APPROVED" } })).id
     customer = (await db.user.create({ data: { businessId: biz, name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000, creditBalance: 500 } })).id
     category = (await db.category.create({ data: { businessId: biz, name: prefix, slug: prefix } })).id
-    await db.branch.upsert({ where: { id: PRINCIPAL_BRANCH_ID }, create: { id: PRINCIPAL_BRANCH_ID, businessId: biz, name: "Local principal" }, update: { isActive: true } })
+    // "branch-principal" queda ligado al primer negocio que lo creó en esta base
+    // persistente; cada corrida crea su propia sucursal y el fallback la elige.
+    branchA = (await db.branch.create({ data: { businessId: biz, name: prefix } })).id
   })
   afterAll(async () => { await db.$disconnect() })
 

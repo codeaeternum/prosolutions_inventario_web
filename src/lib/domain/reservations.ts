@@ -93,10 +93,13 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
   if (actorId === null && input.action !== "expire") throw new BusinessError("Acción no autorizada.", 403)
   if (actorId !== null && input.action === "expire") throw new BusinessError("La expiración se ejecuta desde el proceso del sistema.", 403)
   return transaction(db, async tx => {
-    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "customer" : "admin", businessId) : null
+    // Gestión en mostrador (aprobar, verificar anticipo, entregar, rechazar):
+    // staff = admin|empleado. "cancel" queda como acción de cliente y la
+    // pertencia se valida abajo; staff puede cancelar cualquier reserva.
+    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "customer" : "staff", businessId) : null
     const reservation = await tx.reservation.findUnique({ where: { id }, include: { product: { select: { id: true, name: true } } } })
     if (!reservation || reservation.businessId !== businessId) throw new BusinessError("Reserva no encontrada.", 404)
-    if (user && user.role !== "ADMIN" && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)
+    if (user && !["ADMIN", "EMPLOYEE"].includes(user.role) && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)
     const target = input.action === "cancel" ? "CANCELLED" : input.action === "reject" ? "REJECTED" : input.action === "expire" ? "EXPIRED" : input.action === "approve" ? "APPROVED" : ["pay", "verify_deposit"].includes(input.action) ? "DEPOSIT_VERIFIED" : "COMPLETED"
     if (reservation.status === target) return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid }
     if (!active(reservation.status)) throw new BusinessError("La reserva ya tiene un estado final y no admite esta acción.", 409, "TERMINAL_RESERVATION")
@@ -106,7 +109,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
 
     const config = await settings(tx, businessId)
     let requiresRefund = false
-    const notes = user?.role === "ADMIN" ? input.adminNotes : undefined
+    const notes = user && ["ADMIN", "EMPLOYEE"].includes(user.role) ? input.adminNotes : undefined
     let data: Parameters<typeof tx.reservation.update>[0]["data"] = { status: target, ...(notes !== undefined ? { adminNotes: notes } : {}) }
 
     if (["CANCELLED", "REJECTED", "EXPIRED"].includes(target)) {

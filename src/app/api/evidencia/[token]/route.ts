@@ -15,9 +15,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
   const { token } = await params
   const order = await prisma.repairOrder.findUnique({
     where: { uploadToken: token },
-    select: { number: true, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
+    select: { number: true, business: { select: { isActive: true } }, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
   })
-  if (!order) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+  // Empresa suspendida: el enlace muere igual que un token inválido (404 genérico).
+  if (!order || !order.business.isActive) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
   return NextResponse.json({ orderNumber: order.number, photos: order.photos }, { headers: NO_STORE })
 }
 
@@ -33,9 +34,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     const { token } = await params
     const order = await prisma.repairOrder.findUnique({
       where: { uploadToken: token },
-      select: { id: true, createdById: true, businessId: true },
+      select: { id: true, createdById: true, businessId: true, status: true, business: { select: { isActive: true } } },
     })
-    if (!order) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+    // Empresa suspendida: el enlace muere igual que un token inválido (404 genérico).
+    if (!order || !order.business.isActive) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+    // Orden cerrada: el sticker físico es permanente y el enlace queda vivo
+    // para siempre — sin bloqueo cualquiera podría subir basura a una orden
+    // ya entregada/cancelada. Se responde 404 igual que un token inválido.
+    if (["DELIVERED", "CANCELLED", "NOT_AUTHORIZED", "NOT_REPAIRED"].includes(order.status)) {
+      return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+    }
 
     const form = await req.formData()
     const file = form.get("file")

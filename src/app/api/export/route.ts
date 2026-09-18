@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
+import { orderTotalCents } from "@/lib/workshop-money"
 
 const MAX_ROWS = 5000
 const EXPORT_TYPES = ["products", "sales", "orders"] as const
@@ -125,12 +126,17 @@ async function exportOrders(businessId: string, branchId?: string): Promise<stri
     include: {
       currentBranch: { select: { name: true } },
       assignedTo: { select: { name: true } },
-      payments: { where: { status: "CONFIRMED" }, select: { amount: true } },
+      // CONFIRMED suman y los reembolsos REFUNDED (amount negativo) restan.
+      payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, select: { amount: true, status: true } },
+      // Refacciones autorizadas: se cobran además de la mano de obra.
+      parts: { where: { status: "APPROVED" }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },
     },
   })
   const headers = ["Folio", "Fecha recepción", "Cliente", "Teléfono", "Equipo", "Estado", "Sucursal", "Técnico", "Presupuesto", "Abonado", "Saldo"]
   const rows = orders.map((o) => {
-    const quoteCents = o.approvedQuoteCents ?? o.quoteCents ?? 0
+    // Total de la orden: mano de obra + refacciones autorizadas (o el cargo
+    // de diagnóstico en cierres sin reparación).
+    const totalCents = orderTotalCents(o, o.parts)
     const paidCents = o.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
     return [
       repairFolio(o.number),
@@ -141,9 +147,9 @@ async function exportOrders(businessId: string, branchId?: string): Promise<stri
       repairLabels[o.status] ?? o.status,
       o.currentBranch.name,
       o.assignedTo?.name ?? "",
-      centsToPesos(quoteCents),
+      centsToPesos(totalCents),
       centsToPesos(paidCents),
-      centsToPesos(Math.max(0, quoteCents - paidCents)),
+      centsToPesos(Math.max(0, totalCents - paidCents)),
     ]
   })
   return toCsv(headers, rows)
@@ -151,7 +157,8 @@ async function exportOrders(businessId: string, branchId?: string): Promise<stri
 
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    // Solo admin: los CSV incluyen costPrice y PII de clientes (teléfonos).
+    const auth = await requireAdmin()
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 

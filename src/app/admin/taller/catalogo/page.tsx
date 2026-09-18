@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
+import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -64,6 +65,13 @@ function equipmentIcon(type: string | null): LucideIcon {
 }
 
 export default function WorkshopCatalogPage() {
+  const { data: session } = useSession()
+  // El catálogo se puede consultar como staff, pero crear/editar/desactivar
+  // servicios, importar o eliminar modelos y editar las listas es admin-only.
+  const isAdmin = session?.user?.role === "ADMIN"
+  // Los modelos de equipo son un catálogo GLOBAL compartido entre empresas:
+  // darlos de alta, importarlos o borrarlos es solo del superadmin de plataforma.
+  const isSuperAdmin = session?.user?.isSuperAdmin === true
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
@@ -286,7 +294,7 @@ export default function WorkshopCatalogPage() {
         </TabsList>
 
         <TabsContent value="servicios" className="space-y-6 pt-4">
-          <section className="rounded-xl border bg-card p-5 sm:p-6">
+          {isAdmin && <section className="rounded-xl border bg-card p-5 sm:p-6">
             <h2 className="mb-4 font-semibold">{editing ? `Editar: ${editing.name}` : "Nuevo servicio"}</h2>
             <form onSubmit={submitService} className="grid gap-4 sm:grid-cols-2">
               <label className="block space-y-2 text-sm">Nombre *
@@ -310,7 +318,7 @@ export default function WorkshopCatalogPage() {
                 {editing && <Button type="button" variant="outline" onClick={cancelEdit} disabled={saving}>Cancelar</Button>}
               </div>
             </form>
-          </section>
+          </section>}
 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
@@ -357,7 +365,7 @@ export default function WorkshopCatalogPage() {
               <div className="p-12 text-center">
                 <BookOpen className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
                 <h2 className="text-lg font-semibold">{services.length === 0 ? "Aún no hay servicios" : "Sin resultados"}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? "Crea el primero con el formulario de arriba." : "Prueba con otro nombre o ajusta los filtros."}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? (isAdmin ? "Crea el primero con el formulario de arriba." : "Un administrador aún no registra servicios.") : "Prueba con otro nombre o ajusta los filtros."}</p>
               </div>
             ) : (
               <Table>
@@ -368,7 +376,7 @@ export default function WorkshopCatalogPage() {
                     <TableHead>Precio</TableHead>
                     <TableHead className="hidden sm:table-cell">Tipo de equipo</TableHead>
                     <TableHead>Estado</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
+                    {isAdmin && <TableHead className="text-right">Acciones</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -399,7 +407,7 @@ export default function WorkshopCatalogPage() {
                             : <span className="text-muted-foreground">Cualquiera</span>}
                         </TableCell>
                         <TableCell><Badge variant={service.isActive ? "success" : "secondary"}>{service.isActive ? "Activo" : "Inactivo"}</Badge></TableCell>
-                        <TableCell className="text-right">
+                        {isAdmin && <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
                             <Button type="button" size="sm" variant="outline" onClick={() => startEdit(service)} disabled={saving}>
                               <Pencil className="mr-1 h-3.5 w-3.5" />Editar
@@ -408,7 +416,7 @@ export default function WorkshopCatalogPage() {
                               <Power className="mr-1 h-3.5 w-3.5" />{service.isActive ? "Desactivar" : "Activar"}
                             </Button>
                           </div>
-                        </TableCell>
+                        </TableCell>}
                       </TableRow>
                     )
                   })}
@@ -419,7 +427,12 @@ export default function WorkshopCatalogPage() {
         </TabsContent>
 
         <TabsContent value="modelos" className="space-y-6 pt-4">
-          <section className="rounded-xl border bg-card p-5 sm:p-6">
+          {!isSuperAdmin && (
+            <p className="rounded-lg border border-dashed bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+              Catálogo global de la plataforma: los modelos alimentan el autocompletado de recepción de todas las empresas. Solo el administrador de Reficio puede agregarlos o borrarlos — si falta uno, solicítalo.
+            </p>
+          )}
+          {isSuperAdmin && <section className="rounded-xl border bg-card p-5 sm:p-6">
             <h2 className="mb-1 font-semibold">Nuevo modelo de equipo</h2>
             <p className="mb-4 text-xs text-muted-foreground">Alimentan el autocompletado de marca y modelo al recibir equipos. Si marca + modelo ya existen, se actualiza su código y tipo.</p>
             <form onSubmit={submitModel} className="grid gap-4 sm:grid-cols-2">
@@ -442,7 +455,7 @@ export default function WorkshopCatalogPage() {
                 </Button>
               </div>
             </form>
-          </section>
+          </section>}
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative min-w-56 flex-1 sm:max-w-xs">
@@ -450,9 +463,9 @@ export default function WorkshopCatalogPage() {
               <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
             </div>
             <p className="text-xs text-muted-foreground">{deviceModels.length} {deviceModels.length === 1 ? "modelo" : "modelos"}</p>
-            <div className="ml-auto">
+            {isSuperAdmin && <div className="ml-auto">
               <DeviceModelsImportDialog onImported={() => void loadModels()} />
-            </div>
+            </div>}
           </div>
 
           <section className="rounded-xl border bg-card">
@@ -472,7 +485,7 @@ export default function WorkshopCatalogPage() {
                     <TableHead>Modelo</TableHead>
                     <TableHead className="hidden sm:table-cell">Código</TableHead>
                     <TableHead className="hidden md:table-cell">Tipo</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
+                    {isSuperAdmin && <TableHead className="text-right">Acciones</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -482,11 +495,11 @@ export default function WorkshopCatalogPage() {
                       <TableCell>{item.model}</TableCell>
                       <TableCell className="hidden font-mono text-xs sm:table-cell">{item.code || "—"}</TableCell>
                       <TableCell className="hidden md:table-cell"><Badge variant="outline" className="font-normal">{item.type}</Badge></TableCell>
-                      <TableCell className="text-right">
+                      {isSuperAdmin && <TableCell className="text-right">
                         <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
                           <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
                         </Button>
-                      </TableCell>
+                      </TableCell>}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -500,7 +513,7 @@ export default function WorkshopCatalogPage() {
           <section className="rounded-xl border bg-card p-5 sm:p-6">
             <h2 className="font-semibold">Tipos de equipo y locaciones</h2>
             <p className="mb-5 mt-0.5 text-xs text-muted-foreground">Estas listas alimentan el formulario de servicios y la recepción de equipos.</p>
-            <WorkshopConfigEditor onConfigChange={config => setEquipmentTypes(config.equipmentTypes)} />
+            <WorkshopConfigEditor readOnly={!isAdmin} onConfigChange={config => setEquipmentTypes(config.equipmentTypes)} />
           </section>
         </TabsContent>
       </Tabs>

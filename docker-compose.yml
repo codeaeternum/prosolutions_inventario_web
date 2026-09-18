@@ -19,6 +19,10 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
       CRON_SECRET: ${CRON_SECRET:?Define a random cron secret}
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+      REPAIR_EVIDENCE_DIR: /app/storage/repair-evidence
+      # Producción siempre va tras Cloudflare Tunnel: cloudflared sobrescribe
+      # CF-Connecting-IP/X-Forwarded-For y el rate limit los usa para la IP real.
+      TRUST_PROXY_HEADERS: "true"
       NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_EMAIL: ${VAPID_EMAIL:-mailto:admin@prosolutions.com}
@@ -26,6 +30,7 @@ services:
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs
+      - repair_evidence:/app/storage/repair-evidence
     depends_on:
       db:
         condition: service_healthy
@@ -105,3 +110,5 @@ volumes:
     name: prosolutions_uploads
   payment_proofs:
     name: prosolutions_payment_proofs
+  repair_evidence:
+    name: prosolutions_repair_evidence

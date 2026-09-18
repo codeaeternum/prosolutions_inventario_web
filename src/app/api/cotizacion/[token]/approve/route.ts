@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { transaction, BusinessError } from "@/lib/domain/operations"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { repairFolio } from "@/lib/workshop-labels"
+import { approvedPartsTotal } from "@/lib/workshop-money"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
 // Decisión pública de la cotización (cliente con el link de WhatsApp, sin
@@ -48,9 +49,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           id: true, number: true, version: true, status: true, businessId: true,
           quoteCents: true, approvedQuoteCents: true, quoteApprovedAt: true,
           createdById: true, equipmentType: true, brand: true, model: true,
+          // Tenant suspendido: el enlace muere igual que un token inválido
+          // (sin mutar nada — el cliente no decide sobre un negocio inactivo).
+          business: { select: { isActive: true } },
+          // Refacciones autorizadas: se cobran además de la mano de obra y son
+          // parte de lo que el cliente ve al aprobar.
+          parts: { where: { status: "APPROVED" }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },
         },
       })
-      if (!order) throw new BusinessError(NOT_FOUND, 404)
+      if (!order || !order.business.isActive) throw new BusinessError(NOT_FOUND, 404)
       if (order.quoteApprovedAt) throw new BusinessError("Esta cotización ya fue decidida.", 409)
       if (order.status === "NOT_AUTHORIZED") throw new BusinessError("Esta cotización ya no está vigente.", 409)
       if (order.status === "CANCELLED" || order.status === "DELIVERED") throw new BusinessError("La orden ya está cerrada; la cotización no puede modificarse.", 409)
@@ -69,11 +76,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       const data: Prisma.RepairOrderUncheckedUpdateManyInput = { version: { increment: 1 } }
       if (approving) {
         data.quoteApprovedAt = now
-        // `??= quoteCents`: respeta un importe autorizado ya registrado en mostrador.
+        // `??= quoteCents`: respeta un importe autorizado ya registrado en
+        // mostrador. Lo que el cliente VE al aprobar es el quoteCents vigente
+        // (la vista pública muestra labor + refacciones aprobadas).
         if (order.approvedQuoteCents === null && order.quoteCents !== null) data.approvedQuoteCents = order.quoteCents
-        // Vuelve al trabajo: WAITING_APPROVAL → DIAGNOSIS es transición válida
-        // (repairNextStages). Si la orden ya avanzó, solo queda el registro.
-        if (order.status === "WAITING_APPROVAL") data.status = "DIAGNOSIS"
+        // Directo a reparación, igual que la autorización en mostrador
+        // (workshop.ts APPROVE). Antes fijaba DIAGNOSIS y la orden quedaba
+        // varada: DIAGNOSIS no tiene transición a IN_REPAIR en repairNextStages.
+        // Si la orden ya avanzó, solo queda el registro de la aprobación.
+        if (order.status === "WAITING_APPROVAL" || (order.status === "DIAGNOSIS" && order.quoteCents !== null)) data.status = "IN_REPAIR"
       } else if (order.status === "WAITING_APPROVAL") {
         data.status = "NOT_AUTHORIZED"
       }
@@ -85,6 +96,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       if (updated.count !== 1) throw new BusinessError("La cotización cambió al mismo tiempo. Recarga el enlace.", 409)
       const newStatus = (data.status as string | undefined) ?? order.status
 
+      // Constancia de la cifra que el cliente vio al decidir: mano de obra
+      // autorizada + refacciones aprobadas (lo que la vista pública desglosa).
+      const laborCents = (data.approvedQuoteCents as number | undefined) ?? order.approvedQuoteCents ?? order.quoteCents ?? 0
+      const partsCents = approvedPartsTotal(order.parts).priceCents
+      const decisionAmounts = ` Mano de obra ${(laborCents / 100).toFixed(2)} MXN + refacciones ${(partsCents / 100).toFixed(2)} MXN = ${((laborCents + partsCents) / 100).toFixed(2)} MXN.`
+
       await tx.repairEvent.create({
         data: {
           businessId: order.businessId,
@@ -93,8 +110,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
           type: "NOTE",
           isPublic: false,
           detail: approving
-            ? `Cotización aprobada por el cliente vía link público${signer ? ` (${signer})` : ""}`
-            : `Cotización no autorizada por el cliente vía link público${signer ? ` (${signer})` : ""}`,
+            ? `Cotización aprobada por el cliente vía link público${signer ? ` (${signer})` : ""}.${decisionAmounts}`
+            : `Cotización no autorizada por el cliente vía link público${signer ? ` (${signer})` : ""}.${decisionAmounts}`,
         },
       })
       await tx.repairEvent.create({

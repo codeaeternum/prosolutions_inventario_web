@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useSession } from "next-auth/react"
 import { Download, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -15,7 +16,12 @@ interface ExportButtonProps {
 }
 
 export function ExportButton({ type, branchId, label = "Exportar", className }: ExportButtonProps) {
+  const { data: session } = useSession()
   const [exporting, setExporting] = useState(false)
+
+  // La exportación incluye costos y PII: la API es admin-only, así que el
+  // botón no se muestra a otros roles (evita un 403 seguro pero confuso).
+  const isAdmin = session?.user?.role === "ADMIN"
 
   const handleExport = async () => {
     if (exporting) return
@@ -48,6 +54,8 @@ export function ExportButton({ type, branchId, label = "Exportar", className }: 
       setExporting(false)
     }
   }
+
+  if (!isAdmin) return null
 
   return (
     <Button type="button" variant="outline" onClick={handleExport} disabled={exporting} className={className}>

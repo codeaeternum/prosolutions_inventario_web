@@ -73,8 +73,9 @@ export default function VentasPage() {
     const [showCheckout, setShowCheckout] = useState(false)
     const [paymentMethod, setPaymentMethod] = useState("EFECTIVO")
     const [cashGiven, setCashGiven] = useState("")
+    const [transferRef, setTransferRef] = useState("") // folio SPEI/autorización de la transferencia
     const [splitMode, setSplitMode] = useState(false)
-    const [splitPayments, setSplitPayments] = useState<{ method: string; amount: string }[]>([
+    const [splitPayments, setSplitPayments] = useState<{ method: string; amount: string; reference?: string }[]>([
         { method: "EFECTIVO", amount: "" },
     ])
 
@@ -95,7 +96,7 @@ export default function VentasPage() {
         fetch('/api/branches').then(r => r.ok ? r.json() : null).then(d => {
             const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
             setBranches(list)
-            if (list.length && !branchId) setBranchId(list[0].id)
+            if (list.length) setBranchId(prev => prev ?? list[0].id)
         }).catch(() => {})
     }, [])
 
@@ -235,13 +236,25 @@ export default function VentasPage() {
         if (splitMode) {
             const payments = splitPayments
                 .filter(p => p.method && parseFloat(p.amount) > 0)
-                .map(p => ({ method: p.method, amount: parseFloat(p.amount) }))
-            const sum = payments.reduce((s, p) => s + p.amount, 0)
+            const sum = payments.reduce((s, p) => s + parseFloat(p.amount), 0)
             if (payments.length === 0 || Math.abs(sum - cartTotal) > 0.009) {
                 toast.error(`Los pagos deben sumar ${formatPrice(cartTotal)} (suman ${formatPrice(sum)})`)
                 return
             }
-            payload.payments = payments
+            if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference?.trim())) {
+                toast.error("Captura la referencia de cada transferencia")
+                return
+            }
+            payload.payments = payments.map(p => ({
+                method: p.method, amount: parseFloat(p.amount),
+                ...(p.method === "TRANSFERENCIA" ? { reference: p.reference!.trim() } : {}),
+            }))
+        } else if (paymentMethod === "TRANSFERENCIA") {
+            if (!transferRef.trim()) {
+                toast.error("Captura la referencia de la transferencia")
+                return
+            }
+            payload.payments = [{ method: "TRANSFERENCIA", reference: transferRef.trim() }]
         } else {
             payload.paymentMethod = paymentMethod
         }
@@ -270,6 +283,7 @@ export default function VentasPage() {
             setCreditSearch("")
             setCreditResults([])
             setCashGiven("")
+            setTransferRef("")
             setSplitMode(false)
             setSplitPayments([{ method: "EFECTIVO", amount: "" }])
             setShowCheckout(false)
@@ -545,6 +559,19 @@ export default function VentasPage() {
                                         Dividir
                                     </Button>
                                 </div>
+                                {paymentMethod === "TRANSFERENCIA" && (
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="transfer-ref">Referencia de la transferencia *</Label>
+                                        <Input
+                                            id="transfer-ref"
+                                            placeholder="Folio SPEI / clave de rastreo"
+                                            maxLength={200}
+                                            disabled={processing}
+                                            value={transferRef}
+                                            onChange={e => setTransferRef(e.target.value)}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="space-y-3">
@@ -555,34 +582,46 @@ export default function VentasPage() {
                                     </Button>
                                 </div>
                                 {splitPayments.map((p, i) => (
-                                    <div key={i} className="flex gap-2 items-center">
-                                        <div className="flex-1">
-                                            <Select value={p.method} onValueChange={(m) => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, method: m } : x))}>
-                                                <SelectTrigger disabled={processing}>
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="EFECTIVO">Efectivo</SelectItem>
-                                                    <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
-                                                    <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
-                                                    <SelectItem value="CREDITO">💳 Crédito</SelectItem>
-                                                </SelectContent>
-                                            </Select>
+                                    <div key={i} className="space-y-1.5">
+                                        <div className="flex gap-2 items-center">
+                                            <div className="flex-1">
+                                                <Select value={p.method} onValueChange={(m) => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, method: m } : x))}>
+                                                    <SelectTrigger disabled={processing}>
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="EFECTIVO">Efectivo</SelectItem>
+                                                        <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
+                                                        <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
+                                                        <SelectItem value="CREDITO">💳 Crédito</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                placeholder="0.00"
+                                                aria-label={`Monto pago ${i + 1}`}
+                                                disabled={processing}
+                                                value={p.amount}
+                                                onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                                                className="w-28"
+                                            />
+                                            {splitPayments.length > 1 && (
+                                                <Button type="button" variant="ghost" size="icon" disabled={processing} aria-label="Quitar método" onClick={() => setSplitPayments(prev => prev.filter((_, j) => j !== i))}>
+                                                    <X className="h-4 w-4" />
+                                                </Button>
+                                            )}
                                         </div>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            placeholder="0.00"
-                                            aria-label={`Monto pago ${i + 1}`}
-                                            disabled={processing}
-                                            value={p.amount}
-                                            onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
-                                            className="w-28"
-                                        />
-                                        {splitPayments.length > 1 && (
-                                            <Button type="button" variant="ghost" size="icon" disabled={processing} aria-label="Quitar método" onClick={() => setSplitPayments(prev => prev.filter((_, j) => j !== i))}>
-                                                <X className="h-4 w-4" />
-                                            </Button>
+                                        {p.method === "TRANSFERENCIA" && (
+                                            <Input
+                                                placeholder="Referencia SPEI / folio de la transferencia *"
+                                                aria-label={`Referencia transferencia ${i + 1}`}
+                                                maxLength={200}
+                                                disabled={processing}
+                                                value={p.reference ?? ""}
+                                                onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, reference: e.target.value } : x))}
+                                            />
                                         )}
                                     </div>
                                 ))}

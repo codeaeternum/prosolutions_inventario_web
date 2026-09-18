@@ -16,11 +16,23 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
         return setting || defaultValue
     }
 
+    // Multi-tenant: el catálogo siempre se scopea al businessId del usuario del
+    // bot. Quienes aún no se registran navegan el negocio por defecto del
+    // deployment (bot mono-negocio: un número de Telegram = un negocio).
+    async function businessIdOf(telegramId?: string): Promise<string> {
+        if (telegramId) {
+            const me = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
+            if (me?.businessId) return me.businessId
+        }
+        return getDefaultBusinessId()
+    }
+
     // /categorias
     bot.command('categorias', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
         try {
-            const categories = await prisma.category.findMany({ take: 20 })
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
             if (categories.length === 0) return ctx.reply('No hay categorías registradas.')
             const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `cat_${c.id}`)])
             await ctx.reply('📂 *Selecciona una categoría:*', {
@@ -39,9 +51,10 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
         await ctx.answerCbQuery()
 
         try {
-            const category = await prisma.category.findUnique({ where: { id: categoryId } })
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const category = await prisma.category.findFirst({ where: { id: categoryId, businessId } })
             const products = await prisma.product.findMany({
-                where: { categoryId, isActive: true, stock: { gt: 0 } },
+                where: { categoryId, businessId, isActive: true, stock: { gt: 0 } },
                 take: 8,
                 orderBy: { stock: 'desc' }
             })
@@ -88,8 +101,9 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
         await ctx.answerCbQuery()
 
         try {
-            const product = await prisma.product.findUnique({
-                where: { id: productId },
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId },
                 include: { category: true }
             })
 
@@ -181,7 +195,8 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     bot.action(/^showqr_(.+)$/, async (ctx) => {
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
-        const product = await prisma.product.findUnique({ where: { id: productId } })
+        const businessId = await businessIdOf(ctx.from?.id?.toString())
+        const product = await prisma.product.findFirst({ where: { id: productId, businessId } })
         if (!product) return
         const qrData = product.barcode || product.id
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`
@@ -192,8 +207,9 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     bot.action(/^delprod_(.+)$/, async (ctx) => {
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
-        const product = await prisma.product.findUnique({
-            where: { id: productId },
+        const businessId = await businessIdOf(ctx.from?.id?.toString())
+        const product = await prisma.product.findFirst({
+            where: { id: productId, businessId },
             include: { _count: { select: { reservations: true, movements: true } } }
         })
         if (!product) return
@@ -215,11 +231,37 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         }
 
         try {
-            await prisma.product.delete({ where: { id: productId } })
-            const productName = deleteSession.selectedProduct.name
+            // Multi-tenant: solo productos del negocio del admin.
+            const actor = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
+            if (!actor) {
+                delete sessions.deleteProduct[telegramId]
+                await ctx.answerCbQuery('Cuenta no disponible')
+                return ctx.editMessageText('❌ Cuenta no disponible.')
+            }
+            // Nunca borrar físicamente un producto con historial (reservas,
+            // movimientos o ventas): se archiva con isActive=false para
+            // conservar el ledger. Solo se elimina si no tiene movimientos.
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId: actor.businessId },
+                include: { _count: { select: { reservations: true, movements: true, saleItems: true } } }
+            })
+            if (!product) {
+                delete sessions.deleteProduct[telegramId]
+                await ctx.answerCbQuery('Producto no encontrado')
+                return ctx.editMessageText('❌ Producto no encontrado en tu negocio.')
+            }
+            const productName = product.name
+            const hasLedger = (product._count.reservations + product._count.movements + product._count.saleItems) > 0
+            if (hasLedger) {
+                await prisma.product.updateMany({ where: { id: product.id, businessId: actor.businessId }, data: { isActive: false } })
+                delete sessions.deleteProduct[telegramId]
+                await ctx.answerCbQuery('Archivado')
+                return ctx.editMessageText(`✅ *Producto archivado*\n\n� ${productName}\n\nTiene historial de movimientos/ventas: se desactivó en lugar de borrarse para conservar el registro.`, { parse_mode: 'Markdown' })
+            }
+            await prisma.product.deleteMany({ where: { id: product.id, businessId: actor.businessId } })
             delete sessions.deleteProduct[telegramId]
             await ctx.answerCbQuery('Eliminado')
-            return ctx.editMessageText(`✅ *Producto eliminado*\n\n🗑️ ${productName}\n\nEl producto y todos sus movimientos han sido eliminados.`, { parse_mode: 'Markdown' })
+            return ctx.editMessageText(`✅ *Producto eliminado*\n\n🗑️ ${productName}\n\nEl producto fue eliminado (sin historial que preservar).`, { parse_mode: 'Markdown' })
         } catch (e) {
             console.error('Error deleting product:', e)
             delete sessions.deleteProduct[telegramId]
@@ -329,7 +371,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
             const qrBuffer = await QRCode.toBuffer(qrData)
 
             const methodLabel = method === 'STORE' ? 'Pago en Tienda' : method === 'TRANSFER' ? 'Transferencia' : 'A crédito'
-            let userMsg = `✅ *¡Reserva Confirmada!*
+            const userMsg = `✅ *¡Reserva Confirmada!*
 
 📦 *${session.productName}*
 📊 Cantidad: ${session.quantity}
@@ -342,7 +384,9 @@ _Muestra este QR al recoger:_`
 
             await ctx.replyWithPhoto({ source: qrBuffer }, { caption: userMsg, parse_mode: 'Markdown' })
 
-            const admins = await prisma.user.findMany({ where: { role: 'ADMIN', telegramId: { not: null } } })
+            // Multi-tenant: la reserva se avisa solo a los admins del negocio
+            // del cliente — nunca a administradores de otras empresas.
+            const admins = await prisma.user.findMany({ where: { businessId: user.businessId, role: 'ADMIN', telegramId: { not: null } } })
             const adminTitle = method === 'TRANSFER' ? '(Con Comprobante)' : method === 'CREDIT' ? '(A Crédito)' : '(Pago en Tienda)'
             const adminFooter = method === 'TRANSFER' ? '⚠️ *Validar Comprobante*' : method === 'CREDIT' ? '💳 Cobro a cuenta de crédito' : 'ℹ️ Pendiente de pago en tienda'
             const adminMsg = `🔔 *Nueva Reserva ${adminTitle}*
@@ -371,7 +415,8 @@ ${adminFooter}`
     // back_categories
     bot.action('back_categories', async (ctx) => {
         await ctx.answerCbQuery()
-        const categories = await prisma.category.findMany({ take: 20 })
+        const businessId = await businessIdOf(ctx.from?.id?.toString())
+        const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
         const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `cat_${c.id}`)])
         await ctx.editMessageText('📂 *Selecciona una categoría:*', {
             parse_mode: 'Markdown',
@@ -383,8 +428,9 @@ ${adminFooter}`
     bot.command('ofertas', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
         try {
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
             const products = await prisma.product.findMany({
-                where: { isActive: true, stock: { gt: 5 } },
+                where: { businessId, isActive: true, stock: { gt: 5 } },
                 include: { category: true },
                 orderBy: { stock: 'desc' },
                 take: 5
@@ -423,8 +469,9 @@ ${adminFooter}`
         const brand = ctx.match[1]
         await ctx.answerCbQuery()
         try {
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
             const products = await prisma.product.findMany({
-                where: { name: { contains: brand, mode: 'insensitive' }, isActive: true, stock: { gt: 0 } },
+                where: { businessId, name: { contains: brand, mode: 'insensitive' }, isActive: true, stock: { gt: 0 } },
                 include: { category: true },
                 take: 8,
                 orderBy: { name: 'asc' }

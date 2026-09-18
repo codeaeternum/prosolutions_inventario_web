@@ -11,7 +11,6 @@ import {
   Loader2,
   Users,
   UserCheck,
-  UserX,
   Clock,
   CheckCircle,
   XCircle,
@@ -20,7 +19,6 @@ import {
   UserPlus,
   Wrench,
   Crown,
-  ShieldOff,
   CreditCard,
   DollarSign,
   Send,
@@ -125,6 +123,8 @@ export default function UsersPage() {
   const [abonoNotes, setAbonoNotes] = useState("")
   const [abonoSaving, setAbonoSaving] = useState(false)
   const [abonoPaymentMethod, setAbonoPaymentMethod] = useState<"EFECTIVO" | "TARJETA" | "TRANSFERENCIA">("EFECTIVO")
+  // Sucursal donde entra el efectivo del abono; "AUTO" = sucursal base del cobrador.
+  const [abonoBranch, setAbonoBranch] = useState("AUTO")
   const abonoOperation = useRef<ClientOperationKey | null>(null)
   const abonoInFlight = useRef(false)
 
@@ -335,6 +335,7 @@ export default function UsersPage() {
     setAbonoAmount("")
     setAbonoNotes("")
     setAbonoPaymentMethod("EFECTIVO")
+    setAbonoBranch("AUTO")
     setCreditOpen(true)
   }
 
@@ -373,7 +374,10 @@ export default function UsersPage() {
     abonoInFlight.current = true
     setAbonoSaving(true)
     try {
-      const payload = { userId: creditUser.id, amount, notes: abonoNotes || undefined, paymentMethod: abonoPaymentMethod }
+      const payload = {
+        userId: creditUser.id, amount, notes: abonoNotes || undefined, paymentMethod: abonoPaymentMethod,
+        branchId: abonoBranch !== "AUTO" ? abonoBranch : undefined,
+      }
       abonoOperation.current = getClientOperationKey(abonoOperation.current, payload)
       const res = await fetch("/api/credit/payment", {
         method: "POST",
@@ -987,6 +991,20 @@ export default function UsersPage() {
                         : "Este abono reduce la deuda sin registrar efectivo en caja."}
                     </p>
                   </div>
+                  {abonoPaymentMethod === "EFECTIVO" && branches.filter(b => b.isActive).length > 1 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="abono-branch">Sucursal donde se cobra</Label>
+                      <Select value={abonoBranch} onValueChange={(value) => { if (!abonoInFlight.current) setAbonoBranch(value) }}>
+                        <SelectTrigger id="abono-branch" disabled={abonoSaving}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="AUTO">Mi sucursal (predeterminada)</SelectItem>
+                          {branches.filter(b => b.isActive).map(b => (
+                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="flex gap-2 w-full">
                     <Input
                       type="number"

@@ -14,7 +14,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const { id } = await params
     const reservation = await prisma.reservation.findUnique({ where: { id }, include: reservationInclude })
     if (!reservation || reservation.businessId !== businessIdOf(session)) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 })
-    if (session.user.role !== "ADMIN" && reservation.userId !== session.user.id) return NextResponse.json({ error: "No autorizado" }, { status: 403 })
+    if (!["ADMIN", "EMPLOYEE"].includes(session.user.role) && reservation.userId !== session.user.id) return NextResponse.json({ error: "No autorizado" }, { status: 403 })
     return NextResponse.json(reservation)
   } catch (error) { return businessFailure(error) }
 }

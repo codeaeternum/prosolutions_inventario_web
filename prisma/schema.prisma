@@ -757,9 +757,14 @@ model RepairOrder {
   scheduledAt          DateTime?
   reportedIssue        String
   diagnosis            String?
+  // quoteCents/approvedQuoteCents son SOLO mano de obra; las RepairPart
+  // aprobadas se cobran además.
   quoteCents           Int?
   approvedQuoteCents   Int?
   quoteApprovedAt      DateTime?
+  // Cargo por diagnóstico/revisión cobrado al entregar sin reparación
+  // (NOT_AUTHORIZED / NOT_REPAIRED): la cotización rechazada no se cobra.
+  diagnosticFeeCents   Int?
   qualityCheck         String?
   deliveredTo          String?
   promisedAt           DateTime?

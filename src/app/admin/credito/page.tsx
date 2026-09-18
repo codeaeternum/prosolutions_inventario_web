@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
@@ -124,6 +123,9 @@ export default function CreditoPage() {
   const [abonarNotes, setAbonarNotes] = useState("")
   const [abonarLoading, setAbonarLoading] = useState(false)
   const [abonarPaymentMethod, setAbonarPaymentMethod] = useState<"EFECTIVO" | "TARJETA" | "TRANSFERENCIA">("EFECTIVO")
+  // Sucursal donde entra el efectivo del abono; "AUTO" = sucursal base del cobrador.
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
+  const [abonarBranch, setAbonarBranch] = useState("AUTO")
 
   const [estadoCuentaOpen, setEstadoCuentaOpen] = useState(false)
   const [estadoCuentaUser, setEstadoCuentaUser] = useState<UserCreditDetail | null>(null)
@@ -167,6 +169,13 @@ export default function CreditoPage() {
     fetchData()
   }, [fetchData])
 
+  useEffect(() => {
+    fetch("/api/branches")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)))
+      .catch(() => {})
+  }, [])
+
   // ==================== ABONAR ====================
   const openAbonar = (user: DebtorUser) => {
     if (paymentInFlight.current) return
@@ -174,6 +183,7 @@ export default function CreditoPage() {
     setAbonarAmount("")
     setAbonarNotes("")
     setAbonarPaymentMethod("EFECTIVO")
+    setAbonarBranch("AUTO")
     setAbonarOpen(true)
   }
 
@@ -187,7 +197,10 @@ export default function CreditoPage() {
     paymentInFlight.current = true
     setAbonarLoading(true)
     try {
-      const payload = { userId: abonarUser.id, amount, notes: abonarNotes || undefined, paymentMethod: abonarPaymentMethod }
+      const payload = {
+        userId: abonarUser.id, amount, notes: abonarNotes || undefined, paymentMethod: abonarPaymentMethod,
+        branchId: abonarBranch !== "AUTO" ? abonarBranch : undefined,
+      }
       paymentOperation.current = getClientOperationKey(paymentOperation.current, payload)
       const res = await fetch("/api/credit/payment", {
         method: "POST",
@@ -624,6 +637,23 @@ export default function CreditoPage() {
                   : "Este abono reduce la deuda sin registrar efectivo en caja."}
               </p>
             </div>
+            {abonarPaymentMethod === "EFECTIVO" && branches.length > 1 && (
+              <div className="space-y-2">
+                <Label htmlFor="credit-payment-branch">Sucursal donde se cobra</Label>
+                <Select value={abonarBranch} onValueChange={(value) => { if (!paymentInFlight.current) setAbonarBranch(value) }}>
+                  <SelectTrigger id="credit-payment-branch" disabled={abonarLoading}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AUTO">Mi sucursal (predeterminada)</SelectItem>
+                    {branches.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  El efectivo entra a la caja abierta de esta sucursal.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Notas (opcional)</Label>
               <Textarea

@@ -99,8 +99,10 @@ export const resolvePublicSlug = cache(async (rawSlug: string): Promise<SlugTarg
       }
     }
 
+    // Taller aliado: su slug público muere con la empresa (isActive=false),
+    // igual que el slug del propio negocio — empresa suspendida = 404.
     const user = await prisma.user.findFirst({
-      where: { publicSlug: slug, role: "WORKSHOP", status: "APPROVED" },
+      where: { publicSlug: slug, role: "WORKSHOP", status: "APPROVED", business: { isActive: true } },
       select: {
         id: true,
         name: true,

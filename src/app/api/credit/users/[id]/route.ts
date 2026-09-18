@@ -56,13 +56,26 @@ export async function PATCH(
 
   const existing = await prisma.user.findFirst({
     where: { id, businessId },
-    select: { id: true },
+    select: { id: true, creditLimit: true, creditBalance: true },
   })
   if (!existing) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
 
+  // Un límite por debajo de la deuda viva deja la cuenta en estado inválido:
+  // el cliente quedaría "sobre-endeudado" sin que nadie lo registre.
+  const newLimit = parse.data.creditLimit
+  const balance = existing.creditBalance ?? 0
+  if (newLimit !== null && Math.round(newLimit * 100) < Math.round(balance * 100)) {
+    return NextResponse.json(
+      { error: `El nuevo límite queda por debajo de la deuda actual ($${balance.toLocaleString("es-MX")}). Reduce primero el saldo con un abono.` },
+      { status: 400 }
+    )
+  }
+
+  // TODO(audit): cuando exista el modelo AuditEvent registrar aquí el cambio
+  // de límite (actorId, valor anterior -> nuevo) para rastrear quién lo movió.
   const user = await prisma.user.update({
     where: { id },
-    data: { creditLimit: parse.data.creditLimit },
+    data: { creditLimit: newLimit },
     select: { id: true, creditLimit: true, creditBalance: true },
   })
   return NextResponse.json(user)

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -41,9 +41,11 @@ async function readConfig(tx: Pick<Transaction, "systemSettings">, businessId: s
   }
 }
 
+// Lectura abierta a staff (la recepción de equipos necesita tipos y locaciones);
+// la edición sigue siendo solo admin.
 export async function GET() {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     return NextResponse.json(await readConfig(prisma, businessIdOf(getSession(auth)!)), { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }

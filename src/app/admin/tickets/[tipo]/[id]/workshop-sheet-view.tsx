@@ -46,6 +46,11 @@ export interface WorkshopSheetData {
   }[]
   payments: { label: string; amount: number; method: string; date: string }[]
   paidTotal: number
+  // Totales de la orden (workshop-money): refacciones autorizadas a precio,
+  // cargo por diagnóstico en cierres sin reparación y total a cobrar.
+  partsTotal?: number
+  diagnosticFee?: number
+  totalOrder?: number
   balance?: number
   // Últimos eventos de la orden (tipo ya traducido, detalle y actor).
   events: { date: string; typeLabel: string; detail: string; actor: string }[]
@@ -267,6 +272,9 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
               <p className="text-gray-500">Sin pagos registrados</p>
             )}
             {data.payments.length > 0 && <p>Total pagado: {formatPrice(data.paidTotal)}</p>}
+            {data.partsTotal !== undefined && <p>Refacciones autorizadas: {formatPrice(data.partsTotal)}</p>}
+            {data.diagnosticFee !== undefined && <p>Cargo por diagnóstico: {formatPrice(data.diagnosticFee)}</p>}
+            {data.totalOrder !== undefined && <p className="font-bold">Total a cobrar: {formatPrice(data.totalOrder)}</p>}
             {data.balance !== undefined && <p className="font-bold">Saldo: {formatPrice(data.balance)}</p>}
           </div>
         </section>

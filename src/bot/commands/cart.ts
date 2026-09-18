@@ -1,7 +1,7 @@
 import { sell } from "../../lib/domain/sales"
 import { Markup } from 'telegraf'
 import type { BotContext, CartItem } from '../lib/types'
-import { requireAdmin, requirePrisma } from '../lib/guards'
+import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { notifyAdmins } from '../lib/notify'
 
 export function registerCart({ bot, prisma, sessions }: BotContext) {
@@ -60,8 +60,11 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
         }
 
         try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
+                    businessId: actor.businessId,
                     OR: [
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
@@ -204,7 +207,9 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
         const productId = ctx.match[1]
         const telegramId = ctx.from.id.toString()
 
-        const product = await prisma.product.findUnique({ where: { id: productId } })
+        const actor = await getBotAccount(prisma, telegramId)
+        if (!actor) return ctx.answerCbQuery('❌ Cuenta no disponible')
+        const product = await prisma.product.findUnique({ where: { id: productId, businessId: actor.businessId } })
         if (!product) return ctx.answerCbQuery('❌ Error')
 
         if (!sessions.cart[telegramId]) {

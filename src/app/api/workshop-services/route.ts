@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -16,9 +16,10 @@ const createSchema = z.object({
 })
 
 // Catálogo de servicios del taller. Por defecto solo activos; ?all=1 incluye inactivos.
+// Lectura abierta a staff (el mostrador la usa al recibir equipos); escritura solo admin.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     const query = new URL(req.url).searchParams
     const search = (query.get("q") ?? "").trim().slice(0, 100)

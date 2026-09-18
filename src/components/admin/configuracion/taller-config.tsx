@@ -18,7 +18,7 @@ export interface WorkshopConfig {
  * `onConfigChange` se invoca tras cargar y tras cada guardado para que el
  * consumidor pueda sincronizar su propio estado (datalists, filtros, etc.).
  */
-export function WorkshopConfigEditor({ onConfigChange }: { onConfigChange?: (config: WorkshopConfig) => void }) {
+export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onConfigChange?: (config: WorkshopConfig) => void; readOnly?: boolean }) {
   const [equipmentTypes, setEquipmentTypes] = useState<string[]>(DEFAULT_EQUIPMENT_TYPES)
   const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS)
   const [equipmentDraft, setEquipmentDraft] = useState("")
@@ -126,6 +126,7 @@ export function WorkshopConfigEditor({ onConfigChange }: { onConfigChange?: (con
         placeholder="Ej. Drone"
         maxLength={40}
         disabled={saving}
+        readOnly={readOnly}
       />
       <EditableList
         title="Locaciones del taller"
@@ -138,18 +139,23 @@ export function WorkshopConfigEditor({ onConfigChange }: { onConfigChange?: (con
         placeholder="Ej. Mesa 3"
         maxLength={60}
         disabled={saving}
+        readOnly={readOnly}
       />
-      <div className="flex flex-wrap items-center gap-2 border-t pt-5">
-        <Button onClick={() => void save()} disabled={saving || !dirty}>
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          Guardar cambios
-        </Button>
-        <Button variant="outline" onClick={reset} disabled={saving}>
-          <RotateCcw className="mr-2 h-4 w-4" />
-          Restablecer valores
-        </Button>
-        {dirty && <p className="text-xs text-muted-foreground">Hay cambios sin guardar.</p>}
-      </div>
+      {readOnly ? (
+        <p className="border-t pt-5 text-xs text-muted-foreground">La edición de estas listas requiere administrador.</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 border-t pt-5">
+          <Button onClick={() => void save()} disabled={saving || !dirty}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Guardar cambios
+          </Button>
+          <Button variant="outline" onClick={reset} disabled={saving}>
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Restablecer valores
+          </Button>
+          {dirty && <p className="text-xs text-muted-foreground">Hay cambios sin guardar.</p>}
+        </div>
+      )}
     </div>
   )
 }

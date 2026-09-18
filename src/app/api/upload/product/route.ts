@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/api-auth"
 import * as fs from "fs"
 import * as path from "path"
 import { randomBytes } from "crypto"
+import { imageFormat } from "@/lib/payment-proofs"
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"]
 const MAX_SIZE_MB = 5
@@ -32,9 +33,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const ext = path.extname(file.name) || ".jpg"
-    const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext.toLowerCase()) ? ext : ".jpg"
-    const filename = `${Date.now()}_${randomBytes(8).toString("hex")}${safeExt}`
+    // El MIME declarado y la extensión del nombre son forjables: el formato
+    // real se detecta por magic bytes y de ahí sale la extensión guardada.
+    const bytes = await file.arrayBuffer()
+    const format = imageFormat(new Uint8Array(bytes))
+    if (!format || !ALLOWED_TYPES.includes(format.mime)) {
+      return NextResponse.json(
+        { error: "El contenido no es una imagen válida (JPEG, PNG, WebP o GIF)." },
+        { status: 400 }
+      )
+    }
+
+    const filename = `${Date.now()}_${randomBytes(8).toString("hex")}.${format.extension}`
 
     const uploadDir = path.join(process.cwd(), "public", "uploads", "products")
     if (!fs.existsSync(uploadDir)) {
@@ -42,7 +52,6 @@ export async function POST(request: NextRequest) {
     }
 
     const filePath = path.join(uploadDir, filename)
-    const bytes = await file.arrayBuffer()
     fs.writeFileSync(filePath, Buffer.from(bytes))
 
     const url = `/uploads/products/${filename}`

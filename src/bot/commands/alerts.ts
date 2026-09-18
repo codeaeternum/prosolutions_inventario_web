@@ -21,7 +21,7 @@ export function registerAlerts({ bot, prisma, isDev }: BotContext) {
         try {
             const outOfStock = await prisma.product.findMany({
                 where: { isActive: true, stock: { lte: 0 } },
-                select: { id: true, name: true, stock: true },
+                select: { id: true, name: true, stock: true, businessId: true },
                 orderBy: { name: 'asc' }
             })
 
@@ -45,17 +45,24 @@ export function registerAlerts({ bot, prisma, isDev }: BotContext) {
                 return
             }
 
-            // Build alert message
-            let msg = `🚨 <b>¡Alerta de Stock Agotado!</b>\n\n`
-            msg += `${newAlerts.length} producto(s) sin stock:\n\n`
+            // Multi-tenant: agrupar por empresa y avisar solo a SUS admins —
+            // un negocio nunca ve los productos agotados de otro.
+            const byBusiness = new Map<string, typeof newAlerts>()
+            for (const p of newAlerts) {
+                const list = byBusiness.get(p.businessId) ?? []
+                list.push(p)
+                byBusiness.set(p.businessId, list)
+            }
 
-            newAlerts.forEach((p, i) => {
-                msg += `${i + 1}. ❌ <b>${p.name}</b>\n`
-            })
-
-            msg += `\n⚠️ <i>Reponer inventario desde el panel web.</i>`
-
-            await notifyAdmins(bot, msg)
+            for (const [businessId, products] of byBusiness) {
+                let msg = `🚨 <b>¡Alerta de Stock Agotado!</b>\n\n`
+                msg += `${products.length} producto(s) sin stock:\n\n`
+                products.forEach((p, i) => {
+                    msg += `${i + 1}. ❌ <b>${p.name}</b>\n`
+                })
+                msg += `\n⚠️ <i>Reponer inventario desde el panel web.</i>`
+                await notifyAdmins(bot, businessId, msg)
+            }
 
             // Mark as notified
             newAlerts.forEach(p => notifiedProducts.set(p.id, now))

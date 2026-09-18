@@ -15,8 +15,12 @@ export async function GET(req: Request) {
   try {
     const id = (new URL(req.url).searchParams.get("id") ?? "").trim()
     if (!/^[a-zA-Z0-9_-]{8,64}$/.test(id)) return new NextResponse(null, { status: 404, headers: HEADERS })
-    const photo = await prisma.repairPhoto.findUnique({ where: { id }, select: { filePath: true } })
-    if (!photo) return new NextResponse(null, { status: 404, headers: HEADERS })
+    const photo = await prisma.repairPhoto.findUnique({
+      where: { id },
+      select: { filePath: true, business: { select: { isActive: true } } },
+    })
+    // Empresa suspendida: sus evidencias dejan de servirse (404 genérico).
+    if (!photo || !photo.business.isActive) return new NextResponse(null, { status: 404, headers: HEADERS })
     const file = await readRepairPhoto(photo.filePath)
     if (!file) return new NextResponse(null, { status: 404, headers: HEADERS })
     return new NextResponse(new Uint8Array(file.bytes), {

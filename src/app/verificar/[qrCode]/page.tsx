@@ -77,8 +77,8 @@ export default async function VerifyPage({
   const { qrCode } = await params
   const session = await auth()
 
-  // Solo admins pueden ver esta página
-  if (!session || session.user.role !== "ADMIN" || session.user.status !== "APPROVED") {
+  // Solo staff del negocio (admin|empleado) puede verificar y entregar reservas
+  if (!session || !["ADMIN", "EMPLOYEE"].includes(session.user.role) || session.user.status !== "APPROVED") {
     redirect("/login?callbackUrl=/verificar/" + qrCode)
   }
 

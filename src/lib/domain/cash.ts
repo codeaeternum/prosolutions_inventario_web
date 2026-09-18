@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { actor, amount, BusinessError, cents, openRegister, operation, operationKeySchema, resolveBranch } from "./operations"
+import { actor, amount, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, resolveBranch } from "./operations"
 
 const schema = z.object({
   idempotencyKey: operationKeySchema, action: z.enum(["OPEN", "CLOSE", "MOVEMENT"]),
@@ -10,7 +10,8 @@ const schema = z.object({
 })
 export async function changeCash(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = schema.parse(raw)
-  const value = amount(cents(input.amount, input.action !== "MOVEMENT"))
+  const valueCents = cents(input.amount, input.action !== "MOVEMENT")
+  const value = amount(valueCents)
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: `CASH_${input.action}`, permission: "staff", payload: input }, async tx => {
     const user = await actor(tx, actorId, "staff", businessId)
     const branch = await resolveBranch(tx, input.branchId ?? user.homeBranchId, businessId)
@@ -21,8 +22,19 @@ export async function changeCash(db: PrismaClient, actorId: string, businessId: 
     if (!input.registerId) throw new BusinessError("Identifica la caja que estás operando.")
     const register = await openRegister(tx, branch.id, businessId)
     if (register.id !== input.registerId) throw new BusinessError("La caja cambió. Actualiza la pantalla antes de continuar.", 409)
-    if (input.action === "CLOSE") return tx.cashRegister.update({ where: { id: register.id }, data: { status: "CLOSED", finalAmount: value, closedById: actorId, closedAt: new Date(), notes: input.description } })
+    if (input.action === "CLOSE") {
+      // El cierre cuadra el turno: solo un admin o quien lo abrió puede sellarlo.
+      if (user.role !== "ADMIN" && register.openedById !== actorId) throw new BusinessError("Solo un administrador o quien abrió la caja puede cerrarla.", 403)
+      return tx.cashRegister.update({ where: { id: register.id }, data: { status: "CLOSED", finalAmount: value, closedById: actorId, closedAt: new Date(), notes: input.description } })
+    }
     if (!input.type || !input.description) throw new BusinessError("Indica el tipo y motivo del movimiento.")
+    if (input.type === "OUT") {
+      // Salida directa sin autorización previa: solo admin. El staff solicita
+      // el gasto (CashRequest) y un admin distinto lo autoriza.
+      if (user.role !== "ADMIN") throw new BusinessError("Las salidas de efectivo requieren un administrador. Registra una solicitud de gasto.", 403)
+      const availableCents = await registerCashCents(tx, register.id)
+      if (valueCents > availableCents) throw new BusinessError(`El retiro supera el efectivo en caja (${amount(availableCents)} disponibles).`, 409, "INSUFFICIENT_CASH")
+    }
     return tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: input.type, amount: value, description: input.description, referenceType: "MANUAL" } })
   })
 }

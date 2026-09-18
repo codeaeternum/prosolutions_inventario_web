@@ -5,7 +5,7 @@ import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
-import { BusinessError, operation, operationKeySchema, transaction, type Transaction } from "@/lib/domain/operations"
+import { BusinessError, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "@/lib/domain/operations"
 
 // Decisión sobre una solicitud de gasto: solo ADMIN y nunca sobre la propia.
 // APPROVE asienta el CashMovement OUT en la caja abierta de la sucursal.
@@ -34,9 +34,12 @@ async function decide(tx: Transaction, actorId: string, businessId: string, id: 
     if (rejected.count !== 1) throw new BusinessError("La solicitud ya fue decidida.", 409)
     return { request: await tx.cashRequest.findUniqueOrThrow({ where: { id }, include: requestInclude }) }
   }
-  // APPROVE: requiere caja abierta en la sucursal de la solicitud.
+  // APPROVE: requiere caja abierta en la sucursal de la solicitud y efectivo
+  // suficiente — aprobar de más dejaría la caja en negativo (dinero ficticio).
   const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: request.branchId, businessId }, orderBy: { openedAt: "desc" } })
   if (!register) throw new BusinessError("Abre la caja de la sucursal primero.", 409)
+  const availableCents = await registerCashCents(tx, register.id)
+  if (request.amountCents > availableCents) throw new BusinessError(`La caja solo tiene $${(availableCents / 100).toFixed(2)}; no alcanza para autorizar este gasto.`, 409, "INSUFFICIENT_CASH")
   const approved = await tx.cashRequest.updateMany({
     where: { id, status: "PENDING" },
     data: { status: "APPROVED", decidedById: actorId, decidedAt: new Date(), decisionNote: input.note ?? null },

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { repairFolio } from "@/lib/workshop-labels"
+import { orderTotalCents, orderHeldCents } from "@/lib/workshop-money"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
 // Rastreo público de órdenes de reparación. Sin sesión: la identidad se prueba
@@ -76,25 +77,33 @@ export async function GET(req: Request) {
             orderBy: { createdAt: "asc" },
             select: { id: true, label: true, createdAt: true },
           },
-          // Abonos confirmados: el cliente conoce lo que ha pagado; sirve
+          // Abonos que el cliente conoce (CONFIRMED) menos reembolsos
+          // (REFUNDED, amount negativo): lo retenido por el negocio, sirve
           // para mostrar el saldo que restaría al recoger el equipo.
           payments: {
-            where: { status: "CONFIRMED" },
-            select: { amount: true },
+            where: { status: { in: ["CONFIRMED", "REFUNDED"] } },
+            select: { amount: true, status: true },
           },
-          // Branding del negocio dueño de la orden (encabezado + CTA WhatsApp).
-          business: { select: { name: true, phone: true } },
+          // Refacciones autorizadas: se cobran además de la mano de obra.
+          parts: {
+            where: { status: "APPROVED" },
+            select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true },
+          },
+          // Branding del negocio dueño de la orden (encabezado + CTA WhatsApp)
+          // e isActive: un tenant suspendido no sirve seguimiento.
+          business: { select: { name: true, phone: true, isActive: true } },
         },
       })
 
-    // Respuesta genérica: no revelar si falló el folio o el teléfono.
-    if (!order || !onlyDigits(order.customerPhone).endsWith(phone4)) {
+    // Respuesta genérica: no revelar si falló el folio, el teléfono o si el
+    // negocio está suspendido.
+    if (!order || !order.business.isActive || !onlyDigits(order.customerPhone).endsWith(phone4)) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
     const businessName = order.business?.name?.trim() || null
     const whatsappPhone = order.business?.phone?.trim() || null
-    const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
+    const paidCents = orderHeldCents(order.payments)
 
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
     // Nunca: nombre/teléfono completo, presupuesto sin autorizar (quoteCents),
@@ -115,9 +124,11 @@ export async function GET(req: Request) {
           promisedAt: order.promisedAt,
           createdAt: order.createdAt,
           branch: order.currentBranch.name,
-          // Monto que el cliente YA autorizó (no el estimado) y lo que ha
-          // abonado: con ambos puede saber cuánto pagaría al recoger.
-          authorizedCents: order.approvedQuoteCents,
+          // Monto que el cliente YA autorizó (mano de obra autorizada +
+          // refacciones aprobadas; en cierre sin reparación el cargo de
+          // diagnóstico) y lo que ha abonado: con ambos sabe cuánto pagaría
+          // al recoger. Sin autorización registrada no se expone el estimado.
+          authorizedCents: order.approvedQuoteCents === null ? null : orderTotalCents(order, order.parts),
           paidCents,
           quoteToken: order.status === "WAITING_APPROVAL" ? order.quoteToken : null,
           photos: order.photos,

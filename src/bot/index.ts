@@ -47,7 +47,7 @@ bot.command('testnt', async (ctx) => {
     const user = await prisma.user.findUnique({ where: { telegramId } })
     if (!user || user.role !== 'ADMIN' || user.status !== 'APPROVED') return
     await ctx.reply('🔔 Enviando notificación de prueba a todos los admins...')
-    await notifyAdmins(bot, `🧪 <b>Prueba de Notificación</b>\n\nSi ves esto, el sistema funciona para ti.\nID: ${ctx.from.id}`)
+    await notifyAdmins(bot, user.businessId, `🧪 <b>Prueba de Notificación</b>\n\nSi ves esto, el sistema funciona para ti.\nID: ${ctx.from.id}`)
     await ctx.reply('✅ Proceso terminado. Revisa si llegaron los mensajes.')
 })
 
@@ -86,7 +86,7 @@ registerCancelar(bot, {
     settings: sessions.settings,
 })
 
-const { getSetting } = registerSettings(ctx)
+registerSettings(ctx)
 registerUsers(ctx)
 registerSales(ctx)
 registerCart(ctx)

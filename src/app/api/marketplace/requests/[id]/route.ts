@@ -11,6 +11,7 @@ const decideSchema = z.object({
   action: z.enum(["APPROVE", "REJECT", "FULFILL"]),
   decisionNote: z.string().trim().max(500).optional(),
   paymentMethod: z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"]).optional(),
+  reference: z.string().trim().max(200).optional(), // folio SPEI/autorización; obligatorio en TRANSFERENCIA
   branchId: z.string().min(1).optional(),
   customerId: z.string().min(1).optional(),
 })
@@ -46,7 +47,7 @@ export async function PATCH(
     if (!parseResult.success) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 })
     }
-    const { action, decisionNote, paymentMethod, branchId, customerId } = parseResult.data
+    const { action, decisionNote, paymentMethod, reference, branchId, customerId } = parseResult.data
 
     const existing = await prisma.marketplaceRequest.findUnique({
       where: { id },
@@ -87,7 +88,7 @@ export async function PATCH(
         result = await sell(prisma, actorId, businessId, {
           idempotencyKey: `mkt-fulfill-${existing.id}`,
           items: [{ productId: existing.productId, quantity: existing.qty }],
-          paymentMethod,
+          payments: [{ method: paymentMethod, ...(reference ? { reference } : {}) }],
           customerId: saleCustomerId,
           branchId: branchId ?? undefined,
           priceTier: "wholesale",

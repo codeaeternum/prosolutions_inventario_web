@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useSession } from "next-auth/react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -117,6 +118,8 @@ function TypeBadge({ type }: { type: Cliente["customerType"] }) {
 }
 
 export default function ClientesPage() {
+  const { data: session } = useSession()
+  const isAdmin = session?.user?.role === "ADMIN"
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()
@@ -406,10 +409,12 @@ export default function ClientesPage() {
           description={
             search || typeFilter !== "ALL" || conDeuda
               ? "Prueba con otros filtros o vuelve a la primera página."
-              : "Aún no hay clientes aprobados. Los registros nuevos se aprueban desde Usuarios."
+              : isAdmin
+                ? "Aún no hay clientes aprobados. Los registros nuevos se aprueban desde Usuarios."
+                : "Aún no hay clientes aprobados. Un administrador aprueba los registros nuevos."
           }
           action={
-            search || typeFilter !== "ALL" || conDeuda
+            search || typeFilter !== "ALL" || conDeuda || !isAdmin
               ? undefined
               : { label: "Gestionar usuarios", href: "/admin/usuarios", icon: Users }
           }

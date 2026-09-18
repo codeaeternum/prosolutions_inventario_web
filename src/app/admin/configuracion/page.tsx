@@ -32,8 +32,9 @@ const DEFAULTS: GeneralSettings = {
   depositReservationHours: 48,
   pendingVerificationHours: 24,
   exchangeRate: 17.5,
-  bankTransferInfo: "BBVA\nProSolutions SA\n0123456789",
-  bankCashInfo: "OXXO\nJuan Pérez\n4152 3133 4444 5555",
+  // Sin cuentas de ejemplo: un negocio nuevo no debe mostrar el banco de otro.
+  bankTransferInfo: "",
+  bankCashInfo: "",
 }
 
 function formatDate(iso?: string) {

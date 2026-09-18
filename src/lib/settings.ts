@@ -6,8 +6,10 @@ export const DEFAULT_SETTINGS = {
   depositReservationHours: 48,
   pendingVerificationHours: 24,
   exchangeRate: 17.5,
-  bankTransferInfo: "BBVA\nProSolutions SA\n0123456789",
-  bankCashInfo: "OXXO\nJuan Pérez\n4152 3133 4444 5555"
+  // Vacíos a propósito: un tenant nuevo no debe mostrar la cuenta/CLABE de
+  // otro negocio. El admin los captura en /admin/configuracion.
+  bankTransferInfo: "",
+  bankCashInfo: ""
 }
 
 export type AppSettings = typeof DEFAULT_SETTINGS

@@ -12,16 +12,18 @@ export async function isAdmin(telegramId: string): Promise<boolean> {
 }
 
 /**
- * Envía un mensaje HTML a todos los usuarios con rol ADMIN y telegramId definido.
+ * Envía un mensaje HTML a los usuarios con rol ADMIN y telegramId definido
+ * DEL NEGOCIO `businessId`. Multi-tenant: cada User.businessId es su empresa,
+ * así que jamás se notifica a admins de otros tenants.
  * Usado para notificaciones internas (nuevos registros, reservas, etc.).
  */
-export async function notifyAdmins(bot: Telegraf, message: string, extraOptions?: any): Promise<void> {
+export async function notifyAdmins(bot: Telegraf, businessId: string, message: string, extraOptions?: any): Promise<void> {
   const prisma = getPrisma()
   if (!prisma) return
   const isDev = process.env.NODE_ENV !== "production"
   try {
     const admins = await prisma.user.findMany({
-      where: { role: "ADMIN", status: "APPROVED", telegramId: { not: null } },
+      where: { businessId, role: "ADMIN", status: "APPROVED", telegramId: { not: null } },
     })
     if (isDev) console.log(`[Notify] Found ${admins.length} admins to notify.`)
     for (const admin of admins) {

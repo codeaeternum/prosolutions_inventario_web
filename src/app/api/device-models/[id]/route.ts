@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError } from "@/lib/domain/operations"
 
-// Borrado físico: DeviceModel es solo un catálogo de autocompletado, no hay
-// órdenes que referencien su id, así que eliminar no rompe nada.
+// DeviceModel es un catálogo GLOBAL compartido por todos los tenants: la
+// escritura queda restringida al superadmin de plataforma — un admin de un
+// tenant no puede borrar el catálogo de los demás.
+// Borrado físico: no hay órdenes que referencien su id, así que eliminar no
+// rompe nada.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireSuperAdmin()
     if (auth.error) return auth.error
     const { id } = await params
     const existing = await prisma.deviceModel.findUnique({ where: { id } })

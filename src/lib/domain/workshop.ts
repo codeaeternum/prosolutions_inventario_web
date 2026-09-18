@@ -1,8 +1,14 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema } from "./operations"
+import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
 import { repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
+import { orderTotalCents } from "../workshop-money"
+
+// Los totales de dinero del taller viven en ../workshop-money (módulo puro,
+// lo comparten rutas API y componentes). Se re-exportan para que el dominio
+// siga siendo el punto de importación único.
+export { approvedParts, approvedPartsTotal, orderTotalCents, orderHeldCents, orderBalanceCents, orderOverpaidCents } from "../workshop-money"
 
 const text = z.string().trim().min(1).max(500)
 const optionalText = z.string().trim().max(500).optional()
@@ -83,33 +89,40 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
   const productId = part.productId
   const folio = repairFolio(order.number)
   if (type === "RETURN") {
-    // Se repone solo lo que realmente se descontó (el movimiento OUT registra la
-    // cantidad efectiva en `notes` con el id de la refacción).
-    const moved = await tx.inventoryMovement.aggregate({ where: { businessId, productId, type: "OUT", notes: { contains: part.id } }, _sum: { quantity: true } })
-    const returnQty = moved._sum.quantity ?? 0
+    // Se repone solo lo que realmente se descontó (los movimientos OUT de esta
+    // refacción, identificados por su id en `notes`) menos lo ya repuesto —
+    // así un segundo RETURN por la misma refacción no duplica existencias.
+    const outs = await tx.inventoryMovement.findMany({ where: { businessId, productId, type: "OUT", notes: { contains: part.id } }, select: { quantity: true, branchId: true } })
+    const returned = await tx.inventoryMovement.aggregate({ where: { businessId, productId, type: "RETURN", notes: { contains: part.id } }, _sum: { quantity: true } })
+    const returnQty = outs.reduce((sum, movement) => sum + movement.quantity, 0) - (returned._sum.quantity ?? 0)
     if (returnQty <= 0) return { deducted: 0, stock: 0 }
+    // La reposición va a la sucursal donde ocurrió el OUT (la orden pudo
+    // moverse de sucursal después del descuento).
+    const returnBranchId = outs.find(movement => movement.branchId !== null)?.branchId ?? order.currentBranchId
     await tx.branchStock.upsert({
-      where: { productId_branchId: { productId, branchId: order.currentBranchId } },
-      create: { businessId, productId, branchId: order.currentBranchId, quantity: returnQty },
+      where: { productId_branchId: { productId, branchId: returnBranchId } },
+      create: { businessId, productId, branchId: returnBranchId, quantity: returnQty },
       update: { quantity: { increment: returnQty } },
     })
     const product = await tx.product.update({ where: { id: productId, businessId }, data: { stock: { increment: returnQty } } })
-    await tx.inventoryMovement.create({ data: { businessId, type: "RETURN", quantity: returnQty, previousStock: product.stock - returnQty, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Devolución refacción ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * returnQty) / 100, businessVersion: 1 } })
+    await tx.inventoryMovement.create({ data: { businessId, type: "RETURN", quantity: returnQty, previousStock: product.stock - returnQty, newStock: product.stock, productId, branchId: returnBranchId, userId: actorId, reason: `Devolución refacción ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * returnQty) / 100, businessVersion: 1 } })
     return { deducted: returnQty, stock: product.stock }
   }
   // OUT: el CHECK quantity >= 0 no admite negativos — se toma solo lo disponible.
+  // Invariante Product.stock = Σ BranchStock: ambos descuentan la MISMA
+  // cantidad, así que el tope es el mínimo entre la sucursal y el total
+  // cacheado (si ya venían desfasados, no se profundiza el desfase).
   const stockRow = await tx.branchStock.findUnique({ where: { productId_branchId: { productId, branchId: order.currentBranchId } } })
-  const available = Math.max(0, stockRow?.quantity ?? 0)
-  const deduct = Math.min(part.qty, available)
-  if (deduct <= 0) return { deducted: 0, stock: 0 }
-  const taken = await tx.branchStock.updateMany({ where: { productId, branchId: order.currentBranchId, quantity: { gte: deduct } }, data: { quantity: { decrement: deduct } } })
-  if (taken.count !== 1) return { deducted: 0, stock: 0 } // el stock cambió en paralelo; el evento no afirma descuento
-  // Product.stock es el total cacheado; también tiene CHECK >= 0 — se limita igual.
+  const branchAvailable = Math.max(0, stockRow?.quantity ?? 0)
   const productRow = await tx.product.findUnique({ where: { id: productId, businessId }, select: { stock: true } })
-  const productDeduct = Math.min(deduct, Math.max(0, productRow?.stock ?? 0))
-  const product = await tx.product.update({ where: { id: productId, businessId }, data: { stock: { decrement: productDeduct } } })
-  await tx.inventoryMovement.create({ data: { businessId, type: "OUT", quantity: deduct, previousStock: product.stock + productDeduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * part.qty) / 100, businessVersion: 1 } })
-  return { deducted: deduct, stock: product.stock - (deduct - productDeduct) }
+  const productAvailable = Math.max(0, productRow?.stock ?? 0)
+  const deduct = Math.min(part.qty, branchAvailable, productAvailable)
+  if (deduct <= 0) return { deducted: 0, stock: productAvailable }
+  const taken = await tx.branchStock.updateMany({ where: { productId, branchId: order.currentBranchId, quantity: { gte: deduct } }, data: { quantity: { decrement: deduct } } })
+  if (taken.count !== 1) return { deducted: 0, stock: productAvailable } // el stock cambió en paralelo; el evento no afirma descuento
+  const product = await tx.product.update({ where: { id: productId, businessId }, data: { stock: { decrement: deduct } } })
+  await tx.inventoryMovement.create({ data: { businessId, type: "OUT", quantity: deduct, previousStock: product.stock + deduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * deduct) / 100, businessVersion: 1 } })
+  return { deducted: deduct, stock: product.stock }
 }
 /** Sufijo de evento con el resultado del movimiento de inventario vinculado. */
 const stockNote = (result: { deducted: number; stock: number } | null, qty: number) =>
@@ -120,9 +133,9 @@ const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
   // con flujo de autorización (PART_REQUEST).
-  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_REQUEST", "PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN"]),
+  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_REQUEST", "PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN", "DIAGNOSTIC_FEE", "REFUND"]),
   detail: z.string().trim().min(1).max(2000).optional(), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
-  quoteCents: moneyCents.optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
+  quoteCents: moneyCents.optional(), diagnosticFeeCents: moneyCents.optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
   partId: z.string().min(1).optional(), partDescription: z.string().trim().min(1).max(200).optional(),
   approve: z.boolean().optional(),
   partQty: z.number().int().min(1).max(999).default(1),
@@ -132,7 +145,7 @@ const actionSchema = z.object({
   paymentCents: moneyCents.optional(), paymentMethod: paymentMethod.optional(),
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
 })
-const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "SETTLE_DELIVER"]
+const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "SETTLE_DELIVER", "REFUND"]
 export async function updateRepair(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
@@ -141,11 +154,17 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
     const reopeningToWarranty = order.status === "DELIVERED" && input.action === "STATUS" && input.status === "WARRANTY"
-    if (order.status === "CANCELLED" || (order.status === "DELIVERED" && !reopeningToWarranty)) throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
+    // REFUND es la única acción permitida en órdenes cerradas: devolver un
+    // anticipo no reabre el historial ni altera el estado.
+    if ((order.status === "CANCELLED" || (order.status === "DELIVERED" && !reopeningToWarranty)) && input.action !== "REFUND") throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
     const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
     let detail = input.detail ?? ""
     let eventType: string = input.action
     let eventPublic = false
+    // Dinero retenido por la orden: cobros CONFIRMED menos reembolsos
+    // (filas REFUNDED con amount negativo, misma convención que ventas).
+    const heldCents = async () => Math.round(((await tx.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: id, status: { in: ["CONFIRMED", "REFUNDED"] } } }))._sum.amount ?? 0) * 100)
+    const orderParts = () => tx.repairPart.findMany({ where: { orderId: id }, select: { id: true, productId: true, description: true, qty: true, unitCostCents: true, unitPriceCents: true, status: true } })
     if (input.action === "QUOTE") {
       if (!["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) || input.quoteCents === undefined) throw new BusinessError("Registra el diagnóstico e importe antes de solicitar autorización.", 409)
       Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL" })
@@ -181,21 +200,88 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     } else if (input.action === "PAYMENT") {
       if (input.paymentCents === undefined || input.paymentCents <= 0) throw new BusinessError("Indica el monto del abono.")
       if (!input.paymentMethod) throw new BusinessError("Selecciona el método de cobro.")
+      // Sobrepago silencioso: un abono no puede superar el saldo pendiente
+      // (total de la orden — mano de obra + refacciones autorizadas, o el
+      // cargo de diagnóstico en cierres sin reparación — menos lo retenido).
+      const pendingCents = orderTotalCents(order, await orderParts()) - await heldCents()
+      if (input.paymentCents > pendingCents) throw new BusinessError(`El abono excede el saldo pendiente de ${(Math.max(0, pendingCents) / 100).toFixed(2)} MXN.`, 409)
       const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
       eventType = "PAYMENT"
       detail = `Abono ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} ${input.detail ?? ""}`.trim()
+    } else if (input.action === "REFUND") {
+      if (input.paymentCents === undefined || input.paymentCents <= 0) throw new BusinessError("Indica el monto a devolver.")
+      if (!input.paymentMethod) throw new BusinessError("Selecciona el método de devolución.")
+      // Reembolso de anticipo/excedente (p. ej. al cancelar o al entregar sin
+      // reparación): solo es devolvable lo cobrado de más sobre el total —
+      // el dinero que aún se debe no es reembolsable. Se registra como pago
+      // negativo con status REFUNDED, igual que las devoluciones de ventas.
+      const refundableCents = await heldCents() - orderTotalCents(order, await orderParts())
+      if (input.paymentCents > refundableCents) throw new BusinessError(`La devolución excede lo cobrado de más (${(Math.max(0, refundableCents) / 100).toFixed(2)} MXN).`, 409)
+      const payment = await tx.payment.create({ data: { businessId, repairOrderId: id, purpose: "REFUND", method: input.paymentMethod, amount: -input.paymentCents / 100, status: "REFUNDED", createdById: actorId, notes: input.detail ?? null } })
+      if (input.paymentMethod === "CASH") {
+        const register = await openRegister(tx, order.currentBranchId, businessId)
+        // Igual que las devoluciones de venta: la caja no queda en negativo —
+        // si no alcanza el efectivo se rechaza antes de registrar la salida.
+        const availableCents = await registerCashCents(tx, register.id)
+        if (input.paymentCents > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409)
+        const movement = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: input.paymentCents / 100, description: `Taller OT-${String(order.number).padStart(6, "0")} · reembolso`, referenceType: "REPAIR_REFUND", referenceId: payment.id } })
+        await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
+      }
+      eventType = "PAYMENT"
+      detail = `Reembolso ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}). ${input.detail}`
     } else if (input.action === "SETTLE_DELIVER") {
       if (!repairNextStages[order.status].includes("DELIVERED")) throw new BusinessError("La orden aún no está lista para entregarse.", 409)
-      const paid = (await tx.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: id, status: "CONFIRMED" } }))._sum.amount ?? 0
-      const quoted = order.approvedQuoteCents ?? order.quoteCents ?? 0
-      const balanceCents = Math.max(0, quoted - Math.round(paid * 100))
+      const withoutRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
+      const parts = await orderParts()
+      const held = await heldCents()
+      // Total a cobrar: en cierres sin reparación solo el cargo de diagnóstico
+      // (la cotización rechazada y sus refacciones no se cobran); en el resto
+      // mano de obra + refacciones autorizadas.
+      const totalCents = orderTotalCents(order, parts)
+      const balanceCents = Math.max(0, totalCents - held)
+      const overpaidCents = Math.max(0, held - totalCents)
       if (balanceCents > 0 && !input.paymentMethod) throw new BusinessError(`Restan ${(balanceCents / 100).toFixed(2)} MXN por cobrar. Selecciona el método.`, 409)
+      const tail: string[] = []
+      if (withoutRepair) {
+        // Las refacciones no se cobran. NOT_AUTHORIZED: la reparación nunca
+        // corrió (solo se llega desde WAITING_APPROVAL) — las piezas
+        // autorizadas no salieron del anaquel: se reponen a inventario y
+        // quedan rechazadas. NOT_REPAIRED: las piezas pudieron quedar dentro
+        // del equipo devuelto, así que su stock no se repone aquí; si se
+        // recuperaron físicamente, el administrador las retira con
+        // PART_REMOVE antes de entregar. Las REQUESTED mueren en ambos casos.
+        if (order.status === "NOT_AUTHORIZED") {
+          const released: string[] = []
+          for (const part of parts.filter(row => row.status === "APPROVED")) {
+            const result = await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN" })
+            if (result && result.deducted > 0) released.push(`${result.deducted} × ${part.description}`)
+          }
+          if (released.length) tail.push(`Refacciones liberadas a inventario: ${released.join(", ")}.`)
+        }
+        const rejected = await tx.repairPart.updateMany({
+          where: { orderId: id, ...(order.status === "NOT_AUTHORIZED" ? { status: { in: ["APPROVED", "REQUESTED"] } } : { status: "REQUESTED" }) },
+          data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: "La orden se entregó sin reparación; no se cobra." },
+        })
+        if (rejected.count > 0) tail.push(`${rejected.count} refacción(es) marcadas como no cobradas.`)
+      }
       if (balanceCents > 0) {
         const { cashNote } = await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
-        detail = `Liquidado ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} Entrega a: ${input.detail}`
+        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}).${cashNote} Entrega a: ${input.detail}`
       } else detail = `Sin saldo pendiente. Entrega a: ${input.detail}`
+      // Si el cliente pagó de más (anticipo mayor al cargo final) el excedente
+      // queda documentado para registrar el reembolso con la acción REFUND.
+      if (overpaidCents > 0) tail.push(`Excedente a devolver al cliente: ${(overpaidCents / 100).toFixed(2)} MXN.`)
+      if (tail.length) detail = `${detail} ${tail.join(" ")}`
       Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail })
       eventType = "PAYMENT"
+    } else if (input.action === "DIAGNOSTIC_FEE") {
+      // Cargo por diagnóstico/revisión: lo único cobrable al entregar sin
+      // reparación. Editable mientras la orden está en el cierre sin
+      // reparación (antes de entregar queda bloqueada).
+      if (order.status !== "NOT_AUTHORIZED" && order.status !== "NOT_REPAIRED") throw new BusinessError("El cargo por diagnóstico solo aplica a órdenes cerradas sin reparación.", 409)
+      if (input.diagnosticFeeCents === undefined) throw new BusinessError("Indica el cargo por diagnóstico/revisión.")
+      data.diagnosticFeeCents = input.diagnosticFeeCents
+      detail = `Cargo por diagnóstico/revisión: ${(input.diagnosticFeeCents / 100).toFixed(2)} MXN.${input.detail ? ` ${input.detail}` : ""}`
     } else if (input.action === "PART_REQUEST" || input.action === "PART_ADD") {
       if (!input.partDescription) throw new BusinessError("Describe la refacción.")
       if (input.partProductId && !await tx.product.findFirst({ where: { id: input.partProductId, businessId } })) throw new BusinessError("El producto seleccionado no existe.")
@@ -258,17 +344,4 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
-}
-type PartLike = { qty: number; unitCostCents: number; unitPriceCents: number; status?: string | null }
-/** Solo las refacciones autorizadas suman a costo/precio; REQUESTED y REJECTED son bitácora.
- *  `status` ausente se trata como APPROVED (registros anteriores al flujo de autorización). */
-export function approvedParts<T extends { status?: string | null }>(parts: readonly T[]): T[] {
-  return parts.filter(part => part.status === undefined || part.status === null || part.status === "APPROVED")
-}
-/** Totales en centavos de las refacciones autorizadas: costo, precio y margen. */
-export function approvedPartsTotal(parts: readonly PartLike[]) {
-  const list = approvedParts(parts)
-  const costCents = list.reduce((sum, part) => sum + part.unitCostCents * part.qty, 0)
-  const priceCents = list.reduce((sum, part) => sum + part.unitPriceCents * part.qty, 0)
-  return { costCents, priceCents, marginCents: priceCents - costCents }
 }

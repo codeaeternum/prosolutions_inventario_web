@@ -10,7 +10,8 @@ import * as https from 'https'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
 import { createProduct } from '../../lib/domain/products'
-import { requireAdmin, requirePrisma } from '../lib/guards'
+import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { getDefaultBusinessId } from '../../lib/settings'
 import { generateQRCode, normalizePhone } from '../lib/utils'
 
 type Intent = 'greeting' | 'help' | 'profile' | 'categories' | 'offers'
@@ -66,8 +67,10 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
         }
 
         try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
-                where: { name: { contains: args, mode: 'insensitive' } },
+                where: { businessId: actor.businessId, name: { contains: args, mode: 'insensitive' } },
                 take: 5,
                 select: {
                     id: true, name: true, stock: true,
@@ -131,8 +134,11 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
         }
 
         try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
+                    businessId: actor.businessId,
                     OR: [
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
@@ -384,7 +390,11 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 if (adminSession.step === 'NAME') {
                     adminSession.data.name = ctx.message.text
                     adminSession.step = 'CATEGORY'
-                    const categories = await prisma.category.findMany({ take: 10 })
+                    // Multi-tenant: solo categorías del negocio del admin —
+                    // el producto nuevo se ligará a una de ellas.
+                    const actor = await getBotAccount(prisma, telegramId)
+                    if (!actor) { delete sessions.adminProduct[telegramId]; return ctx.reply('Cuenta no disponible.') }
+                    const categories = await prisma.category.findMany({ where: { businessId: actor.businessId }, take: 10 })
                     const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `addcat_${c.id}`)])
                     await ctx.reply('2️⃣ *Selecciona la categoría:*', { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     return
@@ -453,6 +463,10 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             const intent = classifyIntent(queryLower)
             const userObj = await prisma?.user.findUnique({ where: { telegramId } })
             const userName = userObj?.name?.split(' ')[0] || 'amigo'
+            // Multi-tenant: el catálogo que se busca es el del negocio del
+            // usuario; visitantes sin cuenta ven el negocio por defecto (el
+            // bot de este despliegue es mono-negocio por diseño).
+            const searchBusinessId = userObj?.businessId ?? (await getDefaultBusinessId())
 
             if (intent === 'greeting') return await ctx.reply(`¡Hola ${userName}! 👋 ¿En qué puedo ayudarte? Escribe el nombre de un producto para buscar.\n\nTambién puedes usar /categorias o /ofertas.`)
             if (intent === 'help') return await ctx.reply(`📋 *Ayuda — ProSolutions*\n\n🔍 Escribe el nombre de un producto para buscar.\n   Ej: Pantalla iPhone 15\n\n/start - Reiniciar\n/perfil - Tu perfil\n/categorias - Catálogo por categoría\n/ofertas - Productos destacados`, { parse_mode: 'Markdown' })
@@ -479,7 +493,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 }))
 
                 let products = await prisma.product.findMany({
-                    where: { AND: andConditions, isActive: true, stock: { gt: 0 } },
+                    where: { businessId: searchBusinessId, AND: andConditions, isActive: true, stock: { gt: 0 } },
                     take: 5,
                     include: { category: true },
                     orderBy: { stock: 'desc' }
@@ -492,6 +506,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                             SELECT p.id, p.name, p."retailPrice", p.stock
                             FROM "Product" p
                             WHERE p."isActive" = true AND p.stock > 0
+                              AND p."businessId" = ${searchBusinessId}
                               AND similarity(p.name, ${queryLower}) > 0.3
                             ORDER BY similarity(p.name, ${queryLower}) DESC
                             LIMIT 3
@@ -507,7 +522,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                                 ]
                             }))
                             const orProducts = await prisma.product.findMany({
-                                where: { OR: orConditions, isActive: true, stock: { gt: 0 } },
+                                where: { businessId: searchBusinessId, OR: orConditions, isActive: true, stock: { gt: 0 } },
                                 take: 10, include: { category: true }
                             })
                             const scored = orProducts.map((p: any) => {

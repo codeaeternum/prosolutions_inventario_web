@@ -27,7 +27,9 @@ export async function GET(req: Request) {
     if (type && !["TEMPORARY", "DEPOSIT"].includes(type)) return NextResponse.json({ error: "Tipo inválido" }, { status: 400 })
     const where: Prisma.ReservationWhereInput = {
       businessId: businessIdOf(session),
-      ...(session.user.role !== "ADMIN" ? { userId: session.user.id } : {}),
+      // Staff (admin|empleado) opera el mostrador y ve todas las reservas del
+      // negocio; los clientes solo ven las propias.
+      ...(!["ADMIN", "EMPLOYEE"].includes(session.user.role) ? { userId: session.user.id } : {}),
       ...(status ? { status: status as ReservationStatus } : view === "active" ? { status: { in: [...ACTIVE_RESERVATIONS] } } : view === "history" ? { status: { in: [...TERMINAL_RESERVATIONS] } } : {}),
       ...(type ? { type: type as "TEMPORARY" | "DEPOSIT" } : {}),
     }

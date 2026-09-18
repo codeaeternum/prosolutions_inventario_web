@@ -7,9 +7,15 @@ import { prisma } from "@/lib/prisma"
 type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; businessId: string; password: string | null; close: () => void }
 const connections = new Map<string, Connection>()
 
+// Revalida la sesión en cada heartbeat/broadcast: la conexión muere si el
+// usuario cambia de estado/password/empresa O si la empresa se suspende
+// (Business.isActive=false corta también los streams ya abiertos).
 async function stillAuthorized(connection: Connection): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { id: connection.userId }, select: { status: true, password: true, businessId: true } })
-  return user?.status === "APPROVED" && user.password === connection.password && user.businessId === connection.businessId
+  const user = await prisma.user.findUnique({
+    where: { id: connection.userId },
+    select: { status: true, password: true, businessId: true, business: { select: { isActive: true } } },
+  })
+  return user?.status === "APPROVED" && user.password === connection.password && user.businessId === connection.businessId && user.business.isActive
 }
 
 // Tipos de eventos

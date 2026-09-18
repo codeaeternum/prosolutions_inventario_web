@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
@@ -9,10 +9,13 @@ import { CustomerType } from "@prisma/client"
  * Directorio de clientes (role=CUSTOMER, status=APPROVED) con agregados de
  * actividad: reservas, ventas como cliente y órdenes de taller (ligadas por
  * customerId, con respaldo por teléfono para las históricas sin ligar).
+ *
+ * Staff (admin|empleado): el mostrador busca clientes al recibir equipos y
+ * cobrar a crédito.
  */
 export async function GET(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireAdminOrEmployee()
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

@@ -4,6 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { orderTotalCents } from "@/lib/workshop-money"
 import { ReservationStatus, SaleStatus, CreditMovementType } from "@prisma/client"
 
 /**
@@ -124,6 +125,12 @@ export async function GET(
                 reportedIssue: true,
                 quoteCents: true,
                 approvedQuoteCents: true,
+                diagnosticFeeCents: true,
+                // Solo autorizadas: son las que suman al total de la orden.
+                parts: {
+                  where: { status: "APPROVED" },
+                  select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true },
+                },
                 createdAt: true,
               },
               orderBy: { createdAt: "desc" },
@@ -184,14 +191,16 @@ export async function GET(
 
     for (const order of repairs) {
       const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
-      const quote = order.approvedQuoteCents ?? order.quoteCents
+      // Total real de la orden: mano de obra + refacciones autorizadas
+      // (o solo el cargo por diagnóstico en cierres sin reparación).
+      const totalCents = orderTotalCents(order, order.parts)
       eventos.push({
         kind: "repair",
         id: order.id,
         folio: repairFolio(order.number),
         fecha: order.createdAt.toISOString(),
         descripcion: `${equipo} — ${order.reportedIssue}`.slice(0, 180),
-        monto: quote != null ? quote / 100 : null,
+        monto: totalCents > 0 ? totalCents / 100 : null,
         status: order.status,
         statusLabel: repairLabels[order.status as RepairStage] ?? order.status,
         href: `/admin/taller?orden=${order.id}`,

@@ -8,10 +8,12 @@ import { Input } from "@/components/ui/input"
 export const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
 export const DEFAULT_LOCATIONS = ["Recepción", "Mesa 1", "Mesa 2", "Anaquel A", "Anaquel B"]
 
-export function EditableList({ title, description, items, draft, onDraft, onAdd, onRemove, placeholder, maxLength, disabled }: {
+export function EditableList({ title, description, items, draft, onDraft, onAdd, onRemove, placeholder, maxLength, disabled, readOnly = false }: {
   title: string; description: string; items: string[]; draft: string
   onDraft: (value: string) => void; onAdd: () => void; onRemove: (item: string) => void
   placeholder: string; maxLength: number; disabled: boolean
+  /** Solo lectura: muestra la lista sin controles de agregar/quitar (p. ej. empleados). */
+  readOnly?: boolean
 }) {
   return (
     <div className="space-y-3">
@@ -24,16 +26,20 @@ export function EditableList({ title, description, items, draft, onDraft, onAdd,
         {items.map(item => (
           <span key={item} className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-3 py-1 text-sm">
             {item}
-            <button type="button" aria-label={`Quitar ${item}`} disabled={disabled} onClick={() => onRemove(item)} className="rounded-full p-0.5 text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-50">
-              <X size={12} />
-            </button>
+            {!readOnly && (
+              <button type="button" aria-label={`Quitar ${item}`} disabled={disabled} onClick={() => onRemove(item)} className="rounded-full p-0.5 text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-50">
+                <X size={12} />
+              </button>
+            )}
           </span>
         ))}
       </div>
-      <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); onAdd() }}>
-        <Input value={draft} onChange={event => onDraft(event.target.value)} maxLength={maxLength} placeholder={placeholder} disabled={disabled} className="max-w-xs" />
-        <Button type="submit" variant="outline" disabled={disabled || !draft.trim()}><Plus className="mr-2 h-4 w-4" />Agregar</Button>
-      </form>
+      {!readOnly && (
+        <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); onAdd() }}>
+          <Input value={draft} onChange={event => onDraft(event.target.value)} maxLength={maxLength} placeholder={placeholder} disabled={disabled} className="max-w-xs" />
+          <Button type="submit" variant="outline" disabled={disabled || !draft.trim()}><Plus className="mr-2 h-4 w-4" />Agregar</Button>
+        </form>
+      )}
     </div>
   )
 }

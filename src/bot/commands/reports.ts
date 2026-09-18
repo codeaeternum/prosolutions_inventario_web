@@ -5,7 +5,7 @@ import { Markup } from 'telegraf'
 import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
-import { requireAdmin, requirePrisma } from '../lib/guards'
+import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 
 function generateProgressBar(percent: number): string {
     const filled = Math.min(10, Math.floor(percent / 10))
@@ -46,7 +46,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             const current = await prisma.branchStock.findUnique({
                 where: { productId_branchId: { productId, branchId: branch.id } }
             })
-            const product = await prisma.product.findUnique({ where: { id: productId }, select: { id: true, name: true, stock: true } })
+            const product = await prisma.product.findUnique({ where: { id: productId, businessId: adminUser.businessId }, select: { id: true, name: true, stock: true } })
             if (!product) return ctx.reply('❌ Producto no encontrado.')
             const diff = newStock - (current?.quantity ?? 0)
             if (diff === 0) return ctx.reply(`ℹ️ ${product.name} ya tiene ${newStock} en ${branch.name}.`)
@@ -72,8 +72,10 @@ export function registerReports({ bot, prisma }: BotContext) {
         if (!(await requirePrisma(ctx))) return
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const reservations = await prisma.reservation.findMany({
-                where: { status: { in: ['PENDING', 'PENDING_PAYMENT'] } },
+                where: { businessId: actor.businessId, status: { in: ['PENDING', 'PENDING_PAYMENT'] } },
                 include: { user: true, product: true },
                 orderBy: { createdAt: 'desc' },
                 take: 15
@@ -106,8 +108,10 @@ export function registerReports({ bot, prisma }: BotContext) {
         if (!(await requirePrisma(ctx))) return
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const register = await prisma.cashRegister.findFirst({
-                where: { status: 'OPEN' },
+                where: { businessId: actor.businessId, status: 'OPEN' },
                 include: {
                     openedBy: { select: { name: true } },
                     movements: { orderBy: { createdAt: 'desc' }, take: 5, include: { user: { select: { name: true } } } }
@@ -118,8 +122,15 @@ export function registerReports({ bot, prisma }: BotContext) {
                 return ctx.reply('🔒 *La caja está cerrada.*\n\nAbre la caja desde la web: Admin → Caja', { parse_mode: 'Markdown' })
             }
 
-            const totalIn = register.movements.filter((m: any) => m.type === 'IN').reduce((s: number, m: any) => s + m.amount, 0)
-            const totalOut = register.movements.filter((m: any) => m.type === 'OUT').reduce((s: number, m: any) => s + m.amount, 0)
+            // Totales sobre TODOS los movimientos del turno — el include de
+            // arriba solo trae los últimos 5 para mostrarlos en el listado.
+            const totals = await prisma.cashMovement.groupBy({
+                by: ['type'],
+                where: { registerId: register.id },
+                _sum: { amount: true },
+            })
+            const totalIn = totals.find(t => t.type === 'IN')?._sum.amount ?? 0
+            const totalOut = totals.find(t => t.type === 'OUT')?._sum.amount ?? 0
 
             let msg = `🟢 *Caja Abierta*\n\n`
             msg += `💰 Monto inicial: $${register.initialAmount.toLocaleString()}\n`
@@ -150,8 +161,10 @@ export function registerReports({ bot, prisma }: BotContext) {
         if (!(await requirePrisma(ctx))) return
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const debtors = await prisma.user.findMany({
-                where: { creditBalance: { gt: 0 } },
+                where: { businessId: actor.businessId, creditBalance: { gt: 0 } },
                 select: { name: true, creditBalance: true, creditLimit: true, phone: true },
                 orderBy: { creditBalance: 'desc' },
                 take: 15
@@ -186,15 +199,19 @@ export function registerReports({ bot, prisma }: BotContext) {
         if (!(await requirePrisma(ctx))) return
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const today = new Date()
             today.setHours(0, 0, 0, 0)
 
+            // Solo OUT con paymentMethod son ventas del POS — los demás OUT
+            // son mermas/ajustes y no deben inflar "Ventas del día".
             const [salesMovements, reservationsToday] = await Promise.all([
                 prisma.inventoryMovement.findMany({
-                    where: { type: 'OUT', createdAt: { gte: today } },
+                    where: { businessId: actor.businessId, type: 'OUT', paymentMethod: { not: null }, createdAt: { gte: today } },
                     select: { quantity: true, totalPrice: true, product: { select: { name: true } } }
                 }),
-                prisma.reservation.count({ where: { createdAt: { gte: today } } }),
+                prisma.reservation.count({ where: { businessId: actor.businessId, createdAt: { gte: today } } }),
             ])
 
             const totalSales = salesMovements.length
@@ -428,8 +445,10 @@ Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
         const reservationIdStart = args[1]
 
         try {
+            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
+            if (!actor) return ctx.reply('Cuenta no disponible.')
             const reservation = await prisma.reservation.findFirst({
-                where: { id: { startsWith: reservationIdStart } },
+                where: { businessId: actor.businessId, id: { startsWith: reservationIdStart } },
                 include: { user: true, product: true }
             })
 

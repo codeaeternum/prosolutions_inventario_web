@@ -25,6 +25,10 @@ export async function submitRegistration({ prisma, bot, sessions }: Pick<BotCont
   }
   const requested = session.data.customerType
   const requestedCustomerType = requested === "TECHNICIAN" || requested === "STORE" ? requested : "NORMAL"
+  // Mono-negocio por diseño: este bot de Telegram sirve a UNA empresa (un número
+  // de bot = un negocio), así que los registros nuevos caen en el negocio por
+  // defecto del deployment. Todos los comandos posteriores scopean por el
+  // businessId del usuario YA REGISTRADO (user.businessId), nunca por el default.
   const user = await prisma.user.create({ data: {
     businessId: await getDefaultBusinessId(),
     name: session.data.name!.slice(0, 200), phone: session.data.phone!.slice(0, 50),
@@ -33,7 +37,7 @@ export async function submitRegistration({ prisma, bot, sessions }: Pick<BotCont
     monthlyPurchaseGoal: Number.isFinite(goal) && goal > 0 ? Math.min(goal, 100000000) : null,
   } })
   await ctx.reply(`✅ Solicitud registrada.\n\nNombre: ${user.name}\nTipo solicitado: ${customerTypeLabels[requestedCustomerType]}\n\nTu cuenta está pendiente de aprobación. Un administrador confirmará el tipo de cuenta.`)
-  await notifyAdmins(bot, `📢 <b>Nueva solicitud</b>\n\n${escapeHtml(user.name)}\n${escapeHtml(user.phone)}\n${escapeHtml(customerTypeLabels[requestedCustomerType])}`, Markup.inlineKeyboard([
+  await notifyAdmins(bot, user.businessId, `📢 <b>Nueva solicitud</b>\n\n${escapeHtml(user.name)}\n${escapeHtml(user.phone)}\n${escapeHtml(customerTypeLabels[requestedCustomerType])}`, Markup.inlineKeyboard([
     [Markup.button.callback("✅ Aprobar", `approve_user_${user.id}`)],
     [Markup.button.callback("❌ Rechazar", `reject_user_${user.id}`)],
   ]))

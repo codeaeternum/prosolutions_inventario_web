@@ -1,11 +1,12 @@
 import { notFound, redirect } from "next/navigation"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSettingsMap } from "@/lib/settings"
 import prisma from "@/lib/prisma"
 import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { approvedPartsTotal, orderBalanceCents, orderHeldCents, orderTotalCents } from "@/lib/workshop-money"
 import { TicketPrintView } from "./ticket-print-view"
 import { RepairTicketView, type RepairTicketData } from "./repair-ticket-view"
 import { WorkshopSheetView, type WorkshopSheetData } from "./workshop-sheet-view"
@@ -20,7 +21,7 @@ const CONDITION_LABELS: Record<string, string> = {
 }
 const AESTHETICS_LABELS: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
 const METHOD_LABELS: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
-const PURPOSE_LABELS: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación" }
+const PURPOSE_LABELS: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación", REFUND: "Devolución" }
 const ACCESS_LABELS: Record<string, string> = { NONE: "Sin bloqueo", PATTERN: "Patrón", PIN: "PIN", PASSWORD: "Contraseña" }
 const PART_STATUS_LABELS: Record<string, string> = { REQUESTED: "Solicitada", APPROVED: "Autorizada", REJECTED: "Rechazada" }
 const EVENT_LABELS: Record<string, string> = {
@@ -41,7 +42,9 @@ function loadRepairOrder(id: string, businessId: string) {
       currentBranch: true,
       assignedTo: { select: { name: true } },
       createdBy: { select: { name: true } },
-      payments: { where: { status: "CONFIRMED" }, orderBy: { createdAt: "asc" } },
+      // CONFIRMED suman y REFUNDED (reembolsos, amount negativo) restan:
+      // es la convención de orderHeldCents — ambas filas se imprimen.
+      payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" } },
       parts: {
         orderBy: { createdAt: "asc" },
         include: {
@@ -64,9 +67,11 @@ export default async function TicketPage({
 }: {
   params: Promise<{ tipo: string; id: string }>
 }) {
-  const adminCheck = await requireAdmin()
-  if (adminCheck.error) redirect("/login")
-  const businessId = businessIdOf(getSession(adminCheck)!)
+  // Staff (admin|empleado): el mostrador imprime tickets de recepción, venta,
+  // reserva y abono. Todas las consultas resuelven por id + businessId.
+  const staffCheck = await requireAdminOrEmployee()
+  if (staffCheck.error) redirect("/login")
+  const businessId = businessIdOf(getSession(staffCheck)!)
 
   const { tipo, id } = await params
   
@@ -211,8 +216,15 @@ export default async function TicketPage({
         .map(c => CONDITION_LABELS[c.trim()] ?? c.trim())
         .filter(Boolean)
         .join(", ")
-      const quotedCents = order.approvedQuoteCents ?? order.quoteCents
-      const paidCents = Math.round(order.payments.reduce((sum, p) => sum + p.amount, 0) * 100)
+      // Dinero de la orden — única fuente de verdad (src/lib/workshop-money):
+      // mano de obra y refacciones autorizadas se imprimen por separado y el
+      // total/saldo las suma; en cierres sin reparación solo hay diagnóstico.
+      const laborCents = order.approvedQuoteCents ?? order.quoteCents
+      const partsPriceCents = approvedPartsTotal(order.parts).priceCents
+      const totalCents = orderTotalCents(order, order.parts)
+      const paidCents = orderHeldCents(order.payments)
+      const balanceCents = orderBalanceCents(order, order.parts, order.payments)
+      const isTerminalNoRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
       const folio = repairFolio(order.number)
       const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
       // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
@@ -260,11 +272,14 @@ export default async function TicketPage({
             amount: p.amount,
             method: METHOD_LABELS[p.method] ?? p.method,
           })),
-          // Si un presupuesto autorizado distinto ya reemplazó al estimado, el
-          // estimado original aún se imprime aparte para aclarar el total.
-          estimatedQuote: order.quoteCents != null && order.quoteCents !== quotedCents ? order.quoteCents / 100 : undefined,
-          quote: quotedCents != null ? quotedCents / 100 : undefined,
-          balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
+          // Si una mano de obra autorizada distinta ya reemplazó al estimado,
+          // el estimado original aún se imprime aparte para aclarar el total.
+          estimatedQuote: order.quoteCents != null && order.quoteCents !== laborCents ? order.quoteCents / 100 : undefined,
+          laborQuote: !isTerminalNoRepair && laborCents != null ? laborCents / 100 : undefined,
+          partsTotal: !isTerminalNoRepair && partsPriceCents > 0 ? partsPriceCents / 100 : undefined,
+          diagnosticFee: isTerminalNoRepair ? (order.diagnosticFeeCents ?? 0) / 100 : undefined,
+          totalOrder: totalCents / 100,
+          balance: balanceCents / 100,
           qrCode: trackingUrl,
           trackingHint: "Escanea para rastrear tu reparación",
           // Firma capturada en recepción (PNG base64).
@@ -285,7 +300,7 @@ export default async function TicketPage({
           ].filter(row => row.value !== ""),
           issue: order.reportedIssue,
           diagnosis: order.diagnosis ?? undefined,
-          serviceAmount: quotedCents != null ? quotedCents / 100 : undefined,
+          serviceAmount: laborCents != null ? laborCents / 100 : undefined,
           // Solo refacciones autorizadas: las solicitadas/rechazadas no se
           // cotizan al cliente.
           parts: order.parts
@@ -352,7 +367,10 @@ export default async function TicketPage({
             date: p.createdAt.toISOString(),
           })),
           paidTotal: paidCents / 100,
-          balance: quotedCents != null ? Math.max(0, quotedCents - paidCents) / 100 : undefined,
+          partsTotal: !isTerminalNoRepair && partsPriceCents > 0 ? partsPriceCents / 100 : undefined,
+          diagnosticFee: isTerminalNoRepair ? (order.diagnosticFeeCents ?? 0) / 100 : undefined,
+          totalOrder: totalCents / 100,
+          balance: balanceCents / 100,
           events: order.events.map(event => ({
             date: event.createdAt.toISOString(),
             typeLabel: EVENT_LABELS[event.type] ?? event.type,

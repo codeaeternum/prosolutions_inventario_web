@@ -145,6 +145,22 @@ Para “recrear igual” que antes: usa el mismo `docker-compose.yml` del repo y
 
 El compose usa `${VAR:?...}`: sin estas variables el despliegue falla al validar, no arranca con defaults inseguros.
 
+### Variables fijadas dentro del compose (no van en el `.env`)
+
+- `TRUST_PROXY_HEADERS: "true"` — la app va siempre tras Cloudflare Tunnel: `cloudflared` sobrescribe `CF-Connecting-IP`/`X-Forwarded-For` con la IP real del visitante y el rate limit los usa para el bucket por cliente. **Si alguna vez se publica el puerto 3005 directo a internet** (sin tunnel), hay que quitarla o ponerla en `false`: un cliente podría forjar los headers y evadir el límite.
+- `REPAIR_EVIDENCE_DIR=/app/storage/repair-evidence` — volumen nombrado `repair_evidence` (como `payment_proofs`) para que las evidencias fotográficas sobrevivan a los deploys.
+
+### Tareas programadas (cron externo)
+
+`GET/POST /api/reservations/check-expiring` expira reservas temporales vencidas y avisa al staff. Está protegido por `CRON_SECRET` (header `Authorization: Bearer <CRON_SECRET>` o `x-cron-secret`) pero **nada lo invoca desde el stack**: el bot de Telegram ya corre su propia expiración periódica sobre la misma tabla, así que el endpoint queda como respaldo/manual.
+
+Si se quiere un disparo externo (p. ej. cron del host o un scheduler como cron-job.org):
+
+```bash
+# En el N5, cada 5 minutos (crontab -e):
+*/5 * * * * curl -fsS -m 10 -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3005/api/reservations/check-expiring >/dev/null 2>&1
+```
+
 ### Volúmenes (primera vez)
 
 `postgres_data` y `uploads` son volúmenes **external** con nombre fijo (`prosolutions_postgres_data`, `prosolutions_uploads`). En un host nuevo créalos antes del primer `up`:

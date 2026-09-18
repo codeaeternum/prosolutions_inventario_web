@@ -139,6 +139,14 @@ export async function openRegister(tx: Transaction, branchId?: string | null, bu
   return registers[0]
 }
 
+/** Efectivo esperado en una caja, en centavos: fondo inicial + entradas − salidas. */
+export async function registerCashCents(tx: Transaction, registerId: string) {
+  const register = await tx.cashRegister.findUniqueOrThrow({ where: { id: registerId } })
+  const grouped = await tx.cashMovement.groupBy({ by: ["type"], where: { registerId }, _sum: { amount: true } })
+  const sum = (type: "IN" | "OUT") => Math.round((grouped.find(row => row.type === type)?._sum.amount ?? 0) * 100)
+  return Math.round(register.initialAmount * 100) + sum("IN") - sum("OUT")
+}
+
 export async function addDebt(tx: Transaction, userId: string, totalCents: number, reference: { type: "SALE" | "RESERVATION" | "MANUAL"; id?: string; notes: string }, businessId: string) {
   if (totalCents === 0) return
   const user = await tx.user.findUnique({ where: { id: userId } })

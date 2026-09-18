@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { requireAdmin } from "@/lib/api-auth"
+import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 
@@ -27,14 +27,16 @@ const bodySchema = z.object({
 // concatenar marca+modelo en la clave de deduplicación.
 const keyOf = (brand: string, model: string) => `${brand}\u0000${model}`
 
-// POST /api/device-models/import — importación masiva del catálogo de modelos
-// de equipo (solo admin). mode="upsert": body.rows trae las filas ya parseadas
+// POST /api/device-models/import — importación masiva del catálogo GLOBAL de
+// modelos de equipo (solo superadmin de plataforma: el catálogo es compartido
+// por todos los tenants y un admin de tenant no debe pisarlo).
+// mode="upsert": body.rows trae las filas ya parseadas
 // (máx. 20,000). mode="bundled": lee prisma/seed-data/device-models.json del
 // disco del servidor, útil para resembrar la base incluida sin correr el script.
 // Upsert por la clave única (brand, model) en transacciones de 500 filas.
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireSuperAdmin()
     if (auth.error) return auth.error
 
     const { rows, mode } = bodySchema.parse(await req.json())

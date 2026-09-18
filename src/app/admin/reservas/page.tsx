@@ -19,7 +19,8 @@ export default async function AdminReservationsPage({
   searchParams: Promise<{ page?: string; limit?: string }>
 }) {
   const session = await auth()
-  if (session?.user?.role !== "ADMIN") redirect("/")
+  // Mostrador (admin|empleado): valida pagos y entrega reservas.
+  if (!session || !["ADMIN", "EMPLOYEE"].includes(session.user?.role ?? "")) redirect("/")
   const businessId = businessIdOf(session)
 
   const params = await searchParams

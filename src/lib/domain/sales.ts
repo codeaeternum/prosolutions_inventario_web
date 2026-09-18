@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
+import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
 const METHODS = z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"])
@@ -30,6 +30,8 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
   const payments = input.payments ?? [{ method: input.paymentMethod! }]
   if (payments.some(p => p.method === "CREDITO") && !input.customerId) throw new BusinessError("Selecciona al cliente del crédito.")
   if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
+  // Una transferencia sin folio queda imposible de cuadrar contra el estado de cuenta.
+  if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference)) throw new BusinessError("Captura la referencia de cada transferencia.")
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
     const seller = await actor(tx, actorId, "staff", businessId)
     const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId, businessId)
@@ -56,6 +58,15 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
     if (totalPaidCents !== totalCents) throw new BusinessError(`Los pagos no cuadran con el total (${total}).`, 409)
 
     const sale = await tx.sale.create({ data: { businessId, total, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
+    // Medio dominante (el de mayor monto): clasifica el OUT como venta en el
+    // historial (paymentMethod != null) y fija el canal de devolución simple.
+    // La venta conserva el desglose completo en sus pagos.
+    let dominantMethod: MethodInput = payments[0].method
+    let topCents = -1
+    for (const payment of payments) {
+      const paymentCents = payments.length === 1 ? totalCents : cents(payment.amount!, true)
+      if (paymentCents > topCents) { topCents = paymentCents; dominantMethod = payment.method }
+    }
     const movements = []
     const saleItems = []
     for (const line of lines) {
@@ -68,6 +79,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
         businessId, productId: line.product.id, userId: actorId, type: "OUT", quantity: line.item.quantity,
         previousStock: updated.stock + line.item.quantity, newStock: updated.stock,
         reason: `Venta V-${sale.number}`, unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
+        paymentMethod: dominantMethod,
         customerId: customer?.id, businessVersion: 1, branchId: branch.id, saleId: sale.id,
       }, include: { product: { select: { id: true, name: true } } } })
       saleItems.push(saleItem)
@@ -112,21 +124,34 @@ async function refund(tx: Transaction, input: {
   if (input.refundCents > netCents) throw new BusinessError("El reembolso supera lo cobrado por ese medio de pago.", 409)
 
   let cashMovementId: string | undefined
-  if (input.channel === "EFECTIVO") {
+  // Devolución física de dinero: solo si la caja tiene efectivo suficiente —
+  // una salida mayor dejaría la caja en negativo (dinero ficticio).
+  const cashRefund = async (refundCents: number, description: string) => {
     const register = await openRegister(tx, input.branchId, input.businessId)
+    const availableCents = await registerCashCents(tx, register.id)
+    if (refundCents > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409, "INSUFFICIENT_CASH")
     const cashOut = await tx.cashMovement.create({ data: {
-      businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT", amount: amount(input.refundCents),
-      referenceType: "RETURN", referenceId: input.saleId, description: input.note,
+      businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT", amount: amount(refundCents),
+      referenceType: "RETURN", referenceId: input.saleId, description,
     } })
     cashMovementId = cashOut.id
+  }
+  if (input.channel === "EFECTIVO") {
+    await cashRefund(input.refundCents, input.note)
   }
   if (input.channel === "CREDITO") {
     if (!input.customerId) throw new BusinessError("La venta no tiene cliente para revertir el crédito.", 409)
     const customer = await tx.user.findUniqueOrThrow({ where: { id: input.customerId, businessId: input.businessId } })
     const balance = cents(customer.creditBalance, true)
-    if (input.refundCents > balance) throw new BusinessError("El cliente ya abonó; el excedente requiere devolución en efectivo o conciliación.", 409, "CREDIT_REFUND_REVIEW")
-    await tx.user.update({ where: { id: customer.id }, data: { creditBalance: amount(balance - input.refundCents) } })
-    await tx.creditMovement.create({ data: { businessId: input.businessId, userId: customer.id, amount: amount(input.refundCents), type: "REVERSAL", referenceType: "SALE", referenceId: input.saleId, notes: `REVERSIÓN DE DEUDA. ${input.note}` } })
+    // Lo que aún se debe se perdona (REVERSAL); lo que el cliente ya abonó se
+    // devuelve en efectivo — no puede quedar como saldo a favor implícito.
+    const debtCents = Math.min(input.refundCents, balance)
+    const collectedCents = input.refundCents - debtCents
+    if (debtCents > 0) {
+      await tx.user.update({ where: { id: customer.id }, data: { creditBalance: amount(balance - debtCents) } })
+      await tx.creditMovement.create({ data: { businessId: input.businessId, userId: customer.id, amount: amount(debtCents), type: "REVERSAL", referenceType: "SALE", referenceId: input.saleId, notes: `REVERSIÓN DE DEUDA. ${input.note}` } })
+    }
+    if (collectedCents > 0) await cashRefund(collectedCents, `${input.note} · Devolución de abonos ya cobrados`)
   }
   return tx.payment.create({ data: {
     businessId: input.businessId, saleId: input.saleId, method: METHOD_MAP[input.channel], amount: amount(-input.refundCents), status: "REFUNDED",
@@ -187,11 +212,14 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
         reason: `Anulación V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
       } })
     }
-    for (const payment of sale.payments) {
-      if (payment.status !== "CONFIRMED" || payment.amount <= 0) continue
-      const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === payment.method)!
-      await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: cents(payment.amount), channel, note: `Anulación V-${sale.number}: ${input.reason}` })
-      await tx.payment.update({ where: { id: payment.id }, data: { status: "VOIDED" } })
+    // Reembolsa por cada medio solo su NETO pendiente (cobrado − ya devuelto);
+    // pedir el bruto truena cuando la venta tuvo una devolución parcial previa.
+    const paidMethods = [...new Set(sale.payments.filter(p => p.status === "CONFIRMED" && p.amount > 0).map(p => p.method))]
+    for (const method of paidMethods) {
+      const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === method)!
+      const netCents = sale.payments.filter(p => p.method === method).reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+      if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Anulación V-${sale.number}: ${input.reason}` })
+      await tx.payment.updateMany({ where: { saleId: sale.id, method, status: "CONFIRMED" }, data: { status: "VOIDED" } })
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { status: "VOIDED" } })
     if (changed.count !== 1) throw new BusinessError("La venta cambió durante la operación; reintenta.", 409)

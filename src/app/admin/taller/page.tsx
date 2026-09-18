@@ -13,7 +13,7 @@ import { repairFolio, repairLabels, repairNextStages, type RepairStage } from "@
 import { BusinessName } from "@/components/admin/business-name"
 import { ShareRepairOrder } from "@/components/admin/taller/share-order"
 import { OrderHistory, type WorkshopEvent } from "@/components/admin/taller/order-history"
-import { PaymentsPanel, emptyPaymentForm, emptySettleForm, orderBalanceCents, type PaymentForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
+import { PaymentsPanel, emptyPaymentForm, emptyRefundForm, emptySettleForm, orderBalanceCents, type PaymentForm, type RefundForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
 import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller/work-plan"
 import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
 import { ExportButton } from "@/components/admin/export-button"
@@ -28,7 +28,7 @@ type Order = {
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;
   equipmentColor: string | null; deviceAccessType: string | null; deviceAccessValue: string | null;
   intakeCondition: string | null; reportedIssue: string; diagnosis: string | null; quoteCents: number | null;
-  approvedQuoteCents: number | null; currentBranch: Branch; intakeBranch: Branch; assignedTo: Branch | null; createdAt: string; promisedAt: string | null;
+  approvedQuoteCents: number | null; diagnosticFeeCents: number | null; currentBranch: Branch; intakeBranch: Branch; assignedTo: Branch | null; createdAt: string; promisedAt: string | null;
   scheduledAt: string | null; location: string | null; aesthetics: string | null; functionalConditions: string | null;
   payments?: WorkshopPayment[];
   events?: WorkshopEvent[];
@@ -140,6 +140,8 @@ export default function WorkshopPage() {
   const [action, setAction] = useState("NOTE")
   const [drafts, setDrafts] = useState<Record<string, ActionDraft>>({})
   const [paymentForm, setPaymentForm] = useState<PaymentForm>(emptyPaymentForm)
+  const [refundForm, setRefundForm] = useState<RefundForm>(emptyRefundForm)
+  const [feeDraft, setFeeDraft] = useState("")
   const [settleForm, setSettleForm] = useState<SettleForm>(emptySettleForm)
   const [settleOpen, setSettleOpen] = useState(false)
   const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", location: "" })
@@ -170,9 +172,11 @@ export default function WorkshopPage() {
     }
   }
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
+  const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
+  const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
   const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.receivedBy !== "")
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
-  const hasUnsavedChanges = paymentFormDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
+  const hasUnsavedChanges = paymentFormDirty || refundFormDirty || feeDraftDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
 
   useEffect(() => () => {
@@ -199,7 +203,7 @@ export default function WorkshopPage() {
     detailRequest.current?.abort()
     detailRequest.current = null
     setOpening(false); setSelected(null); setAction("NOTE")
-    setDrafts({}); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm)
+    setDrafts({}); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setFeeDraft(""); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
     setShowAccess(false); setDiscardDialog(false)
   }
@@ -264,7 +268,8 @@ export default function WorkshopPage() {
         const available = ["NOTE", "ASSIGN", "TRANSFER", ...(repairNextStages[order.status].length ? ["STATUS"] : []), ...(["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) ? ["QUOTE"] : []), ...(order.status === "WAITING_APPROVAL" ? ["APPROVE"] : [])]
         if (!available.includes(action)) setAction("NOTE")
       }
-      setSelected(order); setPaymentForm(emptyPaymentForm); setSettleForm(emptySettleForm); setSettleOpen(false)
+      setSelected(order); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setSettleForm(emptySettleForm); setSettleOpen(false)
+      setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
       setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false)
     } catch {
       if (!controller.signal.aborted && version === detailVersion.current) toast.error("No se pudo abrir la orden. Intenta de nuevo.")
@@ -347,6 +352,34 @@ export default function WorkshopPage() {
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
   }
+  async function submitRefund(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (inFlight.current || opening || !selected) return
+    const amount = Number(refundForm.amount)
+    inFlight.current = true; setSaving(true)
+    try {
+      if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) throw new Error("La devolución debe ser mayor a cero y admite hasta dos decimales")
+      if (!["CASH", "CARD", "TRANSFER"].includes(refundForm.method)) throw new Error("Selecciona el método de devolución.")
+      await post(`/api/workshop/${selected.id}`, { action: "REFUND", expectedVersion: selected.version, paymentCents: Math.round(amount * 100), paymentMethod: refundForm.method, detail: refundForm.note.trim() || "Devolución de excedente" })
+      setRefundForm(emptyRefundForm)
+      await openOrder(selected.id, true); await load()
+      toast.success("Reembolso registrado")
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
+  async function submitFee(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (inFlight.current || opening || !selected) return
+    const fee = Number(feeDraft)
+    inFlight.current = true; setSaving(true)
+    try {
+      if (!Number.isFinite(fee) || fee < 0 || Math.abs(fee * 100 - Math.round(fee * 100)) > 0.000001) throw new Error("El cargo admite hasta dos decimales")
+      await post(`/api/workshop/${selected.id}`, { action: "DIAGNOSTIC_FEE", expectedVersion: selected.version, diagnosticFeeCents: Math.round(fee * 100) })
+      await openOrder(selected.id, true); await load()
+      toast.success("Cargo de diagnóstico guardado")
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
   async function submitSettle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (inFlight.current || opening || !selected) return
@@ -412,10 +445,13 @@ export default function WorkshopPage() {
         readOnly={terminalStages.includes(selected.status)}
         onAction={async payload => { await handlePartAction(payload) }} />
       <section className="space-y-3 rounded-xl border bg-card p-5"><h2 className="font-semibold">Diagnóstico y presupuesto</h2><p className="whitespace-pre-wrap text-sm">{selected.diagnosis || "Pendiente de diagnóstico"}</p><p className="text-2xl font-semibold">{selected.quoteCents === null ? "Sin cotizar" : money(selected.quoteCents)}</p><p className="text-sm text-muted-foreground">{selected.approvedQuoteCents === null ? "Sin autorización registrada" : `Autorizado: ${money(selected.approvedQuoteCents)}`}</p></section>
-      <PaymentsPanel quoteCents={selected.quoteCents} approvedQuoteCents={selected.approvedQuoteCents} payments={selected.payments}
+      <PaymentsPanel status={selected.status} quoteCents={selected.quoteCents} approvedQuoteCents={selected.approvedQuoteCents} diagnosticFeeCents={selected.diagnosticFeeCents}
+        parts={selectedParts} payments={selected.payments}
         canCharge={!terminalStages.includes(selected.status)} canDeliver={repairNextStages[selected.status].includes("DELIVERED")} disabled={saving || opening}
         paymentForm={paymentForm} onPaymentChange={setPaymentForm} onPaymentSubmit={e => void submitPayment(e)}
-        settleOpen={settleOpen} onSettleOpenChange={setSettleOpen} settleForm={settleForm} onSettleChange={setSettleForm} onSettleSubmit={e => void submitSettle(e)} />
+        settleOpen={settleOpen} onSettleOpenChange={setSettleOpen} settleForm={settleForm} onSettleChange={setSettleForm} onSettleSubmit={e => void submitSettle(e)}
+        feeDraft={feeDraft} onFeeChange={setFeeDraft} onFeeSubmit={e => void submitFee(e)}
+        refundForm={refundForm} onRefundChange={setRefundForm} onRefundSubmit={e => void submitRefund(e)} />
       <WorkPlan scheduledAt={selected.scheduledAt} location={selected.location} editable={!terminalStages.includes(selected.status)} disabled={saving || opening}
         form={planForm} onChange={setPlanForm} onSubmit={e => void submitPlan(e)} />
       <EvidenceSection order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}

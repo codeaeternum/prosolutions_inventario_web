@@ -51,6 +51,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         select: {
           number: true,
           businessId: true,
+          // Tenant suspendido: el enlace muere igual que un token inválido.
+          business: { select: { isActive: true } },
           status: true,
           customerName: true,
           equipmentType: true,
@@ -77,7 +79,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         },
       })
 
-    if (!order) return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
+    if (!order || !order.business.isActive) return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
 
     const { service, issue } = parseIssue(order.reportedIssue)
