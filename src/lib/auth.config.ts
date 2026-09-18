@@ -146,9 +146,9 @@ export function getAuthRedirect(
     return Response.redirect(new URL("/pending", nextUrl))
   }
 
-  // 4) /login o /register con auth: ADMIN -> /admin, WORKSHOP -> /admin/mercado, APPROVED -> /catalogo, sino -> /pending
+  // 4) /login o /register con auth: staff (ADMIN/EMPLOYEE) -> /admin, WORKSHOP -> /admin/mercado, APPROVED -> /catalogo, sino -> /pending
   if ((pathname === "/login" || pathname === "/register") && isLoggedIn) {
-    if (isAdmin && isApproved) return Response.redirect(new URL("/admin", nextUrl))
+    if ((isAdmin || role === "EMPLOYEE") && isApproved) return Response.redirect(new URL("/admin", nextUrl))
     if (role === "WORKSHOP" && isApproved) return Response.redirect(new URL("/admin/mercado", nextUrl))
     if (isApproved) return Response.redirect(new URL("/catalogo", nextUrl))
     return Response.redirect(new URL("/pending", nextUrl))

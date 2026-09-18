@@ -49,7 +49,8 @@ const loginErrorMessage = (code: string | null | undefined) =>
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const callbackUrl = safeRedirectPath(searchParams.get("callbackUrl"))
+  const callbackParam = searchParams.get("callbackUrl")
+  const callbackUrl = safeRedirectPath(callbackParam)
   const errorCode = searchParams.get("code") ?? searchParams.get("error")
 
   const [loginMethod, setLoginMethod] = useState<LoginMethod>("email")
@@ -105,7 +106,14 @@ export default function LoginPage() {
       if (result?.error) {
         setErrorMsg(loginErrorMessage(result.code ?? result.error) || "No se pudo iniciar sesión. Intenta de nuevo.")
       } else {
-        router.push(callbackUrl)
+        // /post-login resuelve el destino real por rol (staff → /admin,
+        // taller aliado → /admin/mercado, cliente → /catalogo). Un
+        // callbackUrl explícito viaja como ?next= y gana sobre el rol.
+        router.push(
+          callbackParam
+            ? `/post-login?next=${encodeURIComponent(callbackUrl)}`
+            : "/post-login",
+        )
         router.refresh()
       }
     } catch {
