@@ -7,7 +7,7 @@ import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { Button } from "@/components/ui/button"
 import { PublicShell } from "@/components/public/public-shell"
-import { QuoteDocument, QuoteNotFound } from "@/components/public/quote-view"
+import { isQuoteExpired, QuoteDocument, QuoteExpired, QuoteNotFound } from "@/components/public/quote-view"
 
 // Cotización brandeada bajo la vitrina del negocio (/<slug>/cotizacion/<token>).
 // Mismo documento que /cotizacion/[token], pero dentro del PublicShell del
@@ -71,7 +71,13 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
       }
     >
       {order && order.status !== "DELIVERED" && order.status !== "CANCELLED" ? (
-        <QuoteDocument order={order} businessName={target.name} token={token} />
+        isQuoteExpired(order) ? (
+          // Vigencia terminada ("Válida por 15 días"): se muestra el estado
+          // vencido en vez del desglose, igual que el 410 de la API pública.
+          <QuoteExpired trackingHref={`/${target.slug}/order-status`} />
+        ) : (
+          <QuoteDocument order={order} businessName={target.name} token={token} />
+        )
       ) : (
         <QuoteNotFound trackingHref={`/${target.slug}/order-status`} />
       )}

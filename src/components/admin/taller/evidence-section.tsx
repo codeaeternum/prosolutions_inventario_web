@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import QRCode from "qrcode"
-import { Camera, ImagePlus, Link2, Loader2, QrCode, Trash2 } from "lucide-react"
+import { Camera, ImagePlus, Link2, Loader2, QrCode, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,6 +20,13 @@ export type EvidencePhoto = {
 export function EvidenceSection(props: {
     order: { id: string; uploadToken?: string | null; photos?: EvidencePhoto[] }
     onChanged: () => void
+    // Estado del enlace público (QR del sticker): "closed" = orden terminal —
+    // el QR impreso ya no sirve; "expired" = venció y el admin puede
+    // regenerarlo; "active" = usable (default cuando hay uploadToken).
+    linkState?: "active" | "expired" | "closed"
+    // Solo admin: rota el uploadToken — el enlace/QR anterior muere.
+    onRotateLink?: () => void
+    rotateBusy?: boolean
 }) {
     const [busy, setBusy] = useState(false)
     const [label, setLabel] = useState("")
@@ -28,6 +35,7 @@ export function EvidenceSection(props: {
     const [linkUrl, setLinkUrl] = useState("")
     const inputRef = useRef<HTMLInputElement>(null)
     const photos = props.order.photos ?? []
+    const linkState = props.linkState ?? "active"
 
     // Solo en cliente (window no existe durante el SSR de este componente).
     useEffect(() => {
@@ -178,13 +186,32 @@ export function EvidenceSection(props: {
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                     Subir fotos
                 </Button>
-                {props.order.uploadToken && (
+                {props.order.uploadToken && linkState === "active" && (
                     <Button type="button" size="sm" variant="outline" disabled={busy} onClick={openQr}>
                         <QrCode className="h-4 w-4" />
                         QR para celular
                     </Button>
                 )}
+                {props.onRotateLink && linkState !== "closed" && (
+                    <Button type="button" size="sm" variant="outline" disabled={busy || props.rotateBusy} onClick={props.onRotateLink}>
+                        {props.rotateBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                        Regenerar link
+                    </Button>
+                )}
             </div>
+
+            {/* Aviso del estado del enlace público: en orden cerrada el QR
+                impreso ya murió; si solo venció, el admin lo regenera arriba. */}
+            {linkState === "closed" && (
+                <p className="text-xs text-muted-foreground">
+                    El enlace público de evidencias está inactivo: la orden está cerrada y el QR impreso ya no funciona.
+                </p>
+            )}
+            {linkState === "expired" && (
+                <p className="text-xs text-muted-foreground">
+                    El enlace público de evidencias expiró.{props.onRotateLink ? " Usa «Regenerar link» para emitir uno nuevo." : ""}
+                </p>
+            )}
 
             {/* QR del enlace público de subida */}
             <Dialog open={qrOpen} onOpenChange={setQrOpen}>

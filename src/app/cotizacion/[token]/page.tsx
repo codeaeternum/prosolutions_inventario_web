@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
-import { QuoteDocument, QuoteNotFound } from "@/components/public/quote-view"
+import { isQuoteExpired, QuoteDocument, QuoteExpired, QuoteNotFound } from "@/components/public/quote-view"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 export const dynamic = "force-dynamic"
@@ -68,6 +68,16 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
     return (
       <PageShell>
         <QuoteNotFound trackingHref="/seguimiento" />
+      </PageShell>
+    )
+  }
+
+  // "Válida por 15 días": vencida sin decisión se muestra el estado de
+  // vigencia terminada en vez del desglose (mismo 410 que la API pública).
+  if (isQuoteExpired(order)) {
+    return (
+      <PageShell>
+        <QuoteExpired trackingHref="/seguimiento" />
       </PageShell>
     )
   }

@@ -108,6 +108,7 @@ describe("GET /api/workshop (listado)", () => {
     expect(args.omit).toMatchObject({
       deviceAccessValue: true,
       signatureData: true,
+      deliverySignatureData: true,
       uploadToken: true,
       quoteToken: true,
     })
@@ -123,7 +124,7 @@ describe("GET /api/workshop (listado)", () => {
     expect(res.status).toBe(200)
     const pageFetch = mocks.orderFindMany.mock.calls.at(-1)?.[0] as { include?: unknown; omit?: Record<string, boolean> }
     expect(pageFetch.include).toBeTruthy()
-    expect(pageFetch.omit).toMatchObject({ deviceAccessValue: true, signatureData: true, uploadToken: true, quoteToken: true })
+    expect(pageFetch.omit).toMatchObject({ deviceAccessValue: true, signatureData: true, deliverySignatureData: true, uploadToken: true, quoteToken: true })
   })
 })
 
@@ -204,6 +205,63 @@ describe("POST /api/cotizacion/[token]/approve", () => {
     const update = mocks.orderUpdateMany.mock.calls[0][0] as { data: { status?: string } }
     expect(update.data.status).toBe("NOT_AUTHORIZED")
   })
+
+  it("rechaza decidir una cotización vencida (410 QUOTE_EXPIRED)", async () => {
+    mocks.orderFindUnique.mockResolvedValue({ ...pendingQuoteOrder, quoteExpiresAt: new Date(Date.now() - 60_000) })
+    const res = await decideQuote(approveReq({ action: "APPROVE", expectedLaborCents: 150000 }), tokenParams)
+    expect(res.status).toBe(410)
+    const json = await res.json()
+    expect(json.code).toBe("QUOTE_EXPIRED")
+    expect(mocks.orderUpdateMany).not.toHaveBeenCalled()
+  })
+
+  it("una cotización decidida reporta \"ya fue decidida\" aunque esté vencida", async () => {
+    mocks.orderFindUnique.mockResolvedValue({ ...pendingQuoteOrder, quoteApprovedAt: new Date(), quoteExpiresAt: new Date(Date.now() - 60_000) })
+    const res = await decideQuote(approveReq({ action: "APPROVE", expectedLaborCents: 150000 }), tokenParams)
+    expect(res.status).toBe(409)
+    expect(mocks.orderUpdateMany).not.toHaveBeenCalled()
+  })
+
+  it("rechaza aprobar cuando las refacciones vistas no coinciden (409 QUOTE_CHANGED)", async () => {
+    mocks.orderFindUnique.mockResolvedValue({
+      ...pendingQuoteOrder,
+      parts: [{ qty: 1, unitCostCents: 0, unitPriceCents: 30000, status: "APPROVED" }],
+    })
+    const res = await decideQuote(approveReq({ action: "APPROVE", expectedLaborCents: 150000, expectedPartsCents: 9999 }), tokenParams)
+    expect(res.status).toBe(409)
+    const json = await res.json()
+    expect(json.code).toBe("QUOTE_CHANGED")
+    expect(mocks.orderUpdateMany).not.toHaveBeenCalled()
+  })
+
+  it("aprueba cuando mano de obra y refacciones coinciden con lo visto", async () => {
+    mocks.orderFindUnique.mockResolvedValue({
+      ...pendingQuoteOrder,
+      parts: [{ qty: 2, unitCostCents: 0, unitPriceCents: 30000, status: "APPROVED" }],
+    })
+    const res = await decideQuote(approveReq({ action: "APPROVE", expectedLaborCents: 150000, expectedPartsCents: 60000 }), tokenParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.decision).toBe("APPROVED")
+  })
+
+  it("re-aprueba tras re-autorización por refacción nueva (quoteApprovedAt quedó en null)", async () => {
+    // Estado que deja el dominio al aprobar una refacción post-autorización:
+    // status WAITING_APPROVAL, quoteApprovedAt null, approvedQuoteCents
+    // conserva la mano de obra ya pactada.
+    mocks.orderFindUnique.mockResolvedValue({
+      ...pendingQuoteOrder,
+      approvedQuoteCents: 150000,
+      parts: [{ qty: 1, unitCostCents: 0, unitPriceCents: 30000, status: "APPROVED" }],
+    })
+    const res = await decideQuote(approveReq({ action: "APPROVE", expectedLaborCents: 150000, expectedPartsCents: 30000 }), tokenParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.decision).toBe("APPROVED")
+    const update = mocks.orderUpdateMany.mock.calls[0][0] as { where: { quoteApprovedAt: null }, data: { status?: string } }
+    expect(update.where.quoteApprovedAt).toBeNull()
+    expect(update.data.status).toBe("IN_REPAIR")
+  })
 })
 
 describe("GET /api/cotizacion/[token]", () => {
@@ -229,6 +287,28 @@ describe("GET /api/cotizacion/[token]", () => {
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.quote.laborCents).toBe(150000)
+  })
+
+  it("devuelve 410 cuando la vigencia (quoteExpiresAt) ya pasó", async () => {
+    mocks.orderFindUnique.mockResolvedValue({ ...doc, quoteExpiresAt: new Date(Date.now() - 60_000) })
+    const res = await quoteDoc(new Request("https://app.invalid/api/cotizacion/tok-1", { headers: { "x-real-ip": nextIp() } }), tokenParams)
+    expect(res.status).toBe(410)
+    const json = await res.json()
+    expect(json.error).toBe("Esta cotización venció.")
+  })
+
+  it("expone quoteExpiresAt y el total de refacciones (partsCents)", async () => {
+    const expires = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000)
+    mocks.orderFindUnique.mockResolvedValue({
+      ...doc,
+      quoteExpiresAt: expires,
+      parts: [{ description: "Batería", qty: 2, unitPriceCents: 30000 }],
+    })
+    const res = await quoteDoc(new Request("https://app.invalid/api/cotizacion/tok-1", { headers: { "x-real-ip": nextIp() } }), tokenParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.quote.partsCents).toBe(60000)
+    expect(json.quote.totalCents).toBe(210000)
   })
 })
 

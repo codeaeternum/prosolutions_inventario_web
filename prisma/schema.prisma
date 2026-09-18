@@ -195,6 +195,7 @@ model User {
   assignedRepairs       RepairOrder[]        @relation("RepairAssignedTo")
   createdRepairs        RepairOrder[]        @relation("RepairCreatedBy")
   customerRepairs       RepairOrder[]        @relation("RepairCustomer")
+  deliveredRepairs      RepairOrder[]        @relation("RepairDeliveredBy")
   repairParts           RepairPart[]         @relation("RepairPartCreatedBy")
   repairEvents          RepairEvent[]
   businessOperations    BusinessOperation[]
@@ -772,13 +773,25 @@ model RepairOrder {
   // esta marca conserva que el cobro real fue solo el diagnóstico.
   closedWithoutRepair  Boolean       @default(false)
   qualityCheck         String?
+  // Entrega estructurada: deliveredTo = nombre de quien recoge,
+  // deliveredToDoc = identificación opcional (INE/licencia), firma aparte
+  // de la de recepción y staff que entregó (auditoría de mostrador).
   deliveredTo          String?
+  deliveredToDoc       String?
+  deliverySignatureData String?
+  deliveredById        String?
+  deliveredBy          User?         @relation("RepairDeliveredBy", fields: [deliveredById], references: [id], onDelete: Restrict)
   promisedAt           DateTime?
   // Firma del cliente al recibir (PNG base64). Autorización de condiciones.
   signatureData        String?
+  // Vigencia real de la cotización pública (el documento dice 15 días):
+  // se fija al presentar la cotización con la acción QUOTE.
+  quoteExpiresAt       DateTime?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
+  uploadTokenExpiresAt DateTime?
   quoteToken           String        @unique @default(cuid()) // Token público para ver/aprobar la cotización
+  quoteTokenExpiresAt  DateTime?
   photos               RepairPhoto[]
   intakeBranchId       String
   currentBranchId      String

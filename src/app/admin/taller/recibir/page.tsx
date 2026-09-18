@@ -143,9 +143,13 @@ export default function ReceiveEquipmentPage() {
   const [brandTerm, setBrandTerm] = useState("")
   const [brandHits, setBrandHits] = useState<DeviceModel[]>([])
   const [brandSearching, setBrandSearching] = useState(false)
+  const [brandSearched, setBrandSearched] = useState("")
+  const [brandCatalogDown, setBrandCatalogDown] = useState(false)
   const [modelTerm, setModelTerm] = useState("")
   const [modelHits, setModelHits] = useState<DeviceModel[]>([])
   const [modelSearching, setModelSearching] = useState(false)
+  const [modelSearched, setModelSearched] = useState("")
+  const [modelCatalogDown, setModelCatalogDown] = useState(false)
   const [pickedModel, setPickedModel] = useState<DeviceModel | null>(null)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
@@ -293,7 +297,7 @@ export default function ReceiveEquipmentPage() {
     const term = brandTerm.trim()
     if (term.length < 1) {
       brandVersion.current += 1
-      const timer = setTimeout(() => { setBrandHits([]); setBrandSearching(false) }, 0)
+      const timer = setTimeout(() => { setBrandHits([]); setBrandSearched(""); setBrandCatalogDown(false); setBrandSearching(false) }, 0)
       return () => clearTimeout(timer)
     }
     const timer = setTimeout(async () => {
@@ -304,8 +308,10 @@ export default function ReceiveEquipmentPage() {
         const data = await response.json().catch(() => ({}))
         if (version !== brandVersion.current) return
         setBrandHits(response.ok ? data.models ?? [] : [])
+        setBrandCatalogDown(!response.ok)
+        setBrandSearched(term)
       } catch {
-        if (version === brandVersion.current) setBrandHits([])
+        if (version === brandVersion.current) { setBrandHits([]); setBrandCatalogDown(true); setBrandSearched(term) }
       } finally {
         if (version === brandVersion.current) setBrandSearching(false)
       }
@@ -317,7 +323,7 @@ export default function ReceiveEquipmentPage() {
     const term = modelTerm.trim()
     if (term.length < 1) {
       modelVersion.current += 1
-      const timer = setTimeout(() => { setModelHits([]); setModelSearching(false) }, 0)
+      const timer = setTimeout(() => { setModelHits([]); setModelSearched(""); setModelCatalogDown(false); setModelSearching(false) }, 0)
       return () => clearTimeout(timer)
     }
     const brand = form.brand.trim()
@@ -331,8 +337,10 @@ export default function ReceiveEquipmentPage() {
         const data = await response.json().catch(() => ({}))
         if (version !== modelVersion.current) return
         setModelHits(response.ok ? data.models ?? [] : [])
+        setModelCatalogDown(!response.ok)
+        setModelSearched(term)
       } catch {
-        if (version === modelVersion.current) setModelHits([])
+        if (version === modelVersion.current) { setModelHits([]); setModelCatalogDown(true); setModelSearched(term) }
       } finally {
         if (version === modelVersion.current) setModelSearching(false)
       }
@@ -515,7 +523,11 @@ export default function ReceiveEquipmentPage() {
     setServiceResults([])
     setServiceSearched("")
     setBrandHits([])
+    setBrandSearched("")
+    setBrandCatalogDown(false)
     setModelHits([])
+    setModelSearched("")
+    setModelCatalogDown(false)
   }
 
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" })
@@ -825,6 +837,8 @@ export default function ReceiveEquipmentPage() {
                         </ul>
                       )}
                       {brandSearching && <span className="block text-xs text-muted-foreground">Buscando marcas…</span>}
+                      {!brandSearching && brandCatalogDown && brandSearched === brandTerm.trim() && brandSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Catálogo no disponible; escribe la marca a mano.</span>}
+                      {!brandSearching && !brandCatalogDown && brandOptions.length === 0 && brandSearched === brandTerm.trim() && brandSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Sin coincidencias — escríbela a mano o dala de alta en Taller → Catálogo.</span>}
                     </label>
                     <label ref={modelBoxRef} className="relative block space-y-2 text-sm">Modelo
                       <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
@@ -841,6 +855,8 @@ export default function ReceiveEquipmentPage() {
                         </ul>
                       )}
                       {modelSearching && <span className="block text-xs text-muted-foreground">Buscando modelos…</span>}
+                      {!modelSearching && modelCatalogDown && modelSearched === modelTerm.trim() && modelSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Catálogo no disponible; escribe el modelo a mano.</span>}
+                      {!modelSearching && !modelCatalogDown && modelHits.length === 0 && modelSearched === modelTerm.trim() && modelSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Sin coincidencias{form.brand.trim() ? ` en ${form.brand.trim()}` : ""} — escríbelo a mano o dalo de alta en el catálogo.</span>}
                       {pickedModel?.code && pickedModel.model === form.model && <span className="block text-xs text-muted-foreground">Código de referencia: {pickedModel.code}</span>}
                     </label>
                     <label className="block space-y-2 text-sm">{profile.serialLabel}

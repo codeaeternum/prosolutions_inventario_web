@@ -33,7 +33,12 @@ type Order = {
   payments?: WorkshopPayment[];
   events?: WorkshopEvent[];
   parts?: OrderPart[];
+  // Constancia de entrega estructurada (quién recoge, su ID, firma y quién del
+  // staff entregó). deliverySignatureData solo llega en el detalle, no en listas.
+  deliveredTo?: string | null; deliveredToDoc?: string | null; deliverySignatureData?: string | null;
+  deliveredBy?: { id: string; name: string } | null;
   uploadToken?: string;
+  uploadTokenExpiresAt?: string | null;
   photos?: { id: string; label: string | null; createdAt: string; uploadedBy?: { name: string } | null }[];
 }
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
@@ -139,6 +144,7 @@ export default function WorkshopPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selected, setSelected] = useState<Order | null>(null)
+  const [evidenceLinkExpired, setEvidenceLinkExpired] = useState(false)
   const [saving, setSaving] = useState(false)
   const [action, setAction] = useState("NOTE")
   const [drafts, setDrafts] = useState<Record<string, ActionDraft>>({})
@@ -159,6 +165,9 @@ export default function WorkshopPage() {
   const draft = drafts[action] ?? {}
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
+  // No hay deliveredAt dedicado: la fecha exacta la conserva el evento público
+  // de entrega (updatedAt cambiaría con una garantía o reembolso posterior).
+  const deliveredAt = selected?.events?.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt
   // Desglose para "Enviar cotización" por WhatsApp: mano de obra + refacciones aprobadas.
   const quoteShare = (o: Order) => {
     const labor = o.approvedQuoteCents ?? o.quoteCents
@@ -177,10 +186,21 @@ export default function WorkshopPage() {
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
   const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
   const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
-  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.receivedBy !== "")
+  // El nombre de quien recoge se prellena con el titular al abrir el panel:
+  // solo cuenta como cambio si difiere del prellenado.
+  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null)
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
   const hasUnsavedChanges = paymentFormDirty || refundFormDirty || feeDraftDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
+  // SignaturePad emite onChange tras cada render si el handler cambia; el
+  // bail-out por valor evita un ciclo de render infinito (mismo patrón que
+  // la firma de recepción en recibir).
+  const handleSettleChange = useCallback((form: SettleForm) => {
+    setSettleForm(previous =>
+      previous.method === form.method && previous.deliveredTo === form.deliveredTo &&
+      previous.deliveredToDoc === form.deliveredToDoc && previous.deliverySignatureData === form.deliverySignatureData
+        ? previous : form)
+  }, [])
 
   useEffect(() => () => {
     detailVersion.current += 1
@@ -272,6 +292,8 @@ export default function WorkshopPage() {
         if (!available.includes(action)) setAction("NOTE")
       }
       setSelected(order); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setSettleForm(emptySettleForm); setSettleOpen(false)
+      // Vigencia del link de evidencias se evalúa al cargar la orden (no en render).
+      setEvidenceLinkExpired(Boolean(order.uploadTokenExpiresAt && new Date(order.uploadTokenExpiresAt).getTime() < Date.now()))
       setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
       setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false)
     } catch {
@@ -386,13 +408,20 @@ export default function WorkshopPage() {
   async function submitSettle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (inFlight.current || opening || !selected) return
-    const receivedBy = settleForm.receivedBy.trim()
+    const deliveredTo = settleForm.deliveredTo.trim()
+    const deliveredToDoc = settleForm.deliveredToDoc.trim()
     const balance = orderBalanceCents(selected)
     inFlight.current = true; setSaving(true)
     try {
-      if (!receivedBy) throw new Error("Indica a quién se entrega el equipo.")
+      if (deliveredTo.length < 2) throw new Error("Indica el nombre de quien recoge el equipo.")
       if (balance > 0 && !["CASH", "CARD", "TRANSFER"].includes(settleForm.method)) throw new Error("Selecciona el método de cobro del saldo.")
-      await post(`/api/workshop/${selected.id}`, { action: "SETTLE_DELIVER", expectedVersion: selected.version, paymentMethod: balance > 0 ? settleForm.method : undefined, detail: receivedBy })
+      await post(`/api/workshop/${selected.id}`, {
+        action: "SETTLE_DELIVER", expectedVersion: selected.version,
+        paymentMethod: balance > 0 ? settleForm.method : undefined,
+        deliveredTo,
+        deliveredToDoc: deliveredToDoc || undefined,
+        deliverySignatureData: settleForm.deliverySignatureData ?? undefined,
+      })
       setSettleForm(emptySettleForm); setSettleOpen(false)
       await openOrder(selected.id, true); await load()
       toast.success("Entrega registrada")
@@ -407,6 +436,19 @@ export default function WorkshopPage() {
       await post(`/api/workshop/${selected.id}`, { action: "PLAN", expectedVersion: selected.version, scheduledAt: planForm.scheduledAt ? new Date(planForm.scheduledAt).toISOString() : null, location: planForm.location.trim() || null })
       await openOrder(selected.id, true); await load()
       toast.success("Plan actualizado")
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
+  // Regenerar el link público de evidencias (QR del sticker): acción solo
+  // admin — el dominio rota el token y los enlaces/QR anteriores mueren.
+  async function rotateUploadToken() {
+    if (inFlight.current || opening || !selected || !isAdmin) return
+    if (!window.confirm("¿Regenerar el link de evidencias? Los códigos QR y enlaces anteriores dejarán de funcionar.")) return
+    inFlight.current = true; setSaving(true)
+    try {
+      await post(`/api/workshop/${selected.id}`, { action: "ROTATE_UPLOAD_TOKEN", expectedVersion: selected.version })
+      await openOrder(selected.id, true); await load()
+      toast.success("Link de evidencias regenerado")
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
   }
@@ -442,7 +484,7 @@ export default function WorkshopPage() {
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
     </>}
-    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex justify-between"><h2 className="font-semibold">Equipo y recepción</h2><span className="text-sm text-primary">{repairLabels[selected.status]}</span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p><dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null]].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{selected.deviceAccessValue && <><button type="button" onClick={() => setShowAccess(value => !value)} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline">{showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{selected.deviceAccessValue}</code>}{showAccess && selected.deviceAccessType === "PATTERN" && <PatternDots value={selected.deviceAccessValue} />}</>}</dd></div></dl></section>
+    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex justify-between"><h2 className="font-semibold">Equipo y recepción</h2><span className="text-sm text-primary">{repairLabels[selected.status]}</span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p><dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{selected.deviceAccessValue && <><button type="button" onClick={() => setShowAccess(value => !value)} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline">{showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{selected.deviceAccessValue}</code>}{showAccess && selected.deviceAccessType === "PATTERN" && <PatternDots value={selected.deviceAccessValue} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd>{/* eslint-disable-next-line @next/next/no-img-element */}<img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
       <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
         canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening}
         readOnly={partsClosedStages.includes(selected.status)}
@@ -452,12 +494,19 @@ export default function WorkshopPage() {
         closedWithoutRepair={selected.closedWithoutRepair} parts={selectedParts} payments={selected.payments}
         canCharge={!terminalStages.includes(selected.status)} canDeliver={repairDeliverableStages.includes(selected.status)} canRefund={isAdmin} disabled={saving || opening}
         paymentForm={paymentForm} onPaymentChange={setPaymentForm} onPaymentSubmit={e => void submitPayment(e)}
-        settleOpen={settleOpen} onSettleOpenChange={setSettleOpen} settleForm={settleForm} onSettleChange={setSettleForm} onSettleSubmit={e => void submitSettle(e)}
+        settleOpen={settleOpen} onSettleOpenChange={open => { if (open) setSettleForm({ ...emptySettleForm, deliveredTo: selected.customerName }); setSettleOpen(open) }}
+        settleForm={settleForm} onSettleChange={handleSettleChange} onSettleSubmit={e => void submitSettle(e)}
         feeDraft={feeDraft} onFeeChange={setFeeDraft} onFeeSubmit={e => void submitFee(e)}
         refundForm={refundForm} onRefundChange={setRefundForm} onRefundSubmit={e => void submitRefund(e)} />
       <WorkPlan scheduledAt={selected.scheduledAt} location={selected.location} editable={!terminalStages.includes(selected.status)} disabled={saving || opening}
         form={planForm} onChange={setPlanForm} onSubmit={e => void submitPlan(e)} />
       <EvidenceSection order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
+        // El enlace público solo sube en órdenes abiertas: la ruta rechaza
+        // los mismos estados que cierran refacciones; si el token venció el
+        // admin puede regenerarlo desde la misma sección.
+        linkState={partsClosedStages.includes(selected.status) ? "closed" : (evidenceLinkExpired ? "expired" : "active")}
+        onRotateLink={isAdmin ? () => void rotateUploadToken() : undefined}
+        rotateBusy={saving || opening}
         onChanged={() => void openOrder(selected.id, true)} />
       {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5"><h2 className="font-semibold">{selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}</h2><fieldset disabled={saving || opening} className="space-y-4">{selected.status === "DELIVERED" && <><input type="hidden" name="action" value="STATUS" /><input type="hidden" name="status" value="WARRANTY" /> </>}{selected.status !== "DELIVERED" && <label className="block text-sm">Acción<select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}><option value="NOTE">Agregar nota interna</option>{repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}{['DIAGNOSIS', 'WAITING_APPROVAL'].includes(selected.status) && <option value="QUOTE">Registrar diagnóstico y presupuesto</option>}{selected.status === 'WAITING_APPROVAL' && <option value="APPROVE">Registrar autorización del cliente</option>}<option value="ASSIGN">Asignar responsable</option><option value="TRANSFER">Registrar llegada a otra sucursal</option></select></label>}
       {selected.status !== "DELIVERED" && action === "STATUS" && <label className="block text-sm">Nueva etapa<select name="status" value={draft.status ?? repairNextStages[selected.status][0] ?? ""} onChange={e => updateDraft({ status: e.target.value })} className={`${inputClass} mt-2`}>{repairNextStages[selected.status].map(value => <option key={value} value={value}>{repairLabels[value]}</option>)}</select></label>}      {action === "QUOTE" && <label className="block text-sm">Importe total en MXN<Input name="quote" type="number" min={0} max={1000000} step="0.01" required value={draft.quote ?? (selected.quoteCents === null ? "" : String(selected.quoteCents / 100))} onChange={e => updateDraft({ quote: e.target.value })} /></label>}

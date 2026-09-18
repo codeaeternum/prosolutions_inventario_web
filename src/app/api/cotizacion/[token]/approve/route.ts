@@ -29,6 +29,11 @@ const bodySchema = z.object({
   // cambió el presupuesto entre la carga y el POST, se rechaza la decisión
   // en vez de comprometer una cifra que el cliente nunca autorizó.
   expectedLaborCents: z.number().int().min(0).max(100000000),
+  // Anti-TOCTOU de refacciones: el total de piezas autorizadas que el
+  // cliente vio desglosado. Opcional por compatibilidad con clientes
+  // anteriores; la UI actual siempre lo envía. Si no coincide con el
+  // total vigente → 409 QUOTE_CHANGED, igual que la mano de obra.
+  expectedPartsCents: z.number().int().min(0).max(100000000).optional(),
   // Parte del contrato para una futura captura de firma; hoy no se persiste:
   // RepairOrder.signatureData guarda la firma de RECEPCIÓN y no debe mezclarse.
   signatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
@@ -54,6 +59,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         select: {
           id: true, number: true, version: true, status: true, businessId: true,
           quoteCents: true, approvedQuoteCents: true, quoteApprovedAt: true,
+          quoteExpiresAt: true,
           createdById: true, equipmentType: true, brand: true, model: true,
           // Tenant suspendido: el enlace muere igual que un token inválido
           // (sin mutar nada — el cliente no decide sobre un negocio inactivo).
@@ -74,8 +80,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       if (order.status !== "WAITING_APPROVAL" || order.quoteCents === null) {
         throw new BusinessError("Esta cotización no está pendiente de autorización.", 409)
       }
-      // El cliente aprueba la cifra que VIO, no la vigente al llegar el POST.
-      if (approving && input.expectedLaborCents !== order.quoteCents) {
+      // Vigencia real: el documento dice "Válida por 15 días". Una cotización
+      // vencida sin decidir ya no puede aprobarse — el taller la reenvía con
+      // la acción QUOTE, que fija una vigencia nueva.
+      if (order.quoteExpiresAt && order.quoteExpiresAt.getTime() < Date.now()) {
+        throw new BusinessError("La cotización venció. Contacta al taller para reenviarla.", 410, "QUOTE_EXPIRED")
+      }
+      // El cliente aprueba la cifra que VIO, no la vigente al llegar el POST:
+      // mano de obra y refacciones autorizadas por separado (una refacción
+      // nueva no cambia quoteCents, pero sí el total autorizado).
+      const partsCentsNow = approvedPartsTotal(order.parts).priceCents
+      if (approving && (input.expectedLaborCents !== order.quoteCents
+        || (input.expectedPartsCents !== undefined && input.expectedPartsCents !== partsCentsNow))) {
         throw new BusinessError(QUOTE_CHANGED, 409, "QUOTE_CHANGED")
       }
 
@@ -116,8 +132,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       // Constancia de la cifra que el cliente vio al decidir: mano de obra
       // autorizada + refacciones aprobadas (lo que la vista pública desglosa).
       const laborCents = (data.approvedQuoteCents as number | undefined) ?? order.approvedQuoteCents ?? order.quoteCents ?? 0
-      const partsCents = approvedPartsTotal(order.parts).priceCents
-      const decisionAmounts = ` Mano de obra ${(laborCents / 100).toFixed(2)} MXN + refacciones ${(partsCents / 100).toFixed(2)} MXN = ${((laborCents + partsCents) / 100).toFixed(2)} MXN.`
+      const decisionAmounts = ` Mano de obra ${(laborCents / 100).toFixed(2)} MXN + refacciones ${(partsCentsNow / 100).toFixed(2)} MXN = ${((laborCents + partsCentsNow) / 100).toFixed(2)} MXN.`
 
       await tx.repairEvent.create({
         data: {

@@ -65,6 +65,7 @@ function EvidenceUploader() {
   const token = params.token
   const [loading, setLoading] = useState(true)
   const [invalid, setInvalid] = useState(false)
+  const [expired, setExpired] = useState(false)
   const [folio, setFolio] = useState("")
   const [photos, setPhotos] = useState<EvidencePhoto[]>([])
   const [pending, setPending] = useState<PendingFile[]>([])
@@ -79,6 +80,9 @@ function EvidenceUploader() {
     fetch(`/api/evidencia/${encodeURIComponent(token ?? "")}`)
       .then(async res => {
         if (cancelled) return
+        // 410 = el token existe pero ya no está vigente: se muestra un
+        // mensaje distinto al 404 genérico de enlace inválido.
+        if (res.status === 410) { setExpired(true); return }
         if (!res.ok) { setInvalid(true); return }
         const data = await res.json() as { orderNumber: number; photos: EvidencePhoto[] }
         setFolio(repairFolio(data.orderNumber))
@@ -142,6 +146,8 @@ function EvidenceUploader() {
           const data = await res.json().catch(() => null) as { photo?: EvidencePhoto; error?: string } | null
           if (!res.ok || !data?.photo) {
             setPending(prev => prev.map((p, j) => j === i ? { ...p, status: "error" } : p))
+            // Si el link venció a media subida, la vista completa cambia al aviso.
+            if (res.status === 410) setExpired(true)
             toast.error(data?.error ?? `No se pudo subir "${item.file.name}".`)
             continue
           }
@@ -179,6 +185,14 @@ function EvidenceUploader() {
 
       {loading ? (
         <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+      ) : expired ? (
+        <div className="rounded-xl border border-dashed p-8 text-center space-y-3">
+          <AlertCircle className="h-10 w-10 text-muted-foreground mx-auto" />
+          <h2 className="font-semibold text-lg">Este link expiró</h2>
+          <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+            El enlace para subir fotos ya no está vigente. Contacta al taller para pedir uno nuevo.
+          </p>
+        </div>
       ) : invalid ? (
         <div className="rounded-xl border border-dashed p-8 text-center space-y-3">
           <AlertCircle className="h-10 w-10 text-muted-foreground mx-auto" />

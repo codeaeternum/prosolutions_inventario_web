@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { AlertCircle, BadgeCheck } from "lucide-react"
+import { AlertCircle, BadgeCheck, TimerOff } from "lucide-react"
 import { repairFolio } from "@/lib/workshop-labels"
 import { formatDate, formatPrice } from "@/lib/utils"
 import type { PublicQuote } from "@/lib/public-quote"
@@ -80,6 +80,35 @@ export function QuoteNotFound({ trackingHref }: { trackingHref: string }) {
   )
 }
 
+/** Vigencia real del documento: quoteExpiresAt la fija el taller al
+ *  (re)presentar la cotización ("Válida por 15 días"). */
+export function isQuoteExpired(order: Pick<PublicQuote, "quoteExpiresAt">): boolean {
+  return order.quoteExpiresAt !== null && order.quoteExpiresAt.getTime() < Date.now()
+}
+
+/**
+ * Cotización cuya vigencia terminó sin decisión: distinto de "no encontrada"
+ * porque el enlace sí existe — el cliente debe pedir que la reenvíen.
+ */
+export function QuoteExpired({ trackingHref }: { trackingHref: string }) {
+  return (
+    <section className="container mx-auto max-w-2xl px-4 pt-16 pb-20">
+      <div className="rounded-2xl border border-dashed bg-card p-10 text-center space-y-4 shadow-sm">
+        <TimerOff className="mx-auto h-12 w-12 text-muted-foreground" />
+        <h1 className="text-2xl font-bold">Esta cotización venció</h1>
+        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+          La vigencia del documento terminó. Contacta al taller para que te reenvíen la cotización actualizada por WhatsApp.
+        </p>
+        <p className="text-sm">
+          <Link href={trackingHref} className="font-medium text-primary underline-offset-4 hover:underline">
+            Rastrear mi equipo con el folio del ticket →
+          </Link>
+        </p>
+      </div>
+    </section>
+  )
+}
+
 /**
  * Documento "papel" de la cotización + bloque de decisión del cliente.
  * `businessName` es el membrete: en la página global llega de
@@ -99,8 +128,12 @@ export function QuoteDocument({ order, businessName, token }: {
     unitPrice: part.unitPriceCents / 100,
     subtotal: (part.qty * part.unitPriceCents) / 100,
   }))
-  const partsTotal = parts.reduce((sum, part) => sum + part.subtotal, 0)
-  const totalCents = (laborCents ?? 0) + Math.round(partsTotal * 100)
+  // Total de refacciones autorizadas en centavos (misma cuenta que el
+  // servidor: qty × unitPriceCents, sin pasar por flotante): viaja como
+  // expectedPartsCents al POST de decisión — anti-TOCTOU, igual que la mano
+  // de obra. Una refacción nueva no cambia quoteCents pero sí el total.
+  const partsCents = order.parts.reduce((sum, part) => sum + part.qty * part.unitPriceCents, 0)
+  const totalCents = (laborCents ?? 0) + partsCents
   const hasQuote = laborCents !== null || parts.length > 0
   const issuedAt = order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt
 
@@ -240,6 +273,7 @@ export function QuoteDocument({ order, businessName, token }: {
         quoteApprovedAt={order.quoteApprovedAt?.toISOString() ?? null}
         totalCents={hasQuote ? totalCents : null}
         laborCents={laborCents}
+        partsCents={partsCents}
         hasQuote={hasQuote}
       />
     </section>

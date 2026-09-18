@@ -28,7 +28,13 @@ export interface WorkshopSheetData {
   issue: string
   diagnosis?: string
   qualityCheck?: string
+  // Constancia de entrega estructurada: receptor (puede no ser el titular),
+  // su identificación, su firma (PNG base64) y quién del staff entregó.
   deliveredTo?: string
+  deliveredToDoc?: string
+  deliverySignatureData?: string
+  deliveredBy?: string
+  deliveredAt?: string
   // Importes en pesos (los campos *Cents de la orden ya vienen convertidos).
   quote?: number
   approvedQuote?: number
@@ -57,6 +63,10 @@ export interface WorkshopSheetData {
   // URL pública /evidencia/<uploadToken> — el técnico la escanea para subir
   // fotos del equipo desde su celular sin login.
   evidenceUrl?: string
+  // Orden terminal: el enlace público ya murió (la ruta rechaza la subida y
+  // el cierre rota el token) — se imprime el aviso en lugar de un QR que
+  // solo llevaría a un error.
+  evidenceLinkDisabled?: boolean
   businessName?: string
 }
 
@@ -118,7 +128,7 @@ function equipmentValue(data: WorkshopSheetData, label: string) {
 
 /* ---------- HOJA COMPLETA (media carta, documento interno actual) ---------- */
 
-function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: string | null }) {
+function FullSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheetData; evidenceQr: string | null; evidenceDisabled?: boolean }) {
   return (
     <div className="max-w-xl mx-auto bg-white text-black text-xs shadow-lg print:shadow-none">
       {/* Franja de advertencia: borde + texto rojo para que se note aunque
@@ -201,9 +211,31 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
             <p><span className="text-gray-500">Falla reportada:</span> {data.issue}</p>
             {data.diagnosis && <p><span className="text-gray-500">Diagnóstico:</span> {data.diagnosis}</p>}
             {data.qualityCheck && <p><span className="text-gray-500">Revisión final:</span> {data.qualityCheck}</p>}
-            {data.deliveredTo && <p><span className="text-gray-500">Entregado a:</span> {data.deliveredTo}</p>}
           </div>
         </section>
+
+        {/* Constancia de entrega */}
+        {data.deliveredTo && (
+          <section>
+            <h3 className="mb-1 border-b border-gray-400 text-[10px] font-bold uppercase tracking-wide text-gray-600">Entrega del equipo</h3>
+            <table className="w-full">
+              <tbody>
+                <SheetRow label="Entregado a" value={data.deliveredTo} />
+                <SheetRow label="Identificación" value={data.deliveredToDoc} />
+                <SheetRow label="Entregó" value={data.deliveredBy} />
+                <SheetRow label="Fecha de entrega" value={data.deliveredAt ? formatDate(data.deliveredAt) : undefined} />
+              </tbody>
+            </table>
+            {data.deliverySignatureData && (
+              <div className="mt-1">
+                {/* El trazo del canvas es claro (#e4e4e7): brightness(0) lo imprime negro. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={data.deliverySignatureData} alt="Firma de quien recibió el equipo" style={{ filter: "brightness(0)" }} className="h-14 w-auto object-contain" />
+                <p className="text-[9px] text-gray-500">Firma de quien recibe</p>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Presupuesto */}
         {(data.quote !== undefined || data.approvedQuote !== undefined) && (
@@ -295,8 +327,9 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
         )}
 
         {/* QR de evidencias: el técnico lo escanea con su celular para subir
-            fotos del estado del equipo sin login (sección operativa) */}
-        {evidenceQr && (
+            fotos del estado del equipo sin login (sección operativa). En orden
+            cerrada el enlace ya no funciona y se imprime solo el aviso. */}
+        {evidenceQr ? (
           <section>
             <h3 className="mb-1 border-b border-gray-400 text-[10px] font-bold uppercase tracking-wide text-gray-600">Evidencias</h3>
             <div className="flex items-center gap-3">
@@ -307,7 +340,14 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
               </p>
             </div>
           </section>
-        )}
+        ) : evidenceDisabled ? (
+          <section>
+            <h3 className="mb-1 border-b border-gray-400 text-[10px] font-bold uppercase tracking-wide text-gray-600">Evidencias</h3>
+            <p className="text-[10px] text-gray-500 leading-snug">
+              Link de evidencias desactivado: la orden está cerrada y el código QR impreso anteriormente ya no funciona.
+            </p>
+          </section>
+        ) : null}
 
         {/* Firmas internas */}
         <div className="grid grid-cols-2 gap-8 pt-10 text-center text-[10px]">
@@ -326,7 +366,7 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
 
 /* ---------- TÉRMICO 80mm (versión angosta de la hoja interna) ---------- */
 
-function ThermalSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: string | null }) {
+function ThermalSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheetData; evidenceQr: string | null; evidenceDisabled?: boolean }) {
   return (
     <div className="max-w-[80mm] mx-auto bg-white text-black text-xs shadow-lg print:shadow-none p-3">
       <div className="border-2 border-red-700 px-2 py-1 text-center text-[9px] font-bold uppercase tracking-widest text-red-700">
@@ -349,6 +389,7 @@ function ThermalSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQ
         <p><span className="text-gray-500">Cliente:</span> {data.customerName}</p>
         <p><span className="text-gray-500">Teléfono:</span> {data.customerPhone}</p>
         {data.customerPhoneAlt && <p><span className="text-gray-500">Contacto 2:</span> {data.customerPhoneAlt}</p>}
+        {data.deliveredTo && <p><span className="text-gray-500">Entregado a:</span> {data.deliveredTo}{data.deliveredBy ? ` · Entregó: ${data.deliveredBy}` : ""}</p>}
       </div>
 
       {/* Equipo */}
@@ -414,14 +455,19 @@ function ThermalSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQ
         </div>
       )}
 
-      {/* QR de evidencias: lo escanea el técnico para subir fotos del equipo */}
-      {evidenceQr && (
+      {/* QR de evidencias: lo escanea el técnico para subir fotos del equipo.
+          En orden cerrada el enlace ya murió y se imprime solo el aviso. */}
+      {evidenceQr ? (
         <div className="text-center mt-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={evidenceQr} alt="QR para subir fotos del equipo" className="w-24 h-24 mx-auto" />
           <p className="text-[9px] text-gray-600 mt-1 leading-snug">Escanear para subir fotos del equipo</p>
         </div>
-      )}
+      ) : evidenceDisabled ? (
+        <p className="mt-3 text-center text-[9px] font-bold uppercase text-red-700">
+          Link de evidencias desactivado
+        </p>
+      ) : null}
 
       {/* Espacio extra abajo para que la térmica corte bien */}
       <div className="h-8 print:block hidden"></div>
@@ -431,7 +477,7 @@ function ThermalSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQ
 
 /* ---------- ETIQUETA 50×30mm (sticker para pegar en el equipo) ---------- */
 
-function EquipmentLabel({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: string | null }) {
+function EquipmentLabel({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheetData; evidenceQr: string | null; evidenceDisabled?: boolean }) {
   const brandModel = [equipmentValue(data, "Marca"), equipmentValue(data, "Modelo")].filter(Boolean).join(" ")
   const shortName = data.customerName.trim().split(/\s+/).slice(0, 2).join(" ")
 
@@ -439,16 +485,20 @@ function EquipmentLabel({ data, evidenceQr }: { data: WorkshopSheetData; evidenc
     <div className="mx-auto w-fit">
       {/* Borde punteado solo en pantalla: marca la línea de corte */}
       <div className="w-[50mm] h-[30mm] overflow-hidden border border-dashed border-gray-400 print:border-0 bg-white text-black p-[1.5mm] flex items-center gap-[1.5mm]">
-        {evidenceQr ? (
+        {evidenceQr || evidenceDisabled ? (
           <>
             <div className="flex-1 min-w-0 leading-tight">
               <p className="font-bold text-[12pt] leading-none">{data.folio}</p>
               {brandModel && <p className="mt-[0.8mm] text-[6.5pt] truncate">{brandModel}</p>}
               <p className="text-[6.5pt] truncate">{shortName}</p>
               <p className="text-[6pt] text-gray-600">Ing: {shortDate(data.receivedAt)}</p>
+              {/* Orden cerrada: el enlace ya murió — sin QR muerto en el sticker */}
+              {!evidenceQr && evidenceDisabled && (
+                <p className="mt-[0.5mm] text-[6pt] font-bold uppercase text-red-700">Link desactivado</p>
+              )}
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={evidenceQr} alt="QR para subir fotos del equipo" className="w-[13mm] h-[13mm] shrink-0" />
+            {evidenceQr && <img src={evidenceQr} alt="QR para subir fotos del equipo" className="w-[13mm] h-[13mm] shrink-0" />}
           </>
         ) : (
           // Sin uploadToken no hay enlace que escanear: la etiqueta solo
@@ -469,15 +519,17 @@ export function WorkshopSheetView({ data }: { data: WorkshopSheetData }) {
 
   // El QR de evidencias se imprime en los tres formatos: en la hoja y el
   // térmico lo escanea el técnico; en la etiqueta queda pegado al equipo.
+  // Con el link desactivado (orden cerrada) no se genera el QR: imprimirlo
+  // solo llevaría a un enlace muerto.
   useEffect(() => {
-    const url = data.evidenceUrl
+    const url = data.evidenceLinkDisabled ? undefined : data.evidenceUrl
     if (!url) return
     let cancelled = false
     QRCode.toDataURL(url, { width: 200, margin: 1 })
       .then(d => { if (!cancelled) setEvidenceQrDataUrl(d) })
       .catch(() => { if (!cancelled) setEvidenceQrDataUrl(null) })
     return () => { cancelled = true }
-  }, [data.evidenceUrl])
+  }, [data.evidenceUrl, data.evidenceLinkDisabled])
 
   // Mismo patrón que el ticket: en pestaña abierta por script history.back()
   // no hace nada; cerramos y, si el navegador no deja, volvemos al taller.
@@ -527,9 +579,9 @@ export function WorkshopSheetView({ data }: { data: WorkshopSheetData }) {
         </Button>
       </div>
 
-      {format === "sheet" && <FullSheet data={data} evidenceQr={evidenceQrDataUrl} />}
-      {format === "thermal" && <ThermalSheet data={data} evidenceQr={evidenceQrDataUrl} />}
-      {format === "label" && <EquipmentLabel data={data} evidenceQr={evidenceQrDataUrl} />}
+      {format === "sheet" && <FullSheet data={data} evidenceQr={data.evidenceLinkDisabled ? null : evidenceQrDataUrl} evidenceDisabled={data.evidenceLinkDisabled} />}
+      {format === "thermal" && <ThermalSheet data={data} evidenceQr={data.evidenceLinkDisabled ? null : evidenceQrDataUrl} evidenceDisabled={data.evidenceLinkDisabled} />}
+      {format === "label" && <EquipmentLabel data={data} evidenceQr={data.evidenceLinkDisabled ? null : evidenceQrDataUrl} evidenceDisabled={data.evidenceLinkDisabled} />}
     </div>
   )
 }

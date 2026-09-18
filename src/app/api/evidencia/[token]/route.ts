@@ -8,17 +8,28 @@ import { evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib
 // 404 genérico si no existe — no revelar si el token es válido o no.
 const NO_STORE = { "Cache-Control": "no-store" } as const
 const INVALID = { error: "Enlace no válido o expirado." }
+const EXPIRED = { error: "Este link ya no está vigente." }
 const WINDOW_MS = 60 * 60 * 1000
 const MAX_UPLOADS = 20 // fotos por hora por IP
+
+// Caducidad del QR de evidencias: NULL = token histórico (anterior a la
+// caducidad) y sigue válido — la vigencia solo corre para tokens emitidos
+// con uploadTokenExpiresAt. Un token vencido responde 410, distinto del 404
+// genérico, para que la página pública muestre "link expirado" y no
+// "enlace inválido".
+function expired(uploadTokenExpiresAt: Date | null): boolean {
+  return uploadTokenExpiresAt !== null && uploadTokenExpiresAt.getTime() < Date.now()
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
   const order = await prisma.repairOrder.findUnique({
     where: { uploadToken: token },
-    select: { number: true, business: { select: { isActive: true } }, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
+    select: { number: true, uploadTokenExpiresAt: true, business: { select: { isActive: true } }, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
   })
   // Empresa suspendida: el enlace muere igual que un token inválido (404 genérico).
   if (!order || !order.business.isActive) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+  if (expired(order.uploadTokenExpiresAt)) return NextResponse.json(EXPIRED, { status: 410, headers: NO_STORE })
   return NextResponse.json({ orderNumber: order.number, photos: order.photos }, { headers: NO_STORE })
 }
 
@@ -34,10 +45,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     const { token } = await params
     const order = await prisma.repairOrder.findUnique({
       where: { uploadToken: token },
-      select: { id: true, createdById: true, businessId: true, status: true, business: { select: { isActive: true } } },
+      select: { id: true, createdById: true, businessId: true, status: true, uploadTokenExpiresAt: true, business: { select: { isActive: true } } },
     })
     // Empresa suspendida: el enlace muere igual que un token inválido (404 genérico).
     if (!order || !order.business.isActive) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
+    if (expired(order.uploadTokenExpiresAt)) return NextResponse.json(EXPIRED, { status: 410, headers: NO_STORE })
     // Orden cerrada: el sticker físico es permanente y el enlace queda vivo
     // para siempre — sin bloqueo cualquiera podría subir basura a una orden
     // ya entregada/cancelada. Se responde 404 igual que un token inválido.

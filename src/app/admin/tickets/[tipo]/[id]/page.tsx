@@ -42,6 +42,8 @@ function loadRepairOrder(id: string, businessId: string) {
       currentBranch: true,
       assignedTo: { select: { name: true } },
       createdBy: { select: { name: true } },
+      // Quién del staff entregó el equipo (auditoría de mostrador).
+      deliveredBy: { select: { name: true } },
       // CONFIRMED suman y REFUNDED (reembolsos, amount negativo) restan:
       // es la convención de orderHeldCents — ambas filas se imprimen.
       payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" } },
@@ -231,6 +233,14 @@ export default async function TicketPage({
       // fotos; solo va en documentos internos (hoja de taller / etiqueta),
       // nunca en el ticket ni la cotización que recibe el cliente.
       const evidenceUrl = order.uploadToken ? `${base}/evidencia/${order.uploadToken}` : undefined
+      // En orden cerrada el QR impreso ya no sirve: la ruta rechaza la
+      // subida en estos estados y el cierre rota el token — la hoja/etiqueta
+      // muestra el aviso "link desactivado" en vez de un QR muerto.
+      const evidenceLinkDisabled = Boolean(evidenceUrl) && ["DELIVERED", "CANCELLED", "NOT_AUTHORIZED", "NOT_REPAIRED"].includes(order.status)
+      // No hay deliveredAt dedicado en la orden: la fecha exacta de entrega la
+      // conserva el evento público "→ Entregado" (updatedAt cambiaría con una
+      // garantía o un reembolso posterior).
+      const deliveredAt = order.events.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt.toISOString()
 
       if (tipo === "reparacion") {
         // QR de rastreo brandeado: con Business.slug activo apunta a la
@@ -285,6 +295,13 @@ export default async function TicketPage({
           trackingHint: "Escanea para rastrear tu reparación",
           // Firma capturada en recepción (PNG base64).
           signatureData: order.signatureData ?? undefined,
+          // Constancia de entrega: quién recogió el equipo (puede no ser el
+          // titular), su identificación, su firma y quién del staff entregó.
+          deliveredTo: order.deliveredTo ?? undefined,
+          deliveredToDoc: order.deliveredToDoc ?? undefined,
+          deliverySignatureData: order.deliverySignatureData ?? undefined,
+          deliveredBy: order.deliveredBy?.name ?? undefined,
+          deliveredAt,
         }
       } else if (tipo === "cotizacion") {
         quoteData = {
@@ -349,6 +366,10 @@ export default async function TicketPage({
           diagnosis: order.diagnosis ?? undefined,
           qualityCheck: order.qualityCheck ?? undefined,
           deliveredTo: order.deliveredTo ?? undefined,
+          deliveredToDoc: order.deliveredToDoc ?? undefined,
+          deliverySignatureData: order.deliverySignatureData ?? undefined,
+          deliveredBy: order.deliveredBy?.name ?? undefined,
+          deliveredAt,
           quote: order.quoteCents != null ? order.quoteCents / 100 : undefined,
           approvedQuote: order.approvedQuoteCents != null ? order.approvedQuoteCents / 100 : undefined,
           quoteApprovedAt: order.quoteApprovedAt?.toISOString(),
@@ -382,6 +403,7 @@ export default async function TicketPage({
           })),
           // QR de evidencias: va en la hoja interna y en la etiqueta del equipo.
           evidenceUrl,
+          evidenceLinkDisabled,
         }
       }
     }

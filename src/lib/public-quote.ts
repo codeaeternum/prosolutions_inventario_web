@@ -28,6 +28,9 @@ export function loadQuoteByToken(token: string, businessId?: string) {
       quoteCents: true,
       approvedQuoteCents: true,
       quoteApprovedAt: true,
+      // Vigencia del documento ("Válida por 15 días"): la página brandeada y
+      // la global muestran estado vencido en vez del desglose cuando pasó.
+      quoteExpiresAt: true,
       createdAt: true,
       createdBy: { select: { name: true } },
       parts: {

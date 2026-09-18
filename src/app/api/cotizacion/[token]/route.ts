@@ -64,6 +64,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           quoteCents: true,
           approvedQuoteCents: true,
           quoteApprovedAt: true,
+          quoteExpiresAt: true,
           createdAt: true,
           parts: {
             where: { status: "APPROVED" },
@@ -89,6 +90,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         { status: 410, headers: NO_STORE },
       )
     }
+    // "Válida por 15 días" se cumple de verdad: quoteExpiresAt se fija al
+    // presentar la cotización (QUOTE) y al pedir re-autorización por una
+    // refacción nueva. Vencida, el documento ya no se muestra.
+    if (order.quoteExpiresAt && order.quoteExpiresAt.getTime() < Date.now()) {
+      return NextResponse.json(
+        { error: "Esta cotización venció." },
+        { status: 410, headers: NO_STORE },
+      )
+    }
     const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
 
     const { service, issue } = parseIssue(order.reportedIssue)
@@ -99,7 +109,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
       unitPriceCents: part.unitPriceCents,
       subtotalCents: part.qty * part.unitPriceCents,
     }))
-    const totalCents = (laborCents ?? 0) + parts.reduce((sum, part) => sum + part.subtotalCents, 0)
+    // Total de refacciones autorizadas desglosado: es el expectedPartsCents
+    // que el cliente debe devolver al POST /approve (anti-TOCTOU).
+    const partsCents = parts.reduce((sum, part) => sum + part.subtotalCents, 0)
+    const totalCents = (laborCents ?? 0) + partsCents
 
     return NextResponse.json(
       {
@@ -119,10 +132,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           diagnosis: order.diagnosis,
           laborCents,
           parts,
+          partsCents,
           totalCents,
           status: order.status,
           statusLabel: repairLabels[order.status as RepairStage] ?? order.status,
           quoteApprovedAt: order.quoteApprovedAt,
+          quoteExpiresAt: order.quoteExpiresAt,
         },
       },
       { headers: NO_STORE },

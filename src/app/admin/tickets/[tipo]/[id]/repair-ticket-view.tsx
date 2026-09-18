@@ -34,6 +34,13 @@ export interface RepairTicketData {
   trackingHint?: string
   // Firma del cliente capturada en recepción (PNG base64 data URL).
   signatureData?: string
+  // Constancia de entrega: quién recogió el equipo (puede no ser el titular),
+  // su identificación opcional, su firma (PNG base64) y quién entregó.
+  deliveredTo?: string
+  deliveredToDoc?: string
+  deliverySignatureData?: string
+  deliveredBy?: string
+  deliveredAt?: string
   businessName?: string
   subtitle?: string
   footer?: string
@@ -140,6 +147,34 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
               {data.totalOrder !== undefined && <p className="font-bold">Total a pagar: {formatPrice(data.totalOrder)}</p>}
               {data.balance !== undefined && <p className="font-bold">Saldo: {formatPrice(data.balance)}</p>}
             </div>
+          </div>
+        )}
+
+        {/* Constancia de entrega: solo se imprime cuando la orden ya fue
+            entregada — quién recogió, con qué identificación, su firma y
+            quién del staff la entregó. */}
+        {data.deliveredTo && (
+          <div className="mb-3">
+            <h3 className="text-[10px] uppercase text-gray-500 mb-1">Entrega del equipo</h3>
+            <div className="text-xs space-y-0.5">
+              <p><span className="text-gray-500">Entregado a:</span> {data.deliveredTo}</p>
+              {data.deliveredToDoc && <p><span className="text-gray-500">Identificación:</span> {data.deliveredToDoc}</p>}
+              {data.deliveredBy && <p><span className="text-gray-500">Entregó:</span> {data.deliveredBy}</p>}
+              {data.deliveredAt && <p><span className="text-gray-500">Fecha de entrega:</span> {formatDate(data.deliveredAt)}</p>}
+            </div>
+            {data.deliverySignatureData && (
+              <div className="mt-1">
+                {/* El trazo del canvas es claro (#e4e4e7): brightness(0) lo imprime negro. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={data.deliverySignatureData}
+                  alt="Firma de quien recibió el equipo"
+                  style={{ filter: "brightness(0)" }}
+                  className="h-14 w-auto max-w-[95%] object-contain"
+                />
+                <p className="text-[9px] text-gray-500">Firma de quien recibe</p>
+              </div>
+            )}
           </div>
         )}
 

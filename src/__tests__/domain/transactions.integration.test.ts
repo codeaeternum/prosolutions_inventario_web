@@ -221,7 +221,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     expect((await update({ action: "STATUS", status: "READY", detail: "Salida de audio y carga verificadas" })).qualityCheck).toContain("verificadas")
     // La entrega física solo ocurre por SETTLE_DELIVER (cobra el saldo y cierra
     // refacciones); STATUS→DELIVERED ya no es una transición válida.
-    expect((await update({ action: "SETTLE_DELIVER", paymentMethod: "TRANSFER", detail: "Recibe cliente ficticio" })).deliveredTo).toBe("Recibe cliente ficticio")
+    expect((await update({ action: "SETTLE_DELIVER", paymentMethod: "TRANSFER", deliveredTo: "Recibe cliente ficticio" })).deliveredTo).toBe("Recibe cliente ficticio")
     await expect(update({ action: "NOTE", detail: "Reescribir historial" })).rejects.toMatchObject({ status: 409 })
     expect(await db.cashMovement.count({ where: { referenceId: order.id } })).toBe(0)
   })
@@ -252,7 +252,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     await update({ action: "STATUS", status: "QUALITY_CHECK" })
     await update({ action: "STATUS", status: "READY", detail: "Todo verificado" })
     // Liquidar y entregar cobra el saldo restante de una vez
-    const delivered = await update({ action: "SETTLE_DELIVER", paymentMethod: "CASH", detail: "Recibe el titular" })
+    const delivered = await update({ action: "SETTLE_DELIVER", paymentMethod: "CASH", deliveredTo: "Recibe el titular" })
     expect(delivered.status).toBe("DELIVERED")
     const paid = await db.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: order.id, status: "CONFIRMED" } })
     expect(paid._sum.amount).toBe(500)

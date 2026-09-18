@@ -7,10 +7,13 @@ import { Eraser } from "lucide-react"
 interface SignaturePadProps {
   onChange: (dataUrl: string | null) => void
   label?: string
+  // Texto bajo el canvas; por defecto es el de recepción (aceptación de
+  // condiciones). La entrega del equipo pasa su propio texto.
+  hint?: string
 }
 
 // Canvas de firma del cliente. Devuelve PNG base64 (o null si está vacío).
-export function SignaturePad({ onChange, label = "Firma del cliente" }: SignaturePadProps) {
+export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al firmar, el cliente acepta las condiciones y el estado reportado del equipo." }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
   const [isEmpty, setIsEmpty] = useState(true)
@@ -83,7 +86,7 @@ export function SignaturePad({ onChange, label = "Firma del cliente" }: Signatur
         onPointerLeave={end}
       />
       <p className="text-xs text-muted-foreground">
-        Al firmar, el cliente acepta las condiciones y el estado reportado del equipo.
+        {hint}
       </p>
     </div>
   )

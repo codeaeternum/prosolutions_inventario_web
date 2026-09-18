@@ -50890,5 +50890,4283 @@
 "model": "nubia_NB1001",
 "code": "nubia_NB1001",
 "type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 6",
+"code": "A1549",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 6 Plus",
+"code": "A1522",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 6s",
+"code": "A1633",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 6s Plus",
+"code": "A1634",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone SE (1st generation)",
+"code": "A1662",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 7",
+"code": "A1660",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 7 Plus",
+"code": "A1661",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 8",
+"code": "A1863",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 8 Plus",
+"code": "A1864",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone X",
+"code": "A1865",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone XR",
+"code": "A1984",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone XS",
+"code": "A1920",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone XS Max",
+"code": "A1921",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 11",
+"code": "A2111",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 11 Pro",
+"code": "A2160",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 11 Pro Max",
+"code": "A2161",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone SE (2nd generation)",
+"code": "A2275",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 12 mini",
+"code": "A2176",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 12",
+"code": "A2172",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 12 Pro",
+"code": "A2341",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 12 Pro Max",
+"code": "A2342",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 13 mini",
+"code": "A2481",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 13",
+"code": "A2482",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 13 Pro",
+"code": "A2483",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 13 Pro Max",
+"code": "A2484",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone SE (3rd generation)",
+"code": "A2595",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 14",
+"code": "A2649",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 14 Plus",
+"code": "A2632",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 14 Pro",
+"code": "A2650",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 14 Pro Max",
+"code": "A2651",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 15",
+"code": "A2846",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 15 Plus",
+"code": "A2847",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 15 Pro",
+"code": "A2848",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 15 Pro Max",
+"code": "A2849",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 16",
+"code": "A3081",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 16 Plus",
+"code": "A3082",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 16 Pro",
+"code": "A3083",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 16 Pro Max",
+"code": "A3084",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 16e",
+"code": "A3212",
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 17",
+"code": null,
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone Air",
+"code": null,
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 17 Pro",
+"code": null,
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPhone 17 Pro Max",
+"code": null,
+"type": "SMARTPHONE"
+},
+{
+"brand": "Apple",
+"model": "iPad (5th generation)",
+"code": "A1822",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad (6th generation)",
+"code": "A1893",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad (7th generation)",
+"code": "A2197",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad (8th generation)",
+"code": "A2270",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad (9th generation)",
+"code": "A2602",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad (10th generation)",
+"code": "A2696",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad 11\" (A16)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad mini 4",
+"code": "A1538",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad mini (5th generation)",
+"code": "A2133",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad mini (6th generation)",
+"code": "A2567",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad mini (A17 Pro)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air (3rd generation)",
+"code": "A2152",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air (4th generation)",
+"code": "A2316",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air (5th generation)",
+"code": "A2588",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air 11\" (M2)",
+"code": "A2902",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air 13\" (M2)",
+"code": "A2898",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air 11\" (M3)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Air 13\" (M3)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 9.7\"",
+"code": "A1673",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 10.5\"",
+"code": "A1701",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (1st generation)",
+"code": "A1584",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (2nd generation)",
+"code": "A1670",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 11\" (1st generation)",
+"code": "A1980",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 11\" (2nd generation)",
+"code": "A2228",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 11\" (3rd generation)",
+"code": "A2377",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 11\" (M4)",
+"code": "A2836",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (3rd generation)",
+"code": "A1876",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (4th generation)",
+"code": "A2229",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (5th generation)",
+"code": "A2378",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 12.9\" (6th generation)",
+"code": "A2436",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "iPad Pro 13\" (M4)",
+"code": "A2925",
+"type": "TABLET"
+},
+{
+"brand": "Apple",
+"model": "MacBook 12\" Retina",
+"code": "A1534",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 11\" (Early 2015)",
+"code": "A1465",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (2017)",
+"code": "A1466",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (2018)",
+"code": "A1932",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (2019)",
+"code": "A1932",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (2020, Intel)",
+"code": "A2179",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (M1, 2020)",
+"code": "A2337",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (M2, 2022)",
+"code": "A2681",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 15\" (M2, 2023)",
+"code": "A2941",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (M3, 2024)",
+"code": "A3113",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 15\" (M3, 2024)",
+"code": "A3114",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 13\" (M4, 2025)",
+"code": "A3240",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Air 15\" (M4, 2025)",
+"code": "A3241",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2016, Two Thunderbolt 3)",
+"code": "A1708",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2016, Four Thunderbolt 3)",
+"code": "A1706",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 15\" (2017, Touch Bar)",
+"code": "A1707",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2017, Two Thunderbolt 3)",
+"code": "A1708",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2018)",
+"code": "A1989",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 15\" (2018)",
+"code": "A1990",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2019, Two Thunderbolt 3)",
+"code": "A2159",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 15\" (2019)",
+"code": "A1990",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 16\" (2019)",
+"code": "A2141",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2020, Two Thunderbolt 3)",
+"code": "A2289",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (2020, Four Thunderbolt 3)",
+"code": "A2251",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (M1, 2020)",
+"code": "A2338",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 14\" (2021)",
+"code": "A2442",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 16\" (2021)",
+"code": "A2485",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 13\" (M2, 2022)",
+"code": "A2338",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 14\" (2023)",
+"code": "A2779",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 16\" (2023)",
+"code": "A2780",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 14\" (M3, 2023)",
+"code": "A2992",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 16\" (M3, 2023)",
+"code": "A2991",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 14\" (M4, 2024)",
+"code": "A3112",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 16\" (M4, 2024)",
+"code": "A3186",
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "MacBook Pro 14\" (M5, 2025)",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Apple",
+"model": "iMac 21.5\" (2017)",
+"code": "A1418",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 21.5\" (2019)",
+"code": "A2116",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 27\" (2017)",
+"code": "A1419",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 27\" (2020)",
+"code": "A2115",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac Pro 27\" (2017)",
+"code": "A1862",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 24\" (M1, 2021)",
+"code": "A2438",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 24\" (M3, 2023)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iMac 24\" (M4, 2024)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac mini (2018)",
+"code": "A1993",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac mini (M1, 2020)",
+"code": "A2348",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac mini (M2, 2023)",
+"code": "A2686",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac mini (M4, 2024)",
+"code": "A3238",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Studio (M1, 2022)",
+"code": "A2615",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Studio (M2, 2023)",
+"code": "A2901",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Studio (2025)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Pro (2013)",
+"code": "A1481",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Pro (2019)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Mac Pro (2023)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Studio Display",
+"code": "A2525",
+"type": "PANTALLA"
+},
+{
+"brand": "Apple",
+"model": "Pro Display XDR",
+"code": null,
+"type": "PANTALLA"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 4 (40mm)",
+"code": "A1977",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 4 (44mm)",
+"code": "A1976",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 5 (40mm)",
+"code": "A2092",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 5 (44mm)",
+"code": "A2093",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch SE (40mm)",
+"code": "A2351",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch SE (44mm)",
+"code": "A2352",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 6 (40mm)",
+"code": "A2291",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 6 (44mm)",
+"code": "A2292",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 7 (41mm)",
+"code": "A2473",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 7 (45mm)",
+"code": "A2474",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch SE (2nd generation) (40mm)",
+"code": "A2722",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch SE (2nd generation) (44mm)",
+"code": "A2723",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 8 (41mm)",
+"code": "A2770",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 8 (45mm)",
+"code": "A2771",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Ultra (49mm)",
+"code": "A2622",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 9 (41mm)",
+"code": "A2978",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 9 (45mm)",
+"code": "A2980",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Ultra 2 (49mm)",
+"code": "A2986",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 10 (42mm)",
+"code": "A2997",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 10 (46mm)",
+"code": "A2999",
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 11 (42mm)",
+"code": null,
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Series 11 (46mm)",
+"code": null,
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch SE (3rd generation)",
+"code": null,
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "Watch Ultra 3",
+"code": null,
+"type": "SMARTWATCH"
+},
+{
+"brand": "Apple",
+"model": "AirPods (1st generation)",
+"code": "A1523",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods (2nd generation)",
+"code": "A2032",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods (3rd generation)",
+"code": "A2564",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods (4th generation)",
+"code": "A3053",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods (4th generation, ANC)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Pro (1st generation)",
+"code": "A2084",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Pro (2nd generation)",
+"code": "A2699",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Pro (2nd generation, USB-C)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Pro 3",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Max",
+"code": "A2096",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirPods Max (USB-C)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iPod touch (6th generation)",
+"code": "A1574",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "iPod touch (7th generation)",
+"code": "A2178",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "AirTag",
+"code": "A2187",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Apple TV HD",
+"code": "A1625",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Apple TV 4K (1st generation)",
+"code": "A1842",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Apple TV 4K (2nd generation)",
+"code": "A2169",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "Apple TV 4K (3rd generation)",
+"code": "A2737",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "HomePod (1st generation)",
+"code": "A1639",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "HomePod mini",
+"code": "A2374",
+"type": "OTRO"
+},
+{
+"brand": "Apple",
+"model": "HomePod (2nd generation)",
+"code": "A2825",
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Pavilion 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion x360 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion x360 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion Plus 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion Gaming 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Pavilion Aero 13",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Envy x360 13",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Envy x360 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Envy 13",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Envy 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 830 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 840 G7",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 840 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 840 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 840 G10",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 845 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "EliteBook 850 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "ProBook 440 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "ProBook 440 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "ProBook 450 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "ProBook 450 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "ProBook 445 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Victus 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Victus 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Omen 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Omen 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Omen 17",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Omen Transcend 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "HP 240 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "HP 245 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "HP 250 G8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "HP 250 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "HP 255 G9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Stream 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Spectre x360 13.5",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Spectre x360 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "HP",
+"model": "Chromebook 14a",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 14 3421",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 14 5410",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 14 5420",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 14 5440",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 3511",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 3520",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 3525",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 3530",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 3535",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 15 5570",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 16 5620",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 16 5630",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Inspiron 13 5310",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 13 9300",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 13 9310",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 13 9315",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 13 9340",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 13 Plus 9320",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 15 9500",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 15 9510",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 15 9530",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "XPS 17 9720",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 3420",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 3520",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 5420",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 5430",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 5440",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 5520",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 7420",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Latitude 7440",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Vostro 14 3400",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Vostro 14 3420",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Vostro 15 3510",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Vostro 15 3520",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Vostro 15 3530",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "G15 5511",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "G15 5520",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "G15 5530",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Alienware m15 R6",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Alienware m15 R7",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Alienware m16 R1",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Alienware x16 R1",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Dell",
+"model": "Alienware m18 R1",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 1 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 1 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 3 14ITL6",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 3 15ITL6",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 3 15ALC6",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 5 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad 5 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad Slim 3 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad Slim 3 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad Slim 5 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad Flex 5 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad Gaming 3 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "IdeaPad L340-15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad T14 Gen 1",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad T14 Gen 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad T14 Gen 3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad T14 Gen 4",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad T480",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad E14 Gen 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad E14 Gen 4",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad E15 Gen 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad X1 Carbon Gen 9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad X1 Carbon Gen 10",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad X1 Carbon Gen 11",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad L14 Gen 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkPad X13 Gen 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Legion 5 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Legion 5 Pro 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Legion 5i 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Legion 7 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Legion Slim 5 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "LOQ 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Yoga Slim 7 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Yoga 7i 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "Yoga 9i 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "V14 G2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "V15 G2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkBook 14 G2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Lenovo",
+"model": "ThinkBook 15 G2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 3 A314-23P",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 3 A315-23",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 3 A315-56",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 3 A315-58",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 5 A514-54",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 5 A515-45",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 5 A515-56",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 5 A515-57",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 5 A515-58G",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Aspire 7 A715-42G",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Nitro 5 AN515-45",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Nitro 5 AN515-55",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Nitro 5 AN515-57",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Nitro 5 AN515-58",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Nitro V 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Swift 3 SF314-43",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Swift Go 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Predator Helios 300 PH315-54",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Predator Helios Neo 16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Acer",
+"model": "Predator Triton 300 SE",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook 14 X1400",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook 14 X1402",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook 15 X1500",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook 15 X1502",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook 16 X1605",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook S14 S433",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook Go 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "VivoBook Go 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ZenBook 14 UX425",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ZenBook 14 UX3402",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ZenBook 14 OLED",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Strix G15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Strix G16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Strix Scar 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Strix Scar 17",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Zephyrus G14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Zephyrus G15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "ROG Zephyrus M16",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "TUF Gaming A15 FA506",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "TUF Gaming A15 FA507",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "TUF Gaming F15 FX506",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Asus",
+"model": "TUF Gaming F15 FX507",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "GF63 Thin 10SC",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "GF63 Thin 11UC",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "GF63 Thin 12VE",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "GF65 Thin 10UE",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Katana GF66",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Katana 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Stealth 15M",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Modern 14",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Modern 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Cyborg 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Thin 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "MSI",
+"model": "Bravo 15",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Pro 8",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Pro 9",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Pro 10",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Pro 11",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop 3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop 4",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop 5",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop 6",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop Go",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop Go 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop Go 3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Go 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Go 3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Go 4",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Book 3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Microsoft",
+"model": "Surface Laptop Studio 2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book2",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book2 Pro",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book2 Pro 360",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book3",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book3 Pro",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book3 360",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book3 Ultra",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book4",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book4 Pro",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book4 360",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Samsung",
+"model": "Galaxy Book4 Ultra",
+"code": null,
+"type": "LAPTOP"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 2",
+"code": "SCPH-50001",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 2 Slim",
+"code": "SCPH-90001",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 3 Slim",
+"code": "CECH-3001A",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 3 Super Slim",
+"code": "CECH-4001A",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 4",
+"code": "CUH-1215A",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 4 Slim",
+"code": "CUH-2215A",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 4 Pro",
+"code": "CUH-7215B",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 5",
+"code": "CFI-1215A",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 5 Digital Edition",
+"code": "CFI-1215B",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 5 Slim",
+"code": "CFI-2015",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation 5 Pro",
+"code": "CFI-7019",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PSP 3000",
+"code": "PSP-3001",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PSP Go",
+"code": "PSP-N1001",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation Vita",
+"code": "PCH-1001",
+"type": "CONSOLA"
+},
+{
+"brand": "Sony",
+"model": "PlayStation Vita Slim",
+"code": "PCH-2001",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox 360 S",
+"code": "1439",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox 360 E",
+"code": "1538",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox One",
+"code": "1540",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox One S",
+"code": "1681",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox One X",
+"code": "1787",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox Series S",
+"code": "1883",
+"type": "CONSOLA"
+},
+{
+"brand": "Microsoft",
+"model": "Xbox Series X",
+"code": "1882",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Switch",
+"code": "HAC-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Switch (V2)",
+"code": "HAC-001(-01)",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Switch OLED",
+"code": "HEG-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Switch Lite",
+"code": "HDH-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Switch 2",
+"code": "BEE-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "3DS",
+"code": "CTR-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "3DS XL",
+"code": "SPR-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "New 3DS XL",
+"code": "RED-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "2DS",
+"code": "FTR-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "New 2DS XL",
+"code": "JAN-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "DS Lite",
+"code": "USG-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "DSi XL",
+"code": "UTL-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Wii",
+"code": "RVL-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "Wii U",
+"code": "WUP-101",
+"type": "CONSOLA"
+},
+{
+"brand": "Nintendo",
+"model": "GameCube",
+"code": "DOL-001",
+"type": "CONSOLA"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU7000 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU7000 50\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU7000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU7000 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU8000 50\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU8000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD TU8000 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD AU8000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD CU7000 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD CU7000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD CU7000 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD CU8000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD CU8000 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD DU7000 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD DU7000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Crystal UHD DU8000 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q60B 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q60C 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q60C 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q60D 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q70C 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "QLED Q80C 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Neo QLED QN85C 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Neo QLED QN90C 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "Neo QLED QN90D 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "The Frame LS03B 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "The Frame LS03D 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Samsung",
+"model": "OLED S90C 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UP7500 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UP7750 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UR7300 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UR7800 50\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UR7800 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UR7800 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UQ7570 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "UHD UQ7590 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "NanoCell NANO75 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "NanoCell NANO77 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "NanoCell NANO80 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED C1 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED C2 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED C3 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED C3 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED C4 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED B3 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "OLED G4 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "QNED80 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "LG",
+"model": "QNED85 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X75K 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X75K 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X77L 43\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X80K 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X85K 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X75L 50\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X80L 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia X90L 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia XR A80L 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia XR A95L 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia 3 55\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sony",
+"model": "Bravia 7 65\"",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "32S331",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "40S330",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "43S431",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "43S450G",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "50S434",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "55S434",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "55S546",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "65S455",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "55C725",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "65C835",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "55Q651G",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "TCL",
+"model": "65QM850G",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "32A4KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "40A4KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "43A6KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "50A6KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "55A6KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "65A6KV",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "55U6K",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "65U6N",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "55U7K",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Hisense",
+"model": "65U8K",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "43PUS7556",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "43PUS7906",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "55PUS7906",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "65PUS7906",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "55OLED806",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Philips",
+"model": "75PUS8817",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TH-32HS550",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TH-43JS650",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TH-50JX650",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TH-55JX850",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TH-65JX950",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Panasonic",
+"model": "TC-55GX800",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sharp",
+"model": "Aquos LC-32SA4500X",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sharp",
+"model": "Aquos LC-40SA5200X",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sharp",
+"model": "Aquos LC-50SA5200X",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sharp",
+"model": "Aquos LC-55Q6200U",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Sharp",
+"model": "Aquos LC-60N6200U",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Vizio",
+"model": "D40f-J09",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Vizio",
+"model": "V505-J09",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Vizio",
+"model": "M55Q6-J01",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "Vizio",
+"model": "P65Q9-J01",
+"code": null,
+"type": "TV"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 2135",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 2375",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 2376",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 2774",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 2775",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 3785",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet Ink Advantage 4175",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "DeskJet GT 5820",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Ink Tank 115",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Ink Tank 315",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Ink Tank 415",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Ink Tank Wireless 419",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 515",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 530",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 580",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 615",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 670",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Smart Tank 720",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M15w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro MFP M28w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M102w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M107w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M111w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro MFP M135w",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M203dw",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro MFP M227fdw",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro M404dn",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "LaserJet Pro MFP M428fdw",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Color LaserJet Pro MFP M182nw",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Color LaserJet Pro MFP M283fdw",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet Pro 8020",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet Pro 8025",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet Pro 9015",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet Pro 9025",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet Pro 9130",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet 5230",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "OfficeJet 7612",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Envy 6055",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Envy 6455e",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "HP",
+"model": "Envy Inspire 7955e",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L3110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L3150",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L3210",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L3250",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L3251",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L4260",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L5290",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L5590",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L6270",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L14150",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L805",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L1800",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank ET-2800",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank ET-4800",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "EcoTank L6190",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "WorkForce WF-2830",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "WorkForce WF-2850",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Epson",
+"model": "WorkForce Pro WF-4830",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G1110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G2110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G3110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G3160",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G4110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G4111",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G6010",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma G7010",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma TS3110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma TS3410",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma TS3420",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma TR4720",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Pixma MX490",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Canon",
+"model": "Maxify GX6020",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-T220",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-T420W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-T520W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-T720DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-T820DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "HL-1210W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "HL-1212W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "HL-L2320D",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "HL-L2350DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "HL-L2395DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-L2540DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "DCP-L2550DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "MFC-T4500DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "MFC-T920DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "MFC-L2710DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Brother",
+"model": "MFC-L2750DW",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Samsung",
+"model": "Xpress SL-M2020W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Samsung",
+"model": "Xpress SL-M2070W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Samsung",
+"model": "Xpress SL-C430W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Samsung",
+"model": "Xpress SL-C480W",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Go 2",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Go 3",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Go 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Clip 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Clip 5",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Flip 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Flip 5",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Flip 6",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Flip Essential 2",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Charge 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Charge 5",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Charge 6",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Xtreme 2",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Xtreme 3",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Xtreme 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Boombox 2",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Boombox 3",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "PartyBox 110",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "PartyBox 310",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "PartyBox 710",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "PartyBox Encore",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Tune 230NC",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Tune Buds",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "JBL",
+"model": "Live Pro 2",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Mini II",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Micro",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Flex",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Color II",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Revolve",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "SoundLink Revolve+ II",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "QuietComfort 35 II",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "QuietComfort 45",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "QuietComfort Ultra Headphones",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "QuietComfort Earbuds II",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "QuietComfort Ultra Earbuds",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "Noise Cancelling Headphones 700",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Bose",
+"model": "Smart Soundbar 600",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "WH-1000XM3",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "WH-1000XM4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "WH-1000XM5",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "WF-1000XM4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "WF-1000XM5",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XB12",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XB13",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XB23",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XB33",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XB43",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XE200",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "SRS-XE300",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "HT-S100F",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Sony",
+"model": "HT-S400",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Harman Kardon",
+"model": "Onyx Studio 6",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Harman Kardon",
+"model": "Onyx Studio 7",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Harman Kardon",
+"model": "Onyx Studio 8",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Harman Kardon",
+"model": "Go + Play",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Harman Kardon",
+"model": "Aura Studio 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Solo 3 Wireless",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Solo 4",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Studio 3 Wireless",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Studio Pro",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Studio Buds",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Studio Buds+",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Fit Pro",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Powerbeats Pro",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Flex",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Beats",
+"model": "Pill",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick Lite",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick 4K",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick 4K (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick 4K Max",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Stick 4K Max (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Cube (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire TV Cube (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Dot (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Dot (4th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Dot (5th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo (4th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Pop",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Studio",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Show 5 (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Show 8 (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Echo Show 10 (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle (10th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle (11th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle Paperwhite (10th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle Paperwhite (11th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle Paperwhite (12th generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Kindle Oasis (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Amazon",
+"model": "Fire 7 (12th generation)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Amazon",
+"model": "Fire HD 8 (12th generation)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Amazon",
+"model": "Fire HD 10 (13th generation)",
+"code": null,
+"type": "TABLET"
+},
+{
+"brand": "Roku",
+"model": "Express",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Roku",
+"model": "Express 4K+",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Roku",
+"model": "Streaming Stick 4K",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Roku",
+"model": "Streaming Stick+",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Roku",
+"model": "Ultra",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Chromecast (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Chromecast (3rd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Chromecast Ultra",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Chromecast Audio",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Nest Hub",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Nest Hub (2nd generation)",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Nest Mini",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Nest Audio",
+"code": null,
+"type": "OTRO"
+},
+{
+"brand": "Google",
+"model": "Pixel Buds Pro",
+"code": null,
+"type": "OTRO"
 }
 ]

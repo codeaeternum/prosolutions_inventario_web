@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { formatDate, formatPrice } from "@/lib/utils"
 
-type Decision = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "DECIDED"
+type Decision = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "DECIDED" | "EXPIRED"
 
 interface QuoteApprovalProps {
   token: string
@@ -25,6 +25,9 @@ interface QuoteApprovalProps {
   // expectedLaborCents — si el taller cambió el presupuesto, la API responde
   // 409 QUOTE_CHANGED en vez de autorizar una cifra distinta (anti-TOCTOU).
   laborCents: number | null
+  // Refacciones autorizadas que el cliente VE: viaja como expectedPartsCents
+  // — una pieza nueva post-aprobación no mueve quoteCents pero sí el total.
+  partsCents: number | null
   // Sin presupuesto ni refacciones no hay nada que autorizar todavía.
   hasQuote: boolean
 }
@@ -38,12 +41,14 @@ function initialDecision(status: string, quoteApprovedAt: string | null): Decisi
 
 // Bloque de decisión que ve el cliente debajo del documento de cotización.
 // El token del enlace es el secreto: la decisión se registra sin sesión.
-export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCents, laborCents, hasQuote }: QuoteApprovalProps) {
+export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCents, laborCents, partsCents, hasQuote }: QuoteApprovalProps) {
   const [decision, setDecision] = useState<Decision>(() => initialDecision(status, quoteApprovedAt))
   const [approvedAt, setApprovedAt] = useState<string | null>(quoteApprovedAt)
   const [signerName, setSignerName] = useState("")
   const [pending, setPending] = useState<"APPROVE" | "REJECT" | null>(null)
   const [error, setError] = useState("")
+  // QUOTE_CHANGED: la cifra en pantalla quedó vieja — se ofrece recargar.
+  const [quoteChanged, setQuoteChanged] = useState(false)
 
   async function decide(action: "APPROVE" | "REJECT") {
     if (pending) return
@@ -57,6 +62,7 @@ export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCent
           action,
           signerName: signerName.trim() || undefined,
           expectedLaborCents: laborCents ?? 0,
+          expectedPartsCents: partsCents ?? 0,
         }),
       })
       const data = await res.json().catch(() => null) as {
@@ -65,11 +71,18 @@ export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCent
         error?: string
         code?: string
       } | null
+      if (res.status === 410) {
+        // QUOTE_EXPIRED (o el documento dejó de estar vigente): la decisión
+        // ya no procede — el taller debe reenviar la cotización.
+        setDecision("EXPIRED")
+        return
+      }
       if (res.status === 409) {
         if (data?.code === "QUOTE_CHANGED") {
-          // El presupuesto cambió desde que se cargó la página: mensaje
-          // visible y el cliente reabre el link para ver la cifra nueva.
+          // El presupuesto o las refacciones cambiaron desde que se cargó la
+          // página: mensaje visible y recarga para ver la cifra nueva.
           setError(data.error ?? "La cotización cambió; vuelve a abrir el link.")
+          setQuoteChanged(true)
           return
         }
         // Ya fue decidida (otro dispositivo o el taller): no insistir.
@@ -134,6 +147,18 @@ export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCent
     )
   }
 
+  if (decision === "EXPIRED") {
+    return (
+      <div className="rounded-2xl border border-dashed p-6 text-center space-y-2" role="status">
+        <AlertCircle className="mx-auto h-10 w-10 text-muted-foreground" />
+        <h2 className="text-lg font-bold">Esta cotización venció</h2>
+        <p className="text-sm text-muted-foreground">
+          La vigencia del documento terminó. Contacta al taller para que te reenvíen la cotización actualizada por WhatsApp.
+        </p>
+      </div>
+    )
+  }
+
   if (!hasQuote) {
     return (
       <div className="rounded-2xl border border-dashed p-6 text-center space-y-2" role="status">
@@ -171,9 +196,14 @@ export function QuoteApproval({ token, folio, status, quoteApprovedAt, totalCent
       </div>
 
       {error && (
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm font-medium text-center">
-          {error}
-        </p>
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm font-medium text-center space-y-2">
+          <p>{error}</p>
+          {quoteChanged && (
+            <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+              Recargar cotización actualizada
+            </Button>
+          )}
+        </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">

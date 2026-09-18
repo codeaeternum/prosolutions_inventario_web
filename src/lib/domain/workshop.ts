@@ -4,6 +4,7 @@ import { BusinessError, openRegister, operation, operationKeySchema, registerCas
 import { linkCustomerByPhone } from "./customers"
 import { repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
+import { quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
 // lo comparten rutas API y componentes). Se re-exportan para que el dominio
@@ -70,7 +71,9 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // Sin match la orden queda con customerId null y la 360 la cubre por teléfono.
     const customerId = await linkCustomerByPhone(tx, businessId, input.customerPhone)
       ?? await linkCustomerByPhone(tx, businessId, input.customerPhoneAlt)
-    const order = await tx.repairOrder.create({ data: { ...input, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    // uploadTokenFields fija el uploadToken con caducidad: el QR del sticker
+    // ya no es un enlace público permanente (ver lib/workshop-tokens).
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
     if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.`, isPublic: true } })
     if (advance && advance.amountCents > 0) {
@@ -164,11 +167,20 @@ async function releaseOrderParts(tx: Prisma.TransactionClient, args: {
  *  agregar ni autorizar piezas (CANCELLED/DELIVERED ya las bloquean por el
  *  cierre general; NOT_AUTHORIZED/NOT_REPAIRED son cierres sin reparación). */
 const PART_CLOSED_STATUSES: readonly string[] = ["NOT_AUTHORIZED", "NOT_REPAIRED", "CANCELLED", "DELIVERED"]
+// Reparación en curso: una refacción que llega a APPROVED en estas etapas con
+// la cotización ya autorizada cambia el total que el cliente firmó — la orden
+// vuelve a WAITING_APPROVAL para re-autorización. No aplica en RECEIVED /
+// DIAGNOSIS / WAITING_APPROVAL (la cotización aún no se autoriza: el cliente
+// verá el total con la pieza al decidir) ni en terminales (PART_CLOSED_STATUSES
+// ya bloquea el ciclo de refacciones antes).
+const PART_REAUTH_STAGES: readonly string[] = ["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY"]
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
   // con flujo de autorización (PART_REQUEST).
-  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_REQUEST", "PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN", "DIAGNOSTIC_FEE", "REFUND"]),
+  // ROTATE_UPLOAD_TOKEN regenera el link público de evidencias del sticker
+  // (solo admin): el QR/enlace anterior muere en el lookup por token.
+  action: z.enum(["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "PART_REQUEST", "PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "PLAN", "DIAGNOSTIC_FEE", "REFUND", "ROTATE_UPLOAD_TOKEN"]),
   detail: z.string().trim().min(1).max(2000).optional(), status: z.enum(Object.keys(repairLabels) as [keyof typeof repairLabels, ...Array<keyof typeof repairLabels>]).optional(),
   quoteCents: moneyCents.optional(), diagnosticFeeCents: moneyCents.optional(), branchId: z.string().min(1).optional(), assignedToId: z.string().min(1).optional(),
   partId: z.string().min(1).optional(), partDescription: z.string().trim().min(1).max(200).optional(),
@@ -179,14 +191,22 @@ const actionSchema = z.object({
   noteIsPublic: z.boolean().default(false),
   paymentCents: moneyCents.optional(), paymentMethod: paymentMethod.optional(),
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
+  // Entrega estructurada (SETTLE_DELIVER): quién recoge el equipo — puede ser
+  // un familiar o empleado distinto al titular —, su identificación opcional
+  // (INE/licencia) y su firma en PNG base64, aparte de la de recepción.
+  deliveredTo: z.string().trim().min(2).max(80).optional(),
+  deliveredToDoc: z.string().trim().max(40).optional(),
+  deliverySignatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
 })
-const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "SETTLE_DELIVER", "REFUND"]
+const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "REFUND"]
 export async function updateRepair(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
   // REFUND es salida de dinero: solo admin (alineado con cash.ts, que exige
-  // ADMIN para el OUT manual). El resto de acciones son de mostrador (staff).
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: input.action === "REFUND" ? "admin" : "staff", payload: { id, ...input } }, async tx => {
+  // ADMIN para el OUT manual). ROTATE_UPLOAD_TOKEN revoca el QR público del
+  // sticker: también es solo admin. El resto de acciones son de mostrador.
+  const adminOnlyActions: readonly string[] = ["REFUND", "ROTATE_UPLOAD_TOKEN"]
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: adminOnlyActions.includes(input.action) ? "admin" : "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
@@ -208,9 +228,31 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     if (["PART_REQUEST", "PART_ADD", "PART_DECIDE"].includes(input.action) && PART_CLOSED_STATUSES.includes(order.status)) {
       throw new BusinessError("La orden está cerrada; las refacciones ya no se pueden agregar ni resolver.", 409)
     }
+    // Re-autorización del cliente: una refacción que llega a APPROVED con la
+    // cotización ya autorizada (PART_ADD de admin o PART_DECIDE) cambiaría el
+    // total entregado sin que el cliente lo viera. La orden vuelve a
+    // WAITING_APPROVAL, el link público muestra el nuevo total y su vigencia
+    // se reinicia. El aviso público se emite al final junto al evento PART
+    // privado (que lleva el detalle de la pieza). Si la orden YA esperaba
+    // re-autorización solo se renueva la vigencia — sin duplicar el aviso.
+    let partReauthNotice = false
+    const onPartApproved = () => {
+      const reauth = order.quoteApprovedAt !== null && PART_REAUTH_STAGES.includes(order.status)
+      const pendingDecision = order.status === "WAITING_APPROVAL"
+      if (!reauth && !pendingDecision) return
+      const expires = quoteExpiry()
+      Object.assign(data, { quoteExpiresAt: expires, quoteTokenExpiresAt: expires })
+      if (reauth) {
+        Object.assign(data, { quoteApprovedAt: null, status: "WAITING_APPROVAL" })
+        partReauthNotice = true
+      }
+    }
     if (input.action === "QUOTE") {
       if (!["DIAGNOSIS", "WAITING_APPROVAL"].includes(order.status) || input.quoteCents === undefined) throw new BusinessError("Registra el diagnóstico e importe antes de solicitar autorización.", 409)
-      Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL" })
+      // El documento promete "Válida por 15 días": la vigencia se fija al
+      // (re)presentar la cotización y el link público muere con ella.
+      const expires = quoteExpiry()
+      Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL", quoteExpiresAt: expires, quoteTokenExpiresAt: expires })
       detail = `Presupuesto ${(input.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
       eventPublic = true
     } else if (input.action === "APPROVE") {
@@ -235,6 +277,14 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // siempre. En NOT_AUTHORIZED la liberación ocurre al entregar.
         const tail = await releaseOrderParts(tx, { order, parts: await orderParts(), actorId, businessId, note: input.status === "CANCELLED" ? "La orden se canceló; no se cobra." : "La orden se cerró sin reparación; no se cobra." })
         if (tail.length) detail = `${detail} ${tail.join(" ")}`
+      }
+      if (input.status === "CANCELLED") {
+        // La cancelación rota el token de evidencias: el QR del sticker que
+        // quedó en el equipo/cliente muere (404) y deja de ser una puerta
+        // trasera permanente. NOT_REPAIRED no rota aquí — la orden sigue
+        // abierta hasta la entrega (SETTLE_DELIVER) y el sticker todavía
+        // sirve para documentar el estado en que sale el equipo.
+        Object.assign(data, rotatedUploadToken())
       }
     } else if (input.action === "ASSIGN") {
       const assignee = input.assignedToId ? await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId } }) : null
@@ -291,6 +341,10 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // etapas entregables viven en repairDeliverableStages (STATUS nunca
       // llega a DELIVERED por sí solo).
       if (!repairDeliverableStages.includes(order.status)) throw new BusinessError("La orden aún no está lista para entregarse.", 409)
+      // Constancia de entrega: el receptor es dato propio (no el detalle libre)
+      // porque quien recoge puede no ser el titular — familiar, empleado, etc.
+      if (!input.deliveredTo) throw new BusinessError("Indica el nombre de quien recoge el equipo.")
+      const recipientLabel = input.deliveredToDoc ? `${input.deliveredTo} · ID: ${input.deliveredToDoc}` : input.deliveredTo
       const withoutRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
       const parts = await orderParts()
       const held = await heldCents()
@@ -311,8 +365,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       }
       if (balanceCents > 0) {
         await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
-        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${input.detail}`
-      } else detail = `Sin saldo pendiente. Entrega a: ${input.detail}`
+        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${recipientLabel}`
+      } else detail = `Sin saldo pendiente. Entrega a: ${recipientLabel}`
+      if (input.detail) detail = `${detail}. ${input.detail}`
       // Si el cliente pagó de más (anticipo mayor al cargo final) el excedente
       // queda documentado para registrar el reembolso con la acción REFUND.
       if (overpaidCents > 0) tail.push(`Excedente pendiente de devolver al cliente: ${(overpaidCents / 100).toFixed(2)} MXN.`)
@@ -320,7 +375,18 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // El cierre sin reparación persiste en closedWithoutRepair: el status
       // pasa a DELIVERED, pero el total de la orden sigue siendo solo el
       // cargo de diagnóstico (workshop-money) y el excedente es devolvible.
-      Object.assign(data, { status: "DELIVERED", deliveredTo: input.detail, ...(withoutRepair ? { closedWithoutRepair: true } : {}) })
+      Object.assign(data, {
+        status: "DELIVERED",
+        deliveredTo: input.deliveredTo,
+        deliveredToDoc: input.deliveredToDoc || null,
+        deliverySignatureData: input.deliverySignatureData ?? null,
+        // Auditoría de mostrador: quién del staff entregó el equipo.
+        deliveredById: actorId,
+        // El QR de evidencias impreso en el sticker del cliente muere con la
+        // entrega: se rota el token (la orden conserva uno interno vigente).
+        ...rotatedUploadToken(),
+        ...(withoutRepair ? { closedWithoutRepair: true } : {}),
+      })
       eventType = "PAYMENT"
     } else if (input.action === "DIAGNOSTIC_FEE") {
       // Cargo por diagnóstico/revisión: lo único cobrable al entregar sin
@@ -343,6 +409,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       detail = needsApproval
         ? `Refacción solicitada: ${part.qty} × ${part.description} — pendiente de autorización`
         : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
+      // PART_ADD del admin nace APPROVED: mismo cambio de total que decide
+      // PART_DECIDE — aplica la misma re-autorización del cliente.
+      if (!needsApproval) onPartApproved()
     } else if (input.action === "PART_DECIDE") {
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       if (actorUser?.role !== "ADMIN") throw new BusinessError("Solo el administrador autoriza refacciones.", 403)
@@ -361,6 +430,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       detail = input.approve
         ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(decidedStock, part.qty)}`
         : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
+      // Solo al autorizar: la pieza se vuelve cobrable y puede detonar la
+      // re-autorización del cliente. Un rechazo no cambia el total.
+      if (input.approve) onPartApproved()
     } else if (input.action === "PART_REMOVE") {
       const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
       if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
@@ -375,6 +447,13 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // Solo las APPROVED llegaron a descontar stock; REQUESTED/REJECTED nunca lo tocaron.
       const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN" }) : null
       detail = `Refacción retirada: ${part.description}${stockNote(removedStock, part.qty)}`
+    } else if (input.action === "ROTATE_UPLOAD_TOKEN") {
+      // Regeneración manual del link público de evidencias (solo admin): si
+      // el QR del sticker se extravió o se difundió, el token nuevo mata el
+      // enlace anterior en el lookup por uploadToken y reinicia la vigencia.
+      Object.assign(data, rotatedUploadToken())
+      eventType = "NOTE"
+      detail = `Se regeneró el link de evidencias.${input.detail ? ` ${input.detail}` : ""}`
     } else if (input.action === "NOTE") {
       eventPublic = input.noteIsPublic
     }
@@ -390,6 +469,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     const result = await tx.repairOrder.updateMany({ where: { id, businessId, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
+    if (partReauthNotice) {
+      // Aviso limpio para el cliente en seguimiento: el detalle de la pieza
+      // quedó en el evento PART privado; aquí solo se comunica que la
+      // cotización cambió y vuelve a esperar su autorización.
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "NOTE", detail: "Se actualizó la cotización con una nueva refacción — esperando tu autorización.", isPublic: true } })
+    }
     if (input.action === "SETTLE_DELIVER") {
       // La entrega queda como evento PAYMENT (privado: lleva montos y el nombre
       // del receptor). Este segundo evento limpio es el que el cliente ve en

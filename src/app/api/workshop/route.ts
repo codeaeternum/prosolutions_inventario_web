@@ -48,9 +48,10 @@ export async function GET(req: Request) {
       parts: { where: { status: "APPROVED" as const }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },
     }
     // El listado nunca serializa secretos ni datos pesados de la hoja interna:
-    // PIN/patrón del equipo, firma de recepción (~300KB base64) y los tokens
-    // públicos. El detalle por id (/api/workshop/[id]) sí los devuelve.
-    const listOmit = { deviceAccessValue: true, signatureData: true, uploadToken: true, quoteToken: true }
+    // PIN/patrón del equipo, firmas de recepción y entrega (~300KB base64 cada
+    // una) y los tokens públicos. El detalle por id (/api/workshop/[id]) sí
+    // los devuelve.
+    const listOmit = { deviceAccessValue: true, signatureData: true, deliverySignatureData: true, uploadToken: true, quoteToken: true }
     const orderBy = [{ createdAt: "desc" as const }, { id: "desc" as const }]
     if (view === "debt") {
       // El adeudo = total de la orden (mano de obra + refacciones autorizadas,

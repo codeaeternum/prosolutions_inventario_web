@@ -64,7 +64,7 @@ describe("la entrega solo ocurre por SETTLE_DELIVER", () => {
 
   it("SETTLE_DELIVER desde NOT_AUTHORIZED marca closedWithoutRepair y cobra solo el diagnóstico", async () => {
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "NOT_AUTHORIZED", quoteCents: 90000, approvedQuoteCents: null, diagnosticFeeCents: 15000 }))
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", detail: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
     expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DELIVERED", closedWithoutRepair: true }),
     }))
@@ -77,7 +77,7 @@ describe("la entrega solo ocurre por SETTLE_DELIVER", () => {
   it("SETTLE_DELIVER con excedente lo documenta como pendiente de devolver", async () => {
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "NOT_REPAIRED", diagnosticFeeCents: 20000 }))
     tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 500 } }) // anticipo de $500
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", detail: "Recoge el cliente" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente" }))
     // SETTLE_DELIVER crea dos eventos: el PAYMENT privado (montos + excedente
     // documentado) y un STATUS público "→ Entregado" para el seguimiento.
     const paymentEvent = tx.repairEvent.create.mock.calls
@@ -91,6 +91,67 @@ describe("la entrega solo ocurre por SETTLE_DELIVER", () => {
     expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DELIVERED", closedWithoutRepair: true }),
     }))
+  })
+})
+
+describe("constancia de entrega estructurada", () => {
+  it("SETTLE_DELIVER exige el nombre de quien recoge", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY" }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", paymentMethod: "TRANSFER" })))
+      .rejects.toMatchObject({ status: 400, message: "Indica el nombre de quien recoge el equipo." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("el nombre de quien recoge no acepta un solo carácter ni más de 80", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY", approvedQuoteCents: null }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "x" }))).rejects.toThrow()
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "n".repeat(81) }))).rejects.toThrow()
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("persiste receptor, identificación, firma y quién entregó; rota el token de evidencias", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY", approvedQuoteCents: null }))
+    const signature = "data:image/png;base64,iVBORw0KGgo="
+    await updateRepair(db, "admin-1", "biz", "o1", payload({
+      action: "SETTLE_DELIVER", deliveredTo: "María Pérez", deliveredToDoc: "INE-ABC123",
+      deliverySignatureData: signature, detail: "Recoge por el titular",
+    }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "DELIVERED",
+        deliveredTo: "María Pérez",
+        deliveredToDoc: "INE-ABC123",
+        deliverySignatureData: signature,
+        // Quién del staff entregó (auditoría de mostrador).
+        deliveredById: "admin-1",
+        // El QR de evidencias del sticker muere con la entrega: token rotado.
+        uploadToken: expect.any(String),
+        uploadTokenExpiresAt: expect.any(Date),
+      }),
+    }))
+    // El evento privado de liquidación documenta receptor e identificación.
+    const paymentEvent = tx.repairEvent.create.mock.calls
+      .map(call => call[0] as { data: { type: string; detail: string; isPublic: boolean } })
+      .find(call => call.data.type === "PAYMENT")
+    expect(paymentEvent?.data.isPublic).toBe(false)
+    expect(paymentEvent?.data.detail).toContain("Entrega a: María Pérez · ID: INE-ABC123")
+    expect(paymentEvent?.data.detail).toContain("Recoge por el titular")
+  })
+
+  it("sin firma ni identificación la entrega guarda null en esos campos", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY", approvedQuoteCents: null }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Juan García" }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ deliveredToDoc: null, deliverySignatureData: null }),
+    }))
+  })
+
+  it("la firma de entrega debe ser un PNG data URL", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY", approvedQuoteCents: null }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({
+      action: "SETTLE_DELIVER", deliveredTo: "María Pérez", deliverySignatureData: "data:image/jpeg;base64,xx",
+    }))).rejects.toThrow()
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
   })
 })
 
@@ -191,5 +252,112 @@ describe("refacciones en estados terminales", () => {
     await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: true })))
       .rejects.toMatchObject({ status: 409, message: "La orden está cerrada; las refacciones ya no se pueden agregar ni resolver." })
     expect(tx.repairPart.updateMany).not.toHaveBeenCalled()
+  })
+})
+
+describe("vigencia de la cotización (\"Válida por 15 días\")", () => {
+  it("QUOTE fija quoteExpiresAt y quoteTokenExpiresAt al presentarla", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DIAGNOSIS", quoteCents: null, approvedQuoteCents: null }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "QUOTE", quoteCents: 150000, detail: "Cambio de pantalla" }))
+    const data = (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
+    expect(data.status).toBe("WAITING_APPROVAL")
+    expect(data.quoteExpiresAt).toBeInstanceOf(Date)
+    // El link público muere con la cotización: misma fecha en ambos campos.
+    expect(data.quoteTokenExpiresAt).toEqual(data.quoteExpiresAt)
+    // ~15 días (margen de un día para no depender del milisegundo exacto).
+    expect((data.quoteExpiresAt as Date).getTime()).toBeGreaterThan(Date.now() + 14 * 24 * 60 * 60 * 1000)
+  })
+
+  it("re-presentar la cotización renueva la vigencia", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WAITING_APPROVAL", quoteCents: 150000, quoteExpiresAt: new Date(Date.now() - 1000) }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "QUOTE", quoteCents: 180000, detail: "Cotización actualizada" }))
+    const data = (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
+    expect((data.quoteExpiresAt as Date).getTime()).toBeGreaterThan(Date.now())
+  })
+})
+
+describe("re-autorización del cliente al cambiar refacciones", () => {
+  const requestedPart = { id: "pt1", productId: null, description: "Batería", qty: 1, unitCostCents: 0, unitPriceCents: 30000, status: "REQUESTED" }
+  const eventDetails = () => tx.repairEvent.create.mock.calls.map(call => (call[0] as { data: { detail: string; isPublic: boolean; type: string } }).data)
+  const orderUpdateData = () => (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
+
+  it.each(["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY"] as const)(
+    "PART_DECIDE autorizando en %s con cotización aprobada devuelve a WAITING_APPROVAL",
+    async status => {
+      tx.repairOrder.findUnique.mockResolvedValue(order({ status, quoteCents: 150000, approvedQuoteCents: 150000, quoteApprovedAt: new Date() }))
+      tx.repairPart.findFirst.mockResolvedValue(requestedPart)
+      tx.repairPart.updateMany.mockResolvedValue({ count: 1 })
+      await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: true }))
+      const data = orderUpdateData()
+      expect(data.status).toBe("WAITING_APPROVAL")
+      expect(data.quoteApprovedAt).toBeNull()
+      // La vigencia del link se reinicia para la re-autorización.
+      expect(data.quoteExpiresAt).toBeInstanceOf(Date)
+      expect((data.quoteExpiresAt as Date).getTime()).toBeGreaterThan(Date.now())
+      // Evento PART privado con la pieza + aviso público limpio para el cliente.
+      const events = eventDetails()
+      expect(events.some(e => !e.isPublic && e.type === "PART" && e.detail.includes("Batería"))).toBe(true)
+      expect(events.some(e => e.isPublic && e.detail.includes("esperando tu autorización"))).toBe(true)
+      // La autorización pública vuelve a ser posible: el updateMany de la
+      // decisión pública exige quoteApprovedAt null, que aquí se resetea.
+    },
+  )
+
+  it("una segunda refacción autorizada ya en espera de re-autorización solo renueva la vigencia", async () => {
+    // La orden ya está en WAITING_APPROVAL con quoteApprovedAt null (la
+    // primera pieza ya detonó la re-autorización): no se repite el aviso.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WAITING_APPROVAL", quoteCents: 150000, quoteApprovedAt: null }))
+    tx.repairPart.findFirst.mockResolvedValue(requestedPart)
+    tx.repairPart.updateMany.mockResolvedValue({ count: 1 })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: true }))
+    const data = orderUpdateData()
+    expect(data.status).toBeUndefined()
+    expect(data.quoteApprovedAt).toBeUndefined()
+    expect(data.quoteExpiresAt).toBeInstanceOf(Date)
+    const events = eventDetails()
+    expect(events.filter(e => e.isPublic)).toHaveLength(0)
+    expect(events).toHaveLength(1) // solo el evento PART privado
+  })
+
+  it("PART_DECIDE sin cotización aprobada (IN_REPAIR sin QUOTE previo) no toca la orden", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR", quoteCents: null, approvedQuoteCents: null, quoteApprovedAt: null }))
+    tx.repairPart.findFirst.mockResolvedValue(requestedPart)
+    tx.repairPart.updateMany.mockResolvedValue({ count: 1 })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: true }))
+    const data = orderUpdateData()
+    expect(data.status).toBeUndefined()
+    expect(data.quoteExpiresAt).toBeUndefined()
+    expect(eventDetails().filter(e => e.isPublic)).toHaveLength(0)
+  })
+
+  it("PART_ADD del admin nace APPROVED y también detona la re-autorización", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "READY", quoteCents: 150000, approvedQuoteCents: 150000, quoteApprovedAt: new Date() }))
+    tx.repairPart.create.mockResolvedValue({ id: "pt9", productId: null, description: "Flexor", qty: 1, unitCostCents: 0, unitPriceCents: 20000, status: "APPROVED" })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_ADD", partDescription: "Flexor", partQty: 1, partPriceCents: 20000 }))
+    const data = orderUpdateData()
+    expect(data.status).toBe("WAITING_APPROVAL")
+    expect(data.quoteApprovedAt).toBeNull()
+    expect(eventDetails().some(e => e.isPublic && e.detail.includes("esperando tu autorización"))).toBe(true)
+  })
+
+  it("PART_REQUEST de un técnico (queda REQUESTED) aún no detona re-autorización", async () => {
+    tx.user.findUnique.mockResolvedValue({ ...admin, id: "emp-1", role: "EMPLOYEE" })
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR", quoteCents: 150000, approvedQuoteCents: 150000, quoteApprovedAt: new Date() }))
+    tx.repairPart.create.mockResolvedValue({ ...requestedPart })
+    await updateRepair(db, "emp-1", "biz", "o1", payload({ action: "PART_REQUEST", partDescription: "Batería", partQty: 1, partPriceCents: 30000 }))
+    const data = orderUpdateData()
+    expect(data.status).toBeUndefined()
+    expect(data.quoteApprovedAt).toBeUndefined()
+  })
+
+  it("PART_DECIDE rechazando no cambia el total ni exige re-autorización", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR", quoteCents: 150000, approvedQuoteCents: 150000, quoteApprovedAt: new Date() }))
+    tx.repairPart.findFirst.mockResolvedValue(requestedPart)
+    tx.repairPart.updateMany.mockResolvedValue({ count: 1 })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: false, detail: "No procede" }))
+    const data = orderUpdateData()
+    expect(data.status).toBeUndefined()
+    expect(data.quoteApprovedAt).toBeUndefined()
+    expect(eventDetails().filter(e => e.isPublic)).toHaveLength(0)
   })
 })
