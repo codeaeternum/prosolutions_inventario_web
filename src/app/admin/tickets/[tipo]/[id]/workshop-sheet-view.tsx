@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, Printer } from "lucide-react"
 import QRCode from "qrcode"
 import { Button } from "@/components/ui/button"
-import { cn, formatDate, formatPrice } from "@/lib/utils"
+import { cn, formatAccessPattern, formatDate, formatPrice } from "@/lib/utils"
 
 export interface WorkshopSheetData {
   folio: string
@@ -181,7 +181,7 @@ function FullSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQr: 
             {data.accessType === "PATTERN" && data.accessValue ? (
               <p className="mt-1 flex items-center gap-2">
                 Patrón: <AccessPattern value={data.accessValue} />
-                <span className="font-medium">({data.accessValue})</span>
+                <span className="font-medium">({formatAccessPattern(data.accessValue)})</span>
               </p>
             ) : data.accessValue ? (
               <p className="mt-1">Clave: <span className="font-bold">{data.accessValue}</span></p>
@@ -363,7 +363,7 @@ function ThermalSheet({ data, evidenceQr }: { data: WorkshopSheetData; evidenceQ
           {data.accessType === "PATTERN" && data.accessValue ? (
             <p className="mt-1 flex items-center gap-2">
               <AccessPattern value={data.accessValue} />
-              <span className="font-medium">({data.accessValue})</span>
+              <span className="font-medium">({formatAccessPattern(data.accessValue)})</span>
             </p>
           ) : data.accessValue ? (
             <p className="mt-1">Clave: <span className="font-bold">{data.accessValue}</span></p>

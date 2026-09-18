@@ -71,7 +71,7 @@ export function PatternPad({ value, onChange, disabled = false }: { value: numbe
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          {value.length ? `Se guardará como: ${value.join("-")}` : "Toca o arrastra por los puntos en el orden del patrón."}
+          {value.length ? `Se guardará como: ${value.map(i => i + 1).join("-")}` : "Toca o arrastra por los puntos en el orden del patrón."}
         </p>
         <button type="button" onClick={() => onChange([])} disabled={disabled || value.length === 0} className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground disabled:opacity-50">
           <Eraser size={13} />Limpiar

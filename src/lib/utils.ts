@@ -45,6 +45,22 @@ export function normalizePhone(phone: string | null | undefined): string {
   return digits.length > 10 ? digits.slice(-10) : digits
 }
 
+/**
+ * Patrón de desbloqueo para humanos: se guarda como índices 0-8 ("0-4-8")
+ * pero los puntos se cuentan 1-9 (esquina superior izquierda = 1). Devuelve
+ * la cadena con cada punto +1 ("1-5-9"). Si el valor no es numérico se
+ * devuelve tal cual (dato histórico o capturado a mano).
+ */
+export function formatAccessPattern(value: string): string {
+  return value
+    .split("-")
+    .map(part => {
+      const n = Number(part)
+      return Number.isInteger(n) && n >= 0 && n <= 8 ? String(n + 1) : part
+    })
+    .join("-")
+}
+
 export function generateSlug(text: string): string {
   return text
     .toLowerCase()
