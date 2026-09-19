@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock, transaction } from "@/lib/domain/operations"
+import { syncLowStockAlerts } from "@/lib/low-stock"
 import * as XLSX from "xlsx"
 
 export async function GET() {
     try {
-        const result = await requireAdmin()
+        const result = await requireModule("productos")
         if (result.error) return result.error
 
         // Get all products with related data
@@ -94,7 +95,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
-        const result = await requireAdmin()
+        const result = await requireModule("productos")
         if (result.error) return result.error
         const session = getSession(result)!
         const actorId = session.user.id
@@ -104,6 +105,9 @@ export async function POST(request: NextRequest) {
         const formData = await request.formData()
         const file = formData.get("file") as File
         const importBranchId = String(formData.get("branchId") || actor?.homeBranchId || "") || undefined
+        // Los ajustes de stock de la importación caen a esta sucursal.
+        const denied = await assertOperationBranch(session, importBranchId)
+        if (denied) return denied
 
         if (!file) {
             return NextResponse.json({ error: "Archivo requerido" }, { status: 400 })
@@ -124,6 +128,9 @@ export async function POST(request: NextRequest) {
         let created = 0
         let updated = 0
         const errors: string[] = []
+        // Productos cuyo stock/mínimo pudo cruzar el umbral: la alerta se
+        // sincroniza una sola vez al terminar la importación (post-commit).
+        const touchedProductIds = new Set<string>()
 
         for (const row of data) {
             try {
@@ -194,6 +201,7 @@ export async function POST(request: NextRequest) {
                             } })
                         }
                     })
+                    touchedProductIds.add(existingProduct.id)
                     updated++
                 } else {
                     // Create new product - need a category
@@ -208,7 +216,7 @@ export async function POST(request: NextRequest) {
                     }
                     const productCategoryId = categoryId
 
-                    await transaction(prisma, async tx => {
+                    const createdProduct = await transaction(prisma, async tx => {
                         const created = await tx.product.create({
                             data: {
                                 businessId,
@@ -231,7 +239,9 @@ export async function POST(request: NextRequest) {
                                 reason: "IMPORT", notes: "Importación Excel", branchId: branch.id, businessVersion: 1,
                             } })
                         }
+                        return created
                     })
+                    touchedProductIds.add(createdProduct.id)
                     created++
                 }
             } catch (rowError) {
@@ -240,6 +250,8 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // Una sola revisión al final: los avisos llegan agrupados, no por fila.
+        await syncLowStockAlerts(prisma, businessId, [...touchedProductIds])
         return NextResponse.json({
             success: true,
             message: `Importación completada: ${created} creados, ${updated} actualizados`,

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { listSupplierPayments, paySupplier } from "@/lib/domain/supplier-payments"
@@ -8,7 +8,7 @@ import { businessFailure } from "@/lib/domain/http"
 /** Historial de abonos de un proveedor: ?supplierId=<id>. */
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 /** Registra un abono a proveedor (a OC específica o a cuenta general). */
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await request.json()

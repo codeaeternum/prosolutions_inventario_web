@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { fillDays, fillMonths, lastDayKeys, lastMonthKeys } from "@/lib/chart-utils"
 
@@ -9,7 +9,7 @@ type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" 
 
 export async function GET(req: NextRequest) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("reportes")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

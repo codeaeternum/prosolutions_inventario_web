@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule, assertOperationBranch } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { sell } from "@/lib/domain/sales"
@@ -27,7 +27,7 @@ const requestInclude = {
 
 // PATCH /api/marketplace/requests/:id
 // { action: "APPROVE"|"REJECT"|"FULFILL", decisionNote?, paymentMethod?, branchId?, customerId? }
-// Solo ADMIN. La aprobación es un acuerdo comercial: NO descuenta inventario.
+// Módulo mercado. La aprobación es un acuerdo comercial: NO descuenta inventario.
 // FULFILL sí genera la venta (sell) a precio de mayoreo — con idempotencyKey
 // derivado de la solicitud, reintentar nunca duplica la venta — y luego marca
 // la solicitud como FULFILLED ligada a esa venta (saleId).
@@ -36,7 +36,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireModule("mercado")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
@@ -82,6 +82,10 @@ export async function PATCH(
           { status: 400 }
         )
       }
+
+      // La venta del surtido sale de la sucursal indicada o la base del staff.
+      const deniedBranch = await assertOperationBranch(session, branchId)
+      if (deniedBranch) return deniedBranch
 
       let result: Awaited<ReturnType<typeof sell>>
       try {

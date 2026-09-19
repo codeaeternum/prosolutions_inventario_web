@@ -1,14 +1,29 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { z } from "zod"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "./slug-utils"
+import { MODULES } from "@/lib/access"
 import bcrypt from "bcryptjs"
 import { UserRole } from "@prisma/client"
 
+// Restricciones de acceso del staff: lista vacía = sin restricción.
+const accessSchema = z.object({
+  allowedModules: z.array(z.enum(MODULES)).max(MODULES.length).optional(),
+  allowedBranchIds: z.array(z.string().min(1)).max(100).optional(),
+})
+
+/** Las sucursales asignadas deben pertenecer al negocio. */
+async function branchesOwned(ids: string[] | undefined, businessId: string): Promise<boolean> {
+  if (!ids?.length) return true
+  const owned = await prisma.branch.count({ where: { id: { in: ids }, businessId } })
+  return owned === ids.length
+}
+
 export async function GET(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("usuarios")
     if (result.error) return result.error
 
     const { searchParams } = new URL(req.url)
@@ -47,6 +62,8 @@ export async function GET(req: Request) {
       creditBalance: true,
       homeBranchId: true,
       homeBranch: { select: { id: true, name: true } },
+      allowedModules: true,
+      allowedBranchIds: true,
       createdAt: true,
       _count: { select: { reservations: true } },
     }
@@ -84,9 +101,10 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("usuarios")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const body = await req.json()
     const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin, publicSlug } = body
@@ -96,6 +114,21 @@ export async function POST(req: Request) {
         { error: "Faltan campos requeridos" },
         { status: 400 }
       )
+    }
+
+    // Solo un ADMIN puede crear otro ADMIN: un empleado con el módulo de
+    // usuarios gestiona personal pero no se puede coronar a sí mismo.
+    if (role === "ADMIN" && session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Solo un administrador puede crear administradores" }, { status: 403 })
+    }
+
+    const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
+    if (!accessParsed.success) {
+      return NextResponse.json({ error: "Módulos o sucursales inválidos" }, { status: 400 })
+    }
+    const { allowedModules, allowedBranchIds } = accessParsed.data
+    if (!await branchesOwned(allowedBranchIds, businessId)) {
+      return NextResponse.json({ error: "Alguna sucursal no pertenece al negocio" }, { status: 400 })
     }
 
     // Puesto visible del staff (opcional, texto libre de hasta 60 caracteres)
@@ -154,6 +187,8 @@ export async function POST(req: Request) {
         jobTitle: cleanJobTitle || null,
         publicSlug: cleanPublicSlug,
         quickPin: hashedPin,
+        allowedModules: allowedModules ?? [],
+        allowedBranchIds: allowedBranchIds ?? [],
         status: "APPROVED", // Admin created users are auto-approved
       },
     })
@@ -169,6 +204,8 @@ export async function POST(req: Request) {
       jobTitle: user.jobTitle,
       publicSlug: user.publicSlug,
       homeBranchId: user.homeBranchId,
+      allowedModules: user.allowedModules,
+      allowedBranchIds: user.allowedBranchIds,
       createdAt: user.createdAt,
     })
   } catch (error) {

@@ -11,6 +11,8 @@ interface TicketData {
   folio: string
   date: string
   client?: string
+  clientLabel?: string
+  badge?: string
   cashier?: string
   items: { name: string; qty: number; price: number; total: number }[]
   total: number
@@ -42,7 +44,7 @@ export function TicketPrintView({ data }: { data: TicketData }) {
     let text = `*${(data.businessName || "Ticket").toUpperCase()} - ${data.title}*\n`
     text += `Folio: ${data.folio}\n`
     text += `Fecha: ${formatDate(data.date)}\n`
-    if (data.client) text += `Cliente: ${data.client}\n`
+    if (data.client) text += `${data.clientLabel ?? "Cliente"}: ${data.client}\n`
     text += `------------------------\n`
     data.items.forEach(i => {
       text += `${i.qty}x ${i.name} - ${formatPrice(i.total)}\n`
@@ -96,7 +98,12 @@ export function TicketPrintView({ data }: { data: TicketData }) {
           <h2 className="font-bold text-sm">{data.title}</h2>
           <p className="text-xs">Folio: {data.folio}</p>
           <p className="text-[10px]">{formatDate(data.date)}</p>
-          {data.client && <p className="text-xs mt-1">Cliente: {data.client}</p>}
+          {data.badge && (
+            <p className="text-[10px] font-bold uppercase inline-block border border-gray-400 rounded px-1.5 py-0.5 mt-1">
+              {data.badge}
+            </p>
+          )}
+          {data.client && <p className="text-xs mt-1">{data.clientLabel ?? "Cliente"}: {data.client}</p>}
           {data.cashier && <p className="text-[10px]">Atendió: {data.cashier}</p>}
         </div>
 

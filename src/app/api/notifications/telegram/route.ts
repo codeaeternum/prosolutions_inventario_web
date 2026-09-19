@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
-import { getSession, requireAdmin } from '@/lib/api-auth'
+import { getSession, requireModule } from '@/lib/api-auth'
 import { businessIdOf } from '@/lib/tenant'
 
 // API para enviar notificaciones vía Telegram Bot
 // POST /api/notifications/telegram
 export async function POST(req: NextRequest) {
-    const result = await requireAdmin()
+    const result = await requireModule("notificaciones")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

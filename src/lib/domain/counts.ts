@@ -1,6 +1,7 @@
 import type { CountStatus, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
+import { syncLowStockAlerts } from "../low-stock"
 
 /** Folio público de un conteo físico: CC-000001. */
 export function countFolio(number: number): string {
@@ -95,7 +96,9 @@ const actionSchema = z.object({ idempotencyKey: operationKeySchema })
  */
 export async function applyCount(db: PrismaClient, actorId: string, businessId: string, countId: string, raw: unknown) {
   const input = actionSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "COUNT_APPLY", permission: "staff", payload: { countId } }, async tx => {
+  // Productos con ajuste real: la alerta de stock bajo se sincroniza post-commit.
+  const adjustedProductIds: string[] = []
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "COUNT_APPLY", permission: "staff", payload: { countId } }, async tx => {
     const count = await tx.inventoryCount.findFirst({
       where: { id: countId, businessId },
       include: { items: true, branch: { select: { id: true, name: true } } },
@@ -117,6 +120,7 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
       }
       const diff = item.countedQty - current
       if (diff === 0) continue
+      adjustedProductIds.push(item.productId)
       await tx.branchStock.upsert({
         where: { productId_branchId: { productId: item.productId, branchId: count.branchId } },
         create: { businessId, productId: item.productId, branchId: count.branchId, quantity: item.countedQty },
@@ -148,6 +152,8 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
     if (changed.count !== 1) throw new BusinessError("El conteo cambió durante la operación; reintenta.", 409)
     return { countId: count.id, folio, status: "APPLIED" as const, adjustments: movements.length, branchName: count.branch.name }
   })
+  await syncLowStockAlerts(db, businessId, adjustedProductIds)
+  return result
 }
 
 /** Cancela un conteo abierto sin tocar el inventario. */

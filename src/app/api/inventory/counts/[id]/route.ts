@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { applyCount, cancelCount, countForClient, countFolio, getCount } from "@/lib/domain/counts"
@@ -35,7 +35,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 /** Acciones del conteo: { action: "apply" | "cancel" }. */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)

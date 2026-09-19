@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createPurchase, listPurchases } from "@/lib/domain/purchasing"
@@ -10,7 +10,7 @@ const STATUSES: PurchaseStatus[] = ["DRAFT", "ORDERED", "RECEIVED", "CANCELLED"]
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 
@@ -26,10 +26,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await request.json()
+    // La orden de compra surte stock a la sucursal destino.
+    const denied = assertBranchAllowed(session, body?.branchId)
+    if (denied) return denied
     const result = await createPurchase(prisma, session.user.id, businessIdOf(session), {
       ...body,
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),

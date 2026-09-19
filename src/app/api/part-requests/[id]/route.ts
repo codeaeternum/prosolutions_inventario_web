@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -11,15 +11,15 @@ const updateSchema = z.object({
 })
 
 // PATCH /api/part-requests/:id  { status }
-// Staff only: marca la gestión de una solicitud del directorio público
-// (contactada por WhatsApp, cerrada, o reabierta). El modelo es global —
-// sin businessId — pero el cambio exige staff autenticado con empresa.
+// Staff con módulo mercado: marca la gestión de una solicitud del directorio
+// público (contactada por WhatsApp, cerrada, o reabierta). El modelo es
+// global — sin businessId — pero el cambio exige staff con empresa.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("mercado")
     if (auth.error) return auth.error
     businessIdOf(getSession(auth)!)
     const { id } = await params

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { updateRepair } from "@/lib/domain/workshop"
@@ -66,12 +66,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
     const { id } = await params
-    const result = await updateRepair(prisma, actorId, businessIdOf(session), id, await req.json())
+    const body = await req.json()
+    // TRANSFER mueve la orden a branchId; PART_REQUEST/PART_ADD descuenta la
+    // pieza de sourceBranchId — ambas sucursales deben estar asignadas.
+    for (const branchId of [body?.branchId, body?.sourceBranchId]) {
+      const denied = assertBranchAllowed(session, branchId)
+      if (denied) return denied
+    }
+    const result = await updateRepair(prisma, actorId, businessIdOf(session), id, body)
     // La actualización ya se confirmó: un fallo en el aviso no debe reportarse
     // como error de la operación.
     const extra = await readySideEffects(result.order, actorId).catch(() => ({}))

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAuth, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireAuth, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
 
   // Admin summary mode: returns metrics + debtors + recent movements
   if (summary === "true") {
-    const adminResult = await requireAdmin()
+    const adminResult = await requireModule("credito")
     if (adminResult.error) return adminResult.error
     const businessId = businessIdOf(getSession(adminResult)!)
 

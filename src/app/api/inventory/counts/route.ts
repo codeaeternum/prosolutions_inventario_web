@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { countFolio, createCount, listCounts } from "@/lib/domain/counts"
@@ -49,10 +49,13 @@ export async function GET(request: NextRequest) {
 /** Crea una sesión de conteo OPEN: { branchId, notes?, blind? }. */
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await request.json()
+    // El conteo ajusta existencias de la sucursal contada.
+    const denied = assertBranchAllowed(session, body?.branchId)
+    if (denied) return denied
     const result = await createCount(prisma, session.user.id, businessIdOf(session), {
       ...body,
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),

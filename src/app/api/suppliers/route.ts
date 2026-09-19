@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { listSuppliers } from "@/lib/domain/purchasing"
@@ -15,7 +15,7 @@ const createSchema = z.object({
 
 export async function GET() {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const suppliers = await listSuppliers(prisma, businessIdOf(getSession(auth)!))
     return NextResponse.json({ suppliers }, { headers: { "Cache-Control": "private, no-store" } })
@@ -26,7 +26,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 

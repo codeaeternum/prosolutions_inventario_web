@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { changeReservation } from "@/lib/domain/reservations"
 import { businessFailure } from "@/lib/domain/http"
 import { reservationInclude } from "../route"
 
-// Verificación de QR y entrega en mostrador: staff = admin|empleado.
+// Verificación de QR y entrega en mostrador: staff con módulo reservas.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("reservas")
     if (auth.error) return auth.error
     const code = z.string().min(1).max(160).parse(new URL(req.url).searchParams.get("code"))
     const reservation = await prisma.reservation.findFirst({ where: { businessId: businessIdOf(getSession(auth)!), OR: [{ id: code }, { qrCode: code }] }, include: reservationInclude })
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("reservas")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
-import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
+import { getSession, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
@@ -48,6 +48,11 @@ export async function GET() {
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const isWorkshop = session.user.role === "WORKSHOP"
+    // WORKSHOP consulta sus compras; staff interno requiere el módulo mercado.
+    if (!isWorkshop) {
+      const denied = assertModuleAllowed(session, "mercado")
+      if (denied) return denied
+    }
 
     const requests = await prisma.marketplaceRequest.findMany({
       where: {

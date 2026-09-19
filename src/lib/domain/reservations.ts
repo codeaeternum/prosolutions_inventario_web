@@ -2,6 +2,7 @@ import type { PrismaClient, Reservation } from "@prisma/client"
 import { z } from "zod"
 import { isOwnedPaymentProof } from "../payment-proofs"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, takeStock, transaction, type Transaction } from "./operations"
+import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 export const ACTIVE_RESERVATIONS = ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"] as const
 export const TERMINAL_RESERVATIONS = ["COMPLETED", "CANCELLED", "REJECTED", "EXPIRED"] as const
@@ -38,7 +39,7 @@ export async function createReservations(db: PrismaClient, userId: string, busin
     throw new BusinessError("Sube un comprobante privado desde tu cuenta antes de reservar.", 400, "PAYMENT_PROOF_REQUIRED")
   }
   const payload = { items, type, method, proof: method === "TRANSFER" ? input.paymentProofUrl : null }
-  return operation(db, { key: input.idempotencyKey, actorId: userId, businessId, kind: "RESERVATION_CREATE", payload }, async tx => {
+  const result = await operation(db, { key: input.idempotencyKey, actorId: userId, businessId, kind: "RESERVATION_CREATE", payload }, async tx => {
     const user = await actor(tx, userId, "customer", businessId)
     const config = await settings(tx, businessId)
     const expiresAt = new Date(Date.now() + (type === "DEPOSIT" ? config.pendingVerificationHours * 3600000 : config.tempReservationMinutes * 60000))
@@ -65,6 +66,9 @@ export async function createReservations(db: PrismaClient, userId: string, busin
     }
     return { reservations, total: amount(totalCents) }
   })
+  // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
+  await syncLowStockAlerts(db, businessId, collectLowStockIds(items))
+  return result
 }
 
 /** A reversal offsets the debt ledger only; it is never a cash payment. */
@@ -92,7 +96,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
   const input = actionSchema.parse(raw)
   if (actorId === null && input.action !== "expire") throw new BusinessError("Acción no autorizada.", 403)
   if (actorId !== null && input.action === "expire") throw new BusinessError("La expiración se ejecuta desde el proceso del sistema.", 403)
-  return transaction(db, async tx => {
+  // Producto repuesto al cancelar/rechazar/expirar: la alerta se sincroniza post-commit.
+  const touchedProductIds = new Set<string>()
+  const result = await transaction(db, async tx => {
     // Gestión en mostrador (aprobar, verificar anticipo, entregar, rechazar):
     // staff = admin|empleado. "cancel" queda como acción de cliente y la
     // pertencia se valida abajo; staff puede cancelar cualquier reserva.
@@ -115,6 +121,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     if (["CANCELLED", "REJECTED", "EXPIRED"].includes(target)) {
       await reverseReservationDebt(tx, reservation)
       const branch = await releaseStock(tx, { productId: reservation.productId, quantity: reservation.quantity, branchId: reservation.branchId, businessId })
+      touchedProductIds.add(reservation.productId)
       const product = await tx.product.findUniqueOrThrow({ where: { id: reservation.productId } })
       await tx.inventoryMovement.create({ data: { businessId, productId: product.id, userId: actorId, type: "IN", quantity: reservation.quantity, branchId: branch.id, previousStock: product.stock - reservation.quantity, newStock: product.stock, reason: `Liberación de reserva #${id}: ${target}` } })
       requiresRefund = reservation.depositPaid && (reservation.depositAmount ?? 0) > 0
@@ -147,6 +154,8 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     const updated = await tx.reservation.findUniqueOrThrow({ where: { id }, include: { product: { select: { id: true, name: true } } } })
     return { reservation: updated, changed: true, requiresRefund }
   })
+  await syncLowStockAlerts(db, businessId, [...touchedProductIds])
+  return result
 }
 
 export async function expireReservations(db: PrismaClient) {

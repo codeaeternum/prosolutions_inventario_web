@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession, requireAdmin } from '@/lib/api-auth'
+import { getSession, requireModule } from '@/lib/api-auth'
 import { businessIdOf } from '@/lib/tenant'
 
 /**
@@ -53,7 +53,7 @@ function fixProductName(name: string): string {
 
 export async function GET() {
     try {
-        const authResult = await requireAdmin()
+        const authResult = await requireModule("productos")
         if (authResult.error) return authResult.error
         const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({
@@ -109,7 +109,7 @@ export async function GET() {
 
 export async function POST() {
     try {
-        const authResult = await requireAdmin()
+        const authResult = await requireModule("productos")
         if (authResult.error) return authResult.error
         const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({

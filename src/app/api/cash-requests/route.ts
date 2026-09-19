@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -43,7 +43,7 @@ async function createRequest(tx: Transaction, actorId: string, businessId: strin
 
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("caja")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const query = new URL(req.url).searchParams
@@ -78,12 +78,15 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("caja")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const input = createSchema.parse(await req.json())
+    // El gasto se descuenta de la caja de la sucursal solicitada.
+    const denied = assertBranchAllowed(session, input.branchId)
+    if (denied) return denied
     const key = input.idempotencyKey ?? req.headers.get("idempotency-key") ?? undefined
     const result = key
       ? await operation(prisma, { key, actorId, businessId, kind: "CASH_REQUEST", permission: "staff", payload: input }, tx => createRequest(tx, actorId, businessId, input))

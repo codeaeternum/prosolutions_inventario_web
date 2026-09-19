@@ -23,7 +23,7 @@ import { GET as reports } from "@/app/api/reports/route"
 import { paymentProofFilename, writePaymentProof } from "@/lib/payment-proofs"
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=", "base64")
-const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test" } })
+const user = (id: string, role = "CUSTOMER", status = "APPROVED", allowedModules?: string[]) => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test", allowedModules } })
 let directory: string
 beforeEach(async () => {
   vi.clearAllMocks(); mocks.auth.mockResolvedValue(null); mocks.findReservation.mockResolvedValue(null); mocks.findUserById.mockResolvedValue({ businessId: "biz-test" })
@@ -33,7 +33,8 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); vi.unstubAllEnvs() })
 describe("route authorization contracts with real Request/Response", () => {
   it("fix catalog denies anonymous and employee access before database reads", async () => {
-    for (const session of [null, user("employee", "EMPLOYEE"), user("pending-admin", "ADMIN", "PENDING")]) {
+    // Empleado restringido a "caja" no tiene el módulo productos que piden estas rutas.
+    for (const session of [null, user("employee", "EMPLOYEE", "APPROVED", ["caja"]), user("pending-admin", "ADMIN", "PENDING")]) {
       mocks.auth.mockResolvedValue(session)
       expect([401, 403]).toContain((await fixPreview()).status)
       expect([401, 403]).toContain((await fixApply()).status)
@@ -41,7 +42,8 @@ describe("route authorization contracts with real Request/Response", () => {
     expect(mocks.findProduct).not.toHaveBeenCalled()
   })
   it("employees cannot call full users or reports APIs", async () => {
-    mocks.auth.mockResolvedValue(user("employee", "EMPLOYEE"))
+    // Sin los módulos usuarios/reportes asignados, el empleado queda fuera.
+    mocks.auth.mockResolvedValue(user("employee", "EMPLOYEE", "APPROVED", ["caja"]))
     expect((await users(new Request("https://app.invalid/api/users"))).status).toBe(403)
     expect((await reports(new NextRequest("https://app.invalid/api/reports"))).status).toBe(403)
   })

@@ -1,16 +1,24 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { z } from "zod"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "../slug-utils"
+import { MODULES } from "@/lib/access"
 import bcrypt from "bcryptjs"
+
+// Restricciones de acceso del staff: lista vacía = sin restricción.
+const accessSchema = z.object({
+  allowedModules: z.array(z.enum(MODULES)).max(MODULES.length).optional(),
+  allowedBranchIds: z.array(z.string().min(1)).max(100).optional(),
+})
 
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("usuarios")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
@@ -25,6 +33,24 @@ export async function PATCH(
     })
     if (!existingUser) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
+    }
+
+    // Solo un ADMIN toca a otro ADMIN o asigna el rol: un empleado con el
+    // módulo de usuarios gestiona personal pero no escala privilegios.
+    if (session.user.role !== "ADMIN" && (existingUser.role === "ADMIN" || role === "ADMIN")) {
+      return NextResponse.json({ error: "Solo un administrador puede gestionar administradores" }, { status: 403 })
+    }
+
+    const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
+    if (!accessParsed.success) {
+      return NextResponse.json({ error: "Módulos o sucursales inválidos" }, { status: 400 })
+    }
+    const { allowedModules, allowedBranchIds } = accessParsed.data
+    if (allowedBranchIds?.length) {
+      const owned = await prisma.branch.count({ where: { id: { in: allowedBranchIds }, businessId } })
+      if (owned !== allowedBranchIds.length) {
+        return NextResponse.json({ error: "Alguna sucursal no pertenece al negocio" }, { status: 400 })
+      }
     }
 
     // Puesto del staff: string de hasta 60 caracteres; vacío/null lo limpia.
@@ -95,6 +121,8 @@ export async function PATCH(
         ...(jobTitleUpdate !== undefined && { jobTitle: jobTitleUpdate }),
         ...(quickPinUpdate !== undefined && { quickPin: quickPinUpdate }),
         ...(publicSlugUpdate !== undefined && { publicSlug: publicSlugUpdate }),
+        ...(allowedModules !== undefined && { allowedModules }),
+        ...(allowedBranchIds !== undefined && { allowedBranchIds }),
       },
       select: {
         id: true,
@@ -106,6 +134,8 @@ export async function PATCH(
         jobTitle: true,
         publicSlug: true,
         homeBranchId: true,
+        allowedModules: true,
+        allowedBranchIds: true,
       },
     })
 
@@ -121,13 +151,22 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("usuarios")
     if (result.error) return result.error
+    const session = getSession(result)!
 
     const { id } = await params
 
+    // Un empleado con el módulo no puede eliminar a un administrador.
+    if (session.user.role !== "ADMIN") {
+      const target = await prisma.user.findUnique({ where: { id, businessId: businessIdOf(session) }, select: { role: true } })
+      if (target?.role === "ADMIN") {
+        return NextResponse.json({ error: "Solo un administrador puede eliminar administradores" }, { status: 403 })
+      }
+    }
+
     await prisma.user.delete({
-      where: { id, businessId: businessIdOf(getSession(result)!) },
+      where: { id, businessId: businessIdOf(session) },
     })
 
     return NextResponse.json({ success: true })

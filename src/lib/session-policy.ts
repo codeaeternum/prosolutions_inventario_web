@@ -9,6 +9,9 @@ export type CurrentUser = {
   jobTitle: string | null
   businessId: string
   isSuperAdmin: boolean
+  /** Restricciones de staff: vacío = sin restricción (lib/access.ts). */
+  allowedModules: string[]
+  allowedBranchIds: string[]
   /** Cargada por auth.ts para revocar sesiones cuando la empresa se suspende. */
   business?: { isActive: boolean } | null
 }
@@ -26,5 +29,6 @@ export function refreshSessionToken(token: JWT, current: CurrentUser | null, sig
     ...token, id: current.id, name: current.name, email: current.email ?? current.phone ?? "",
     role: current.role, status: current.status, customerType: current.customerType, passwordVersion,
     jobTitle: current.jobTitle, businessId: current.businessId, isSuperAdmin: current.isSuperAdmin,
+    allowedModules: current.allowedModules, allowedBranchIds: current.allowedBranchIds,
   }
 }

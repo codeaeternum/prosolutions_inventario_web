@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
-import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
+import { getSession, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
@@ -37,6 +37,11 @@ export async function GET(req: Request) {
     const auth = await requireMarketplaceViewer()
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    // WORKSHOP solo ve lo suyo; el staff que opera el mercado necesita el módulo.
+    if (session.user.role !== "WORKSHOP") {
+      const denied = assertModuleAllowed(session, "mercado")
+      if (denied) return denied
+    }
 
     const status = new URL(req.url).searchParams.get("status")
     if (status && !(statuses as readonly string[]).includes(status)) {
@@ -80,6 +85,11 @@ export async function POST(req: Request) {
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const isWorkshop = session.user.role === "WORKSHOP"
+    // El taller se autorregistra su solicitud; staff interno requiere el módulo.
+    if (!isWorkshop) {
+      const denied = assertModuleAllowed(session, "mercado")
+      if (denied) return denied
+    }
 
     const parseResult = createSchema.safeParse(await req.json().catch(() => null))
     if (!parseResult.success) {

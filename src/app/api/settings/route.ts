@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, getDefaultBusinessId, setBusinessSetting } from "@/lib/settings"
@@ -76,10 +76,10 @@ export async function GET() {
   }
 }
 
-// PATCH - Actualizar configuración (solo admin)
+// PATCH - Actualizar configuración (módulo configuración)
 export async function PATCH(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("configuracion")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
@@ -17,7 +18,12 @@ export async function GET(req: Request) {
   try {
     const result = await requireAdminOrEmployee()
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    // El directorio también lo usa recepción de taller: vale clientes o taller.
+    if (!hasModule(session.user, "clientes") && !hasModule(session.user, "taller")) {
+      return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
+    }
+    const businessId = businessIdOf(session)
 
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()

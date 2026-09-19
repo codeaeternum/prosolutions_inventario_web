@@ -68,6 +68,7 @@ model Business {
   inventoryCountItems InventoryCountItem[]
   directoryEvents     DirectoryEvent[]
   deviceModels        DeviceModel[]
+  shoppingItems       ShoppingItem[]
 
   @@index([isActive])
 }
@@ -185,6 +186,12 @@ model User {
   homeBranchId String?
   homeBranch   Branch? @relation("HomeBranch", fields: [homeBranchId], references: [id], onDelete: SetNull)
 
+  // Restricciones de acceso del staff. Lista VACÍA = sin restricción (todos
+  // los módulos/sucursales). allowedModules usa las claves de lib/access.ts
+  // ("ventas", "caja", "taller", …); allowedBranchIds guarda Branch.id.
+  allowedModules   String[] @default([])
+  allowedBranchIds String[] @default([])
+
   // Metas de compra
   monthlyPurchaseGoal   Float? // Meta mensual de compra en pesos
   totalPurchases        Float     @default(0) // Total de compras acumuladas
@@ -221,6 +228,8 @@ model User {
   purchases             Purchase[]
   supplierPayments      SupplierPayment[]
   inventoryCounts       InventoryCount[]
+  shoppingItemsCreated  ShoppingItem[]       @relation("ShoppingItemCreatedBy")
+  shoppingItemsResolved ShoppingItem[]       @relation("ShoppingItemResolvedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -298,6 +307,10 @@ model Product {
   stock    Int @default(0)
   minStock Int @default(1)
 
+  // Anti-spam del aviso de stock bajo: cuándo se alertó por última vez.
+  // Se limpia cuando el stock vuelve a subir por encima del mínimo.
+  lowStockAlertAt DateTime?
+
   images String[] // Array de URLs
 
   isActive           Boolean @default(true)
@@ -319,6 +332,7 @@ model Product {
   purchaseItems       PurchaseItem[]
   marketplaceRequests MarketplaceRequest[]
   inventoryCountItems InventoryCountItem[]
+  shoppingItems       ShoppingItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -646,6 +660,15 @@ enum SaleStatus {
   VOIDED // anulada mediante contramovimientos; el documento se conserva
 }
 
+// Tipo de documento de la venta. RETAIL: mostrador al público. WORKSHOP:
+// "Nota de venta a taller" — venta de refacciones a un taller/negocio
+// (cliente tipo STORE o TECHNICIAN, precio de mayoreo). Separa la
+// contabilidad del negocio de refacciones de la venta al público.
+enum SaleKind {
+  RETAIL
+  WORKSHOP
+}
+
 enum PaymentMethod {
   CASH
   CARD
@@ -667,6 +690,7 @@ model Sale {
   number             Int                 @unique @default(autoincrement())
   version            Int                 @default(1)
   status             SaleStatus          @default(COMPLETED)
+  kind               SaleKind            @default(RETAIL)
   total              Float
   branchId           String
   branch             Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
@@ -1058,6 +1082,7 @@ model Purchase {
   paidAt           DateTime? // cuándo quedó liquidada (paidCents >= totalCents)
   items            PurchaseItem[]
   supplierPayments SupplierPayment[]
+  shoppingItems    ShoppingItem[]
   createdById      String
   createdBy        User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
   receivedAt       DateTime?
@@ -1177,6 +1202,44 @@ model PartRequest {
   createdAt DateTime          @default(now())
 
   @@index([status, createdAt])
+}
+
+// ==================== LISTA DE ENCARGOS / COMPRAS ====================
+
+enum ShoppingItemStatus {
+  PENDING // Falta por comprar
+  PURCHASED // Ya se compró (manual o por OC recibida)
+  CANCELLED
+}
+
+// Entrada manual de la "lista de encargos": insumos que no son producto del
+// catálogo (alcohol, cinta, herramientas) o productos que sí lo son. La
+// demanda de REFACCIONES por órdenes abiertas no se persiste aquí — se
+// calcula en vivo desde RepairPart + stock, así nunca queda desactualizada.
+model ShoppingItem {
+  id          String            @id @default(cuid())
+  businessId  String
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  productId   String?
+  product     Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  description String // Qué hay que comprar (texto libre o nombre del producto)
+  quantity    Int               @default(1)
+  // Costo estimado opcional por pieza, para presupuestar la compra.
+  unitCostCents Int             @default(0)
+  status      ShoppingItemStatus @default(PENDING)
+  notes       String?
+  // OC que cubre este pendiente (si se generó desde la lista).
+  purchaseId  String?
+  purchase    Purchase?         @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  createdById String
+  createdBy   User              @relation("ShoppingItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  resolvedById String?
+  resolvedBy  User?             @relation("ShoppingItemResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([businessId, status])
 }
 
 // Telemetría del directorio: búsquedas, clicks a vitrinas y solicitudes.

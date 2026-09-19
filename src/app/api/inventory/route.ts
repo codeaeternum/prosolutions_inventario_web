@@ -1,7 +1,7 @@
 import { moveInventory } from "@/lib/domain/inventory"
 import { businessFailure } from "@/lib/domain/http"
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, assertOperationBranch, getSession, requireAdmin, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { MovementType } from "@prisma/client"
@@ -146,10 +146,19 @@ export async function DELETE() {
 
 export async function POST(request: NextRequest) {
     try {
-        const auth = await requireAdminOrEmployee()
+        const auth = await requireModule("inventario")
         if (auth.error) return auth.error
         const session = getSession(auth)!
         const body = await request.json()
+        // Cada partida toca su sucursal (item.branchId ?? body.branchId, o la
+        // principal si ninguna llega) y el traspaso además la de destino.
+        const items = Array.isArray(body?.items) && body.items.length ? body.items : [body]
+        for (const item of items) {
+            const denied = await assertOperationBranch(session, item?.branchId ?? body?.branchId, { homeFallback: false })
+            if (denied) return denied
+            const deniedDest = assertBranchAllowed(session, item?.toBranchId)
+            if (deniedDest) return deniedDest
+        }
         const result = await moveInventory(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
         return NextResponse.json(body.items ? result : { ...result.movements[0], operationId: result.operationId }, { status: 201 })
     } catch (error) { return businessFailure(error) }

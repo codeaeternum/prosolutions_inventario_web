@@ -21,6 +21,7 @@ import {
     DialogFooter
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { EmptyState } from "@/components/admin/empty-state"
 import {
     ShoppingCart,
@@ -41,7 +42,7 @@ import { formatPrice } from "@/lib/utils"
 
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 
-interface CreditCustomer { id: string; name: string; creditLimit: number | null; creditBalance: number }
+interface CreditCustomer { id: string; name: string; customerType?: string; creditLimit: number | null; creditBalance: number }
 
 interface Product {
     id: string
@@ -67,7 +68,10 @@ export default function VentasPage() {
     const [processing, setProcessing] = useState(false)
     const submitting = useRef(false)
     const pendingOperation = useRef<ClientOperationKey | null>(null)
-    const [lastSale, setLastSale] = useState<{ product: string; quantity: number; total: number; ticketUrl?: string } | null>(null)
+    const [lastSale, setLastSale] = useState<{ product: string; quantity: number; total: number; ticketUrl?: string; kind?: string } | null>(null)
+    // "Venta a taller": nota de venta a mayoreo. El servidor decide el kind
+    // final; un cliente STORE/TECHNICIAN la fuerza aunque el toggle esté apagado.
+    const [workshopSale, setWorkshopSale] = useState(false)
 
     // Checkout modal state
     const [showCheckout, setShowCheckout] = useState(false)
@@ -232,6 +236,7 @@ export default function VentasPage() {
             items: cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
             customerId: usesCredit ? creditCustomer?.id : undefined,
             branchId: branchId || undefined,
+            workshopSale: workshopActive || undefined,
         }
         if (splitMode) {
             const payments = splitPayments
@@ -276,9 +281,11 @@ export default function VentasPage() {
                 quantity: data.quantity,
                 total: data.total,
                 ticketUrl,
+                kind: data.sale?.kind ?? data.kind,
             })
-            toast.success(`Venta V-${String(data.sale?.number ?? "").padStart(6, "0")} registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
+            toast.success(`${data.sale?.kind === "WORKSHOP" ? "Nota a taller" : "Venta"} ${data.sale?.kind === "WORKSHOP" ? "NT" : "V"}-${String(data.sale?.number ?? "").padStart(6, "0")} registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
             setCart([])
+            setWorkshopSale(false)
             setCreditCustomer(null)
             setCreditSearch("")
             setCreditResults([])
@@ -297,7 +304,13 @@ export default function VentasPage() {
         }
     }
 
-    const cartTotal = cart.reduce((sum, item) => sum + (item.product.retailPrice * item.quantity), 0)
+    // Cliente taller/negocio (STORE/TECHNICIAN): la nota a taller se activa sola.
+    const workshopCustomer = creditCustomer?.customerType === "STORE" || creditCustomer?.customerType === "TECHNICIAN"
+    const workshopActive = workshopSale || workshopCustomer
+    // Con nota a taller activa el mostrador cobra (y muestra) precio de mayoreo,
+    // igual que lo resolverá el servidor al registrar la venta.
+    const unitPrice = (product: Product) => (workshopActive ? product.wholesalePrice : product.retailPrice)
+    const cartTotal = cart.reduce((sum, item) => sum + (unitPrice(item.product) * item.quantity), 0)
     const cartItems = cart.reduce((sum, item) => sum + item.quantity, 0)
 
     return (
@@ -428,7 +441,7 @@ export default function VentasPage() {
                                     <div className="flex-1 min-w-0">
                                         <p className="font-medium truncate">{item.product.name}</p>
                                         <p className="text-sm text-muted-foreground">
-                                            ${item.product.retailPrice.toLocaleString()} c/u
+                                            ${unitPrice(item.product).toLocaleString()} c/u{workshopActive ? " · mayoreo" : ""}
                                         </p>
                                     </div>
                                     <div className="flex items-center justify-between w-full sm:w-auto gap-4">
@@ -457,7 +470,7 @@ export default function VentasPage() {
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <p className="font-bold min-w-[3rem] text-right">
-                                                ${(item.product.retailPrice * item.quantity).toLocaleString()}
+                                                ${(unitPrice(item.product) * item.quantity).toLocaleString()}
                                             </p>
                                             <Button
                                                 variant="ghost"
@@ -501,7 +514,10 @@ export default function VentasPage() {
                         <div className="flex items-center gap-3">
                             <CheckCircle className="h-8 w-8 text-green-600" />
                             <div>
-                                <p className="font-medium text-green-800 dark:text-green-400">Última venta registrada</p>
+                                <p className="font-medium text-green-800 dark:text-green-400">
+                                    Última venta registrada
+                                    {lastSale.kind === "WORKSHOP" && <Badge variant="secondary" className="ml-2">Nota a taller</Badge>}
+                                </p>
                                 <p className="text-sm text-green-600 dark:text-green-500">
                                     {lastSale.product} × {lastSale.quantity} — {formatPrice(lastSale.total)}
                                 </p>
@@ -534,7 +550,23 @@ export default function VentasPage() {
                             <span className="font-medium text-lg">Total a pagar:</span>
                             <span className="text-2xl font-bold text-primary">{formatPrice(cartTotal)}</span>
                         </div>
-                        
+
+                        {/* Nota de venta a taller: cobra mayoreo y emite folio NT-.
+                            Con cliente STORE/TECHNICIAN el servidor la impone:
+                            el toggle queda marcado y solo se muestra el badge. */}
+                        <div className="flex items-center gap-2">
+                            <Checkbox
+                                id="workshop-sale"
+                                checked={workshopActive}
+                                disabled={processing || workshopCustomer}
+                                onCheckedChange={(checked) => setWorkshopSale(checked === true)}
+                            />
+                            <Label htmlFor="workshop-sale" className="cursor-pointer font-normal">
+                                Venta a taller <span className="text-xs text-muted-foreground">(precio de mayoreo)</span>
+                            </Label>
+                            {workshopCustomer && <Badge variant="secondary">Taller — mayoreo automático</Badge>}
+                        </div>
+
                         {!splitMode ? (
                             <div className="space-y-2">
                                 <Label>Método de Pago</Label>

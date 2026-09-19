@@ -1,7 +1,7 @@
 import { changeCash, expectedCashCents, type CashMovementLike } from "@/lib/domain/cash"
 import { businessFailure } from "@/lib/domain/http"
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import prisma from "@/lib/prisma"
 
@@ -41,7 +41,7 @@ const movementInclude = {
 
 export async function GET(req: Request) {
   try {
-    const result = await requireAdminOrEmployee()
+    const result = await requireModule("caja")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 
@@ -121,9 +121,13 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("caja")
     if (auth.error) return auth.error
     const session = getSession(auth)!
-    return NextResponse.json(await changeCash(prisma, session.user.id, businessIdOf(session), await req.json()))
+    const body = await req.json()
+    // Abrir/mover la caja toca la sucursal indicada o la base del cajero.
+    const denied = await assertOperationBranch(session, body?.branchId)
+    if (denied) return denied
+    return NextResponse.json(await changeCash(prisma, session.user.id, businessIdOf(session), body))
   } catch (error) { return businessFailure(error) }
 }

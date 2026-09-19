@@ -1,6 +1,7 @@
 import type { PrismaClient, Product } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, releaseStock, transaction } from "./operations"
+import { syncLowStockAlerts } from "../low-stock"
 
 export const createProductSchema = z.object({
   name: z.string().trim().min(1).max(500),
@@ -16,7 +17,7 @@ export const createProductSchema = z.object({
 /** Crea producto con existencia inicial en UNA sucursal (branchId o la del actor). */
 export async function createProduct(db: PrismaClient, actorId: string, businessId: string, raw: unknown): Promise<Product> {
   const input = createProductSchema.parse(raw)
-  return transaction(db, async tx => {
+  const product = await transaction(db, async tx => {
     const category = await tx.category.findFirst({ where: { id: input.categoryId, businessId }, select: { id: true } })
     if (!category) throw new BusinessError("La categoría no existe.", 400)
     const product = await tx.product.create({ data: {
@@ -37,4 +38,7 @@ export async function createProduct(db: PrismaClient, actorId: string, businessI
     }
     return product
   })
+  // Post-commit: un producto que nace bajo mínimo también avisa.
+  await syncLowStockAlerts(db, businessId, [product.id])
+  return product
 }

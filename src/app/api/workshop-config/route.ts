@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -59,7 +59,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireModule("configuracion")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id

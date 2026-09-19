@@ -4,6 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { moduleForAdminPath } from "@/lib/access"
 import { Button } from "@/components/ui/button"
 import { BusinessName } from "@/components/admin/business-name"
 import {
@@ -27,6 +28,8 @@ import {
   BookOpen,
   Store,
   Shield,
+  ClipboardList,
+  Handshake,
 } from "lucide-react"
 
 const navigationGroups = [
@@ -59,6 +62,7 @@ const navigationGroups = [
       { name: "Mercado", href: "/admin/mercado", icon: Store },
       { name: "Productos", href: "/admin/productos", icon: Package },
       { name: "Inventario", href: "/admin/inventario", icon: Warehouse },
+      { name: "Encargos", href: "/admin/encargos", icon: ClipboardList },
     ]
   },
   {
@@ -85,6 +89,19 @@ const ALL_NAV_HREFS = [
   ...navigationGroups.flatMap(g => g.items.map(i => i.href)),
   ...bottomBarItems.map(i => i.href),
   "/platform",
+  "/aliado",
+]
+
+// Portal del taller aliado (captador): su pantalla principal es /aliado y
+// desde el sidebar también puede entrar al Mercado para comprar refacciones.
+const workshopGroups = [
+  {
+    name: "Aliado",
+    items: [
+      { name: "Portal aliado", href: "/aliado", icon: Handshake },
+      { name: "Mercado", href: "/admin/mercado", icon: Store },
+    ]
+  }
 ]
 
 // Consola de plataforma: solo la ve el superadmin (operador Reficio).
@@ -112,6 +129,7 @@ interface AdminSidebarProps {
   user: {
     role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"
     isSuperAdmin?: boolean
+    allowedModules?: string[]
   }
   collapsed?: boolean
 }
@@ -120,19 +138,24 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-  const filteredNavigation = navigationGroups
-    .map(group => {
-      // WORKSHOP (taller aliado): solo ve la entrada "Mercado"
-      if (user.role === "WORKSHOP") {
-        return { ...group, items: group.items.filter(item => item.href === "/admin/mercado") }
-      }
-      return group
-    })
+  const filteredNavigation = (user.role === "WORKSHOP" ? workshopGroups : navigationGroups)
+    .map(group => ({
+      ...group,
+      // Restricción por módulo asignado (User.allowedModules; vacío = libre,
+      // ADMIN nunca se restringe). Los href sin módulo mapeado siempre pasan.
+      items: user.role === "ADMIN" || !user.allowedModules?.length
+        ? group.items
+        : group.items.filter(item => {
+            const required = moduleForAdminPath(item.href)
+            return !required || user.allowedModules!.includes(required)
+          }),
+    }))
     .filter(group => {
       // Grupos vacíos no muestran header
       if (group.items.length === 0) return false
-      // Hide "Administración" if user is EMPLOYEE (los empleados sí usan el taller)
-      if (user.role === "EMPLOYEE") {
+      // EMPLOYEE sin módulos asignados no ve "Administración" (regla previa);
+      // con módulos explícitos el filtro por ítem ya decidió qué entra.
+      if (user.role === "EMPLOYEE" && !user.allowedModules?.length) {
         return group.name !== "Administración"
       }
       return true
@@ -142,9 +165,9 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
     filteredNavigation.push(platformGroup)
   }
 
-  // Bottom bar móvil: el taller aliado solo necesita el Mercado
+  // Bottom bar móvil: el taller aliado necesita su portal y el Mercado
   const visibleBottomBarItems = user.role === "WORKSHOP"
-    ? [{ name: "Mercado", href: "/admin/mercado", icon: Store }]
+    ? [{ name: "Portal", href: "/aliado", icon: Handshake }, { name: "Mercado", href: "/admin/mercado", icon: Store }]
     : bottomBarItems
 
   return (

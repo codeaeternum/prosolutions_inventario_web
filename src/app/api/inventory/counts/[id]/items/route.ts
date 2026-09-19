@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { setCountItems } from "@/lib/domain/counts"
@@ -8,7 +8,7 @@ import { businessFailure } from "@/lib/domain/http"
 /** Captura/actualiza lo contado: { items: [{ productId, countedQty }] }. */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const { id } = await params

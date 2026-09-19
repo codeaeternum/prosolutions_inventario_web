@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 // POST /api/fix-categories — Rename all categories to singular form (one-time migration)
 export async function POST() {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("productos")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

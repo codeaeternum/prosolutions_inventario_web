@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 
 // Reporte de demanda del marketplace B2B: qué refacciones piden los talleres
@@ -26,7 +26,7 @@ const startOfWeek = (d: Date) => {
 
 export async function GET() {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("reportes")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 

@@ -2,11 +2,12 @@ import { auth } from "@/lib/auth"
 import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, transaction } from "@/lib/domain/operations"
+import { syncLowStockAlerts } from "@/lib/low-stock"
 
 const createProductSchema = z
   .object({
@@ -129,7 +130,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("productos")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
@@ -191,6 +192,12 @@ export async function POST(req: Request) {
         { error: "Sucursal no encontrada" },
         { status: 400 }
       )
+    }
+
+    // La existencia inicial entra a una sucursal (stockBranchId ?? homeBranch).
+    if (stock > 0) {
+      const denied = await assertOperationBranch(session, stockBranchId)
+      if (denied) return denied
     }
 
     // Check if barcode already exists
@@ -264,6 +271,8 @@ export async function POST(req: Request) {
       return created
     })
 
+    // Post-commit: un producto que nace bajo mínimo también avisa.
+    await syncLowStockAlerts(prisma, businessId, [product.id])
     return NextResponse.json(product)
   } catch (error) {
     console.error("Error creating product:", error)

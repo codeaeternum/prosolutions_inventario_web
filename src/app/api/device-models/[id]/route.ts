@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -12,7 +12,7 @@ import { BusinessError } from "@/lib/domain/operations"
 // rompe nada.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const tenantId = businessIdOf(session)

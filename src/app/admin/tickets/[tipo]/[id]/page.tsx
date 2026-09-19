@@ -80,7 +80,8 @@ export default async function TicketPage({
   const { tipo, id } = await params
   
   let ticketData: {
-    title: string; folio: string; date: string; client?: string; cashier?: string;
+    title: string; folio: string; date: string; client?: string; clientLabel?: string;
+    cashier?: string; badge?: string;
     items: { name: string; qty: number; price: number; total: number }[];
     total: number; paymentMethod?: string; notes?: string; newBalance?: number;
     qrCode?: string; businessName?: string; subtitle?: string; footer?: string;
@@ -104,11 +105,20 @@ export default async function TicketPage({
 
     if (saleDoc) {
       const METHOD_LABEL: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
+      // Nota de venta a taller (SaleKind.WORKSHOP): otro encabezado, folio NT-,
+      // sello de mayoreo y el cliente se identifica por su negocio.
+      const isWorkshop = saleDoc.kind === "WORKSHOP"
       ticketData = {
-        title: saleDoc.status === "VOIDED" ? "VENTA ANULADA" : "TICKET DE VENTA",
-        folio: `V-${String(saleDoc.number).padStart(6, "0")}`,
+        title: saleDoc.status === "VOIDED"
+          ? (isWorkshop ? "NOTA DE VENTA A TALLER ANULADA" : "VENTA ANULADA")
+          : (isWorkshop ? "NOTA DE VENTA A TALLER" : "TICKET DE VENTA"),
+        folio: `${isWorkshop ? "NT" : "V"}-${String(saleDoc.number).padStart(6, "0")}`,
         date: saleDoc.createdAt.toISOString(),
-        client: saleDoc.customer?.name,
+        client: isWorkshop
+          ? (saleDoc.customer?.businessName ?? saleDoc.customer?.name)
+          : saleDoc.customer?.name,
+        clientLabel: isWorkshop && saleDoc.customer ? "Taller/Negocio" : undefined,
+        badge: isWorkshop ? "Documento para taller — precio de mayoreo" : undefined,
         items: saleDoc.items.map(item => ({
           name: item.product.name,
           qty: item.quantity,

@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
+import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
 const METHODS = z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"])
@@ -22,6 +23,10 @@ const saleSchema = z.object({
   // "wholesale"/"retail" fuerzan la lista sin importar el tipo de cliente
   // (p. ej. el surtido de una solicitud del mercado B2B siempre va a mayoreo).
   priceTier: z.enum(["auto", "wholesale", "retail"]).optional(),
+  // Marca del mostrador para emitir "nota de venta a taller" (SaleKind.WORKSHOP)
+  // aunque el comprador sea walk-in sin cuenta STORE/TECHNICIAN. El servidor
+  // siempre resuelve el kind final; el flag solo puede elevar a WORKSHOP.
+  workshopSale: z.boolean().optional(),
 }).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
 
 export async function sell(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
@@ -32,13 +37,22 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
   if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
   // Una transferencia sin folio queda imposible de cuadrar contra el estado de cuenta.
   if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference)) throw new BusinessError("Captura la referencia de cada transferencia.")
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
     const seller = await actor(tx, actorId, "staff", businessId)
     const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId, businessId)
     const customer = input.customerId ? await actor(tx, input.customerId, "customer", businessId) : null
 
+    // Documento contable: RETAIL es mostrador al público; WORKSHOP ("nota de
+    // venta a taller") separa la refacción vendida a talleres/negocios. Lo
+    // fuerzan el tipo de cliente (STORE/TECHNICIAN) o la marca manual del POS.
+    const kind: "RETAIL" | "WORKSHOP" =
+      customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN" || input.workshopSale === true
+        ? "WORKSHOP" : "RETAIL"
+
     // Precios del servidor; stock por sucursal con decremento condicional.
-    const tier = input.priceTier ?? "auto"
+    // Toda nota a taller cobra la lista de mayoreo salvo lista explícita:
+    // el walk-in de taller sin cuenta STORE/TECHNICIAN también va a mayoreo.
+    const tier = input.priceTier ?? (kind === "WORKSHOP" ? "wholesale" : "auto")
     const lines = []
     let totalCents = 0
     for (const item of items) {
@@ -57,7 +71,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
     const totalPaidCents = payments.length === 1 ? totalCents : payments.reduce((sum, p) => sum + cents(p.amount!, true), 0)
     if (totalPaidCents !== totalCents) throw new BusinessError(`Los pagos no cuadran con el total (${total}).`, 409)
 
-    const sale = await tx.sale.create({ data: { businessId, total, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
+    const sale = await tx.sale.create({ data: { businessId, total, kind, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
     // Medio dominante (el de mayor monto): clasifica el OUT como venta en el
     // historial (paymentMethod != null) y fija el canal de devolución simple.
     // La venta conserva el desglose completo en sus pagos.
@@ -108,8 +122,11 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
         reference: payment.reference ?? null, cashMovementId: cashMovementId ?? null, createdById: actorId,
       } }))
     }
-    return { sale, items: saleItems, payments: created, movements, quantity: items.reduce((sum, item) => sum + item.quantity, 0), total }
+    return { sale, items: saleItems, payments: created, movements, quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind }
   })
+  // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
+  await syncLowStockAlerts(db, businessId, collectLowStockIds(items))
+  return result
 }
 
 /** Devuelve el stock a la sucursal de la venta y revierte el dinero por cada medio. */
@@ -168,7 +185,10 @@ const returnSchema = z.object({
 })
 export async function returnSaleItems(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = returnSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
+  // Productos repuestos por la devolución: se acumulan dentro del tx y la
+  // alerta se sincroniza post-commit (fuera de la transacción).
+  const touchedProductIds = new Set<string>()
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
     const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true } })
     if (!sale || sale.businessId !== businessId || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
     const merged = mergeItems(input.items.map(i => ({ productId: i.saleItemId, quantity: i.quantity })))
@@ -179,6 +199,7 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, busines
       const changed = await tx.saleItem.updateMany({ where: { id: item.id, quantity: { gte: item.returnedQuantity + line.quantity } }, data: { returnedQuantity: { increment: line.quantity } } })
       if (changed.count !== 1) throw new BusinessError(`La cantidad a devolver de ${item.id} supera lo vendido.`, 409)
       await releaseStock(tx, { productId: item.productId, quantity: line.quantity, branchId: sale.branchId, businessId })
+      touchedProductIds.add(item.productId)
       const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
       await tx.inventoryMovement.create({ data: {
         businessId, productId: item.productId, userId: actorId, type: "RETURN", quantity: line.quantity,
@@ -190,14 +211,18 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, busines
       refundCents += cents(item.unitPrice) * line.quantity
     }
     const refundRow = await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
-    return { refund: refundRow, refunded: amount(refundCents) }
+    // La devolución hereda el documento original: kind solo se expone, no se decide aquí.
+    return { refund: refundRow, refunded: amount(refundCents), kind: sale.kind }
   })
+  await syncLowStockAlerts(db, businessId, [...touchedProductIds])
+  return result
 }
 
 const voidSchema = z.object({ saleId: z.string().min(1), reason: z.string().trim().min(1).max(500), idempotencyKey: operationKeySchema })
 export async function voidSale(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = voidSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_VOID", permission: "staff", payload: input }, async tx => {
+  const touchedProductIds = new Set<string>()
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_VOID", permission: "staff", payload: input }, async tx => {
     const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true, payments: true } })
     if (!sale || sale.businessId !== businessId) throw new BusinessError("Venta no encontrada.", 404)
     if (sale.status !== "COMPLETED") throw new BusinessError("La venta ya fue anulada.", 409)
@@ -205,6 +230,7 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
       const pending = item.quantity - item.returnedQuantity
       if (pending <= 0) continue
       await releaseStock(tx, { productId: item.productId, quantity: pending, branchId: sale.branchId, businessId })
+      touchedProductIds.add(item.productId)
       const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
       await tx.inventoryMovement.create({ data: {
         businessId, productId: item.productId, userId: actorId, type: "IN", quantity: pending,
@@ -223,6 +249,9 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { status: "VOIDED" } })
     if (changed.count !== 1) throw new BusinessError("La venta cambió durante la operación; reintenta.", 409)
-    return { saleId: sale.id, number: sale.number }
+    // La anulación conserva el kind del documento (nota a taller vs ticket retail).
+    return { saleId: sale.id, number: sale.number, kind: sale.kind }
   })
+  await syncLowStockAlerts(db, businessId, [...touchedProductIds])
+  return result
 }

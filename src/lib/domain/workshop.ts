@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
+import { syncLowStockAlerts } from "../low-stock"
 import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, WARRANTY_DAYS_KEY, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
 import { quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
@@ -123,9 +124,13 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
   order: { number: number; currentBranchId: string }
   part: { id: string; productId: string | null; description: string; qty: number; unitPriceCents: number; sourceBranchId?: string | null }
   actorId: string; businessId: string; type: "OUT" | "RETURN"
+  // Set opcional donde se registra el productId tocado: el llamador lo usa para
+  // sincronizar la alerta de stock bajo post-commit (fuera de esta transacción).
+  touched?: Set<string>
 }): Promise<{ deducted: number; stock: number } | null> {
   const { order, part, actorId, businessId, type } = args
   if (!part.productId) return null
+  args.touched?.add(part.productId)
   const productId = part.productId
   const folio = repairFolio(order.number)
   if (type === "RETURN") {
@@ -182,11 +187,12 @@ async function releaseOrderParts(tx: Prisma.TransactionClient, args: {
   order: { id: string; number: number; currentBranchId: string }
   parts: ReadonlyArray<{ id: string; productId: string | null; description: string; qty: number; unitPriceCents: number; status: string }>
   actorId: string; businessId: string; note: string
+  touched?: Set<string>
 }): Promise<string[]> {
   const tail: string[] = []
   const released: string[] = []
   for (const part of args.parts.filter(row => row.status === "APPROVED")) {
-    const result = await syncPartStock(tx, { order: args.order, part, actorId: args.actorId, businessId: args.businessId, type: "RETURN" })
+    const result = await syncPartStock(tx, { order: args.order, part, actorId: args.actorId, businessId: args.businessId, type: "RETURN", touched: args.touched })
     if (result && result.deducted > 0) released.push(`${result.deducted} × ${part.description}`)
   }
   if (released.length) tail.push(`Refacciones liberadas a inventario: ${released.join(", ")}.`)
@@ -245,7 +251,10 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
   // ADMIN para el OUT manual). ROTATE_UPLOAD_TOKEN revoca el QR público del
   // sticker: también es solo admin. El resto de acciones son de mostrador.
   const adminOnlyActions: readonly string[] = ["REFUND", "ROTATE_UPLOAD_TOKEN"]
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: adminOnlyActions.includes(input.action) ? "admin" : "staff", payload: { id, ...input } }, async tx => {
+  // Productos cuyo stock mueven las refacciones de esta acción (OUT/RETURN):
+  // syncPartStock los registra y la alerta se sincroniza post-commit.
+  const touchedProductIds = new Set<string>()
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: adminOnlyActions.includes(input.action) ? "admin" : "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
@@ -329,7 +338,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // todas quedan REJECTED — una cancelada ya no admite PART_REMOVE, así
         // que sin esta reposición el inventario quedaría descontado para
         // siempre. En NOT_AUTHORIZED la liberación ocurre al entregar.
-        const tail = await releaseOrderParts(tx, { order, parts: await orderParts(), actorId, businessId, note: input.status === "CANCELLED" ? "La orden se canceló; no se cobra." : "La orden se cerró sin reparación; no se cobra." })
+        const tail = await releaseOrderParts(tx, { order, parts: await orderParts(), actorId, businessId, note: input.status === "CANCELLED" ? "La orden se canceló; no se cobra." : "La orden se cerró sin reparación; no se cobra.", touched: touchedProductIds })
         if (tail.length) detail = `${detail} ${tail.join(" ")}`
       }
       if (input.status === "CANCELLED") {
@@ -415,7 +424,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // quedan REJECTED junto con las REQUESTED. Es idempotente — quien
         // llegó a NOT_REPAIRED por STATUS ya liberó su inventario ahí; esto
         // además cubre órdenes anteriores a esa regla.
-        tail.push(...await releaseOrderParts(tx, { order, parts, actorId, businessId, note: "La orden se entregó sin reparación; no se cobra." }))
+        tail.push(...await releaseOrderParts(tx, { order, parts, actorId, businessId, note: "La orden se entregó sin reparación; no se cobra.", touched: touchedProductIds }))
       }
       if (balanceCents > 0) {
         await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
@@ -467,7 +476,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       eventType = "PART"
       // Las creadas ya APPROVED (administrador) descuentan stock de inmediato;
       // las REQUESTED del técnico lo descuentan recién en PART_DECIDE.
-      const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT" })
+      const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT", touched: touchedProductIds })
       const sourceNote = sourceBranch && sourceBranch.id !== order.currentBranchId ? ` · surte ${sourceBranch.name}` : ""
       detail = needsApproval
         ? `Refacción solicitada: ${part.qty} × ${part.description}${sourceNote} — pendiente de autorización`
@@ -489,7 +498,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       })
       if (decided.count !== 1) throw new BusinessError("La refacción ya fue autorizada o rechazada.", 409)
       eventType = "PART"
-      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT" }) : null
+      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT", touched: touchedProductIds }) : null
       detail = input.approve
         ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(decidedStock, part.qty)}`
         : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
@@ -508,7 +517,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       await tx.repairPart.delete({ where: { id: part.id } })
       eventType = "PART"
       // Solo las APPROVED llegaron a descontar stock; REQUESTED/REJECTED nunca lo tocaron.
-      const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN" }) : null
+      const removedStock = part.status === "APPROVED" ? await syncPartStock(tx, { order, part, actorId, businessId, type: "RETURN", touched: touchedProductIds }) : null
       detail = `Refacción retirada: ${part.description}${stockNote(removedStock, part.qty)}`
     } else if (input.action === "ROTATE_UPLOAD_TOKEN") {
       // Regeneración manual del link público de evidencias (solo admin): si
@@ -546,4 +555,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     }
     return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
   })
+  // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
+  await syncLowStockAlerts(db, businessId, [...touchedProductIds])
+  return result
 }

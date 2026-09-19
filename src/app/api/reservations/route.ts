@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAuth } from "@/lib/api-auth"
+import { getSession, requireAuth, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS, createReservations } from "@/lib/domain/reservations"
@@ -16,6 +16,11 @@ export async function GET(req: Request) {
     const auth = await requireAuth()
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    // El staff ve todas las reservas del negocio: exige el módulo reservas.
+    if (["ADMIN", "EMPLOYEE"].includes(session.user.role)) {
+      const denied = assertModuleAllowed(session, "reservas")
+      if (denied) return denied
+    }
     const query = new URL(req.url).searchParams
     const page = Math.max(1, Number.parseInt(query.get("page") ?? "1") || 1)
     const limit = Math.min(100, Math.max(1, Number.parseInt(query.get("limit") ?? query.get("pageSize") ?? "20") || 20))
@@ -46,6 +51,11 @@ export async function POST(req: Request) {
     const auth = await requireAuth()
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    // Mostrador (admin|empleado) requiere el módulo; clientes se autoreservan.
+    if (["ADMIN", "EMPLOYEE"].includes(session.user.role)) {
+      const denied = assertModuleAllowed(session, "reservas")
+      if (denied) return denied
+    }
     const body = await req.json()
     const result = await createReservations(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") })
     return NextResponse.json(body.items ? result : { ...result.reservations[0], operationId: result.operationId }, { status: 201 })

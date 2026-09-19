@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -18,7 +18,7 @@ const closedForEmployee = (status: string, role: string | undefined) =>
 // sirve por /api/evidence?id=<photoId> (los ids son cuid no adivinables).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
@@ -63,7 +63,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 // DELETE { photoId } — borra el registro y el archivo del disco.
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id

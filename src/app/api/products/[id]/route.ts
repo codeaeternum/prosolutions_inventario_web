@@ -1,11 +1,12 @@
 import { auth } from "@/lib/auth"
 import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock } from "@/lib/domain/operations"
+import { syncLowStockAlerts } from "@/lib/low-stock"
 import type { Prisma } from "@prisma/client"
 
 type TransactionClient = Prisma.TransactionClient
@@ -78,7 +79,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("productos")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
@@ -271,6 +272,9 @@ export async function PUT(
       return updatedProduct
     })
 
+    // Post-commit: revisa stock bajo tanto por el ajuste de existencias como
+    // por un cambio de minStock (subir el mínimo puede cruzar el umbral solo).
+    await syncLowStockAlerts(prisma, businessId, [id])
     return NextResponse.json(product)
   } catch (error) {
     console.error("Error updating product:", error)
@@ -287,7 +291,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("productos")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)

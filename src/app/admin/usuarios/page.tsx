@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/select"
 import { Pagination } from "@/components/ui/pagination"
 import { SlugField, normalizeSlugInput, slugFieldError } from "@/components/admin/slug-input"
+import { MODULE_LABELS, type ModuleKey } from "@/lib/access"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -66,6 +67,8 @@ interface User {
   creditBalance?: number
   homeBranchId?: string | null
   homeBranch?: { id: string; name: string } | null
+  allowedModules?: string[] | null
+  allowedBranchIds?: string[] | null
   createdAt: string
   _count: { reservations: number }
 }
@@ -102,6 +105,8 @@ export default function UsersPage() {
     jobTitle: "",
     quickPin: "",
     publicSlug: "",
+    allowedModules: [] as string[],
+    allowedBranchIds: [] as string[],
   })
   const [branches, setBranches] = useState<Branch[]>([])
 
@@ -112,7 +117,13 @@ export default function UsersPage() {
   const [editPublicSlug, setEditPublicSlug] = useState("")
   const [editPin, setEditPin] = useState("")
   const [editPinClear, setEditPinClear] = useState(false)
+  const [editModules, setEditModules] = useState<string[]>([])
+  const [editBranchesAllowed, setEditBranchesAllowed] = useState<string[]>([])
   const [editSaving, setEditSaving] = useState(false)
+
+  // Lista vacía = acceso a todos los módulos / todas las sucursales.
+  const toggleInList = (list: string[], value: string) =>
+    list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
 
   // Credit management dialog
   const [creditOpen, setCreditOpen] = useState(false)
@@ -241,7 +252,13 @@ export default function UsersPage() {
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...newUser, publicSlug: normalizeSlugInput(newUser.publicSlug) }),
+        body: JSON.stringify({
+          ...newUser,
+          publicSlug: normalizeSlugInput(newUser.publicSlug),
+          // Solo personal interno lleva restricciones; para clientes no aplica.
+          allowedModules: newUser.role === "CUSTOMER" ? [] : newUser.allowedModules,
+          allowedBranchIds: newUser.role === "CUSTOMER" ? [] : newUser.allowedBranchIds,
+        }),
       })
 
       const data = await res.json()
@@ -259,6 +276,8 @@ export default function UsersPage() {
           jobTitle: "",
           quickPin: "",
           publicSlug: "",
+          allowedModules: [],
+          allowedBranchIds: [],
         })
         fetchUsers()
       } else {
@@ -278,6 +297,8 @@ export default function UsersPage() {
     setEditPublicSlug(user.publicSlug ?? "")
     setEditPin("")
     setEditPinClear(false)
+    setEditModules(user.allowedModules ?? [])
+    setEditBranchesAllowed(user.allowedBranchIds ?? [])
     setEditOpen(true)
   }
 
@@ -296,7 +317,11 @@ export default function UsersPage() {
     }
     setEditSaving(true)
     try {
-      const payload: { jobTitle: string; quickPin?: string; publicSlug?: string } = { jobTitle: editJobTitle.trim() }
+      const payload: { jobTitle: string; quickPin?: string; publicSlug?: string; allowedModules?: string[]; allowedBranchIds?: string[] } = {
+        jobTitle: editJobTitle.trim(),
+        allowedModules: editModules,
+        allowedBranchIds: editBranchesAllowed,
+      }
       if (editUser.role === "WORKSHOP") {
         payload.publicSlug = normalizeSlugInput(editPublicSlug)
       }
@@ -598,6 +623,48 @@ export default function UsersPage() {
                   disabled={creating}
                 />
               )}
+              {newUser.role !== "CUSTOMER" && (
+                <div className="space-y-3 border-t pt-3">
+                  <div className="space-y-2">
+                    <Label>Módulos permitidos</Label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {Object.entries(MODULE_LABELS).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <Checkbox
+                            checked={newUser.allowedModules.includes(key)}
+                            disabled={creating}
+                            onCheckedChange={() =>
+                              setNewUser({ ...newUser, allowedModules: toggleInList(newUser.allowedModules, key) })
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Sin selección = acceso a todos</p>
+                  </div>
+                  {branches.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Sucursales permitidas</Label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {branches.map((b) => (
+                          <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={newUser.allowedBranchIds.includes(b.id)}
+                              disabled={creating}
+                              onCheckedChange={() =>
+                                setNewUser({ ...newUser, allowedBranchIds: toggleInList(newUser.allowedBranchIds, b.id) })
+                              }
+                            />
+                            {b.name}
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Sin selección = acceso a todas las sucursales</p>
+                    </div>
+                  )}
+                </div>
+              )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                   Cancelar
@@ -763,6 +830,24 @@ export default function UsersPage() {
                           Crédito: ${(user.creditBalance ?? 0).toLocaleString()} deuda
                           {user.creditLimit != null && ` / $${user.creditLimit.toLocaleString()} límite`}
                         </p>
+                      )}
+                      {(user.allowedModules?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5" title="Módulos permitidos">
+                          {user.allowedModules!.map((m) => (
+                            <Badge key={m} variant="secondary" className="text-[10px] px-1.5 py-0">
+                              {MODULE_LABELS[m as ModuleKey] ?? m}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      {(user.allowedBranchIds?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1" title="Sucursales permitidas">
+                          {user.allowedBranchIds!.map((id) => (
+                            <Badge key={id} variant="outline" className="text-[10px] px-1.5 py-0">
+                              {branches.find((b) => b.id === id)?.name ?? "Sucursal"}
+                            </Badge>
+                          ))}
+                        </div>
                       )}
                     </div>
 
@@ -1118,6 +1203,42 @@ export default function UsersPage() {
                 </label>
               </div>
               )}
+              <div className="space-y-3 border-t pt-3">
+                <div className="space-y-2">
+                  <Label>Módulos permitidos</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {Object.entries(MODULE_LABELS).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={editModules.includes(key)}
+                          disabled={editSaving}
+                          onCheckedChange={() => setEditModules(toggleInList(editModules, key))}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Sin selección = acceso a todos</p>
+                </div>
+                {branches.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Sucursales permitidas</Label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {branches.map((b) => (
+                        <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <Checkbox
+                            checked={editBranchesAllowed.includes(b.id)}
+                            disabled={editSaving}
+                            onCheckedChange={() => setEditBranchesAllowed(toggleInList(editBranchesAllowed, b.id))}
+                          />
+                          {b.name}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Sin selección = acceso a todas las sucursales</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           <DialogFooter>

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -52,6 +53,64 @@ function getNotificationTypeLabel(type: NotificationType) {
         default:
             return "Notificación"
     }
+}
+
+type LowStockProduct = { id: string; name: string; stock: number; minStock: number }
+
+/** Panel permanente: los productos activos con stock <= minStock (fuente: /api/products?lowStock=true). */
+function LowStockSection() {
+    const [products, setProducts] = useState<LowStockProduct[] | null>(null)
+
+    useEffect(() => {
+        let cancelled = false
+        fetch("/api/products?lowStock=true&limit=100")
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+                if (!cancelled) setProducts(Array.isArray(data?.products) ? data.products : [])
+            })
+            .catch(() => {
+                if (!cancelled) setProducts([])
+            })
+        return () => { cancelled = true }
+    }, [])
+
+    // Sin datos aún o sin productos bajos: la sección no estorba.
+    if (products === null || products.length === 0) return null
+
+    return (
+        <Card className="border-amber-300 dark:border-amber-700">
+            <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-2">
+                    <div>
+                        <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+                            <AlertTriangle className="h-5 w-5" />
+                            Productos bajo mínimo
+                        </CardTitle>
+                        <CardDescription>
+                            {products.length} producto(s) con existencias en o por debajo del mínimo
+                        </CardDescription>
+                    </div>
+                    <Button size="sm" variant="outline" asChild>
+                        <Link href="/admin/inventario">Ir a inventario</Link>
+                    </Button>
+                </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+                <ul className="divide-y">
+                    {products.map((product) => (
+                        <li key={product.id} className="flex items-center justify-between gap-3 py-2">
+                            <Link href="/admin/inventario" className="font-medium hover:underline truncate">
+                                {product.name}
+                            </Link>
+                            <Badge variant={product.stock === 0 ? "destructive" : "secondary"} className="flex-shrink-0">
+                                {product.stock === 0 ? "Sin existencias" : `Quedan ${product.stock} (mín ${product.minStock})`}
+                            </Badge>
+                        </li>
+                    ))}
+                </ul>
+            </CardContent>
+        </Card>
+    )
 }
 
 function formatFullDate(timestamp: string) {
@@ -200,6 +259,9 @@ export default function NotificacionesPage() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Productos con existencias en o bajo el mínimo */}
+            <LowStockSection />
 
             {/* Filters and Actions */}
             <Card>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
@@ -73,7 +73,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireAdminOrEmployee()
+    const result = await requireModule("clientes")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

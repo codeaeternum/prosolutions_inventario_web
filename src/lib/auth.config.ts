@@ -1,4 +1,5 @@
 import { safeRedirectPath } from "./safe-redirect"
+import { moduleForAdminPath } from "./access"
 import type { NextAuthConfig } from "next-auth"
 
 // Definimos los tipos localmente para evitar problemas con Edge runtime
@@ -16,6 +17,8 @@ declare module "next-auth" {
     status: UserStatus
     businessId: string
     isSuperAdmin?: boolean
+    allowedModules?: string[]
+    allowedBranchIds?: string[]
   }
 
   interface Session {
@@ -29,6 +32,8 @@ declare module "next-auth" {
       businessId: string
       isSuperAdmin?: boolean
       jobTitle?: string | null
+      allowedModules?: string[]
+      allowedBranchIds?: string[]
       // Id del staff que inició esta sesión vía cambio rápido de usuario.
       impersonator?: string | null
     }
@@ -46,6 +51,8 @@ declare module "@auth/core/jwt" {
     isSuperAdmin?: boolean
     jobTitle?: string | null
     impersonator?: string | null
+    allowedModules?: string[]
+    allowedBranchIds?: string[]
   }
 }
 
@@ -56,7 +63,7 @@ const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)
 const PROTECTED_PATHS = ["/mis-reservas", "/perfil", "/carrito"]
 
-type AuthSession = { user?: { role: UserRole; status: UserStatus; isSuperAdmin?: boolean } } | null
+type AuthSession = { user?: { role: UserRole; status: UserStatus; isSuperAdmin?: boolean; allowedModules?: string[] } } | null
 
 function isPublicPath(pathname: string): boolean {
   return (
@@ -117,14 +124,40 @@ export function getAuthRedirect(
       return null
     }
 
-    // 2.2) EMPLOYEE restrictions
-    if (role === "EMPLOYEE") {
+    // Restricción por módulo asignado (User.allowedModules; vacío = libre).
+    // ADMIN no se restringe; la lista vive en lib/access.ts y viaja en el JWT.
+    const allowed = auth?.user?.allowedModules
+    const hasExplicitModules = !!(allowed && allowed.length > 0)
+
+    // 2.2) EMPLOYEE restrictions (regla general cuando NO hay módulos
+    // asignados; con asignación explícita, 2.4 es la que manda).
+    if (role === "EMPLOYEE" && !hasExplicitModules) {
       const restrictedForEmployee = ["/admin/usuarios", "/admin/credito", "/admin/reportes", "/admin/notificaciones", "/admin/configuracion"]
       if (restrictedForEmployee.some(path => pathname.startsWith(path))) {
         return Response.redirect(new URL("/admin", nextUrl))
       }
     }
-    
+
+    // 2.4) Gate de módulo por ruta para cualquier rol no-ADMIN con lista.
+    if (role !== "ADMIN" && hasExplicitModules) {
+      const required = moduleForAdminPath(pathname)
+      if (required && !allowed.includes(required)) {
+        return Response.redirect(new URL("/admin", nextUrl))
+      }
+    }
+
+    return null
+  }
+
+  // 2.5) /aliado: portal del taller asociado (capta equipos para otro tenant).
+  // Lo usa el rol WORKSHOP y el staff del negocio captador; el cliente final
+  // no tiene nada que hacer aquí.
+  if (pathname.startsWith("/aliado")) {
+    if (!isLoggedIn) {
+      return Response.redirect(new URL("/login", nextUrl))
+    }
+    if (status !== "APPROVED") return Response.redirect(new URL("/pending", nextUrl))
+    if (role === "CUSTOMER") return Response.redirect(new URL("/", nextUrl))
     return null
   }
 
@@ -146,10 +179,12 @@ export function getAuthRedirect(
     return Response.redirect(new URL("/pending", nextUrl))
   }
 
-  // 4) /login o /register con auth: staff (ADMIN/EMPLOYEE) -> /admin, WORKSHOP -> /admin/mercado, APPROVED -> /catalogo, sino -> /pending
+  // 4) /login o /register con auth: superadmin -> centro de mando /platform;
+  // staff (ADMIN/EMPLOYEE) -> /admin, WORKSHOP -> portal /aliado, APPROVED -> /catalogo, sino -> /pending
   if ((pathname === "/login" || pathname === "/register") && isLoggedIn) {
+    if (auth?.user?.isSuperAdmin && isApproved) return Response.redirect(new URL("/platform", nextUrl))
     if ((isAdmin || role === "EMPLOYEE") && isApproved) return Response.redirect(new URL("/admin", nextUrl))
-    if (role === "WORKSHOP" && isApproved) return Response.redirect(new URL("/admin/mercado", nextUrl))
+    if (role === "WORKSHOP" && isApproved) return Response.redirect(new URL("/aliado", nextUrl))
     if (isApproved) return Response.redirect(new URL("/catalogo", nextUrl))
     return Response.redirect(new URL("/pending", nextUrl))
   }
@@ -196,6 +231,8 @@ export const authConfig: NextAuthConfig = {
         session.user.isSuperAdmin = token.isSuperAdmin ?? false
         session.user.jobTitle = token.jobTitle ?? null
         session.user.impersonator = token.impersonator ?? null
+        session.user.allowedModules = token.allowedModules ?? []
+        session.user.allowedBranchIds = token.allowedBranchIds ?? []
       }
       return session
     }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { requireModule } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSettingsMap } from "@/lib/settings"
 import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
@@ -77,10 +77,10 @@ async function readProfile(businessId: string) {
   }
 }
 
-// GET - Perfil público del negocio (solo admin)
+// GET - Perfil público del negocio (módulo configuración)
 export async function GET() {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireModule("configuracion")
     if (auth.error) return auth.error
     return NextResponse.json(await readProfile(auth.session.user.businessId), {
       headers: { "Cache-Control": "private, no-store" },
@@ -94,7 +94,7 @@ export async function GET() {
   }
 }
 
-// POST - Guardar perfil público (solo admin)
+// POST - Guardar perfil público (módulo configuración)
 // body: { slug?, phone?, description?, address?, logo?, businessName?, showInDirectory? } —
 // `logo` es el path devuelto por /api/upload/logo (vacío/null quita el logo).
 // `businessName` actualiza Business.name Y ticket_business_name scoped.
@@ -104,7 +104,7 @@ export async function GET() {
 // El slug no puede quedar vacío: Business.slug es obligatorio.
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdmin()
+    const auth = await requireModule("configuracion")
     if (auth.error) return auth.error
     const businessId = auth.session.user.businessId
 

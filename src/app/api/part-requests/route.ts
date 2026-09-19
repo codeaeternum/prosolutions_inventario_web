@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
@@ -34,12 +34,12 @@ const cleanText = (value: string) =>
 
 const statuses = ["OPEN", "CONTACTED", "CLOSED"] as const
 
-// GET /api/part-requests?status=&page= — staff only (ADMIN/EMPLOYEE). El
-// feed es global pero el panel requiere staff autenticado con empresa.
+// GET /api/part-requests?status=&page= — staff con módulo mercado. El
+// feed es global pero el panel lo opera el módulo de mercado B2B.
 // Orden: OPEN primero, dentro de cada estado las más recientes. take 50.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("mercado")
     if (auth.error) return auth.error
     businessIdOf(getSession(auth)!) // valida sesión con empresa asignada
 

@@ -93,6 +93,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           status: user.status,
           businessId: user.businessId,
           isSuperAdmin: user.isSuperAdmin,
+          allowedModules: user.allowedModules,
+          allowedBranchIds: user.allowedBranchIds,
         }
       }
     })

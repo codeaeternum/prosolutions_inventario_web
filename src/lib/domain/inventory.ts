@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, cents, openRegister, operation, operationKeySchema, releaseStock, takeStock, resolveBranch } from "./operations"
+import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 const movementSchema = z.object({
   productId: z.string().min(1), type: z.enum(["IN", "OUT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "DAMAGED", "LOST", "RETURN", "TRANSFER"]),
@@ -11,7 +12,7 @@ const movementSchema = z.object({
 const schema = z.object({ idempotencyKey: operationKeySchema, branchId: z.string().min(1).optional(), items: z.array(movementSchema).min(1).max(100) })
 export async function moveInventory(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = schema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
     const movements = []
     for (const row of input.items) {
       const product = await tx.product.findFirst({ where: { id: row.productId, businessId } })
@@ -83,4 +84,7 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
     }
     return { movements }
   })
+  // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
+  await syncLowStockAlerts(db, businessId, collectLowStockIds(input.items))
+  return result
 }

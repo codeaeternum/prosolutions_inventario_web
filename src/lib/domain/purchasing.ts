@@ -1,6 +1,7 @@
 import type { PrismaClient, PurchaseStatus } from "@prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, operation, operationKeySchema, releaseStock, resolveBranch } from "./operations"
+import { syncLowStockAlerts } from "../low-stock"
 
 /** Folio público de una orden de compra: OC-000001. */
 export function purchaseFolio(number: number): string {
@@ -98,7 +99,10 @@ const STATUS_LABEL: Record<PurchaseStatus, string> = {
 export async function setPurchaseStatus(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = statusSchema.parse(raw)
   const target = TARGET[input.action]
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "PURCHASE_STATUS", permission: "staff", payload: { id, ...input } }, async tx => {
+  // Productos que entran al recibir: la alerta de stock bajo se sincroniza
+  // post-commit (subir stock también sirve para limpiar flags y rearmarla).
+  const receivedProductIds: string[] = []
+  const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "PURCHASE_STATUS", permission: "staff", payload: { id, ...input } }, async tx => {
     const purchase = await tx.purchase.findFirst({
       where: { id, businessId },
       include: { items: true, branch: { select: { id: true, name: true } } },
@@ -112,6 +116,7 @@ export async function setPurchaseStatus(db: PrismaClient, actorId: string, busin
       const folio = purchaseFolio(purchase.number)
       for (const item of purchase.items) {
         await releaseStock(tx, { productId: item.productId, quantity: item.quantity, branchId: purchase.branchId, businessId })
+        receivedProductIds.push(item.productId)
         // costPrice existe en Product: queda como "último costo" conocido.
         const data: { costPrice?: number } = item.unitCostCents > 0 ? { costPrice: amount(item.unitCostCents) } : {}
         const updated = await tx.product.update({ where: { id: item.productId }, data })
@@ -141,6 +146,8 @@ export async function setPurchaseStatus(db: PrismaClient, actorId: string, busin
     if (changed.count !== 1) throw new BusinessError("La compra cambió durante la operación; reintenta.", 409)
     return { purchaseId: purchase.id, number: purchase.number, folio: purchaseFolio(purchase.number), status: target, branchName: purchase.branch.name }
   })
+  await syncLowStockAlerts(db, businessId, receivedProductIds)
+  return result
 }
 
 export function listPurchases(db: PrismaClient, businessId: string, status?: PurchaseStatus) {

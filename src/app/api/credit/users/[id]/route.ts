@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdmin } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
@@ -12,7 +12,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const result = await requireAdmin()
+  const result = await requireModule("credito")
   if (result.error) return result.error
   const businessId = businessIdOf(getSession(result)!)
 
@@ -40,7 +40,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const result = await requireAdmin()
+  const result = await requireModule("credito")
   if (result.error) return result.error
   const businessId = businessIdOf(getSession(result)!)
 

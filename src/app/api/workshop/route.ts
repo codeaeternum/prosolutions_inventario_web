@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createRepair } from "@/lib/domain/workshop"
@@ -108,12 +108,15 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const body = await req.json()
+    // La orden nace en la sucursal de recepción (intakeBranchId).
+    const denied = assertBranchAllowed(session, body?.intakeBranchId)
+    if (denied) return denied
     if (body.action === "CREATE_BRANCH") {
       const input = z.object({ name: z.string().trim().min(2).max(80), idempotencyKey: operationKeySchema }).parse(body)
       const result = await operation(prisma, { key: input.idempotencyKey, actorId, businessId, kind: "BRANCH_CREATE", permission: "admin", payload: input.name }, async tx => ({ branch: await tx.branch.create({ data: { businessId, name: input.name } }) }))

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdmin, requireMarketplaceViewer } from "@/lib/api-auth"
+import { getSession, requireModule, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
@@ -19,6 +19,11 @@ export async function GET(req: Request) {
     const result = await requireMarketplaceViewer()
     if (result.error) return result.error
     const session = getSession(result)!
+    // WORKSHOP es el cliente del catálogo; el staff interno necesita el módulo.
+    if (session.user.role !== "WORKSHOP") {
+      const denied = assertModuleAllowed(session, "mercado")
+      if (denied) return denied
+    }
     const isAdmin = session.user.role === "ADMIN"
     const businessId = businessIdOf(session)
 
@@ -105,10 +110,10 @@ export async function GET(req: Request) {
 }
 
 // POST /api/marketplace  { productId, marketplaceVisible }
-// Solo ADMIN: muestra u oculta un producto del catálogo para talleres.
+// Módulo mercado: muestra u oculta un producto del catálogo para talleres.
 export async function POST(req: Request) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("mercado")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

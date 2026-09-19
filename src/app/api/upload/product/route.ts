@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdmin } from "@/lib/api-auth"
+import { requireModule } from "@/lib/api-auth"
 import * as fs from "fs"
 import * as path from "path"
 import { randomBytes } from "crypto"
@@ -11,7 +11,7 @@ const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
 
 export async function POST(request: NextRequest) {
   try {
-    const result = await requireAdmin()
+    const result = await requireModule("productos")
     if (result.error) return result.error
 
     const formData = await request.formData()

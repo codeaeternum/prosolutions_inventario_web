@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -41,7 +41,7 @@ const keyOf = (brand: string, model: string) => `${brand}\u0000${model}`
 export async function POST(req: Request) {
   try {
     // Primero staff autenticado; el scope decide la elevación después.
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
 

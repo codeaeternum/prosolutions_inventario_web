@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("ventas")
     if (auth.error) return auth.error
     const { id } = await params
     const sale = await prisma.sale.findUnique({
@@ -14,7 +14,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       include: {
         branch: { select: { id: true, name: true } },
         seller: { select: { id: true, name: true } },
-        customer: { select: { id: true, name: true, customerType: true } },
+        customer: { select: { id: true, name: true, businessName: true, customerType: true } },
         items: { include: { product: { select: { id: true, name: true, barcode: true } } } },
         payments: { orderBy: { createdAt: "asc" } },
       },
