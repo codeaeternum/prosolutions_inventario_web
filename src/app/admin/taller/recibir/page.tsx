@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Store, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,7 +24,7 @@ type AccessType = "NONE" | "PATTERN" | "PIN" | "PASSWORD"
 type FunctionalCondition = "ENCENDIDO" | "APAGADO" | "MOJADO" | "MANIPULADO" | "ROTO" | "INCOMPLETO"
 type Aesthetics = "BUENO" | "REGULAR" | "MALO"
 type AdvanceMethod = "CASH" | "CARD" | "TRANSFER"
-type CreatedOrder = { id: string; number: number; customerName: string }
+type CreatedOrder = { id: string; number: number; customerName: string; originBusinessName?: string | null }
 type LookupField = "customerName" | "customerPhone"
 type WorkshopService = { id: string; name: string; description: string | null; priceCents: number | null; equipmentType: string | null }
 type DeviceModel = { id: string; brand: string; model: string; code: string | null; type: string }
@@ -89,6 +89,9 @@ const emptyForm = {
   intakeCondition: "", reportedIssue: "",
   promisedAt: "", scheduledAt: "", location: "",
   advanceEnabled: false, advanceAmount: "", advanceMethod: "CASH" as AdvanceMethod,
+  // Taller aliado de mostrador: el negocio no tiene cuenta propia — se
+  // registra quién lo trajo y el precio convenio pactado (opcional).
+  partnerDrop: false, originBusinessName: "", originContact: "", partnerPrice: "",
 }
 
 const chipClass = (selected: boolean) =>
@@ -516,6 +519,11 @@ export default function ReceiveEquipmentPage() {
       const phoneAlt = form.customerPhoneAlt.trim()
       if (phoneAlt && (parsePhone(phoneAlt).local.length < 7 || !PHONE_PATTERN.test(phoneAlt))) return "Revisa el teléfono alterno: al menos 7 dígitos después de la lada."
       if (!form.intakeBranchId) return "Selecciona la sucursal de recepción."
+      if (form.partnerDrop) {
+        if (!form.originBusinessName.trim()) return "Escribe el nombre del negocio aliado o desactiva la sección."
+        const partner = Number.parseFloat(form.partnerPrice)
+        if (form.partnerPrice.trim() && (!Number.isFinite(partner) || partner < 0 || partner > 1000000)) return "Revisa el precio convenio: debe ser un importe positivo."
+      }
     }
     if (index === 1) {
       if (!form.equipmentType) return "Selecciona el tipo de equipo."
@@ -589,6 +597,11 @@ export default function ReceiveEquipmentPage() {
   const budgetNumber = Number.parseFloat(form.budgetAmount)
   const budgetCents = form.budgetAmount.trim() !== "" && Number.isFinite(budgetNumber) && budgetNumber >= 0 ? Math.round(budgetNumber * 100) : 0
   const budgetLabel = budgetCents > 0 ? money(budgetCents) : ""
+  // Precio convenio pactado con el taller aliado (interno; no es la
+  // cotización al cliente final).
+  const partnerPriceNumber = Number.parseFloat(form.partnerPrice)
+  const partnerPriceCents = form.partnerDrop && form.partnerPrice.trim() !== "" && Number.isFinite(partnerPriceNumber) && partnerPriceNumber >= 0 ? Math.round(partnerPriceNumber * 100) : 0
+  const partnerLabel = partnerPriceCents > 0 ? money(partnerPriceCents) : ""
 
   function buildPayload() {
     const accessValue = form.accessType === "PATTERN" ? form.pattern.join("-") : form.accessType === "NONE" ? "" : form.accessValue.trim()
@@ -618,6 +631,11 @@ export default function ReceiveEquipmentPage() {
       promisedAt: form.promisedAt && !Number.isNaN(Date.parse(form.promisedAt)) ? new Date(form.promisedAt).toISOString() : "",
       scheduledAt: form.scheduledAt && !Number.isNaN(Date.parse(form.scheduledAt)) ? new Date(form.scheduledAt).toISOString() : "",
       advance: form.advanceEnabled && advanceCents > 0 ? { amountCents: advanceCents, method: form.advanceMethod } : "",
+      // Taller aliado (mostrador): solo viaja cuando la sección está activa;
+      // el precio convenio es interno y opcional.
+      originBusinessName: form.partnerDrop ? form.originBusinessName.trim() : "",
+      originContact: form.partnerDrop ? form.originContact.trim() : "",
+      partnerPriceCents: form.partnerDrop && partnerPriceCents > 0 ? partnerPriceCents : undefined,
     }).filter(([, value]) => value !== "" && value !== undefined))
   }
 
@@ -739,7 +757,7 @@ export default function ReceiveEquipmentPage() {
         <section className="rounded-xl border bg-card p-6 text-center sm:p-8">
           <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
           <h2 className="mt-3 text-2xl font-bold">Orden {createdFolio} creada</h2>
-          <p className="mt-2 text-muted-foreground">El equipo de {created.customerName} quedó registrado como recibido. Entrega el ticket al cliente.</p>
+          <p className="mt-2 text-muted-foreground">El equipo de {created.customerName} quedó registrado como recibido{created.originBusinessName ? ` — captada por ${created.originBusinessName}` : ""}. Entrega el ticket al cliente.</p>
           {advanceCents > 0 && (
             <p className="mt-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">Anticipo registrado: {money(advanceCents)} ({advanceMethodLabel}).</p>
           )}
@@ -810,6 +828,35 @@ export default function ReceiveEquipmentPage() {
                       No hay sucursales del taller registradas. Crea una desde la pantalla de órdenes antes de recibir equipos.
                     </p>
                   )}
+                  <div className="rounded-lg border border-indigo-200/70 bg-indigo-500/5 p-4 dark:border-indigo-500/30 sm:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="flex items-center gap-2 text-sm font-medium"><Store size={15} className="text-indigo-600 dark:text-indigo-300" />Traída por taller aliado</p>
+                        <p className="text-xs text-muted-foreground">Un negocio sin cuenta (p. ej. Telcel) trae equipos y reparamos a precio convenio.</p>
+                      </div>
+                      <button type="button" role="switch" aria-checked={form.partnerDrop} aria-expanded={form.partnerDrop} aria-label="La orden la trae un taller aliado" onClick={() => update({ partnerDrop: !form.partnerDrop })} className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.partnerDrop ? "bg-indigo-600" : "bg-muted"}`}>
+                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-all ${form.partnerDrop ? "left-[1.375rem]" : "left-0.5"}`} />
+                      </button>
+                    </div>
+                    {form.partnerDrop && (
+                      <div className="mt-4 grid gap-4 border-t border-indigo-200/70 pt-4 dark:border-indigo-500/30 sm:grid-cols-2">
+                        <label className="block space-y-2 text-sm">Negocio aliado *
+                          <Input value={form.originBusinessName} onChange={event => update({ originBusinessName: event.target.value })} maxLength={80} autoComplete="off" placeholder="Ej. Telcel Centro" />
+                        </label>
+                        <label className="block space-y-2 text-sm">Quién lo trajo / teléfono del negocio
+                          <Input value={form.originContact} onChange={event => update({ originContact: event.target.value })} maxLength={120} autoComplete="off" placeholder="Ej. Marisol · 667 123 4567" />
+                        </label>
+                        <label className="block space-y-2 text-sm">Precio convenio al aliado (MXN)
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                            <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.partnerPrice} onChange={event => update({ partnerPrice: event.target.value })} placeholder="Según convenio" className="pl-7" />
+                          </div>
+                          <span className="block text-xs text-muted-foreground">Interno: lo que se cobra al negocio, no al cliente. Opcional.</span>
+                        </label>
+                        <p className="flex items-start gap-1.5 self-end text-xs text-muted-foreground"><ShieldCheck size={13} className="mt-0.5" aria-hidden />El cliente final conserva su flujo normal de cotización y autorización.</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1113,6 +1160,10 @@ export default function ReceiveEquipmentPage() {
                       ...(form.customerPhoneAlt.trim() ? [["Teléfono alterno", form.customerPhoneAlt.trim()] as [string, ReactNode]] : []),
                       ["Sucursal de recepción", branchName],
                       ["Responsable técnico", staffName],
+                      ...(form.partnerDrop ? [
+                        ["Taller aliado", [form.originBusinessName.trim(), form.originContact.trim()].filter(Boolean).join(" · ")] as [string, ReactNode],
+                        ["Precio convenio", partnerLabel || "Sin convenio capturado"] as [string, ReactNode],
+                      ] : []),
                     ]} />
                     <SummaryGroup title="Equipo" icon={Package} items={[
                       ["Tipo", equipmentLabel],

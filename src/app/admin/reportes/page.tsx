@@ -21,6 +21,8 @@ import {
   RefreshCw,
   Store,
   Wrench,
+  PieChart,
+  ChartLine,
 } from "lucide-react"
 import {
   Table,
@@ -33,6 +35,14 @@ import {
 import { EmptyState } from "@/components/admin/empty-state"
 import { formatDate } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
+import {
+  BarChart,
+  DonutChart,
+  GroupedBars,
+  HorizontalBars,
+  LineChart,
+} from "@/components/admin/charts"
+import { repairLabels } from "@/lib/workshop-labels"
 
 interface ReportStats {
   totalProducts: number
@@ -139,6 +149,19 @@ interface MarketplaceDemandReport {
   }>
 }
 
+// Respuesta de /api/reports?series=1 — todos los montos en centavos.
+interface ReportSeries {
+  generatedAt: string
+  salesByDay: Array<{ day: string; salesCents: number; count: number }>
+  cashByDay: Array<{ day: string; inCents: number; outCents: number }>
+  repairMoney: Array<{ day: string; paymentsCents: number }>
+  topModels: Array<{ label: string; count: number }>
+  topParts: Array<{ label: string; count: number; revenueCents: number }>
+  repairsByStatus: Array<{ status: string; count: number }>
+  customersByMonth: Array<{ month: string; count: number }>
+  topCustomers: Array<{ label: string; orders: number; spentCents: number }>
+}
+
 export default function ReportsPage() {
   const { formatPrice } = useCurrency()
   const [stats, setStats] = useState<ReportStats | null>(null)
@@ -149,6 +172,9 @@ export default function ReportsPage() {
   const [demand, setDemand] = useState<MarketplaceDemandReport | null>(null)
   const [demandLoading, setDemandLoading] = useState(true)
   const [demandError, setDemandError] = useState<string | null>(null)
+  const [series, setSeries] = useState<ReportSeries | null>(null)
+  const [seriesLoading, setSeriesLoading] = useState(true)
+  const [seriesError, setSeriesError] = useState<string | null>(null)
 
   const fetchStats = async () => {
     try {
@@ -186,10 +212,27 @@ export default function ReportsPage() {
     }
   }
 
+  // Series para las gráficas: fetch independiente para que un fallo aquí
+  // no tumbe el reporte general.
+  const fetchSeries = async () => {
+    try {
+      setSeriesLoading(true)
+      setSeriesError(null)
+      const response = await fetch("/api/reports?series=1")
+      if (!response.ok) throw new Error("Error al cargar series")
+      setSeries(await response.json())
+    } catch {
+      setSeriesError("No se pudieron cargar las gráficas")
+    } finally {
+      setSeriesLoading(false)
+    }
+  }
+
   useEffect(() => {
     queueMicrotask(() => {
       void fetchStats()
       void fetchDemand()
+      void fetchSeries()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -253,6 +296,27 @@ export default function ReportsPage() {
   const maxWeekQty = demand
     ? Math.max(1, ...demand.weekly.map((w) => w.qty))
     : 1
+
+  // Las series llegan en centavos; formatPrice espera pesos.
+  const money = (cents: number) => formatPrice(cents / 100)
+  const dayLabel = (d: string) =>
+    new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", {
+      day: "2-digit",
+      month: "short",
+    })
+  const monthLabel = (m: string) =>
+    new Date(`${m}-15T12:00:00`).toLocaleDateString("es-MX", {
+      month: "short",
+      year: "2-digit",
+    })
+  const intFmt = (v: number) => v.toLocaleString("es-MX")
+
+  const salesTotal = series?.salesByDay.reduce((s, d) => s + d.salesCents, 0) ?? 0
+  const salesCount = series?.salesByDay.reduce((s, d) => s + d.count, 0) ?? 0
+  const cashTotals = series?.cashByDay.reduce(
+    (acc, d) => ({ inC: acc.inC + d.inCents, outC: acc.outC + d.outCents }),
+    { inC: 0, outC: 0 }
+  ) ?? { inC: 0, outC: 0 }
 
   return (
     <div className="space-y-6">
@@ -903,6 +967,218 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Gráficas — series de los últimos 30 días y rankings del taller */}
+      <div className="space-y-4 pt-4">
+        <h2 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+          <ChartLine className="h-5 w-5" />
+          Gráficas
+        </h2>
+
+        {seriesLoading ? (
+          <Card>
+            <CardContent className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </CardContent>
+          </Card>
+        ) : seriesError || !series ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-8">
+              <p className="text-sm text-destructive">
+                {seriesError || "Error desconocido"}
+              </p>
+              <Button onClick={fetchSeries} variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Reintentar
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            {/* Ventas y cobros de taller — últimos 30 días */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5" />
+                    Ventas
+                  </CardTitle>
+                  <CardDescription>
+                    Últimos 30 días · {salesCount}{" "}
+                    {salesCount === 1 ? "venta" : "ventas"} ·{" "}
+                    {money(salesTotal)}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <LineChart
+                    data={series.salesByDay.map((d) => ({
+                      label: dayLabel(d.day),
+                      value: d.salesCents,
+                      hint: `${d.count} ${d.count === 1 ? "venta" : "ventas"}`,
+                    }))}
+                    format={money}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Wrench className="h-5 w-5" />
+                    Cobros de Taller
+                  </CardTitle>
+                  <CardDescription>
+                    Últimos 30 días · pagos confirmados
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <LineChart
+                    data={series.repairMoney.map((d) => ({
+                      label: dayLabel(d.day),
+                      value: d.paymentsCents,
+                    }))}
+                    format={money}
+                    color="#7c3aed"
+                  />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Ingresos vs egresos de caja */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5" />
+                  Ingresos y Egresos de Caja
+                </CardTitle>
+                <CardDescription>
+                  Últimos 30 días · Ganancia:{" "}
+                  <span
+                    className={
+                      cashTotals.inC - cashTotals.outC < 0
+                        ? "text-destructive font-medium"
+                        : "text-green-600 font-medium"
+                    }
+                  >
+                    {money(cashTotals.inC - cashTotals.outC)}
+                  </span>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <GroupedBars
+                  data={series.cashByDay.map((d) => ({
+                    label: dayLabel(d.day),
+                    values: [d.inCents, d.outCents],
+                  }))}
+                  series={[
+                    { name: "Ingresos", color: "#16a34a" },
+                    { name: "Egresos", color: "#dc2626" },
+                  ]}
+                  format={money}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Estado del taller y altas de clientes */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <PieChart className="h-5 w-5" />
+                    Reparaciones por Estado
+                  </CardTitle>
+                  <CardDescription>Todas las órdenes registradas</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <DonutChart
+                    data={series.repairsByStatus.map((s) => ({
+                      label:
+                        repairLabels[s.status as keyof typeof repairLabels] ??
+                        s.status,
+                      value: s.count,
+                    }))}
+                    format={intFmt}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Clientes Nuevos por Mes
+                  </CardTitle>
+                  <CardDescription>Últimos 6 meses</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <BarChart
+                    data={series.customersByMonth.map((m) => ({
+                      label: monthLabel(m.month),
+                      value: m.count,
+                    }))}
+                    format={intFmt}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Rankings del taller */}
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Modelos Más Reparados</CardTitle>
+                  <CardDescription>Top 10 · histórico</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <HorizontalBars
+                    data={series.topModels.map((m) => ({
+                      label: m.label,
+                      value: m.count,
+                    }))}
+                    format={intFmt}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Refacciones Más Usadas</CardTitle>
+                  <CardDescription>Top 10 · piezas aprobadas</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <HorizontalBars
+                    data={series.topParts.map((p) => ({
+                      label: p.label,
+                      value: p.count,
+                      hint: money(p.revenueCents),
+                    }))}
+                    format={(v) => `${intFmt(v)} pzs`}
+                    color="#0891b2"
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Clientes del Taller</CardTitle>
+                  <CardDescription>Top 10 por órdenes</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <HorizontalBars
+                    data={series.topCustomers.map((c) => ({
+                      label: c.label,
+                      value: c.orders,
+                      hint: `~${money(c.spentCents)}`,
+                    }))}
+                    format={(v) => `${intFmt(v)} ord.`}
+                    color="#f59e0b"
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

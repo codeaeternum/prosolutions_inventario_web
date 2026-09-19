@@ -50,6 +50,9 @@ model Business {
   saleItems           SaleItem[]
   payments            Payment[]
   repairOrders        RepairOrder[]
+  // Órdenes que este negocio captó para que las repare otro tenant
+  // (modelo taller asociado: Telcel trae el equipo, el taller lo repara).
+  originOrders        RepairOrder[]       @relation("OriginOrders")
   repairParts         RepairPart[]
   repairEvents        RepairEvent[]
   cashRequests        CashRequest[]
@@ -500,6 +503,10 @@ model CashRegister {
   closedById String?
   closedBy   User?   @relation("RegisterClosedBy", fields: [closedById], references: [id])
 
+  // Conteo físico al cerrar: {"1000":2,"500":5,…} denominación→piezas.
+  // finalAmount sigue siendo el total contado (suma del desglose).
+  denominations Json?
+
   notes String?
 
   movements CashMovement[]
@@ -597,6 +604,7 @@ model Branch {
   isActive          Boolean             @default(true)
   receivedOrders    RepairOrder[]       @relation("IntakeBranch")
   heldOrders        RepairOrder[]       @relation("CurrentBranch")
+  sourceParts       RepairPart[]        @relation("PartSourceBranch")
   stocks            BranchStock[]
   cashRegisters     CashRegister[]
   sales             Sale[]
@@ -792,6 +800,15 @@ model RepairOrder {
   // cuenta cuántas veces ha entrado a garantía.
   warrantyUntil        DateTime?
   warrantyCount        Int            @default(0)
+  // Taller aliado que captó el equipo (modelo "Telcel trae → nosotros
+  // reparamos"): originBusinessId liga el tenant cuando está registrado y
+  // originBusinessName queda como texto cuando no lo está. partnerPriceCents
+  // es el precio convenio que se cobra al aliado (no al cliente final).
+  originBusinessId     String?
+  originBusiness       Business?      @relation("OriginOrders", fields: [originBusinessId], references: [id], onDelete: SetNull)
+  originBusinessName   String?
+  originContact        String?
+  partnerPriceCents    Int?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
   uploadTokenExpiresAt DateTime?
@@ -836,6 +853,11 @@ model RepairPart {
   createdBy      User        @relation("RepairPartCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   // REQUESTED = pedida por técnico pendiente de autorización; APPROVED/REJECTED.
   status         PartStatus  @default(APPROVED)
+  // Sucursal de donde salió físicamente la pieza (default: la sucursal
+  // actual de la orden). Permite que un almacén de refacciones surta a los
+  // talleres sin mover la orden de sucursal.
+  sourceBranchId String?
+  sourceBranch   Branch?     @relation("PartSourceBranch", fields: [sourceBranchId], references: [id], onDelete: SetNull)
   decidedById    String?
   decidedBy      User?       @relation("RepairPartDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
   decidedAt      DateTime?

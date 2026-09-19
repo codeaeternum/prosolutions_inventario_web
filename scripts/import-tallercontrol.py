@@ -23,7 +23,9 @@ import openpyxl
 BUSINESS_ID = "biz-default"
 BRANCH_MAIN = "branch-maneadero"
 BRANCH_CB = "branch-canbuenavista"
-FALLBACK_ACTOR = "pilot-admin-01"
+# Receptor por defecto cuando "Usuario recibio" viene vacío o no mapea:
+# el script crea a Cristina en ambos entornos, así que es FK seguro.
+FALLBACK_ACTOR = "imp-staff-cristina"
 
 STAFF = {
     "cristina solorio lopez": ("imp-staff-cristina", "Cristina Solorio Lopez"),

@@ -26,11 +26,20 @@ export async function GET(req: Request) {
     const status = query.get("status")
     const view = query.get("view")
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
-    if (view && !["debt", "today", "overdue", "mine"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
+    if (view && !["debt", "today", "overdue", "mine", "partner"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
     const now = new Date()
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const dayEnd = new Date(dayStart.getTime() + 86400000)
     const openStages = Object.keys(repairLabels).filter(s => !["DELIVERED", "CANCELLED"].includes(s))
+    // Los alcances con OR (aliados y búsqueda) viajan dentro de AND para que
+    // combinarlos no pise un OR con otro en el mismo nivel del where.
+    const scopes = [
+      // "Aliados": órdenes captadas por un taller aliado — ligadas por tenant
+      // (originBusinessId, intake /api/workshop/partner) o registradas de
+      // mostrador con el nombre del negocio (originBusinessName).
+      view === "partner" ? { OR: [{ originBusinessId: { not: null } }, { originBusinessName: { not: null } }] } : null,
+      search ? { OR: [...["customerName", "customerPhone", "model", "serialNumber"].map(field => ({ [field]: { contains: search, mode: "insensitive" as const } })), ...(orderNumber === undefined ? [] : [{ number: orderNumber }])] } : null,
+    ].filter(scope => scope !== null)
     const where = {
       businessId,
       ...(branchId ? { currentBranchId: branchId } : {}),
@@ -42,13 +51,16 @@ export async function GET(req: Request) {
       // filtros normales (etapa, sucursal, búsqueda) — el índice
       // (assignedToId, status) de RepairOrder sostiene la consulta.
       ...(view === "mine" ? { assignedToId: session.user.id } : {}),
-      ...(search ? { OR: [...["customerName", "customerPhone", "model", "serialNumber"].map(field => ({ [field]: { contains: search, mode: "insensitive" as const } })), ...(orderNumber === undefined ? [] : [{ number: orderNumber }])] } : {}),
+      ...(scopes.length ? { AND: scopes } : {}),
     }
     // Cobros que mueven el saldo: CONFIRMED suman y los reembolsos REFUNDED
     // (amount negativo) restan — neto = dinero retenido por la orden.
     const paymentWhere = { status: { in: ["CONFIRMED", "REFUNDED"] as ("CONFIRMED" | "REFUNDED")[] } }
     const orderInclude = {
       currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } },
+      // Taller aliado ligado por tenant: el listado muestra su nombre aunque
+      // la captura de mostrador (originBusinessName) no exista.
+      originBusiness: { select: { id: true, name: true } },
       payments: { where: paymentWhere, select: { amount: true, purpose: true, status: true } },
       // Refacciones autorizadas: se cobran además de la mano de obra.
       parts: { where: { status: "APPROVED" as const }, select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true } },

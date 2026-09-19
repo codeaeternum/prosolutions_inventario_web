@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Check, Package, PackagePlus, Trash2, X } from "lucide-react"
+import { Check, Package, PackagePlus, Trash2, Warehouse, X } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,9 @@ export type WorkshopPart = {
     createdAt?: string
     createdBy?: { name: string } | null
     product?: { id: string; name: string; barcode: string | null; retailPrice?: number | null } | null
+    /** Sucursal que surte la pieza; null = la sucursal actual de la orden. */
+    sourceBranchId?: string | null
+    sourceBranch?: { id: string; name: string } | null
 }
 
 // Subconjunto del DTO de GET /api/products que usa el buscador de vínculo.
@@ -35,7 +38,7 @@ type ProductOption = {
 
 // Payload que el padre reenvía a POST /api/workshop/{order.id} (agregando idempotencyKey).
 export type PartActionPayload =
-    | { action: "PART_REQUEST"; expectedVersion: number; partDescription: string; partQty: number; partCostCents: number; partPriceCents: number; partProductId?: string }
+    | { action: "PART_REQUEST"; expectedVersion: number; partDescription: string; partQty: number; partCostCents: number; partPriceCents: number; partProductId?: string; sourceBranchId?: string }
     | { action: "PART_DECIDE"; expectedVersion: number; partId: string; approve: boolean; detail?: string }
     | { action: "PART_REMOVE"; expectedVersion: number; partId: string }
 
@@ -54,6 +57,10 @@ export function PartsSection(props: {
     canDecide: boolean
     /** Para mostrar "Retirar" en las REQUESTED propias del empleado. */
     currentUserId?: string | null
+    /** Sucursales activas del negocio para el selector "Surtir desde". */
+    branches: { id: string; name: string }[]
+    /** Sucursal actual de la orden: default del selector "Surtir desde". */
+    currentBranchId: string
     /** true cuando la orden está cerrada: oculta el formulario y las acciones. */
     readOnly?: boolean
     busy?: boolean
@@ -65,6 +72,11 @@ export function PartsSection(props: {
     const [productQuery, setProductQuery] = useState("")
     const [productOptions, setProductOptions] = useState<ProductOption[]>([])
     const [linkedProduct, setLinkedProduct] = useState<ProductOption | null>(null)
+    // "" = default (la sucursal actual de la orden); otro valor = branchId origen.
+    const [sourceBranchId, setSourceBranchId] = useState("")
+    // Existencias por sucursal del producto vinculado (null = sin cargar / sin vínculo).
+    const [stockByBranch, setStockByBranch] = useState<Record<string, number> | null>(null)
+    const effectiveSourceBranchId = sourceBranchId || props.currentBranchId
     const parts = props.order.parts ?? []
     const approved = parts.filter(part => (part.status ?? "APPROVED") === "APPROVED")
     const totals = approved.reduce(
@@ -86,10 +98,29 @@ export function PartsSection(props: {
         return () => { controller.abort(); clearTimeout(timer) }
     }, [productQuery, linkedProduct])
 
+    // Existencias por sucursal del producto vinculado: alimenta las cantidades
+    // del selector "Surtir desde" y el aviso de sucursal sin stock. El estado
+    // se limpia al elegir/quitar el vínculo (pickProduct/unlinkProduct/resetForm).
+    useEffect(() => {
+        if (!linkedProduct) return
+        const controller = new AbortController()
+        void fetch(`/api/inventory/stock?productId=${encodeURIComponent(linkedProduct.id)}`, { signal: controller.signal })
+            .then(res => (res.ok ? res.json() : { stock: [] }))
+            .then((data: { stock?: { branchId: string; quantity: number }[] }) => {
+                const rows = Array.isArray(data.stock) ? data.stock : []
+                setStockByBranch(Object.fromEntries(rows.map(row => [row.branchId, row.quantity])))
+            })
+            .catch(() => { /* abortada o sin red: las opciones solo muestran el nombre */ })
+        return () => controller.abort()
+    }, [linkedProduct])
+
     function pickProduct(product: ProductOption) {
         setLinkedProduct(product)
         setProductQuery("")
         setProductOptions([])
+        // Las existencias llegan con el fetch del efecto; mientras tanto las
+        // opciones solo muestran el nombre de la sucursal.
+        setStockByBranch(null)
         // Prellena descripción y precios del catálogo; la descripción sigue editable.
         setForm(previous => ({
             ...previous,
@@ -101,6 +132,7 @@ export function PartsSection(props: {
 
     function unlinkProduct() {
         setLinkedProduct(null)
+        setStockByBranch(null)
     }
 
     function resetForm() {
@@ -108,6 +140,8 @@ export function PartsSection(props: {
         setLinkedProduct(null)
         setProductQuery("")
         setProductOptions([])
+        setSourceBranchId("")
+        setStockByBranch(null)
     }
 
     async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -132,6 +166,12 @@ export function PartsSection(props: {
                 partCostCents: Math.round(cost * 100),
                 partPriceCents: Math.round(price * 100),
                 ...(linkedProduct ? { partProductId: linkedProduct.id } : {}),
+                // Se envía la sucursal origen elegida mientras sea una sucursal
+                // activa conocida: la intención queda registrada aunque la orden
+                // cambie de sucursal antes de autorizarse. Si la sucursal actual
+                // ya no está activa no se envía — comportamiento previo (descuenta
+                // de donde esté la orden al autorizarse).
+                ...(props.branches.some(branch => branch.id === effectiveSourceBranchId) ? { sourceBranchId: effectiveSourceBranchId } : {}),
             })
             resetForm()
         } catch {
@@ -176,6 +216,10 @@ export function PartsSection(props: {
                         // El servidor valida igual: REQUESTED solo la retira quien la pidió;
                         // APPROVED/REJECTED solo el administrador.
                         const canRemove = !props.readOnly && (status === "REQUESTED" ? part.createdById === props.currentUserId : props.canDecide)
+                        // Sucursal que surte la pieza: solo se anuncia cuando no es
+                        // la sucursal actual de la orden (almacén de refacciones).
+                        const sourceBranch = part.sourceBranch ?? props.branches.find(branch => branch.id === part.sourceBranchId) ?? null
+                        const showSource = sourceBranch !== null && sourceBranch.id !== props.currentBranchId
                         return (
                             <li key={part.id} className="space-y-2 rounded-lg border p-3 text-sm">
                                 <div className="flex items-start justify-between gap-3">
@@ -189,6 +233,13 @@ export function PartsSection(props: {
                                                 <span className="inline-flex items-center gap-1">
                                                     <Package size={12} className="shrink-0" />
                                                     {part.product.name}{part.product.barcode ? ` · ${part.product.barcode}` : ""}
+                                                    {part.createdBy?.name || part.createdAt || showSource ? " ·" : ""}
+                                                </span>
+                                            )}
+                                            {showSource && (
+                                                <span className="inline-flex items-center gap-1">
+                                                    <Warehouse size={12} className="shrink-0" />
+                                                    desde {sourceBranch.name}
                                                     {part.createdBy?.name || part.createdAt ? " ·" : ""}
                                                 </span>
                                             )}
@@ -300,6 +351,26 @@ export function PartsSection(props: {
                         </div>
                     )}
                 </fieldset>
+                {props.branches.length > 0 && (
+                    <fieldset disabled={props.busy} className="space-y-1">
+                        <label className="text-xs" htmlFor="part-source-branch">Surtir desde</label>
+                        <select
+                            id="part-source-branch"
+                            className="w-full rounded-md border bg-background px-2 py-1.5 text-xs"
+                            value={effectiveSourceBranchId}
+                            onChange={e => setSourceBranchId(e.target.value)}
+                        >
+                            {props.branches.map(branch => (
+                                <option key={branch.id} value={branch.id}>
+                                    {branch.name}{linkedProduct && stockByBranch ? ` — ${stockByBranch[branch.id] ?? 0} disp.` : ""}
+                                </option>
+                            ))}
+                        </select>
+                        {linkedProduct && stockByBranch !== null && (stockByBranch[effectiveSourceBranchId] ?? 0) === 0 && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400">Sin stock en esa sucursal — se solicitará como encargo</p>
+                        )}
+                    </fieldset>
+                )}
                 <fieldset disabled={props.busy} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_0.7fr_1fr_1fr]">
                     <label className="text-xs">Descripción *<Input required maxLength={200} value={form.description} onChange={e => setForm(previous => ({ ...previous, description: e.target.value }))} placeholder="Pantalla, batería, flex…" className="mt-1" /></label>
                     <label className="text-xs">Cantidad<Input type="number" min={1} max={999} step={1} required value={form.qty} onChange={e => setForm(previous => ({ ...previous, qty: e.target.value }))} className="mt-1" /></label>

@@ -38,6 +38,16 @@ const createSchema = z.object({
   signatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
   // Presupuesto estimado declarado en recepción (sin diagnóstico aún).
   quoteCents: moneyCents.optional(),
+  // Taller aliado que captó el equipo ("Telcel trae → nosotros reparamos"):
+  // originBusinessId liga el tenant cuando el aliado tiene cuenta (intake
+  // /api/workshop/partner); originBusinessName/originContact quedan como
+  // texto cuando se registra de mostrador. partnerPriceCents es el precio
+  // convenio que se cobra al aliado — dato interno: la cotización al
+  // cliente final sigue su flujo normal (approvedQuoteCents queda null).
+  originBusinessId: z.string().optional(),
+  originBusinessName: z.string().trim().max(80).optional(),
+  originContact: z.string().trim().max(120).optional(),
+  partnerPriceCents: moneyCents.optional(),
   // Anticipo cobrado en recepción; con caja abierta genera su asiento de caja.
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
@@ -61,8 +71,16 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
   }
   return { payment }
 }
-export async function createRepair(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
+/** Opciones del alta de orden. `recordedById`: quién capturó la orden cuando
+ *  difiere del actor de la operación — el intake de taller aliado
+ *  (/api/workshop/partner) corre con un usuario staff DEL taller reparador
+ *  (la operación exige actor del mismo tenant), pero "Recibió"/actor de los
+ *  eventos registra al usuario del negocio aliado que captó el equipo: es la
+ *  auditoría real de quién lo registró. `privateNote`: nota interna del
+ *  canal (p. ej. notas del aliado) — nunca sale en el rastreo público. */
+export async function createRepair(db: PrismaClient, actorId: string, businessId: string, raw: unknown, opts?: { recordedById?: string; privateNote?: string }) {
   const { idempotencyKey, promisedAt, scheduledAt, functionalConditions, advance, ...input } = createSchema.parse(raw)
+  const recorderId = opts?.recordedById ?? actorId
   return operation(db, { key: idempotencyKey, actorId, businessId, kind: "REPAIR_CREATE", permission: "staff", payload: { ...input, promisedAt, scheduledAt, functionalConditions, advance } }, async tx => {
     const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true, businessId } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
@@ -77,9 +95,13 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // El dato de desbloqueo se guarda cifrado en reposo (AES-256-GCM, ver
     // lib/device-secret): llega en claro desde recepción y solo se descifra
     // con auditoría (reveal=1 de la ficha, hoja de taller impresa).
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
-    await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
-    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.`, isPublic: true } })
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
+    // Origen aliado queda en bitácora privada: el nombre del negocio que captó
+    // y el convenio no se publican en el seguimiento del cliente.
+    if (input.originBusinessName) await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "NOTE", detail: `Captado por ${input.originBusinessName}${order.partnerPriceCents != null ? ` · convenio ${(order.partnerPriceCents / 100).toFixed(2)} MXN` : ""}`, isPublic: false } })
+    if (opts?.privateNote) await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "NOTE", detail: opts.privateNote, isPublic: false } })
+    if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.`, isPublic: true } })
     if (advance && advance.amountCents > 0) {
       await registerPayment(tx, { orderId: order.id, orderNumber: order.number, branchId: branch.id, actorId, businessId, amountCents: advance.amountCents, method: advance.method, purpose: "ADVANCE" })
       await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "PAYMENT", detail: `Anticipo ${(advance.amountCents / 100).toFixed(2)} MXN (${advance.method}).` } })
@@ -87,15 +109,19 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     return { order }
   })
 }
-/** Mueve inventario de la sucursal actual de la orden por una refacción vinculada
- *  al catálogo: OUT al autorizarse/agregarse, RETURN al retirarse estando autorizada.
+/** Mueve inventario por una refacción vinculada al catálogo: OUT al
+ *  autorizarse/agregarse, RETURN al retirarse estando autorizada. El OUT
+ *  descuenta de la sucursal origen registrada en la pieza
+ *  (part.sourceBranchId — el almacén de refacciones puede surtir órdenes de
+ *  otras sucursales) o de la sucursal actual de la orden cuando no hay origen;
+ *  el RETURN repone en la sucursal donde ocurrió el OUT.
  *  Respeta el invariante de stock no negativo (CHECK en BranchStock y Product):
  *  si no alcanzan las existencias descuenta lo que hay y el detalle de la orden
  *  documenta el faltante — la pieza pudo montarse antes de catalogarse.
  *  Devuelve el resultado del movimiento, o null si la refacción no está vinculada. */
 async function syncPartStock(tx: Prisma.TransactionClient, args: {
   order: { number: number; currentBranchId: string }
-  part: { id: string; productId: string | null; description: string; qty: number; unitPriceCents: number }
+  part: { id: string; productId: string | null; description: string; qty: number; unitPriceCents: number; sourceBranchId?: string | null }
   actorId: string; businessId: string; type: "OUT" | "RETURN"
 }): Promise<{ deducted: number; stock: number } | null> {
   const { order, part, actorId, businessId, type } = args
@@ -123,19 +149,23 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
     return { deducted: returnQty, stock: product.stock }
   }
   // OUT: el CHECK quantity >= 0 no admite negativos — se toma solo lo disponible.
+  // La sucursal que surte es la registrada en la refacción o, sin ella, la
+  // sucursal actual de la orden; el movimiento guarda la sucursal real y el
+  // RETURN la sigue aunque la orden se mueva después.
   // Invariante Product.stock = Σ BranchStock: ambos descuentan la MISMA
   // cantidad, así que el tope es el mínimo entre la sucursal y el total
   // cacheado (si ya venían desfasados, no se profundiza el desfase).
-  const stockRow = await tx.branchStock.findUnique({ where: { productId_branchId: { productId, branchId: order.currentBranchId } } })
+  const sourceBranchId = part.sourceBranchId ?? order.currentBranchId
+  const stockRow = await tx.branchStock.findUnique({ where: { productId_branchId: { productId, branchId: sourceBranchId } } })
   const branchAvailable = Math.max(0, stockRow?.quantity ?? 0)
   const productRow = await tx.product.findUnique({ where: { id: productId, businessId }, select: { stock: true } })
   const productAvailable = Math.max(0, productRow?.stock ?? 0)
   const deduct = Math.min(part.qty, branchAvailable, productAvailable)
   if (deduct <= 0) return { deducted: 0, stock: productAvailable }
-  const taken = await tx.branchStock.updateMany({ where: { productId, branchId: order.currentBranchId, quantity: { gte: deduct } }, data: { quantity: { decrement: deduct } } })
+  const taken = await tx.branchStock.updateMany({ where: { productId, branchId: sourceBranchId, quantity: { gte: deduct } }, data: { quantity: { decrement: deduct } } })
   if (taken.count !== 1) return { deducted: 0, stock: productAvailable } // el stock cambió en paralelo; el evento no afirma descuento
   const product = await tx.product.update({ where: { id: productId, businessId }, data: { stock: { decrement: deduct } } })
-  await tx.inventoryMovement.create({ data: { businessId, type: "OUT", quantity: deduct, previousStock: product.stock + deduct, newStock: product.stock, productId, branchId: order.currentBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * deduct) / 100, businessVersion: 1 } })
+  await tx.inventoryMovement.create({ data: { businessId, type: "OUT", quantity: deduct, previousStock: product.stock + deduct, newStock: product.stock, productId, branchId: sourceBranchId, userId: actorId, reason: `Taller ${folio}`, notes: `Refacción OT ${part.id} · ${part.description}`, unitPrice: part.unitPriceCents / 100, totalPrice: (part.unitPriceCents * deduct) / 100, businessVersion: 1 } })
   return { deducted: deduct, stock: product.stock }
 }
 /** Sufijo de evento con el resultado del movimiento de inventario vinculado. */
@@ -192,6 +222,9 @@ const actionSchema = z.object({
   partQty: z.number().int().min(1).max(999).default(1),
   partCostCents: moneyCents.default(0), partPriceCents: moneyCents.default(0),
   partProductId: z.string().min(1).optional(),
+  // Sucursal que surte la pieza (almacén de refacciones); sin ella se descuenta
+  // de la sucursal actual de la orden. Se valida al crear la refacción.
+  sourceBranchId: z.string().min(1).optional(),
   noteIsPublic: z.boolean().default(false),
   paymentCents: moneyCents.optional(), paymentMethod: paymentMethod.optional(),
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
@@ -423,16 +456,22 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     } else if (input.action === "PART_REQUEST" || input.action === "PART_ADD") {
       if (!input.partDescription) throw new BusinessError("Describe la refacción.")
       if (input.partProductId && !await tx.product.findFirst({ where: { id: input.partProductId, businessId } })) throw new BusinessError("El producto seleccionado no existe.")
+      // Almacén de refacciones: la pieza puede salir de cualquier sucursal
+      // activa del negocio. El OUT de inventario se registra contra esa
+      // sucursal (syncPartStock) y la devolución lo sigue.
+      const sourceBranch = input.sourceBranchId ? await tx.branch.findFirst({ where: { id: input.sourceBranchId, isActive: true, businessId } }) : null
+      if (input.sourceBranchId && !sourceBranch) throw new BusinessError("La sucursal que surte no existe o está inactiva.", 404)
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       const needsApproval = actorUser?.role === "EMPLOYEE"
-      const part = await tx.repairPart.create({ data: { businessId, orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
+      const part = await tx.repairPart.create({ data: { businessId, orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, sourceBranchId: sourceBranch?.id ?? null, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
       eventType = "PART"
       // Las creadas ya APPROVED (administrador) descuentan stock de inmediato;
       // las REQUESTED del técnico lo descuentan recién en PART_DECIDE.
       const addedStock = needsApproval ? null : await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT" })
+      const sourceNote = sourceBranch && sourceBranch.id !== order.currentBranchId ? ` · surte ${sourceBranch.name}` : ""
       detail = needsApproval
-        ? `Refacción solicitada: ${part.qty} × ${part.description} — pendiente de autorización`
-        : `Refacción agregada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
+        ? `Refacción solicitada: ${part.qty} × ${part.description}${sourceNote} — pendiente de autorización`
+        : `Refacción agregada: ${part.qty} × ${part.description}${sourceNote} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
       // PART_ADD del admin nace APPROVED: mismo cambio de total que decide
       // PART_DECIDE — aplica la misma re-autorización del cliente.
       if (!needsApproval) onPartApproved()

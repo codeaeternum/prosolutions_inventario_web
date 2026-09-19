@@ -9,6 +9,10 @@ import { prisma } from "@/lib/prisma"
  *
  * Filtros opcionales: ?search= (nombre/barcode), ?categoryId=, ?lowStock=true
  * (total <= minStock; se filtra en JS porque Prisma no compara columnas).
+ *
+ * ?productId= responde el detalle de UN producto: { product, stock } con una
+ * fila por sucursal activa (quantity 0 donde no hay BranchStock). Lo usa el
+ * selector "Surtir desde" del taller para mostrar existencias por sucursal.
  */
 export async function GET(request: NextRequest) {
     try {
@@ -20,6 +24,35 @@ export async function GET(request: NextRequest) {
         const search = searchParams.get("search")?.trim()
         const categoryId = searchParams.get("categoryId")
         const lowStock = searchParams.get("lowStock") === "true"
+        const productId = searchParams.get("productId")?.trim()
+
+        if (productId) {
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId },
+                select: {
+                    id: true,
+                    name: true,
+                    barcode: true,
+                    stocks: { where: { businessId }, select: { branchId: true, quantity: true } },
+                },
+            })
+            if (!product) {
+                return NextResponse.json({ error: "Producto no encontrado" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
+            }
+            const productBranches = await prisma.branch.findMany({
+                where: { businessId, isActive: true },
+                orderBy: { name: "asc" },
+                select: { id: true, name: true },
+            })
+            const byBranch = new Map(product.stocks.map((s) => [s.branchId, s.quantity]))
+            return NextResponse.json(
+                {
+                    product: { id: product.id, name: product.name, barcode: product.barcode },
+                    stock: productBranches.map((b) => ({ branchId: b.id, branchName: b.name, quantity: byBranch.get(b.id) ?? 0 })),
+                },
+                { headers: { "Cache-Control": "private, no-store" } }
+            )
+        }
 
         const where = {
             businessId,

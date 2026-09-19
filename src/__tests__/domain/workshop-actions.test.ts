@@ -208,6 +208,93 @@ describe("reposición de stock al cerrar", () => {
   })
 })
 
+describe("refacciones surtidas desde otra sucursal (almacén)", () => {
+  // Stock disponible en la sucursal origen y en el total cacheado del producto.
+  const stockMocks = (branchQty = 4, totalStock = 10) => {
+    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: "biz" })
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: branchQty })
+    tx.product.findUnique.mockResolvedValue({ stock: totalStock })
+    tx.branchStock.updateMany.mockResolvedValue({ count: 1 })
+    tx.product.update.mockResolvedValue({ id: "p1", stock: totalStock - 1 })
+  }
+  const approvedPart = (over: Record<string, unknown> = {}) => ({
+    id: "pt1", productId: "p1", description: "Pantalla", qty: 1,
+    unitCostCents: 0, unitPriceCents: 10000, status: "APPROVED", ...over,
+  })
+
+  it("PART_ADD con sourceBranchId descuenta del almacén, no de la sucursal de la orden", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    tx.branch.findFirst.mockResolvedValue({ id: "b2", name: "Almacén", isActive: true, businessId: "biz" })
+    stockMocks()
+    tx.repairPart.create.mockResolvedValue(approvedPart({ sourceBranchId: "b2" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_ADD", partDescription: "Pantalla", partQty: 1, partPriceCents: 10000, partProductId: "p1", sourceBranchId: "b2" }))
+    // La sucursal origen se valida activa y del negocio, y se guarda en la pieza.
+    expect(tx.branch.findFirst).toHaveBeenCalledWith({ where: { id: "b2", isActive: true, businessId: "biz" } })
+    expect(tx.repairPart.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ sourceBranchId: "b2" }),
+    }))
+    // El OUT descuenta de b2: fila de stock, guard atómico y movimiento.
+    expect(tx.branchStock.findUnique).toHaveBeenCalledWith({ where: { productId_branchId: { productId: "p1", branchId: "b2" } } })
+    expect(tx.branchStock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ productId: "p1", branchId: "b2", quantity: { gte: 1 } }),
+    }))
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", productId: "p1", branchId: "b2", quantity: 1 }),
+    }))
+  })
+
+  it("PART_ADD sin sourceBranchId sigue descontando de la sucursal actual", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    stockMocks()
+    tx.repairPart.create.mockResolvedValue(approvedPart({ sourceBranchId: null }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_ADD", partDescription: "Pantalla", partQty: 1, partPriceCents: 10000, partProductId: "p1" }))
+    expect(tx.branch.findFirst).not.toHaveBeenCalled()
+    expect(tx.branchStock.findUnique).toHaveBeenCalledWith({ where: { productId_branchId: { productId: "p1", branchId: "b1" } } })
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", branchId: "b1" }),
+    }))
+  })
+
+  it("sourceBranchId inexistente/inactivo/ajeno se rechaza sin crear la refacción", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    tx.branch.findFirst.mockResolvedValue(null)
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_ADD", partDescription: "Pantalla", partQty: 1, sourceBranchId: "b-x" })))
+      .rejects.toMatchObject({ status: 404 })
+    expect(tx.repairPart.create).not.toHaveBeenCalled()
+    expect(tx.branchStock.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("PART_DECIDE al autorizar descuenta de la sucursal origen guardada en la pieza", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR", quoteCents: null, approvedQuoteCents: null, quoteApprovedAt: null }))
+    tx.repairPart.findFirst.mockResolvedValue({ id: "pt1", productId: "p1", description: "Batería", qty: 1, unitCostCents: 0, unitPriceCents: 30000, status: "REQUESTED", sourceBranchId: "b2" })
+    tx.repairPart.updateMany.mockResolvedValue({ count: 1 })
+    stockMocks()
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_DECIDE", partId: "pt1", approve: true }))
+    expect(tx.branchStock.findUnique).toHaveBeenCalledWith({ where: { productId_branchId: { productId: "p1", branchId: "b2" } } })
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", branchId: "b2" }),
+    }))
+  })
+
+  it("PART_REMOVE repone en la sucursal donde salió la pieza (el OUT manda)", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    tx.repairPart.findFirst.mockResolvedValue(approvedPart({ sourceBranchId: "b2" }))
+    // El OUT quedó registrado contra el almacén b2: la reposición va ahí.
+    tx.inventoryMovement.findMany.mockResolvedValue([{ quantity: 1, branchId: "b2" }])
+    tx.inventoryMovement.aggregate.mockResolvedValue({ _sum: { quantity: null } })
+    tx.product.update.mockResolvedValue({ id: "p1", stock: 11 })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_REMOVE", partId: "pt1" }))
+    expect(tx.branchStock.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { productId_branchId: { productId: "p1", branchId: "b2" } },
+      create: expect.objectContaining({ branchId: "b2", quantity: 1 }),
+      update: { quantity: { increment: 1 } },
+    }))
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "RETURN", productId: "p1", branchId: "b2", quantity: 1 }),
+    }))
+  })
+})
+
 describe("permisos y caja", () => {
   it("REFUND exige rol ADMIN: un empleado recibe 403", async () => {
     tx.user.findUnique.mockResolvedValue({ ...admin, id: "emp-1", role: "EMPLOYEE" })
