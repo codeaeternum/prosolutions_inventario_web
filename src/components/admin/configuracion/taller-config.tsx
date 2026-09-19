@@ -4,12 +4,16 @@ import { useEffect, useRef, useState } from "react"
 import { Loader2, RotateCcw, Save } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS } from "@/lib/workshop-labels"
 import { DEFAULT_EQUIPMENT_TYPES, DEFAULT_LOCATIONS, EditableList } from "./editable-list"
 
 export interface WorkshopConfig {
   equipmentTypes: string[]
   locations: string[]
+  // Vigencia de la garantía en días al reingresar un equipo entregado.
+  warrantyDays: number
 }
 
 /**
@@ -21,6 +25,7 @@ export interface WorkshopConfig {
 export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onConfigChange?: (config: WorkshopConfig) => void; readOnly?: boolean }) {
   const [equipmentTypes, setEquipmentTypes] = useState<string[]>(DEFAULT_EQUIPMENT_TYPES)
   const [locations, setLocations] = useState<string[]>(DEFAULT_LOCATIONS)
+  const [warrantyDaysDraft, setWarrantyDaysDraft] = useState(String(DEFAULT_WARRANTY_DAYS))
   const [equipmentDraft, setEquipmentDraft] = useState("")
   const [locationDraft, setLocationDraft] = useState("")
   const [dirty, setDirty] = useState(false)
@@ -40,9 +45,11 @@ export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onC
         const config: WorkshopConfig = {
           equipmentTypes: Array.isArray(data.equipmentTypes) ? data.equipmentTypes : DEFAULT_EQUIPMENT_TYPES,
           locations: Array.isArray(data.locations) ? data.locations : DEFAULT_LOCATIONS,
+          warrantyDays: Number.isInteger(data.warrantyDays) ? data.warrantyDays : DEFAULT_WARRANTY_DAYS,
         }
         setEquipmentTypes(config.equipmentTypes)
         setLocations(config.locations)
+        setWarrantyDaysDraft(String(config.warrantyDays))
         notifyRef.current?.(config)
       })
       .catch(() => {
@@ -62,13 +69,15 @@ export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onC
     setDirty(true)
   }
 
-  async function save(nextEquipmentTypes: string[] = equipmentTypes, nextLocations: string[] = locations) {
+  async function save(nextEquipmentTypes: string[] = equipmentTypes, nextLocations: string[] = locations, nextWarrantyDays: string = warrantyDaysDraft) {
     if (inFlight.current) return
     if (!nextEquipmentTypes.length || !nextLocations.length) { toast.error("Cada lista necesita al menos un elemento."); return }
+    const days = Number.parseInt(nextWarrantyDays, 10)
+    if (!Number.isInteger(days) || days < 1 || days > MAX_WARRANTY_DAYS) { toast.error(`Los días de garantía deben ser un entero entre 1 y ${MAX_WARRANTY_DAYS}.`); return }
     inFlight.current = true
     setSaving(true)
     try {
-      const payload = { equipmentTypes: nextEquipmentTypes, locations: nextLocations }
+      const payload = { equipmentTypes: nextEquipmentTypes, locations: nextLocations, warrantyDays: days }
       operationKey.current = getClientOperationKey(operationKey.current, { url: "/api/workshop-config", ...payload })
       const response = await fetch("/api/workshop-config", {
         method: "POST",
@@ -81,9 +90,11 @@ export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onC
       const config: WorkshopConfig = {
         equipmentTypes: Array.isArray(data.equipmentTypes) ? data.equipmentTypes : nextEquipmentTypes,
         locations: Array.isArray(data.locations) ? data.locations : nextLocations,
+        warrantyDays: Number.isInteger(data.warrantyDays) ? data.warrantyDays : days,
       }
       setEquipmentTypes(config.equipmentTypes)
       setLocations(config.locations)
+      setWarrantyDaysDraft(String(config.warrantyDays))
       setDirty(false)
       notifyRef.current?.(config)
       toast.success("Configuración del taller guardada")
@@ -101,7 +112,8 @@ export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onC
     setLocationDraft("")
     setEquipmentTypes(DEFAULT_EQUIPMENT_TYPES)
     setLocations(DEFAULT_LOCATIONS)
-    void save(DEFAULT_EQUIPMENT_TYPES, DEFAULT_LOCATIONS)
+    setWarrantyDaysDraft(String(DEFAULT_WARRANTY_DAYS))
+    void save(DEFAULT_EQUIPMENT_TYPES, DEFAULT_LOCATIONS, String(DEFAULT_WARRANTY_DAYS))
   }
 
   if (loading) {
@@ -141,6 +153,27 @@ export function WorkshopConfigEditor({ onConfigChange, readOnly = false }: { onC
         disabled={saving}
         readOnly={readOnly}
       />
+      {/* Vigencia de la garantía al reingresar un equipo entregado. */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Días de garantía</h3>
+        <p className="text-xs text-muted-foreground">
+          Vigencia de la garantía cuando un equipo entregado reingresa al taller.
+        </p>
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_WARRANTY_DAYS}
+            value={warrantyDaysDraft}
+            onChange={event => { setWarrantyDaysDraft(event.target.value); setDirty(true) }}
+            disabled={saving || readOnly}
+            className="w-28"
+            aria-label="Días de garantía"
+          />
+          <span className="text-sm text-muted-foreground">días</span>
+        </div>
+      </div>
       {readOnly ? (
         <p className="border-t pt-5 text-xs text-muted-foreground">La edición de estas listas requiere administrador.</p>
       ) : (

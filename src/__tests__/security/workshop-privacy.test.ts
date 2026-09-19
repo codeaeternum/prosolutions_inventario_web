@@ -126,6 +126,36 @@ describe("GET /api/workshop (listado)", () => {
     expect(pageFetch.include).toBeTruthy()
     expect(pageFetch.omit).toMatchObject({ deviceAccessValue: true, signatureData: true, deliverySignatureData: true, uploadToken: true, quoteToken: true })
   })
+
+  it("view=mine solo trae las órdenes asignadas a quien consulta", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    const res = await workshopList(new Request("https://app.invalid/api/workshop?view=mine"))
+    expect(res.status).toBe(200)
+    const args = mocks.orderFindMany.mock.calls[0][0] as { where?: Record<string, unknown> }
+    expect(args.where).toMatchObject({ businessId: "biz-1", assignedToId: "u-EMPLOYEE" })
+  })
+
+  it("view=mine se combina con el filtro de etapa (ambos aplican)", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    const res = await workshopList(new Request("https://app.invalid/api/workshop?view=mine&status=IN_REPAIR"))
+    expect(res.status).toBe(200)
+    const args = mocks.orderFindMany.mock.calls[0][0] as { where?: Record<string, unknown> }
+    expect(args.where).toMatchObject({ assignedToId: "u-EMPLOYEE", status: "IN_REPAIR" })
+  })
+
+  it("sin view el admin ve todas las órdenes (sin filtro de asignación)", async () => {
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    const res = await workshopList(new Request("https://app.invalid/api/workshop"))
+    expect(res.status).toBe(200)
+    const args = mocks.orderFindMany.mock.calls[0][0] as { where?: Record<string, unknown> }
+    expect(args.where).not.toHaveProperty("assignedToId")
+  })
+
+  it("view=mine es válida y las vistas desconocidas siguen en 400", async () => {
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    expect((await workshopList(new Request("https://app.invalid/api/workshop?view=mine"))).status).toBe(200)
+    expect((await workshopList(new Request("https://app.invalid/api/workshop?view=fantasma"))).status).toBe(400)
+  })
 })
 
 describe("GET /api/seguimiento (timeline público)", () => {

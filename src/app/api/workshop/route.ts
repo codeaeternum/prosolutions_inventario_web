@@ -14,17 +14,19 @@ export async function GET(req: Request) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
     const query = new URL(req.url).searchParams
     const page = Math.max(1, Math.min(1000, Number(query.get("page")) || 1))
     const search = (query.get("q") ?? "").trim().slice(0, 100)
-    const folio = /^(?:OT-)?0*(\d+)$/i.exec(search)?.[1]
+    // Folio con cualquier prefijo corto ("OT-000001", "PS-000001"), con ceros o sin ellos.
+    const folio = /^(?:[A-Z0-9]{1,8}-)?0*(\d+)$/i.exec(search)?.[1]
     const orderNumber = folio && Number.isSafeInteger(Number(folio)) && Number(folio) <= 2147483647 ? Number(folio) : undefined
     const branchId = query.get("branchId") || undefined
     const status = query.get("status")
     const view = query.get("view")
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
-    if (view && !["debt", "today", "overdue"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
+    if (view && !["debt", "today", "overdue", "mine"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
     const now = new Date()
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const dayEnd = new Date(dayStart.getTime() + 86400000)
@@ -36,6 +38,10 @@ export async function GET(req: Request) {
       ...(view === "today" ? { promisedAt: { gte: dayStart, lt: dayEnd }, status: { in: openStages as never } } : {}),
       ...(view === "overdue" ? { promisedAt: { lt: dayStart }, status: { in: openStages as never } } : {}),
       ...(view === "debt" ? { status: { in: openStages as never } } : {}),
+      // "Mis órdenes": solo las asignadas a quien consulta. Se combina con los
+      // filtros normales (etapa, sucursal, búsqueda) — el índice
+      // (assignedToId, status) de RepairOrder sostiene la consulta.
+      ...(view === "mine" ? { assignedToId: session.user.id } : {}),
       ...(search ? { OR: [...["customerName", "customerPhone", "model", "serialNumber"].map(field => ({ [field]: { contains: search, mode: "insensitive" as const } })), ...(orderNumber === undefined ? [] : [{ number: orderNumber }])] } : {}),
     }
     // Cobros que mueven el saldo: CONFIRMED suman y los reembolsos REFUNDED

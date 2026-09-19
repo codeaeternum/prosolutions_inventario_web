@@ -3,6 +3,7 @@ import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { updateRepair } from "@/lib/domain/workshop"
+import { decryptAccessValue } from "@/lib/device-secret"
 import { businessFailure } from "@/lib/domain/http"
 import { repairFolio } from "@/lib/workshop-labels"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
@@ -42,13 +43,25 @@ async function readySideEffects(order: { id: string; number: number; status: str
   return { notifyWhatsApp }
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
+    const session = getSession(auth)!
     const { id } = await params
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(getSession(auth)!) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
-    return NextResponse.json(order ? { order } : { error: "Orden no encontrada" }, { status: order ? 200 : 404, headers: { "Cache-Control": "private, no-store" } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
+    if (!order) return NextResponse.json({ error: "Orden no encontrada" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
+    // El PIN/patrón viaja cifrado en BD y solo sale con ?reveal=1; sin el
+    // parámetro la ficha recibe null (deviceAccessType sigue indicando que
+    // hay credencial). Staff admin y empleado pueden revelarlo — los
+    // técnicos lo necesitan — pero cada reveal queda en la bitácora interna.
+    let deviceAccessValue: string | null = null
+    if (new URL(req.url).searchParams.get("reveal") === "1" && order.deviceAccessValue) {
+      // Clave rotada o dato ilegible: la ficha se sirve igual, sin el código.
+      try { deviceAccessValue = decryptAccessValue(order.deviceAccessValue) } catch { deviceAccessValue = null }
+      await prisma.repairEvent.create({ data: { businessId: order.businessId, actorId: session.user.id, orderId: order.id, type: "NOTE", detail: "Consultó el dato de desbloqueo del equipo", isPublic: false } })
+    }
+    return NextResponse.json({ order: { ...order, deviceAccessValue } }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {

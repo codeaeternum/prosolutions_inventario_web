@@ -9,6 +9,10 @@ const dotPosition = (index: number) => ({
 
 export function PatternPad({ value, onChange, disabled = false }: { value: number[]; onChange: (points: number[]) => void; disabled?: boolean }) {
   const drawing = useRef(false)
+  // El patrón del gesto en curso vive en un ref: value llega por prop y puede
+  // quedar stale dentro del mismo gesto (arrastre o taps seguidos), y hacer
+  // onChange([...value, i]) desde el prop perdía puntos intermedios.
+  const draft = useRef<number[]>([])
 
   useEffect(() => {
     const stop = () => { drawing.current = false }
@@ -21,12 +25,19 @@ export function PatternPad({ value, onChange, disabled = false }: { value: numbe
   }, [])
 
   const addPoint = (index: number) => {
-    if (!disabled && Number.isInteger(index) && index >= 0 && index < DOT_COUNT && !value.includes(index)) {
-      onChange([...value, index])
+    if (!disabled && Number.isInteger(index) && index >= 0 && index < DOT_COUNT && !draft.current.includes(index)) {
+      draft.current.push(index)
+      onChange([...draft.current])
     }
   }
 
-  const trackPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginStroke = (event: ReactPointerEvent<HTMLElement>) => {
+    drawing.current = true
+    draft.current = [...value]
+    trackPointer(event)
+  }
+
+  const trackPointer = (event: ReactPointerEvent<HTMLElement>) => {
     if (!drawing.current) return
     const dot = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-pattern-dot]")
     if (dot) addPoint(Number(dot.getAttribute("data-pattern-dot")))
@@ -38,7 +49,7 @@ export function PatternPad({ value, onChange, disabled = false }: { value: numbe
         role="group"
         aria-label="Dibuja el patrón de desbloqueo"
         className="relative mx-auto aspect-square w-full max-w-[240px] touch-none select-none"
-        onPointerDown={event => { drawing.current = true; trackPointer(event) }}
+        onPointerDown={beginStroke}
         onPointerMove={trackPointer}
         onPointerUp={() => { drawing.current = false }}
       >
@@ -60,7 +71,7 @@ export function PatternPad({ value, onChange, disabled = false }: { value: numbe
               disabled={disabled}
               aria-pressed={selected}
               aria-label={`Punto ${index + 1}${selected ? `, posición ${order + 1} del patrón` : ""}`}
-              onPointerDown={event => { event.preventDefault(); drawing.current = true; addPoint(index) }}
+              onPointerDown={event => { event.preventDefault(); drawing.current = true; draft.current = [...value]; addPoint(index) }}
               className={`absolute flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-semibold transition ${selected ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:border-primary/60"} disabled:opacity-50`}
               style={dotPosition(index)}
             >

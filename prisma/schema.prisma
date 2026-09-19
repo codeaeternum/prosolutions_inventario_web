@@ -787,6 +787,11 @@ model RepairOrder {
   // Vigencia real de la cotización pública (el documento dice 15 días):
   // se fija al presentar la cotización con la acción QUOTE.
   quoteExpiresAt       DateTime?
+  // Garantía con vigencia: al reabrir una orden entregada por garantía se
+  // fija la fecha límite (días configurables por negocio, default 30) y se
+  // cuenta cuántas veces ha entrado a garantía.
+  warrantyUntil        DateTime?
+  warrantyCount        Int            @default(0)
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
   uploadTokenExpiresAt DateTime?

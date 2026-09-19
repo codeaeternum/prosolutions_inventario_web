@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, Printer } from "lucide-react"
 import QRCode from "qrcode"
 import { Button } from "@/components/ui/button"
-import { formatDate, formatPrice } from "@/lib/utils"
+import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 
 export interface RepairTicketData {
   title: string
@@ -41,6 +41,10 @@ export interface RepairTicketData {
   deliverySignatureData?: string
   deliveredBy?: string
   deliveredAt?: string
+  // Garantía vigente: solo llega mientras la orden está reingresada por
+  // garantía; warrantyCount es la N del reingreso (Garantía #1, #2…).
+  warrantyUntil?: string
+  warrantyCount?: number
   businessName?: string
   subtitle?: string
   footer?: string
@@ -109,6 +113,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
           {data.branch && <p><span className="text-gray-500">Sucursal de recepción:</span> {data.branch}</p>}
           {data.receivedBy && <p><span className="text-gray-500">Recibió:</span> {data.receivedBy}</p>}
           {data.promisedAt && <p><span className="text-gray-500">Fecha promesa:</span> {formatDate(data.promisedAt)}</p>}
+          {data.warrantyUntil && <p><span className="text-gray-500">Garantía #{data.warrantyCount ?? 1}:</span> válida hasta {formatDay(data.warrantyUntil)}</p>}
         </div>
 
         {/* Equipo recibido */}

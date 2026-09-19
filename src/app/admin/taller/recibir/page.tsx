@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,8 +13,9 @@ import { PhoneInput, parsePhone } from "@/components/admin/taller/phone-input"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
-import { formatAccessPattern } from "@/lib/utils"
-import { repairFolio } from "@/lib/workshop-labels"
+import { formatAccessPattern, titleCaseName } from "@/lib/utils"
+import { DEFAULT_ORDER_PREFIX, formatFolio } from "@/lib/workshop-labels"
+import { waMeHref } from "@/components/public/whatsapp-button"
 
 type Branch = { id: string; name: string }
 type Person = { id: string; name: string }
@@ -56,6 +57,14 @@ const ADVANCE_METHODS: { value: AdvanceMethod; label: string; icon: LucideIcon }
   { value: "CARD", label: "Tarjeta", icon: CreditCard },
   { value: "TRANSFER", label: "Transferencia", icon: ArrowLeftRight },
 ]
+// Piezas que el equipo NO trae (faltantes al recibirlo). Viajan por el mismo
+// campo `accessories` de la orden pero se capturan en un grupo aparte para que
+// el staff no las lea como accesorios recibidos.
+const MISSING_ITEMS = ["Sin bandeja SIM", "Sin tapa trasera", "Sin pantalla", "Sin batería", "Sin cargador"]
+const MISSING_SET = new Set(MISSING_ITEMS)
+// serviceName se guarda como "A + B + …" en un campo de 500 caracteres:
+// 4 servicios del catálogo (120 c/u) siempre caben.
+const MAX_SERVICES = 4
 const EQUIPMENT_COLORS: { label: string; hex: string }[] = [
   { label: "Negro", hex: "#1c1c1e" }, { label: "Blanco", hex: "#f5f5f4" }, { label: "Azul", hex: "#2563eb" },
   { label: "Rojo", hex: "#dc2626" }, { label: "Rosa", hex: "#ec4899" }, { label: "Dorado", hex: "#c9a227" },
@@ -73,6 +82,7 @@ const emptyForm = {
   intakeBranchId: "", assignedToId: "",
   equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", equipmentColorCustom: false, serialNumber: "",
   serviceName: "", servicePriceCents: null as number | null, otherService: "", budgetAmount: "", signatureData: "",
+  services: [] as WorkshopService[],
   accessType: "NONE" as AccessType, pattern: [] as number[], accessValue: "",
   accessories: [] as string[], accessoryOther: "",
   functionalConditions: [] as FunctionalCondition[], aesthetics: "" as Aesthetics | "",
@@ -151,6 +161,8 @@ export default function ReceiveEquipmentPage() {
   const [modelSearched, setModelSearched] = useState("")
   const [modelCatalogDown, setModelCatalogDown] = useState(false)
   const [pickedModel, setPickedModel] = useState<DeviceModel | null>(null)
+  // Prefijo del folio impreso (ajuste `order_prefix` del negocio); OT por defecto.
+  const [orderPrefix, setOrderPrefix] = useState(DEFAULT_ORDER_PREFIX)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const searchVersion = useRef(0)
@@ -202,6 +214,10 @@ export default function ReceiveEquipmentPage() {
         setLocations(Array.isArray(data.locations) && data.locations.length ? data.locations : DEFAULT_LOCATIONS)
       })
       .catch(() => { /* sin catálogo de configuración: se usan los valores por defecto */ })
+    fetch("/api/settings")
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error("sin ajustes"))))
+      .then(data => { if (!cancelled && typeof data.orderPrefix === "string" && data.orderPrefix.trim()) setOrderPrefix(data.orderPrefix) })
+      .catch(() => { /* sin ajustes: folio con el prefijo por defecto */ })
     return () => { cancelled = true }
   }, [])
 
@@ -432,20 +448,41 @@ export default function ReceiveEquipmentPage() {
     setMatchedCustomer(null)
   }
 
+  // Une los servicios elegidos en serviceName ("A + B") y, solo si TODOS traen
+  // precio fijo, propone la suma como presupuesto estimado.
+  const servicesPatch = (services: WorkshopService[]) => {
+    const total = services.length > 0 && services.every(service => typeof service.priceCents === "number")
+      ? services.reduce((sum, service) => sum + (service.priceCents ?? 0), 0)
+      : null
+    return {
+      services,
+      serviceName: services.map(service => service.name).join(" + "),
+      servicePriceCents: total,
+      // La suma solo autollenar el presupuesto con catálogo completo de precios;
+      // si alguno es "según dispositivo" el campo queda editable como antes.
+      ...(total !== null ? { budgetAmount: (total / 100).toFixed(2) } : {}),
+    }
+  }
+
   const pickService = (service: WorkshopService) => {
     serviceVersion.current += 1
-    update({
-      serviceName: service.name,
-      servicePriceCents: typeof service.priceCents === "number" ? service.priceCents : null,
-      // Con precio fijo se propone como presupuesto; sin precio el campo queda editable y sin autollenar.
-      ...(typeof service.priceCents === "number" ? { budgetAmount: (service.priceCents / 100).toFixed(2) } : {}),
-    })
+    setDirty(true)
+    setStepError("")
+    setForm(previous =>
+      previous.services.some(item => item.id === service.id) || previous.services.length >= MAX_SERVICES
+        ? previous
+        : { ...previous, ...servicesPatch([...previous.services, service]) },
+    )
     setServiceQuery("")
     setServiceResults([])
     setServiceSearched("")
   }
 
-  const clearService = () => update({ serviceName: "", servicePriceCents: null })
+  const removeService = (id: string) => {
+    setDirty(true)
+    setStepError("")
+    setForm(previous => ({ ...previous, ...servicesPatch(previous.services.filter(item => item.id !== id)) }))
+  }
 
   const pickBrand = (brand: string) => {
     brandVersion.current += 1
@@ -596,7 +633,7 @@ export default function ReceiveEquipmentPage() {
       if (!response.ok) throw new Error(data.error || "No se pudo crear la orden. Reintenta sin cambiar los datos.")
       operationKey.current = null
       setCreated(data.order)
-      toast.success(`Orden ${repairFolio(data.order.number)} registrada`)
+      toast.success(`Orden ${formatFolio(orderPrefix, data.order.number)} registrada`)
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Error de conexión. Reintenta sin cambiar los datos.")
     } finally {
@@ -635,7 +672,11 @@ export default function ReceiveEquipmentPage() {
   const showNewCustomerNote = !lookupDown && searchedTerm === lookupTermSearched && searchedTerm.length >= 3 && suggestions.length === 0 && !matchedCustomer
   const profile = deviceProfileFor(form.equipmentType)
   // Sugerencias del perfil + lo ya seleccionado aunque no aplique al tipo + "Otro" libre.
-  const accessoryChips = [...new Set([...profile.accessorySuggestions, ...form.accessories, "Otro"])]
+  // Los faltantes ("Sin …") se capturan en su propio grupo más abajo.
+  const accessoryChips = [...new Set([...profile.accessorySuggestions, ...form.accessories, "Otro"])].filter(item => !MISSING_SET.has(item))
+  // Resumen: lo recibido y lo faltante se muestran por separado aunque viajan juntos.
+  const receivedAccessoryText = form.accessories.filter(item => !MISSING_SET.has(item)).map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item).join(" · ")
+  const missingAccessoryText = form.accessories.filter(item => MISSING_SET.has(item)).join(" · ")
   const allowedAccessOptions = ACCESS_OPTIONS.filter(option => profile.accessTypes.includes(option.value))
   const conditionHints = form.functionalConditions.map(condition => CONDITION_HINTS[condition]).filter((hint): hint is string => Boolean(hint))
   const accessOption = ACCESS_OPTIONS.find(option => option.value === form.accessType)
@@ -650,6 +691,21 @@ export default function ReceiveEquipmentPage() {
   const aestheticsLabel = AESTHETIC_OPTIONS.find(option => option.value === form.aesthetics)?.label ?? ""
   const serviceSummary = [form.serviceName, form.otherService.trim()].filter(Boolean).join(" · ")
   const brandOptions = [...new Set(brandHits.map(hit => hit.brand))].slice(0, 8)
+  // Los servicios cuyo equipmentType coincide con el equipo recibido van primero
+  // en la lista y llevan una insignia "para {tipo}".
+  const equipmentTypeKey = equipmentLabel.trim().toLowerCase()
+  const serviceMatchesEquipment = (service: WorkshopService) => Boolean(equipmentTypeKey) && (service.equipmentType ?? "").trim().toLowerCase() === equipmentTypeKey
+  const sortedServiceResults = [...serviceResults].sort((a, b) => Number(serviceMatchesEquipment(b)) - Number(serviceMatchesEquipment(a)))
+  // Los ya elegidos no se ofrecen de nuevo en el desplegable.
+  const visibleServiceResults = sortedServiceResults.filter(service => !form.services.some(item => item.id === service.id))
+  // Enlace de WhatsApp para avisar al cliente que su equipo ya quedó registrado:
+  // mismo armado que notifyWhatsApp de /api/workshop/[id] (folio + tracking).
+  const trackingBase = typeof window === "undefined" ? "" : window.location.origin
+  const createdFolio = created ? formatFolio(orderPrefix, created.number) : ""
+  const createdPhone4 = form.customerPhone.replace(/\D/g, "").slice(-4)
+  const createdWhatsApp = created && form.customerPhone.trim()
+    ? waMeHref(form.customerPhone, `Hola ${form.customerName.trim()}, recibimos tu equipo con el folio ${createdFolio}. Sigue tu reparación aquí: ${trackingBase}/seguimiento?folio=${encodeURIComponent(createdFolio)}${createdPhone4 ? `&t=${createdPhone4}` : ""}`)
+    : null
   const advanceLabel = advanceCents > 0 ? `${money(advanceCents)} · ${advanceMethodLabel}` : ""
   const toLocalInputValue = (date: Date) => { const copy = new Date(date); copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset()); return copy.toISOString().slice(0, 16) }
   const startOfToday = new Date()
@@ -682,17 +738,25 @@ export default function ReceiveEquipmentPage() {
       {created ? (
         <section className="rounded-xl border bg-card p-6 text-center sm:p-8">
           <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
-          <h2 className="mt-3 text-2xl font-bold">Orden {repairFolio(created.number)} creada</h2>
+          <h2 className="mt-3 text-2xl font-bold">Orden {createdFolio} creada</h2>
           <p className="mt-2 text-muted-foreground">El equipo de {created.customerName} quedó registrado como recibido. Entrega el ticket al cliente.</p>
           {advanceCents > 0 && (
             <p className="mt-2 text-sm font-medium text-emerald-600 dark:text-emerald-400">Anticipo registrado: {money(advanceCents)} ({advanceMethodLabel}).</p>
           )}
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Button asChild>
-              <a href={`/admin/tickets/reparacion/${created.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-4 w-4" />Imprimir ticket de recepción</a>
+              <a href={`/admin/tickets/reparacion/${created.id}`} target="_blank" rel="noreferrer"><Printer className="mr-2 h-4 w-4" />Imprimir ticket cliente</a>
             </Button>
+            <Button variant="outline" asChild>
+              <a href={`/admin/tickets/taller/${created.id}`} target="_blank" rel="noreferrer"><Wrench className="mr-2 h-4 w-4" />Imprimir hoja de taller</a>
+            </Button>
+            {createdWhatsApp && (
+              <Button variant="outline" asChild>
+                <a href={createdWhatsApp} target="_blank" rel="noreferrer"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp al cliente</a>
+              </Button>
+            )}
+            <Button variant="outline" asChild><Link href={`/admin/taller?orden=${created.id}`}>Abrir orden</Link></Button>
             <Button variant="outline" onClick={reset}><RotateCcw className="mr-2 h-4 w-4" />Registrar otro equipo</Button>
-            <Button variant="outline" asChild><Link href="/admin/taller">Ir a órdenes</Link></Button>
           </div>
         </section>
       ) : (
@@ -705,7 +769,7 @@ export default function ReceiveEquipmentPage() {
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2">
                   <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
-                    <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
+                    <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </label>
                   <PhoneInput containerRef={phoneBoxRef} label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
@@ -778,27 +842,38 @@ export default function ReceiveEquipmentPage() {
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <p className="text-sm">Servicio del catálogo</p>
-                      {form.serviceName ? (
-                        <p className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
-                          <Wrench size={14} aria-hidden />
-                          <span className="truncate">{form.serviceName}</span>
-                          <span className="text-xs font-normal text-primary/80">{form.servicePriceCents !== null ? money(form.servicePriceCents) : "Precio según dispositivo"}</span>
-                          <button type="button" aria-label={`Quitar ${form.serviceName}`} onClick={clearService} className="rounded-full p-0.5 transition hover:bg-primary/15">
-                            <X size={13} />
-                          </button>
-                        </p>
-                      ) : (
+                      <p className="text-sm">Servicios del catálogo</p>
+                      {form.services.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {form.services.map(service => (
+                            <p key={service.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
+                              <Wrench size={14} aria-hidden />
+                              <span className="truncate">{service.name}</span>
+                              <span className="text-xs font-normal text-primary/80">{typeof service.priceCents === "number" ? money(service.priceCents) : "Precio según dispositivo"}</span>
+                              <button type="button" aria-label={`Quitar ${service.name}`} onClick={() => removeService(service.id)} className="rounded-full p-0.5 transition hover:bg-primary/15">
+                                <X size={13} />
+                              </button>
+                            </p>
+                          ))}
+                          {form.services.length > 1 && form.servicePriceCents !== null && (
+                            <span className="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium text-muted-foreground">Total: {money(form.servicePriceCents)}</span>
+                          )}
+                        </div>
+                      )}
+                      {form.services.length < MAX_SERVICES ? (
                         <div className="relative" ref={serviceBoxRef}>
                           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                          <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder="Buscar: cambio de pantalla, batería…" className="pl-9" />
-                          {serviceResults.length > 0 && (
+                          <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder={form.services.length ? "Agregar otro servicio…" : "Buscar: cambio de pantalla, batería…"} className="pl-9" />
+                          {visibleServiceResults.length > 0 && (
                             <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
-                              {serviceResults.map(service => (
+                              {visibleServiceResults.map(service => (
                                 <li key={service.id}>
                                   <button type="button" onClick={() => pickService(service)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
                                     <span className="flex items-center justify-between gap-3">
-                                      <span className="font-medium">{service.name}</span>
+                                      <span className="flex min-w-0 items-center gap-1.5">
+                                        <span className="truncate font-medium">{service.name}</span>
+                                        {serviceMatchesEquipment(service) && <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">para {equipmentLabel}</span>}
+                                      </span>
                                       <span className="shrink-0 text-xs text-muted-foreground">{typeof service.priceCents === "number" ? money(service.priceCents) : "Precio según dispositivo"}</span>
                                     </span>
                                     {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
@@ -808,10 +883,12 @@ export default function ReceiveEquipmentPage() {
                             </ul>
                           )}
                         </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Máximo {MAX_SERVICES} servicios del catálogo por orden.</p>
                       )}
-                      {!form.serviceName && serviceSearching && <p className="text-xs text-muted-foreground">Buscando servicios…</p>}
-                      {!form.serviceName && !serviceSearching && serviceCatalogDown && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Catálogo no disponible; usa el campo Otro servicio.</p>}
-                      {!form.serviceName && !serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
+                      {serviceSearching && <p className="text-xs text-muted-foreground">Buscando servicios…</p>}
+                      {!serviceSearching && serviceCatalogDown && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Catálogo no disponible; usa el campo Otro servicio.</p>}
+                      {!serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
                     </div>
                     <label className="block space-y-2 text-sm">Otro servicio
                       <Input value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio que no está en el catálogo" />
@@ -920,6 +997,16 @@ export default function ReceiveEquipmentPage() {
                     {form.accessories.includes("Otro") && (
                       <Input value={form.accessoryOther} onChange={event => update({ accessoryOther: event.target.value })} maxLength={120} placeholder="¿Qué otro accesorio? Ej. mochila, base de carga…" className="mt-2 max-w-sm" />
                     )}
+                    <div className="border-t border-dashed pt-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">No incluye / faltante</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {MISSING_ITEMS.map(item => (
+                          <button key={item} type="button" aria-pressed={form.accessories.includes(item)} onClick={() => update({ accessories: form.accessories.includes(item) ? form.accessories.filter(accessory => accessory !== item) : [...form.accessories, item] })} className={chipClass(form.accessories.includes(item))}>
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   <div className="grid gap-5">
                     <div className="space-y-2">
@@ -1038,7 +1125,8 @@ export default function ReceiveEquipmentPage() {
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[
                       ["Bloqueo del equipo", accessLabel],
                       ...(form.accessType !== "NONE" ? [[accessValueLabel, accessValueSummary] as [string, ReactNode]] : []),
-                      ["Accesorios recibidos", accessoryText],
+                      ["Accesorios recibidos", receivedAccessoryText],
+                      ...(missingAccessoryText ? [["No incluye", missingAccessoryText] as [string, ReactNode]] : []),
                     ]} />
                     <SummaryGroup title="Estado" icon={ShieldCheck} items={[
                       ["Falla reportada", reportedIssueText],

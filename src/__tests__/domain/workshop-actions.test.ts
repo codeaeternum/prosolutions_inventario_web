@@ -22,6 +22,7 @@ const tx = {
   branchStock: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
   product: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
   branch: { findFirst: vi.fn() },
+  systemSettings: { findUnique: vi.fn() },
 }
 const db = { $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
@@ -30,7 +31,8 @@ const order = (over: Record<string, unknown> = {}) => ({
   id: "o1", businessId: "biz", number: 7, version: 3, status: "READY",
   customerId: "cust-1", customerPhone: "8112345678", customerPhoneAlt: null,
   quoteCents: null, approvedQuoteCents: 50000, diagnosticFeeCents: null,
-  closedWithoutRepair: false, currentBranchId: "b1", ...over,
+  closedWithoutRepair: false, currentBranchId: "b1",
+  warrantyUntil: null, warrantyCount: 0, ...over,
 })
 let op = 0
 const payload = (over: Record<string, unknown>) => ({ idempotencyKey: `test-op-${++op}`, expectedVersion: 3, ...over })
@@ -48,6 +50,8 @@ beforeEach(() => {
   tx.repairPart.updateMany.mockResolvedValue({ count: 0 })
   tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } })
   tx.cashMovement.groupBy.mockResolvedValue([])
+  // Sin warranty_days configurado: el dominio cae al default de 30 días.
+  tx.systemSettings.findUnique.mockResolvedValue(null)
 })
 
 describe("la entrega solo ocurre por SETTLE_DELIVER", () => {
@@ -359,5 +363,119 @@ describe("re-autorización del cliente al cambiar refacciones", () => {
     expect(data.status).toBeUndefined()
     expect(data.quoteApprovedAt).toBeUndefined()
     expect(eventDetails().filter(e => e.isPublic)).toHaveLength(0)
+  })
+})
+
+describe("avance de etapa sin detalle (STATUS con detalle opcional)", () => {
+  const statusEvent = () => tx.repairEvent.create.mock.calls
+    .map(call => call[0] as { data: { type: string; detail: string; isPublic: boolean } })
+    .find(call => call.data.type === "STATUS")
+
+  it("STATUS sin detail avanza y el evento conserva la transición automática", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DIAGNOSIS" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "EXTERNAL_LAB" }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "EXTERNAL_LAB" }),
+    }))
+    // Sin texto del staff el detalle es solo "Origen → Destino." — nunca "undefined".
+    expect(statusEvent()?.data.detail).toBe("En diagnóstico → Laboratorio externo.")
+    expect(statusEvent()?.data.isPublic).toBe(true)
+  })
+
+  it("STATUS con detail lo conserva tras la transición, como antes", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "QUALITY_CHECK", detail: "Quedó el flexor" }))
+    expect(statusEvent()?.data.detail).toBe("En reparación → En revisión final. Quedó el flexor")
+  })
+
+  it("el resto de acciones sigue exigiendo detalle (NOTE lo rechaza)", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "NOTE" })))
+      .rejects.toMatchObject({ message: "Describe el detalle de la acción." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+})
+
+describe("ciclo de garantía con vigencia", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000
+  const updateData = () => (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
+  const statusEvent = () => tx.repairEvent.create.mock.calls
+    .map(call => call[0] as { data: { type: string; detail: string; isPublic: boolean } })
+    .find(call => call.data.type === "STATUS")
+
+  it("STATUS→WARRANTY desde DELIVERED fija warrantyUntil ~30 días e incrementa el contador", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "El cliente reporta la misma falla" }))
+    const data = updateData()
+    expect(data.status).toBe("WARRANTY")
+    expect(data.warrantyUntil).toBeInstanceOf(Date)
+    expect((data.warrantyUntil as Date).getTime()).toBeGreaterThan(Date.now() + 29 * DAY_MS)
+    expect((data.warrantyUntil as Date).getTime()).toBeLessThan(Date.now() + 31 * DAY_MS)
+    // El contador viaja como incremento atómico (no valor absoluto).
+    expect(data.warrantyCount).toEqual({ increment: 1 })
+    // El evento público lleva la N de la garantía y su vigencia.
+    expect(statusEvent()?.data.isPublic).toBe(true)
+    expect(statusEvent()?.data.detail).toContain("Entregado → En garantía. Garantía 1 — válida hasta")
+  })
+
+  it.each(["READY", "IN_REPAIR", "DIAGNOSIS"] as const)("STATUS→WARRANTY se rechaza desde %s (solo aplica a entregadas)", async status => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Reingreso" })))
+      .rejects.toMatchObject({ status: 409, message: "El cambio de estado no corresponde a la etapa actual." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("STATUS→DELIVERED desde WARRANTY sigue rechazado: la entrega es solo por SETTLE_DELIVER", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WARRANTY", warrantyCount: 1 }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "DELIVERED", detail: "Entrega directa" })))
+      .rejects.toMatchObject({ status: 409, message: "El cambio de estado no corresponde a la etapa actual." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("la vigencia respeta warranty_days configurado por el negocio", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED" }))
+    tx.systemSettings.findUnique.mockResolvedValue({ value: "60" })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Reingreso" }))
+    const until = updateData().warrantyUntil as Date
+    expect(until.getTime()).toBeGreaterThan(Date.now() + 59 * DAY_MS)
+    expect(until.getTime()).toBeLessThan(Date.now() + 61 * DAY_MS)
+  })
+
+  it("warranty_days inválido cae al default de 30 días", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED" }))
+    tx.systemSettings.findUnique.mockResolvedValue({ value: "0" })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Reingreso" }))
+    const until = updateData().warrantyUntil as Date
+    expect(until.getTime()).toBeGreaterThan(Date.now() + 29 * DAY_MS)
+    expect(until.getTime()).toBeLessThan(Date.now() + 31 * DAY_MS)
+  })
+
+  it("un segundo reingreso registra Garantía 2 en el evento", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyCount: 1 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Otra vez la misma falla" }))
+    expect(statusEvent()?.data.detail).toContain("Garantía 2 —")
+    expect(updateData().warrantyCount).toEqual({ increment: 1 })
+  })
+
+  it("SETTLE_DELIVER desde WARRANTY entrega y cierra el ciclo limpiando warrantyUntil", async () => {
+    // La orden reingresó por garantía; al entregarla de nuevo la vigencia se
+    // limpia y warrantyCount conserva el historial (no se toca aquí).
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "WARRANTY", approvedQuoteCents: null, quoteCents: null,
+      warrantyUntil: new Date(Date.now() + 10 * DAY_MS), warrantyCount: 1,
+    }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente" }))
+    const data = updateData()
+    expect(data.status).toBe("DELIVERED")
+    expect(data.warrantyUntil).toBeNull()
+  })
+
+  it("SETTLE_DELIVER tras reparar la garantía (READY de nuevo) también limpia warrantyUntil", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "READY", approvedQuoteCents: null, quoteCents: null,
+      warrantyUntil: new Date(Date.now() + 10 * DAY_MS), warrantyCount: 2,
+    }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente" }))
+    expect(updateData().warrantyUntil).toBeNull()
   })
 })

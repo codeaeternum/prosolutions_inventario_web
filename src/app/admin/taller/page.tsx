@@ -37,6 +37,11 @@ type Order = {
   // staff entregó). deliverySignatureData solo llega en el detalle, no en listas.
   deliveredTo?: string | null; deliveredToDoc?: string | null; deliverySignatureData?: string | null;
   deliveredBy?: { id: string; name: string } | null;
+  // Quién registró la recepción (solo llega en el detalle, no en listas).
+  createdBy?: { id: string; name: string } | null;
+  // Garantía con vigencia: la API los fija al reabrir una entregada.
+  warrantyUntil?: string | null;
+  warrantyCount?: number | null;
   uploadToken?: string;
   uploadTokenExpiresAt?: string | null;
   photos?: { id: string; label: string | null; createdAt: string; uploadedBy?: { name: string } | null }[];
@@ -44,6 +49,7 @@ type Order = {
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
 const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
+const day = (value: string) => new Date(value).toLocaleDateString("es-MX", { dateStyle: "medium" })
 
 const activeBoardStages: RepairStage[] = ["RECEIVED", "DIAGNOSIS", "WAITING_APPROVAL", "WAITING_PARTS", "EXTERNAL_LAB", "IN_REPAIR", "QUALITY_CHECK", "READY"]
 const closedColumnStages: RepairStage[] = ["DELIVERED", "NOT_REPAIRED", "NOT_AUTHORIZED", "CANCELLED", "WARRANTY"]
@@ -53,7 +59,7 @@ const terminalStages: readonly RepairStage[] = ["DELIVERED", "CANCELLED"]
 // (el dominio rechaza PART_* ahí): la sección se muestra solo lectura.
 const partsClosedStages: readonly RepairStage[] = [...terminalStages, "NOT_AUTHORIZED", "NOT_REPAIRED"]
 const closedColumnStyle = { dot: "bg-zinc-400", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" }
-const viewTabs = [{ value: "board", label: "Tablero" }, { value: "today", label: "Entregar hoy" }, { value: "overdue", label: "Atrasadas" }, { value: "debt", label: "Con adeudo" }] as const
+const viewTabs = [{ value: "board", label: "Tablero" }, { value: "mine", label: "Mías" }, { value: "today", label: "Entregar hoy" }, { value: "overdue", label: "Atrasadas" }, { value: "debt", label: "Con adeudo" }] as const
 type BoardView = typeof viewTabs[number]["value"]
 const stageStyles: Record<RepairStage, { dot: string; badge: string }> = {
   RECEIVED: { dot: "bg-sky-500", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
@@ -155,6 +161,9 @@ export default function WorkshopPage() {
   const [settleOpen, setSettleOpen] = useState(false)
   const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", location: "" })
   const [showAccess, setShowAccess] = useState(false)
+  // El PIN/patrón solo viaja al pedirlo (?reveal=1): se conserva lo revelado
+  // para no repetir la consulta al alternar Mostrar/Ocultar.
+  const [accessSecret, setAccessSecret] = useState<{ loading: boolean; fetched: boolean; value: string | null }>({ loading: false, fetched: false, value: null })
   const [discardDialog, setDiscardDialog] = useState(false)
   const [opening, setOpening] = useState(false)
   const operationKey = useRef<ClientOperationKey | null>(null)
@@ -165,6 +174,13 @@ export default function WorkshopPage() {
   const draft = drafts[action] ?? {}
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
+  // Avance de un clic: solo etapas de progreso — los cierres (cancelar, no
+  // quedó, no autorizado) siguen por el flujo completo con detalle, para que
+  // un misclick no libere inventario ni rote tokens.
+  const quickStages = selected ? repairNextStages[selected.status].filter(next => !(["CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] as RepairStage[]).includes(next)) : []
+  // El botón "Mostrar" del bloqueo aplica cuando el tipo sugiere secreto — el
+  // valor en sí llega null hasta revelarlo (ver toggleAccessSecret).
+  const canRevealAccess = Boolean(selected?.deviceAccessValue || (selected?.deviceAccessType && selected.deviceAccessType !== "NONE"))
   // No hay deliveredAt dedicado: la fecha exacta la conserva el evento público
   // de entrega (updatedAt cambiaría con una garantía o reembolso posterior).
   const deliveredAt = selected?.events?.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt
@@ -228,7 +244,7 @@ export default function WorkshopPage() {
     setOpening(false); setSelected(null); setAction("NOTE")
     setDrafts({}); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setFeeDraft(""); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
-    setShowAccess(false); setDiscardDialog(false)
+    setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null }); setDiscardDialog(false)
   }
 
   function backToOrders() {
@@ -295,7 +311,7 @@ export default function WorkshopPage() {
       // Vigencia del link de evidencias se evalúa al cargar la orden (no en render).
       setEvidenceLinkExpired(Boolean(order.uploadTokenExpiresAt && new Date(order.uploadTokenExpiresAt).getTime() < Date.now()))
       setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
-      setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false)
+      setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null })
     } catch {
       if (!controller.signal.aborted && version === detailVersion.current) toast.error("No se pudo abrir la orden. Intenta de nuevo.")
     } finally {
@@ -452,6 +468,42 @@ export default function WorkshopPage() {
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
   }
+  // Avance rápido: el mismo POST STATUS del formulario, sin elegir acción ni
+  // escribir detalle — el detalle es opcional y el evento conserva la
+  // transición ("Etapa anterior → Etapa nueva.") automáticamente.
+  async function quickAdvance(status: RepairStage) {
+    if (inFlight.current || opening || !selected) return
+    inFlight.current = true; setSaving(true)
+    try {
+      const result = await post(`/api/workshop/${selected.id}`, { action: "STATUS", expectedVersion: selected.version, status })
+      await openOrder(selected.id, true); await load()
+      toast.success(`Etapa actualizada: ${repairLabels[status]}`)
+      if (result?.notifyWhatsApp) toast.success("Orden lista", { action: { label: "Avisar por WhatsApp", onClick: () => window.open(result.notifyWhatsApp, "_blank", "noopener") }, duration: 10000 })
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
+  // El detalle de la orden trae deviceAccessValue en null; el valor real solo
+  // viaja con ?reveal=1. Al primer "Mostrar" se consulta con revelado y se
+  // guarda — los toggles siguientes no repiten la consulta.
+  async function toggleAccessSecret() {
+    if (!selected || accessSecret.loading) return
+    if (showAccess) { setShowAccess(false); return }
+    if (accessSecret.fetched) { setShowAccess(true); return }
+    const version = detailVersion.current
+    setAccessSecret({ loading: true, fetched: false, value: null })
+    try {
+      const response = await fetch(`/api/workshop/${selected.id}?reveal=1`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "No se pudo obtener el dato de bloqueo.")
+      if (version !== detailVersion.current) return
+      setAccessSecret({ loading: false, fetched: true, value: data.order?.deviceAccessValue ?? null })
+      setShowAccess(true)
+    } catch (cause) {
+      if (version !== detailVersion.current) return
+      setAccessSecret({ loading: false, fetched: false, value: null })
+      toast.error(cause instanceof Error ? cause.message : "No se pudo obtener el dato de bloqueo.")
+    }
+  }
 
   const emptyList = <div className="rounded-xl border border-dashed p-12 text-center"><ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">{total === 0 && !search && !stage && !branch && view === "board" ? "Todo listo para la primera recepción" : "No hay órdenes con estos filtros"}</h2><p className="mt-2 text-muted-foreground">{branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}</p></div>
 
@@ -484,7 +536,7 @@ export default function WorkshopPage() {
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
     </>}
-    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex justify-between"><h2 className="font-semibold">Equipo y recepción</h2><span className="text-sm text-primary">{repairLabels[selected.status]}</span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p><dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{selected.deviceAccessValue && <><button type="button" onClick={() => setShowAccess(value => !value)} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline">{showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{selected.deviceAccessValue}</code>}{showAccess && selected.deviceAccessType === "PATTERN" && <PatternDots value={selected.deviceAccessValue} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd>{/* eslint-disable-next-line @next/next/no-img-element */}<img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
+    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p><dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
       <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
         canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening}
         readOnly={partsClosedStages.includes(selected.status)}
@@ -508,11 +560,11 @@ export default function WorkshopPage() {
         onRotateLink={isAdmin ? () => void rotateUploadToken() : undefined}
         rotateBusy={saving || opening}
         onChanged={() => void openOrder(selected.id, true)} />
-      {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5"><h2 className="font-semibold">{selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}</h2><fieldset disabled={saving || opening} className="space-y-4">{selected.status === "DELIVERED" && <><input type="hidden" name="action" value="STATUS" /><input type="hidden" name="status" value="WARRANTY" /> </>}{selected.status !== "DELIVERED" && <label className="block text-sm">Acción<select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}><option value="NOTE">Agregar nota interna</option>{repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}{['DIAGNOSIS', 'WAITING_APPROVAL'].includes(selected.status) && <option value="QUOTE">Registrar diagnóstico y presupuesto</option>}{selected.status === 'WAITING_APPROVAL' && <option value="APPROVE">Registrar autorización del cliente</option>}<option value="ASSIGN">Asignar responsable</option><option value="TRANSFER">Registrar llegada a otra sucursal</option></select></label>}
+      {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5"><h2 className="font-semibold">{selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}</h2><fieldset disabled={saving || opening} className="space-y-4">{quickStages.length > 0 && <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Avance rápido:</span>{quickStages.map(next => <button key={next} type="button" onClick={() => void quickAdvance(next)} className={`rounded-full border px-3 py-1 text-xs font-medium transition hover:border-primary ${stageStyles[next].badge}`}>→ {repairLabels[next]}</button>)}</div>}{selected.status === "DELIVERED" && <><input type="hidden" name="action" value="STATUS" /><input type="hidden" name="status" value="WARRANTY" /> </>}{selected.status !== "DELIVERED" && <label className="block text-sm">Acción<select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}><option value="NOTE">Agregar nota interna</option>{repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}{['DIAGNOSIS', 'WAITING_APPROVAL'].includes(selected.status) && <option value="QUOTE">Registrar diagnóstico y presupuesto</option>}{selected.status === 'WAITING_APPROVAL' && <option value="APPROVE">Registrar autorización del cliente</option>}<option value="ASSIGN">Asignar responsable</option><option value="TRANSFER">Registrar llegada a otra sucursal</option></select></label>}
       {selected.status !== "DELIVERED" && action === "STATUS" && <label className="block text-sm">Nueva etapa<select name="status" value={draft.status ?? repairNextStages[selected.status][0] ?? ""} onChange={e => updateDraft({ status: e.target.value })} className={`${inputClass} mt-2`}>{repairNextStages[selected.status].map(value => <option key={value} value={value}>{repairLabels[value]}</option>)}</select></label>}      {action === "QUOTE" && <label className="block text-sm">Importe total en MXN<Input name="quote" type="number" min={0} max={1000000} step="0.01" required value={draft.quote ?? (selected.quoteCents === null ? "" : String(selected.quoteCents / 100))} onChange={e => updateDraft({ quote: e.target.value })} /></label>}
       {action === "ASSIGN" && <label className="block text-sm">Responsable técnico<select name="assignedToId" required value={draft.assignedToId ?? ""} onChange={e => updateDraft({ assignedToId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona una persona</option>{staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>}
       {action === "TRANSFER" && <label className="block text-sm">Sucursal donde se recibió el equipo<select name="branchId" required value={draft.branchId ?? ""} onChange={e => updateDraft({ branchId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona la sucursal destino</option>{branches.filter(b => b.id !== selected.currentBranch.id).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>}
-      <label className="block text-sm">{action === "APPROVE" ? "Quién autorizó y por qué medio" : action === "QUOTE" ? "Diagnóstico y alcance del trabajo" : "Detalle de la acción"}<textarea name="detail" value={draft.detail ?? ""} onChange={e => updateDraft({ detail: e.target.value })} required maxLength={2000} rows={3} className={`${inputClass} mt-2`} placeholder={action === "STATUS" ? "Para entregar: quién recibe. Para listo: resultado de la revisión final." : "Deja contexto para la siguiente persona que atienda la orden."} /></label>{action === "NOTE" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noteIsPublic" checked={draft.noteIsPublic ?? false} onChange={e => updateDraft({ noteIsPublic: e.target.checked })} className="h-4 w-4 rounded border" />Visible para el cliente en el rastreo</label>}<p className="text-xs text-muted-foreground">Cada acción conserva su propio borrador hasta guardarlo o salir de la orden.</p><Button disabled={saving || opening}>{saving ? "Guardando…" : "Guardar cambio"}</Button><Button variant="outline" type="button" disabled={saving || opening} onClick={() => void openOrder(selected.id, true)}>Actualizar orden</Button></fieldset></form>}
+      <label className="block text-sm">{action === "APPROVE" ? "Quién autorizó y por qué medio" : action === "QUOTE" ? "Diagnóstico y alcance del trabajo" : "Detalle de la acción"}<textarea name="detail" value={draft.detail ?? ""} onChange={e => updateDraft({ detail: e.target.value })} required={action !== "STATUS" && selected.status !== "DELIVERED"} maxLength={2000} rows={3} className={`${inputClass} mt-2`} placeholder={action === "STATUS" ? "Para entregar: quién recibe. Para listo: resultado de la revisión final." : "Deja contexto para la siguiente persona que atienda la orden."} /></label>{action === "NOTE" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noteIsPublic" checked={draft.noteIsPublic ?? false} onChange={e => updateDraft({ noteIsPublic: e.target.checked })} className="h-4 w-4 rounded border" />Visible para el cliente en el rastreo</label>}<p className="text-xs text-muted-foreground">Cada acción conserva su propio borrador hasta guardarlo o salir de la orden.</p><Button disabled={saving || opening}>{saving ? "Guardando…" : "Guardar cambio"}</Button><Button variant="outline" type="button" disabled={saving || opening} onClick={() => void openOrder(selected.id, true)}>Actualizar orden</Button></fieldset></form>}
       </div><OrderHistory events={selected.events} folio={repairFolio(selected.number)} phone={selected.customerPhone} /></div>}
     <AlertDialog open={discardDialog} onOpenChange={setDiscardDialog}>
       <AlertDialogContent>

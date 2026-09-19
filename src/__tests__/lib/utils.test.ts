@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatDate, formatPrice, generateSlug, normalizePhone } from "@/lib/utils"
+import { formatDate, formatPrice, generateSlug, normalizePhone, titleCaseName } from "@/lib/utils"
 
 describe("formatDate", () => {
   it("formats a date string in es-MX locale", () => {
@@ -53,6 +53,35 @@ describe("normalizePhone", () => {
     expect(normalizePhone(undefined)).toBe("")
     expect(normalizePhone("")).toBe("")
     expect(normalizePhone("   ")).toBe("")
+  })
+})
+
+describe("titleCaseName", () => {
+  it("title-cases all-caps counter input", () => {
+    expect(titleCaseName("MARIA MARTINBEZ")).toBe("Maria Martinbez")
+    expect(titleCaseName("JUAN PEREZ")).toBe("Juan Perez")
+  })
+
+  it("normalizes spacing and keeps accents", () => {
+    expect(titleCaseName("  ana   maria  ")).toBe("Ana Maria")
+    expect(titleCaseName("juan pérez garcía")).toBe("Juan Pérez García")
+    expect(titleCaseName("ÑANDÚ")).toBe("Ñandú")
+  })
+
+  it("keeps Mc and O' name particles readable", () => {
+    expect(titleCaseName("MCDONALD")).toBe("McDonald")
+    expect(titleCaseName("o'brien")).toBe("O'Brien")
+    expect(titleCaseName("O'NEIL")).toBe("O'Neil")
+  })
+
+  it("title-cases hyphenated names", () => {
+    expect(titleCaseName("maria-jose")).toBe("Maria-Jose")
+    expect(titleCaseName("JEAN-LUC")).toBe("Jean-Luc")
+  })
+
+  it("returns empty for empty/blank input", () => {
+    expect(titleCaseName("")).toBe("")
+    expect(titleCaseName("   ")).toBe("")
   })
 })
 

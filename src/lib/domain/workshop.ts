@@ -2,9 +2,10 @@ import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
-import { repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
+import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, WARRANTY_DAYS_KEY, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
 import { quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
+import { encryptAccessValue } from "../device-secret"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
 // lo comparten rutas API y componentes). Se re-exportan para que el dominio
@@ -73,7 +74,10 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
       ?? await linkCustomerByPhone(tx, businessId, input.customerPhoneAlt)
     // uploadTokenFields fija el uploadToken con caducidad: el QR del sticker
     // ya no es un enlace público permanente (ver lib/workshop-tokens).
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    // El dato de desbloqueo se guarda cifrado en reposo (AES-256-GCM, ver
+    // lib/device-secret): llega en claro desde recepción y solo se descifra
+    // con auditoría (reveal=1 de la ficha, hoja de taller impresa).
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: actorId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
     if (order.quoteCents !== null) await tx.repairEvent.create({ data: { businessId, actorId, orderId: order.id, type: "QUOTE", detail: `Presupuesto estimado en recepción: ${(order.quoteCents / 100).toFixed(2)} MXN.`, isPublic: true } })
     if (advance && advance.amountCents > 0) {
@@ -198,7 +202,9 @@ const actionSchema = z.object({
   deliveredToDoc: z.string().trim().max(40).optional(),
   deliverySignatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
 })
-const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "STATUS", "TRANSFER", "ASSIGN", "REFUND"]
+// STATUS quedó fuera: el detalle del evento es la transición misma
+// ("Recibido → En diagnóstico."), así que el avance de etapa no exige texto.
+const detailRequiredActions: readonly string[] = ["NOTE", "QUOTE", "APPROVE", "TRANSFER", "ASSIGN", "REFUND"]
 export async function updateRepair(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (detailRequiredActions.includes(input.action) && !input.detail) throw new BusinessError("Describe el detalle de la acción.")
@@ -265,11 +271,26 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // ocurre por SETTLE_DELIVER, que cobra el saldo y cierra refacciones.
       if (!input.status || !repairNextStages[order.status].includes(input.status)) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
       data.status = input.status
-      if (input.status === "READY") data.qualityCheck = input.detail
-      detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}. ${input.detail}`
+      if (input.status === "READY") data.qualityCheck = input.detail ?? null
+      // El detalle es opcional: sin texto del staff el evento conserva solo
+      // la transición ("Etapa anterior → Etapa nueva.").
+      detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}.${input.detail ? ` ${input.detail}` : ""}`
       // El cambio de etapa es el progreso que ve el cliente en seguimiento;
       // el texto libre del staff va después del punto y se trunca al publicar.
       eventPublic = true
+      if (input.status === "WARRANTY") {
+        // Reingreso por garantía (solo desde DELIVERED, ver repairNextStages):
+        // abre un ciclo con vigencia — warranty_days del negocio en
+        // SystemSettings (default 30) — y cuenta las entradas a garantía.
+        // El ciclo cierra cuando la orden vuelve a entregarse por
+        // SETTLE_DELIVER (ahí warrantyUntil se limpia).
+        const setting = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } }, select: { value: true } })
+        const configured = Number.parseInt(setting?.value ?? "", 10)
+        const warrantyDays = configured >= 1 && configured <= MAX_WARRANTY_DAYS ? configured : DEFAULT_WARRANTY_DAYS
+        const until = new Date(Date.now() + warrantyDays * 24 * 60 * 60 * 1000)
+        Object.assign(data, { warrantyUntil: until, warrantyCount: { increment: 1 } })
+        detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}. Garantía ${order.warrantyCount + 1} — válida hasta ${until.toLocaleDateString("es-MX", { dateStyle: "medium" })}.${input.detail ? ` ${input.detail}` : ""}`
+      }
       if (input.status === "CANCELLED" || input.status === "NOT_REPAIRED") {
         // Cierre sin cobrar refacciones: las APPROVED regresan al stock y
         // todas quedan REJECTED — una cancelada ya no admite PART_REMOVE, así
@@ -385,6 +406,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // El QR de evidencias impreso en el sticker del cliente muere con la
         // entrega: se rota el token (la orden conserva uno interno vigente).
         ...rotatedUploadToken(),
+        // Si la orden reingresó por garantía, esta entrega cierra el ciclo:
+        // la vigencia se limpia (warrantyCount conserva el historial).
+        warrantyUntil: null,
         ...(withoutRepair ? { closedWithoutRepair: true } : {}),
       })
       eventType = "PAYMENT"

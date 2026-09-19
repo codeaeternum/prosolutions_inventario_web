@@ -1,12 +1,13 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { getBusinessSettingsMap } from "@/lib/settings"
+import { getBusinessSetting, getBusinessSettingsMap } from "@/lib/settings"
 import prisma from "@/lib/prisma"
 import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
-import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { formatFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { approvedPartsTotal, orderBalanceCents, orderHeldCents, orderTotalCents } from "@/lib/workshop-money"
+import { decryptAccessValue } from "@/lib/device-secret"
 import { TicketPrintView } from "./ticket-print-view"
 import { RepairTicketView, type RepairTicketData } from "./repair-ticket-view"
 import { WorkshopSheetView, type WorkshopSheetData } from "./workshop-sheet-view"
@@ -73,7 +74,8 @@ export default async function TicketPage({
   // reserva y abono. Todas las consultas resuelven por id + businessId.
   const staffCheck = await requireAdminOrEmployee()
   if (staffCheck.error) redirect("/login")
-  const businessId = businessIdOf(getSession(staffCheck)!)
+  const session = getSession(staffCheck)!
+  const businessId = businessIdOf(session)
 
   const { tipo, id } = await params
   
@@ -227,7 +229,9 @@ export default async function TicketPage({
       const paidCents = orderHeldCents(order.payments)
       const balanceCents = orderBalanceCents(order, order.parts, order.payments)
       const isTerminalNoRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
-      const folio = repairFolio(order.number)
+      // Prefijo del folio configurable por negocio (order_prefix, p. ej. "PS").
+      const orderPrefix = await getBusinessSetting(businessId, "order_prefix")
+      const folio = formatFolio(orderPrefix, order.number)
       const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
       // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
       // fotos; solo va en documentos internos (hoja de taller / etiqueta),
@@ -302,6 +306,10 @@ export default async function TicketPage({
           deliverySignatureData: order.deliverySignatureData ?? undefined,
           deliveredBy: order.deliveredBy?.name ?? undefined,
           deliveredAt,
+          // Ciclo de garantía vigente: presente solo mientras la orden está
+          // reingresada por garantía (warrantyUntil se limpia al entregar).
+          warrantyUntil: order.warrantyUntil?.toISOString(),
+          warrantyCount: order.warrantyCount,
         }
       } else if (tipo === "cotizacion") {
         quoteData = {
@@ -333,6 +341,15 @@ export default async function TicketPage({
           elaboratedBy: order.createdBy.name,
         }
       } else {
+        // La hoja interna es el único documento que imprime el desbloqueo:
+        // verlo deja rastro en la bitácora, igual que el ?reveal=1 de la
+        // ficha en línea (evento interno, nunca público). Valor ilegible por
+        // clave rotada o corrupción: la hoja se imprime sin el código.
+        let accessValue: string | undefined
+        if (order.deviceAccessValue) {
+          try { accessValue = decryptAccessValue(order.deviceAccessValue) } catch { accessValue = undefined }
+          await prisma.repairEvent.create({ data: { businessId, actorId: session.user.id, orderId: order.id, type: "NOTE", detail: "Vio el desbloqueo en la hoja de taller", isPublic: false } })
+        }
         workshopData = {
           folio,
           status: repairLabels[order.status as RepairStage] ?? order.status,
@@ -361,7 +378,7 @@ export default async function TicketPage({
           ].filter(row => row.value !== ""),
           accessType: order.deviceAccessType ?? undefined,
           accessTypeLabel: order.deviceAccessType ? (ACCESS_LABELS[order.deviceAccessType] ?? order.deviceAccessType) : undefined,
-          accessValue: order.deviceAccessValue ?? undefined,
+          accessValue,
           issue: order.reportedIssue,
           diagnosis: order.diagnosis ?? undefined,
           qualityCheck: order.qualityCheck ?? undefined,

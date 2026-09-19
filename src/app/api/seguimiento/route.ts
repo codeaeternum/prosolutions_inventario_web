@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { repairFolio } from "@/lib/workshop-labels"
+import { getBusinessSetting } from "@/lib/settings"
+import { formatFolio } from "@/lib/workshop-labels"
 import { orderTotalCents, orderHeldCents } from "@/lib/workshop-money"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
@@ -60,8 +61,9 @@ export async function GET(req: Request) {
     }
 
     const query = new URL(req.url).searchParams
-    // Mismo formato que /api/workshop: acepta "OT-000001", "000001" o "1".
-    const folioMatch = /^(?:OT-)?0*(\d+)$/i.exec((query.get("folio") ?? "").trim())
+    // Acepta "OT-000001", "PS-000001" (prefijo configurable con order_prefix),
+    // "000001" o "1": cualquier prefijo corto de letras/dígitos se ignora.
+    const folioMatch = /^(?:[A-Z0-9]{1,8}-)?0*(\d+)$/i.exec((query.get("folio") ?? "").trim())
     const number = folioMatch ? Number(folioMatch[1]) : NaN
     // Últimos 4 dígitos del teléfono registrado — obligatorio.
     const phone4 = onlyDigits((query.get("phone") ?? "").trim())
@@ -111,6 +113,9 @@ export async function GET(req: Request) {
     const businessName = order.business?.name?.trim() || null
     const whatsappPhone = order.business?.phone?.trim() || null
     const paidCents = orderHeldCents(order.payments)
+    // Mismo prefijo impreso en el ticket (order_prefix); si el ajuste falla se
+    // responde con el folio por defecto en vez de tirar la consulta.
+    const orderPrefix = await getBusinessSetting(order.businessId, "order_prefix").catch(() => null)
 
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
     // Nunca: nombre/teléfono completo, presupuesto sin autorizar (quoteCents),
@@ -122,7 +127,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         order: {
-          folio: repairFolio(order.number),
+          folio: formatFolio(orderPrefix, order.number),
           status: order.status,
           equipmentType: order.equipmentType,
           brand: order.brand,
@@ -138,6 +143,10 @@ export async function GET(req: Request) {
           // al recoger. Sin autorización registrada no se expone el estimado.
           authorizedCents: order.approvedQuoteCents === null ? null : orderTotalCents(order, order.parts),
           paidCents,
+          // Vigencia de la garantía: dato del propio cliente (hasta cuándo
+          // cubre la reparación anterior); solo viaja mientras la orden está
+          // reingresada por garantía — entregada/cerrada no lo expone.
+          warrantyUntil: order.status === "WARRANTY" ? order.warrantyUntil : null,
           quoteToken: order.status === "WAITING_APPROVAL" ? order.quoteToken : null,
           photos: order.photos,
           // Whitelist estricta: SOLO eventos marcados isPublic por el dominio.

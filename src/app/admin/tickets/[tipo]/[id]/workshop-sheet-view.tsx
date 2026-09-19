@@ -20,8 +20,9 @@ export interface WorkshopSheetData {
   customerPhone: string
   customerPhoneAlt?: string
   equipment: { label: string; value: string }[]
-  // Tipo y clave de desbloqueo del equipo: SOLO se imprimen en esta hoja
-  // interna; el ticket del cliente y la etiqueta jamás los muestran.
+  // Tipo y clave de desbloqueo del equipo: SOLO se imprimen en documentos
+  // internos (esta hoja y la etiqueta pegada al equipo); el ticket del
+  // cliente jamás los muestra.
   accessType?: string
   accessTypeLabel?: string
   accessValue?: string
@@ -84,7 +85,8 @@ const FORMAT_OPTIONS: { value: SheetFormat; label: string }[] = [
 const PAGE_CSS: Record<SheetFormat, string> = {
   sheet: "",
   thermal: "@page { size: 80mm auto; margin: 0; }",
-  label: "@page { size: 50mm 30mm; margin: 0; }",
+  // La etiqueta creció a 50×40mm para caber la falla reportada y la clave.
+  label: "@page { size: 50mm 40mm; margin: 0; }",
 }
 
 // Fila etiqueta/valor usada en todas las secciones de la hoja.
@@ -480,11 +482,21 @@ function ThermalSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSh
 function EquipmentLabel({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheetData; evidenceQr: string | null; evidenceDisabled?: boolean }) {
   const brandModel = [equipmentValue(data, "Marca"), equipmentValue(data, "Modelo")].filter(Boolean).join(" ")
   const shortName = data.customerName.trim().split(/\s+/).slice(0, 2).join(" ")
+  // Falla reportada, recortada para que quepa en el sticker (~2 líneas a 6pt).
+  const issue = data.issue.trim()
+  const issueSnippet = issue.length > 80 ? `${issue.slice(0, 80).trimEnd()}…` : issue
+  // Clave de desbloqueo para el técnico: el patrón se imprime como puntos 1-9
+  // (formatAccessPattern), PIN y contraseña tal como las dictó el cliente.
+  const accessSnippet = data.accessType === "PATTERN" && data.accessValue
+    ? `Patrón: ${formatAccessPattern(data.accessValue)}`
+    : data.accessValue
+      ? `${data.accessTypeLabel ?? "Clave"}: ${data.accessValue}`
+      : ""
 
   return (
     <div className="mx-auto w-fit">
       {/* Borde punteado solo en pantalla: marca la línea de corte */}
-      <div className="w-[50mm] h-[30mm] overflow-hidden border border-dashed border-gray-400 print:border-0 bg-white text-black p-[1.5mm] flex items-center gap-[1.5mm]">
+      <div className="w-[50mm] min-h-[30mm] max-h-[40mm] overflow-hidden border border-dashed border-gray-400 print:border-0 bg-white text-black p-[1.5mm] flex items-center gap-[1.5mm]">
         {evidenceQr || evidenceDisabled ? (
           <>
             <div className="flex-1 min-w-0 leading-tight">
@@ -492,21 +504,27 @@ function EquipmentLabel({ data, evidenceQr, evidenceDisabled }: { data: Workshop
               {brandModel && <p className="mt-[0.8mm] text-[6.5pt] truncate">{brandModel}</p>}
               <p className="text-[6.5pt] truncate">{shortName}</p>
               <p className="text-[6pt] text-gray-600">Ing: {shortDate(data.receivedAt)}</p>
+              {issueSnippet && <p className="mt-[0.5mm] text-[6pt] leading-snug line-clamp-2">{issueSnippet}</p>}
+              {accessSnippet && <p className="mt-[0.3mm] text-[6pt] font-bold leading-snug">{accessSnippet}</p>}
               {/* Orden cerrada: el enlace ya murió — sin QR muerto en el sticker */}
               {!evidenceQr && evidenceDisabled && (
                 <p className="mt-[0.5mm] text-[6pt] font-bold uppercase text-red-700">Link desactivado</p>
               )}
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            {evidenceQr && <img src={evidenceQr} alt="QR para subir fotos del equipo" className="w-[13mm] h-[13mm] shrink-0" />}
+            {evidenceQr && <img src={evidenceQr} alt="QR para subir fotos del equipo" className="w-[13mm] h-[13mm] shrink-0 self-center" />}
           </>
         ) : (
-          // Sin uploadToken no hay enlace que escanear: la etiqueta solo
-          // identifica el equipo por su folio.
-          <p className="w-full text-center font-bold text-[14pt]">{data.folio}</p>
+          // Sin uploadToken no hay enlace que escanear: la etiqueta identifica
+          // el equipo por folio, falla y clave de desbloqueo.
+          <div className="w-full">
+            <p className="text-center font-bold text-[14pt]">{data.folio}</p>
+            {issueSnippet && <p className="mt-[0.5mm] text-[6pt] leading-snug line-clamp-2">{issueSnippet}</p>}
+            {accessSnippet && <p className="mt-[0.3mm] text-[6pt] font-bold leading-snug">{accessSnippet}</p>}
+          </div>
         )}
       </div>
-      <p className="mt-2 text-center text-[10px] text-gray-500 print:hidden">Etiqueta 50 × 30 mm — el QR abre la subida de evidencias</p>
+      <p className="mt-2 text-center text-[10px] text-gray-500 print:hidden">Etiqueta 50 × 40 mm — el QR abre la subida de evidencias</p>
     </div>
   )
 }

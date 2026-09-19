@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { waMeHref } from "@/components/public/whatsapp-button"
 import { repairLabels, type RepairStage } from "@/lib/workshop-labels"
-import { cn, formatDate, formatPrice } from "@/lib/utils"
+import { cn, formatDate, formatDay, formatPrice } from "@/lib/utils"
 
 export interface PublicEvent {
   id: string
@@ -46,6 +46,8 @@ export interface PublicOrder {
   // Monto autorizado por el cliente (nunca el estimado) y abonos confirmados.
   authorizedCents: number | null
   paidCents: number
+  // Vigencia de la garantía: solo presente mientras la orden está en WARRANTY.
+  warrantyUntil: string | null
   // Solo presente mientras la orden espera la autorización del cliente.
   quoteToken: string | null
   photos: PublicPhoto[]
@@ -215,9 +217,10 @@ function splitIssue(raw: string): { service?: string; issue: string } {
   return { service: undefined, issue: raw.trim() }
 }
 
-// Folios válidos: "OT-000001", "000001" o "1" (ver /api/seguimiento).
+// Folios válidos: "OT-000001", "PS-000001" (prefijo configurable), "000001" o
+// "1" (ver /api/seguimiento). 16 chars cubren prefijo de 8 + guion + 6 dígitos.
 export const sanitizeFolio = (value: string | null) =>
-  (value ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 12)
+  (value ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 16)
 
 export const sanitizePhone4 = (value: string | null) =>
   (value ?? "").replace(/\D/g, "").slice(0, 4)
@@ -280,6 +283,12 @@ export function OrderResult({ order, business }: { order: PublicOrder; business:
             <span className="inline-flex items-center gap-1.5">
               <CalendarClock className="h-3.5 w-3.5" aria-hidden />
               Entrega estimada: {formatDate(order.promisedAt)}
+            </span>
+          )}
+          {order.warrantyUntil && (
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+              Garantía vigente hasta {formatDay(order.warrantyUntil)}
             </span>
           )}
           {order.branch && (

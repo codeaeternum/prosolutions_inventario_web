@@ -14,6 +14,7 @@ const optionalButRecommended = [
   "TELEGRAM_BOT_TOKEN",
   "VAPID_PRIVATE_KEY",
   "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
+  "DEVICE_SECRET_KEY",
 ] as const
 
 function getEnv(name: string): string | undefined {

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema } from "@/lib/domain/operations"
 import type { Transaction } from "@/lib/domain/operations"
+import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, WARRANTY_DAYS_KEY } from "@/lib/workshop-labels"
 
 const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
 const DEFAULT_LOCATIONS = ["Recepción", "Mesa 1", "Mesa 2", "Anaquel A", "Anaquel B"]
@@ -16,6 +17,8 @@ const LOCATIONS_KEY = "workshop_locations"
 const updateSchema = z.object({
   equipmentTypes: z.array(z.string().trim().min(1).max(40)).min(1).max(60).optional(),
   locations: z.array(z.string().trim().min(1).max(60)).min(1).max(30).optional(),
+  // Vigencia de la garantía en días al reingresar un equipo entregado.
+  warrantyDays: z.number().int().min(1).max(MAX_WARRANTY_DAYS).optional(),
   idempotencyKey: operationKeySchema,
 })
 
@@ -33,11 +36,14 @@ function parseList(raw: string | undefined, fallback: string[]): string[] {
 const dedupe = (list: string[]) => [...new Set(list)]
 
 async function readConfig(tx: Pick<Transaction, "systemSettings">, businessId: string) {
-  const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY] } } })
+  const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY, WARRANTY_DAYS_KEY] } } })
   const map = new Map(rows.map(row => [row.key, row.value]))
+  // warranty_days se guarda como entero en texto ("30"); inválido → default.
+  const days = Number.parseInt(map.get(WARRANTY_DAYS_KEY) ?? "", 10)
   return {
     equipmentTypes: parseList(map.get(EQUIPMENT_TYPES_KEY), DEFAULT_EQUIPMENT_TYPES),
     locations: parseList(map.get(LOCATIONS_KEY), DEFAULT_LOCATIONS),
+    warrantyDays: days >= 1 && days <= MAX_WARRANTY_DAYS ? days : DEFAULT_WARRANTY_DAYS,
   }
 }
 
@@ -59,7 +65,7 @@ export async function POST(req: Request) {
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const { idempotencyKey, ...input } = updateSchema.parse(await req.json())
-    if (input.equipmentTypes === undefined && input.locations === undefined) throw new BusinessError("No hay cambios por guardar.")
+    if (input.equipmentTypes === undefined && input.locations === undefined && input.warrantyDays === undefined) throw new BusinessError("No hay cambios por guardar.")
     const result = await operation(prisma, { key: idempotencyKey, actorId, businessId, kind: "WORKSHOP_CONFIG_UPDATE", permission: "admin", payload: input }, async tx => {
       if (input.equipmentTypes !== undefined) {
         const value = JSON.stringify(dedupe(input.equipmentTypes))
@@ -75,6 +81,14 @@ export async function POST(req: Request) {
           where: { businessId_key: { businessId, key: LOCATIONS_KEY } },
           create: { businessId, key: LOCATIONS_KEY, value, type: "JSON" },
           update: { value, type: "JSON" },
+        })
+      }
+      if (input.warrantyDays !== undefined) {
+        // Entero en texto plano (no JSON): el dominio lo lee con parseInt.
+        await tx.systemSettings.upsert({
+          where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } },
+          create: { businessId, key: WARRANTY_DAYS_KEY, value: String(input.warrantyDays), type: "NUMBER" },
+          update: { value: String(input.warrantyDays), type: "NUMBER" },
         })
       }
       return readConfig(tx, businessId)

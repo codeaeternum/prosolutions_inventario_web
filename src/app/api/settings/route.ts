@@ -38,6 +38,7 @@ export async function GET() {
     const systemSettings = await getBusinessSettingsMap(businessId, [
       "bank_transfer_info", "bank_cash_info",
       "ticket_business_name", "ticket_subtitle", "ticket_footer",
+      "order_prefix",
     ])
 
     return NextResponse.json({
@@ -57,6 +58,8 @@ export async function GET() {
       ticketBusinessName: systemSettings.get("ticket_business_name") || "PROSOLUTIONS",
       ticketSubtitle: systemSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional",
       ticketFooter: systemSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",
+      // Prefijo del folio de órdenes de taller (OT-000001 → p. ej. PS-000001).
+      orderPrefix: systemSettings.get("order_prefix") || "OT",
     })
   } catch (error: unknown) {
     // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
@@ -92,6 +95,7 @@ export async function PATCH(req: Request) {
       ticketBusinessName,
       ticketSubtitle,
       ticketFooter,
+      orderPrefix,
     } = body
 
     const updateData = {
@@ -134,7 +138,15 @@ export async function PATCH(req: Request) {
       }
     }
 
-    return NextResponse.json({ ...settings, bankTransferInfo, bankCashInfo, ticketBusinessName, ticketSubtitle, ticketFooter })
+    // Prefijo del folio impreso: solo letras/dígitos, máx. 8; vacío = default OT.
+    let savedOrderPrefix: string | undefined
+    if (orderPrefix !== undefined) {
+      const clean = String(orderPrefix).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)
+      savedOrderPrefix = clean || "OT"
+      await setBusinessSetting(businessId, "order_prefix", savedOrderPrefix)
+    }
+
+    return NextResponse.json({ ...settings, bankTransferInfo, bankCashInfo, ticketBusinessName, ticketSubtitle, ticketFooter, orderPrefix: savedOrderPrefix })
   } catch (error) {
     console.error("Error updating settings:", error)
     return NextResponse.json(
