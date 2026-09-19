@@ -32,6 +32,7 @@ services:
       # CF-Connecting-IP/X-Forwarded-For para la IP real del visitante.
       TRUST_PROXY_HEADERS: "true"
       REFICIO_SIGNUP_ENABLED: ${REFICIO_SIGNUP_ENABLED:-false}
+      DEVICE_SECRET_KEY: ${DEVICE_SECRET_KEY:-}
     ports:
       - "${PILOT_BIND:-127.0.0.1}:3316:3000"
     volumes:

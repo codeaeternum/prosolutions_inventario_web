@@ -27,6 +27,8 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_EMAIL: ${VAPID_EMAIL:-mailto:admin@prosolutions.com}
       REFICIO_SIGNUP_ENABLED: ${REFICIO_SIGNUP_ENABLED:-false}
+      # Cifrado del PIN/patrón de equipos; si falta se deriva de NEXTAUTH_SECRET.
+      DEVICE_SECRET_KEY: ${DEVICE_SECRET_KEY:-}
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs
