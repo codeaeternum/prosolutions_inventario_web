@@ -25,6 +25,7 @@ import {
   type TextField,
 } from "@/components/admin/configuracion/settings-sections"
 import { PublicProfileCard } from "@/components/admin/configuracion/public-profile"
+import { PartnerCard } from "@/components/admin/configuracion/partner-card"
 
 const DEFAULTS: GeneralSettings = {
   tempReservationMinutes: 30,
@@ -81,6 +82,10 @@ export default function ConfiguracionPage() {
           ticketBusinessName: data.ticketBusinessName ?? "PROSOLUTIONS",
           ticketSubtitle: data.ticketSubtitle ?? "Venta de refacciones y\nReparación profesional",
           ticketFooter: data.ticketFooter ?? "¡Gracias por tu preferencia!",
+          orderPrefix: data.orderPrefix ?? "OT",
+          orderFolioDigits: data.orderFolioDigits ?? 6,
+          partnerIntakeEnabled: Boolean(data.partnerIntakeEnabled),
+          repairPartnerBusinessId: data.repairPartnerBusinessId ?? "",
           updatedAt: data.updatedAt,
         }
         setSettings(next)
@@ -171,7 +176,15 @@ export default function ConfiguracionPage() {
   }
 
   function handleResetDefaults() {
-    setSettings(DEFAULTS)
+    // El reset solo aplica a reservas/finanzas/ticket: el taller asociado y el
+    // folio se conservan para no desvincular al captador por accidente.
+    setSettings((prev) => ({
+      ...DEFAULTS,
+      orderPrefix: prev.orderPrefix,
+      orderFolioDigits: prev.orderFolioDigits,
+      partnerIntakeEnabled: prev.partnerIntakeEnabled,
+      repairPartnerBusinessId: prev.repairPartnerBusinessId,
+    }))
     toast.info("Valores restablecidos. Pulsa «Guardar» para aplicarlos.")
   }
 
@@ -186,7 +199,11 @@ export default function ConfiguracionPage() {
       settings.bankCashInfo !== initialSettings.bankCashInfo ||
       settings.ticketBusinessName !== initialSettings.ticketBusinessName ||
       settings.ticketSubtitle !== initialSettings.ticketSubtitle ||
-      settings.ticketFooter !== initialSettings.ticketFooter)
+      settings.ticketFooter !== initialSettings.ticketFooter ||
+      settings.orderPrefix !== initialSettings.orderPrefix ||
+      settings.orderFolioDigits !== initialSettings.orderFolioDigits ||
+      settings.partnerIntakeEnabled !== initialSettings.partnerIntakeEnabled ||
+      settings.repairPartnerBusinessId !== initialSettings.repairPartnerBusinessId)
 
   const lastUpdated = formatDate(settings.updatedAt)
 
@@ -266,13 +283,22 @@ export default function ConfiguracionPage() {
 
       <WorkshopCard />
 
+      <PartnerCard
+        intakeEnabled={settings.partnerIntakeEnabled ?? false}
+        partnerId={settings.repairPartnerBusinessId ?? ""}
+        onIntakeChange={(value) =>
+          setSettings((prev) => ({ ...prev, partnerIntakeEnabled: value }))
+        }
+        onPartnerChange={(value) => handleText("repairPartnerBusinessId", value)}
+      />
+
       <AdminLinksCard />
 
       <TimingCard settings={settings} onNumber={handleNumber} />
 
       <FinanceCard settings={settings} onNumber={handleNumber} onText={handleText} />
 
-      <TicketCard settings={settings} onText={handleText} />
+      <TicketCard settings={settings} onText={handleText} onNumber={handleNumber} />
 
       <SummaryCard settings={settings} />
     </div>

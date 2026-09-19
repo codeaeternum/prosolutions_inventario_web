@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 
@@ -166,7 +167,9 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
   })
   if (!business) return null
 
-  const [users, orders, sales, salesTotal, lastOrder, lastSale] = await Promise.all([
+  // El folio de las órdenes recientes respeta los dígitos configurados por
+  // ESE negocio (order_folio_digits), no un formato fijo de la consola.
+  const [users, orders, sales, salesTotal, lastOrder, lastSale, folioDigits] = await Promise.all([
     prisma.user.findMany({
       where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
       orderBy: { createdAt: "asc" },
@@ -218,6 +221,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
     }),
+    getOrderFolioDigits(id),
   ])
 
   return {
@@ -229,7 +233,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     users,
     recentRepairOrders: orders.map(o => ({
       id: o.id,
-      folio: repairFolio(o.number),
+      folio: repairFolio(o.number, folioDigits),
       status: o.status,
       createdAt: o.createdAt,
       // Total real de la orden: mano de obra + refacciones autorizadas (o el

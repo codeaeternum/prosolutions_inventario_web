@@ -34,11 +34,18 @@ export interface GeneralSettings {
   ticketBusinessName?: string
   ticketSubtitle?: string
   ticketFooter?: string
+  // Folio de órdenes de taller: prefijo impreso y dígitos del consecutivo.
+  orderPrefix?: string
+  orderFolioDigits?: number
+  // Modelo taller asociado: este negocio acepta órdenes de captadores y/o
+  // tiene un taller reparador al que delega las suyas.
+  partnerIntakeEnabled?: boolean
+  repairPartnerBusinessId?: string
   updatedAt?: string
 }
 
-export type NumericField = "tempReservationMinutes" | "depositPercentage" | "depositReservationHours" | "pendingVerificationHours" | "exchangeRate"
-export type TextField = "bankTransferInfo" | "bankCashInfo" | "ticketBusinessName" | "ticketSubtitle" | "ticketFooter"
+export type NumericField = "tempReservationMinutes" | "depositPercentage" | "depositReservationHours" | "pendingVerificationHours" | "exchangeRate" | "orderFolioDigits"
+export type TextField = "bankTransferInfo" | "bankCashInfo" | "ticketBusinessName" | "ticketSubtitle" | "ticketFooter" | "orderPrefix" | "repairPartnerBusinessId"
 
 export function IdentityCard({ value, saving, onChange, onSave }: {
   value: string
@@ -344,9 +351,10 @@ export function FinanceCard({ settings, onNumber, onText }: {
   )
 }
 
-export function TicketCard({ settings, onText }: {
+export function TicketCard({ settings, onText, onNumber }: {
   settings: GeneralSettings
   onText: (field: TextField, value: string) => void
+  onNumber: (field: NumericField, value: string) => void
 }) {
   return (
     <Card>
@@ -380,6 +388,45 @@ export function TicketCard({ settings, onText }: {
             placeholder="¡Gracias por tu preferencia!"
           />
           <p className="text-xs text-muted-foreground">Aparece al final del ticket, debajo del total.</p>
+        </div>
+
+        <div className="border-t pt-4">
+          <h4 className="text-sm font-medium mb-3">Folio de órdenes de servicio</h4>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="orderPrefix">Prefijo de folio</Label>
+              <Input
+                id="orderPrefix"
+                value={settings.orderPrefix || ""}
+                onChange={(e) => onText("orderPrefix", e.target.value)}
+                placeholder="OT"
+                maxLength={8}
+                className="w-28 uppercase"
+              />
+              <p className="text-xs text-muted-foreground">
+                Letras y dígitos, máx. 8. Vacío = OT. Ejemplo: PS → PS-000001.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="orderFolioDigits">Dígitos del folio</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="orderFolioDigits"
+                  type="number"
+                  inputMode="numeric"
+                  min={4}
+                  max={8}
+                  value={settings.orderFolioDigits ?? 6}
+                  onChange={(e) => onNumber("orderFolioDigits", e.target.value)}
+                  className="w-24"
+                />
+                <span className="text-muted-foreground text-sm">dígitos</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Longitud del consecutivo, entre 4 y 8 (6 → OT-000001).
+              </p>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>

@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { getBusinessSetting, getBusinessSettingsMap } from "@/lib/settings"
+import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
 import prisma from "@/lib/prisma"
 import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
@@ -239,9 +239,13 @@ export default async function TicketPage({
       const paidCents = orderHeldCents(order.payments)
       const balanceCents = orderBalanceCents(order, order.parts, order.payments)
       const isTerminalNoRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
-      // Prefijo del folio configurable por negocio (order_prefix, p. ej. "PS").
-      const orderPrefix = await getBusinessSetting(businessId, "order_prefix")
-      const folio = formatFolio(orderPrefix, order.number)
+      // Prefijo y largo del folio configurables por negocio (order_prefix,
+      // p. ej. "PS", y order_folio_digits, 4–8 dígitos de consecutivo).
+      const [orderPrefix, folioDigits] = await Promise.all([
+        getBusinessSetting(businessId, "order_prefix"),
+        getOrderFolioDigits(businessId),
+      ])
+      const folio = formatFolio(orderPrefix, order.number, folioDigits)
       const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
       // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
       // fotos; solo va en documentos internos (hoja de taller / etiqueta),

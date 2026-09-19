@@ -36,9 +36,24 @@ export const MAX_WARRANTY_DAYS = 3650
 /** Prefijo de folio por defecto; el negocio lo cambia con el ajuste
  *  `order_prefix` de SystemSettings (p. ej. "PS" → PS-000001). */
 export const DEFAULT_ORDER_PREFIX = "OT"
-/** Folio impreso con prefijo configurable: solo letras/dígitos, máx. 8. */
-export const formatFolio = (prefix: string | null | undefined, number: number) => {
+/** Ajuste SystemSettings `order_folio_digits`: largo del consecutivo impreso
+ *  (4–8 dígitos, default 6 → OT-000123 vs OT-0123). */
+export const ORDER_FOLIO_DIGITS_KEY = "order_folio_digits"
+export const DEFAULT_FOLIO_DIGITS = 6
+export const MIN_FOLIO_DIGITS = 4
+export const MAX_FOLIO_DIGITS = 8
+/** Acota el ajuste al rango soportado; lo no numérico cae al default. */
+export const clampFolioDigits = (digits: number | null | undefined): number =>
+  typeof digits === "number" && Number.isFinite(digits)
+    ? Math.min(MAX_FOLIO_DIGITS, Math.max(MIN_FOLIO_DIGITS, Math.trunc(digits)))
+    : DEFAULT_FOLIO_DIGITS
+/** Interpreta el valor crudo de SystemSettings (texto) como dígitos de folio. */
+export const parseFolioDigits = (value: string | null | undefined): number =>
+  clampFolioDigits(value == null || value.trim() === "" ? undefined : Number(value))
+/** Folio impreso con prefijo configurable: solo letras/dígitos, máx. 8.
+ *  `digits` fija el largo del consecutivo (4–8; default 6). */
+export const formatFolio = (prefix: string | null | undefined, number: number, digits?: number) => {
   const clean = (prefix ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)
-  return `${clean || DEFAULT_ORDER_PREFIX}-${String(number).padStart(6, "0")}`
+  return `${clean || DEFAULT_ORDER_PREFIX}-${String(number).padStart(clampFolioDigits(digits), "0")}`
 }
-export const repairFolio = (number: number) => formatFolio(DEFAULT_ORDER_PREFIX, number)
+export const repairFolio = (number: number, digits?: number) => formatFolio(DEFAULT_ORDER_PREFIX, number, digits)

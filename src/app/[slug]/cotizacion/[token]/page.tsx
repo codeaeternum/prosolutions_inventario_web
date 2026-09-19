@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound, redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
+import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug"
 import { loadQuoteByToken } from "@/lib/public-quote"
@@ -23,9 +24,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug, token } = await params
   const [target, order] = await Promise.all([
     resolvePublicSlug(slug),
-    prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true } }),
+    prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true, businessId: true } }),
   ])
-  const title = order ? `Cotización ${repairFolio(order.number)}` : "Cotización"
+  const title = order ? `Cotización ${repairFolio(order.number, await getOrderFolioDigits(order.businessId))}` : "Cotización"
   return {
     title: target?.kind === "business" ? `${title} — ${target.name}` : title,
     description: "Consulta y autoriza la cotización de tu reparación.",
@@ -58,6 +59,8 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
   }
 
   const order = await loadQuoteByToken(token, target.businessId)
+  // Largo del folio del negocio dueño de la orden (order_folio_digits).
+  const folioDigits = order ? await getOrderFolioDigits(order.businessId) : undefined
 
   return (
     <PublicShell
@@ -76,7 +79,7 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
           // vencido en vez del desglose, igual que el 410 de la API pública.
           <QuoteExpired trackingHref={`/${target.slug}/order-status`} />
         ) : (
-          <QuoteDocument order={order} businessName={target.name} token={token} />
+          <QuoteDocument order={order} businessName={target.name} token={token} folioDigits={folioDigits} />
         )
       ) : (
         <QuoteNotFound trackingHref={`/${target.slug}/order-status`} />

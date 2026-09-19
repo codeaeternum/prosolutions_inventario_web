@@ -15,7 +15,7 @@ import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { ClipboardList, PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2 } from "lucide-react"
 
-interface ShortageOrder { orderId: string; number: number; qty: number }
+interface ShortageOrder { orderId: string; number: number; qty: number; folio?: string }
 interface ShortageRow {
     productId: string
     name: string
@@ -279,7 +279,8 @@ export default function EncargosPage() {
                                                 <div className="flex flex-wrap gap-1">
                                                     {row.orders.map(order => (
                                                         <Badge key={order.orderId} variant="outline" className="font-normal">
-                                                            {orderFolio(order.number)} ×{order.qty}
+                                                            {/* La API ya trae el folio con los dígitos del negocio; orderFolio es el respaldo. */}
+                                                            {order.folio ?? orderFolio(order.number)} ×{order.qty}
                                                         </Badge>
                                                     ))}
                                                 </div>

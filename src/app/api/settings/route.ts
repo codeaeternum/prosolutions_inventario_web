@@ -11,6 +11,19 @@ const DEFAULT_SETTINGS = {
   updatedAt: new Date().toISOString(),
 }
 
+// Consecutivo del folio de órdenes: dígitos permitidos (order_folio_digits).
+const FOLIO_DIGITS_MIN = 4
+const FOLIO_DIGITS_MAX = 8
+const FOLIO_DIGITS_DEFAULT = 6
+
+/** Parsea `order_folio_digits`; cualquier valor inválido cae al default 6. */
+function parseFolioDigits(raw: string | undefined): number {
+  const digits = Number.parseInt(raw ?? "", 10)
+  return Number.isInteger(digits) && digits >= FOLIO_DIGITS_MIN && digits <= FOLIO_DIGITS_MAX
+    ? digits
+    : FOLIO_DIGITS_DEFAULT
+}
+
 // GET - Obtener configuración.
 // Anónimo (checkout público /carrito): solo los campos que la reserva pública
 // necesita — nunca datos bancarios (CLABE/cuentas) ni textos del ticket.
@@ -38,7 +51,8 @@ export async function GET() {
     const systemSettings = await getBusinessSettingsMap(businessId, [
       "bank_transfer_info", "bank_cash_info",
       "ticket_business_name", "ticket_subtitle", "ticket_footer",
-      "order_prefix",
+      "order_prefix", "order_folio_digits",
+      "partner_intake_enabled", "repair_partner_business_id",
     ])
 
     return NextResponse.json({
@@ -60,6 +74,12 @@ export async function GET() {
       ticketFooter: systemSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",
       // Prefijo del folio de órdenes de taller (OT-000001 → p. ej. PS-000001).
       orderPrefix: systemSettings.get("order_prefix") || "OT",
+      // Dígitos del consecutivo del folio (4–8; default 6 → OT-000001).
+      orderFolioDigits: parseFolioDigits(systemSettings.get("order_folio_digits")),
+      // Modelo taller asociado: este negocio acepta órdenes de captadores.
+      partnerIntakeEnabled: systemSettings.get("partner_intake_enabled") === "true",
+      // Taller reparador al que este negocio (captador) envía sus órdenes.
+      repairPartnerBusinessId: systemSettings.get("repair_partner_business_id") || "",
     })
   } catch (error: unknown) {
     // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
@@ -96,7 +116,53 @@ export async function PATCH(req: Request) {
       ticketSubtitle,
       ticketFooter,
       orderPrefix,
+      orderFolioDigits,
+      partnerIntakeEnabled,
+      repairPartnerBusinessId,
     } = body
+
+    // Validaciones previas a cualquier escritura: si fallan, el PATCH no deja
+    // el negocio a medias (el update de Settings todavía no corre).
+    let folioDigits: number | undefined
+    if (orderFolioDigits !== undefined) {
+      const parsed = Number(orderFolioDigits)
+      if (!Number.isInteger(parsed) || parsed < FOLIO_DIGITS_MIN || parsed > FOLIO_DIGITS_MAX) {
+        return NextResponse.json(
+          { error: `Los dígitos del folio deben ser un entero entre ${FOLIO_DIGITS_MIN} y ${FOLIO_DIGITS_MAX}` },
+          { status: 400 }
+        )
+      }
+      folioDigits = parsed
+    }
+
+    // Taller reparador asociado (modelo captador): debe ser OTRO negocio
+    // activo; cadena vacía/null desvincula.
+    let repairPartnerId: string | null | undefined
+    if (repairPartnerBusinessId !== undefined) {
+      const candidate =
+        typeof repairPartnerBusinessId === "string" ? repairPartnerBusinessId.trim() : ""
+      if (!candidate) {
+        repairPartnerId = null
+      } else {
+        if (candidate === businessId) {
+          return NextResponse.json(
+            { error: "El taller asociado no puede ser tu propio negocio" },
+            { status: 400 }
+          )
+        }
+        const target = await prisma.business.findUnique({
+          where: { id: candidate },
+          select: { isActive: true },
+        })
+        if (!target?.isActive) {
+          return NextResponse.json(
+            { error: "El taller asociado no existe o está inactivo" },
+            { status: 400 }
+          )
+        }
+        repairPartnerId = candidate
+      }
+    }
 
     const updateData = {
       ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
@@ -146,7 +212,45 @@ export async function PATCH(req: Request) {
       await setBusinessSetting(businessId, "order_prefix", savedOrderPrefix)
     }
 
-    return NextResponse.json({ ...settings, bankTransferInfo, bankCashInfo, ticketBusinessName, ticketSubtitle, ticketFooter, orderPrefix: savedOrderPrefix })
+    // Dígitos del consecutivo del folio (ya validados arriba).
+    if (folioDigits !== undefined) {
+      await setBusinessSetting(businessId, "order_folio_digits", String(folioDigits), "NUMBER")
+    }
+
+    // Intake de captadores: este taller acepta recibir órdenes delegadas.
+    let savedPartnerIntake: boolean | undefined
+    if (partnerIntakeEnabled !== undefined) {
+      savedPartnerIntake = Boolean(partnerIntakeEnabled)
+      await setBusinessSetting(
+        businessId,
+        "partner_intake_enabled",
+        savedPartnerIntake ? "true" : "false"
+      )
+    }
+
+    // Vínculo captador → taller reparador (ya validado arriba). null = quitar.
+    if (repairPartnerId !== undefined) {
+      if (repairPartnerId === null) {
+        await prisma.systemSettings.deleteMany({
+          where: { businessId, key: "repair_partner_business_id" },
+        })
+      } else {
+        await setBusinessSetting(businessId, "repair_partner_business_id", repairPartnerId)
+      }
+    }
+
+    return NextResponse.json({
+      ...settings,
+      bankTransferInfo,
+      bankCashInfo,
+      ticketBusinessName,
+      ticketSubtitle,
+      ticketFooter,
+      orderPrefix: savedOrderPrefix,
+      orderFolioDigits: folioDigits,
+      partnerIntakeEnabled: savedPartnerIntake,
+      repairPartnerBusinessId: repairPartnerId,
+    })
   } catch (error) {
     console.error("Error updating settings:", error)
     return NextResponse.json(

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
+import { formatFolio } from "@/lib/workshop-labels"
 import { evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
 
 // Subida pública de evidencias por QR (técnico en celular, sin login). El
@@ -25,12 +27,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
   const { token } = await params
   const order = await prisma.repairOrder.findUnique({
     where: { uploadToken: token },
-    select: { number: true, uploadTokenExpiresAt: true, business: { select: { isActive: true } }, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
+    select: { number: true, businessId: true, uploadTokenExpiresAt: true, business: { select: { isActive: true } }, photos: { orderBy: { createdAt: "asc" }, select: { id: true, label: true, createdAt: true } } },
   })
   // Empresa suspendida: el enlace muere igual que un token inválido (404 genérico).
   if (!order || !order.business.isActive) return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
   if (expired(order.uploadTokenExpiresAt)) return NextResponse.json(EXPIRED, { status: 410, headers: NO_STORE })
-  return NextResponse.json({ orderNumber: order.number, photos: order.photos }, { headers: NO_STORE })
+  // El folio viaja ya formateado con prefijo y dígitos del negocio dueño
+  // (order_prefix + order_folio_digits); ante un fallo del ajuste salen los
+  // valores por defecto — el enlace público no muere por un setting.
+  const [orderPrefix, folioDigits] = await Promise.all([
+    getBusinessSetting(order.businessId, "order_prefix").catch(() => null),
+    getOrderFolioDigits(order.businessId),
+  ])
+  return NextResponse.json({ orderNumber: order.number, folio: formatFolio(orderPrefix, order.number, folioDigits), photos: order.photos }, { headers: NO_STORE })
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {

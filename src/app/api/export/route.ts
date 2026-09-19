@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
+import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 
@@ -133,13 +134,15 @@ async function exportOrders(businessId: string, branchId?: string): Promise<stri
     },
   })
   const headers = ["Folio", "Fecha recepción", "Cliente", "Teléfono", "Equipo", "Estado", "Sucursal", "Técnico", "Presupuesto", "Abonado", "Saldo"]
+  // Mismo largo de folio que el ticket impreso (order_folio_digits del negocio).
+  const folioDigits = await getOrderFolioDigits(businessId)
   const rows = orders.map((o) => {
     // Total de la orden: mano de obra + refacciones autorizadas (o el cargo
     // de diagnóstico en cierres sin reparación).
     const totalCents = orderTotalCents(o, o.parts)
     const paidCents = o.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
     return [
-      repairFolio(o.number),
+      repairFolio(o.number, folioDigits),
       formatDateTime(o.createdAt),
       o.customerName,
       o.customerPhone,

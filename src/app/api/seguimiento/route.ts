@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
-import { formatFolio } from "@/lib/workshop-labels"
+import { ORDER_FOLIO_DIGITS_KEY, formatFolio, parseFolioDigits } from "@/lib/workshop-labels"
 import { orderTotalCents, orderHeldCents } from "@/lib/workshop-money"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
@@ -113,9 +113,13 @@ export async function GET(req: Request) {
     const businessName = order.business?.name?.trim() || null
     const whatsappPhone = order.business?.phone?.trim() || null
     const paidCents = orderHeldCents(order.payments)
-    // Mismo prefijo impreso en el ticket (order_prefix); si el ajuste falla se
-    // responde con el folio por defecto en vez de tirar la consulta.
-    const orderPrefix = await getBusinessSetting(order.businessId, "order_prefix").catch(() => null)
+    // Mismo formato impreso en el ticket (order_prefix + order_folio_digits
+    // del negocio DUEÑO de la orden); si el ajuste falla se responde con el
+    // folio por defecto en vez de tirar la consulta.
+    const [orderPrefix, folioDigitsRaw] = await Promise.all([
+      getBusinessSetting(order.businessId, "order_prefix").catch(() => null),
+      getBusinessSetting(order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+    ])
 
     // Solo datos que el propio cliente ya conoce o puede ver en mostrador.
     // Nunca: nombre/teléfono completo, presupuesto sin autorizar (quoteCents),
@@ -127,7 +131,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         order: {
-          folio: formatFolio(orderPrefix, order.number),
+          folio: formatFolio(orderPrefix, order.number, parseFolioDigits(folioDigitsRaw)),
           status: order.status,
           equipmentType: order.equipmentType,
           brand: order.brand,

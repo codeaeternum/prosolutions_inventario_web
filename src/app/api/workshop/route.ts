@@ -7,7 +7,8 @@ import { createRepair } from "@/lib/domain/workshop"
 import { orderTotalCents } from "@/lib/workshop-money"
 import { businessFailure } from "@/lib/domain/http"
 import { operation, operationKeySchema } from "@/lib/domain/operations"
-import { repairLabels } from "@/lib/workshop-labels"
+import { getBusinessSetting } from "@/lib/settings"
+import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels } from "@/lib/workshop-labels"
 
 // Internal pilot. Open staff access only after branch/technician permissions are implemented.
 export async function GET(req: Request) {
@@ -71,6 +72,10 @@ export async function GET(req: Request) {
     // los devuelve.
     const listOmit = { deviceAccessValue: true, signatureData: true, deliverySignatureData: true, uploadToken: true, quoteToken: true }
     const orderBy = [{ createdAt: "desc" as const }, { id: "desc" as const }]
+    // Largo del folio impreso del negocio (order_folio_digits, 4–8): la
+    // respuesta ya trae el folio formateado para no recalcularlo en cliente.
+    const folioDigits = parseFolioDigits(await getBusinessSetting(businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null))
+    const withFolio = <T extends { number: number }>(order: T) => ({ ...order, folio: repairFolio(order.number, folioDigits) })
     if (view === "debt") {
       // El adeudo = total de la orden (mano de obra + refacciones autorizadas,
       // o cargo de diagnóstico) − lo retenido. No cabe en un `where` de Prisma
@@ -96,14 +101,14 @@ export async function GET(req: Request) {
       const pageOrders = await prisma.repairOrder.findMany({ where: { id: { in: [...pageIds] } }, include: orderInclude, omit: listOmit })
       const byId = new Map(pageOrders.map(order => [order.id, order]))
       const orders = owing.slice((page - 1) * 20, page * 20).map(order => byId.get(order.id)).filter((order): order is NonNullable<typeof order> => order !== undefined)
-      return NextResponse.json({ orders, total: owing.length, branches, staff, page, totalPages: Math.max(1, Math.ceil(owing.length / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
+      return NextResponse.json({ orders: orders.map(withFolio), total: owing.length, branches, staff, page, totalPages: Math.max(1, Math.ceil(owing.length / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
     }
     const [orders, total, branches, staff] = await Promise.all([
       prisma.repairOrder.findMany({ where, take: 20, skip: (Math.floor(page) - 1) * 20, orderBy, include: orderInclude, omit: listOmit }),
       prisma.repairOrder.count({ where }), prisma.branch.findMany({ where: { isActive: true, businessId }, orderBy: { name: "asc" } }),
       prisma.user.findMany({ where: { status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId }, select: { id: true, name: true } }),
     ])
-    return NextResponse.json({ orders, total, branches, staff, page, totalPages: Math.max(1, Math.ceil(total / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
+    return NextResponse.json({ orders: orders.map(withFolio), total, branches, staff, page, totalPages: Math.max(1, Math.ceil(total / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 export async function POST(req: Request) {

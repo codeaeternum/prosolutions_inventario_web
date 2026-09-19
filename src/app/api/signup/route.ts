@@ -6,6 +6,9 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
 import { generateSlug, normalizePhone } from "@/lib/utils"
 import { SUGGESTED_SERVICES } from "@/lib/workshop-service-suggestions"
+import { issueVerificationCode } from "@/lib/verification"
+import { sendVerificationEmail } from "@/lib/mailer"
+import { buildTelegramVerifyUrl } from "@/lib/telegram"
 
 /**
  * POST /api/signup — Alta pública de una empresa nueva (multi-tenant).
@@ -43,6 +46,9 @@ const signupSchema = z.object({
     .string()
     .min(8, "La contraseña debe tener al menos 8 caracteres")
     .max(100, "La contraseña no puede exceder 100 caracteres"),
+  // Giro del negocio (Business.businessKind): no restringe módulos, solo
+  // adapta onboarding y opciones visibles. Default FULL (taller + refacciones).
+  businessKind: z.enum(["FULL", "REPAIR", "PARTNER", "PARTS"]).default("FULL"),
 })
 
 /** Prisma P2002 (unique violado): slug/email/phone chocó dentro de la tx. */
@@ -109,7 +115,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: message }, { status: 400 })
     }
 
-    const { businessName, slug: rawSlug, adminName, email, phone, password } = parseResult.data
+    const { businessName, slug: rawSlug, adminName, email, phone, password, businessKind } = parseResult.data
     const emailNorm = email.trim().toLowerCase()
     // User.phone es único GLOBAL: se guarda normalizado (últimos 10 dígitos)
     // para que "+52 811 234 5678" y "811 234 5678" choquen en vez de evadirlo.
@@ -173,6 +179,9 @@ export async function POST(req: Request) {
 
     const hashedPassword = await bcrypt.hash(password, 12)
 
+    // Ids del alta para emitir los códigos de verificación fuera de la tx.
+    let createdBusinessId: string | null = null
+    let createdUserId: string | null = null
     try {
       await prisma.$transaction(async (tx) => {
         const business = await tx.business.create({
@@ -181,10 +190,11 @@ export async function POST(req: Request) {
             slug,
             phone: phoneOrNull,
             isActive: true,
+            businessKind,
           },
           select: { id: true },
         })
-        await tx.user.create({
+        const adminUser = await tx.user.create({
           data: {
             businessId: business.id,
             name: adminName,
@@ -196,6 +206,8 @@ export async function POST(req: Request) {
           },
           select: { id: true },
         })
+        createdBusinessId = business.id
+        createdUserId = adminUser.id
         // Semillas del negocio: nombre para tickets y sucursal principal.
         await tx.systemSettings.create({
           data: {
@@ -228,10 +240,43 @@ export async function POST(req: Request) {
       throw error
     }
 
+    // Verificación de contacto post-alta (no bloquea el acceso). El código en
+    // claro solo viaja por su canal: correo vía Resend o el deep-link de
+    // Telegram — jamás en esta respuesta salvo dentro de telegramUrl.
+    let emailSent = false
+    let telegramUrl: string | null = null
+    try {
+      if (createdUserId) {
+        const emailCode = await issueVerificationCode(prisma, {
+          userId: createdUserId,
+          businessId: createdBusinessId,
+          identifier: emailNorm,
+          channel: "EMAIL",
+        })
+        emailSent = (await sendVerificationEmail(emailNorm, emailCode.code, businessName)).sent
+        if (phoneOrNull) {
+          const phoneCode = await issueVerificationCode(prisma, {
+            userId: createdUserId,
+            businessId: createdBusinessId,
+            identifier: phoneOrNull,
+            channel: "TELEGRAM",
+          })
+          telegramUrl = await buildTelegramVerifyUrl(phoneCode.code)
+        }
+      }
+    } catch (error) {
+      // El alta ya se confirmó: una falla de entrega no la echa para atrás.
+      console.error("[signup] Error emitiendo verificación:", error)
+    }
+
     return NextResponse.json(
       {
         ok: true,
         slug,
+        verification: {
+          emailSent,
+          telegramUrl,
+        },
         urls: {
           home: `/${slug}`,
           market: `/${slug}/market`,

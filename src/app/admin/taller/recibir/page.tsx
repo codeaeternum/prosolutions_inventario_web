@@ -14,7 +14,7 @@ import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
 import { formatAccessPattern, titleCaseName } from "@/lib/utils"
-import { DEFAULT_ORDER_PREFIX, formatFolio } from "@/lib/workshop-labels"
+import { DEFAULT_FOLIO_DIGITS, DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio } from "@/lib/workshop-labels"
 import { waMeHref } from "@/components/public/whatsapp-button"
 
 type Branch = { id: string; name: string }
@@ -166,6 +166,8 @@ export default function ReceiveEquipmentPage() {
   const [pickedModel, setPickedModel] = useState<DeviceModel | null>(null)
   // Prefijo del folio impreso (ajuste `order_prefix` del negocio); OT por defecto.
   const [orderPrefix, setOrderPrefix] = useState(DEFAULT_ORDER_PREFIX)
+  // Largo del consecutivo impreso (ajuste `order_folio_digits`, 4–8); 6 por defecto.
+  const [folioDigits, setFolioDigits] = useState(DEFAULT_FOLIO_DIGITS)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const searchVersion = useRef(0)
@@ -219,8 +221,14 @@ export default function ReceiveEquipmentPage() {
       .catch(() => { /* sin catálogo de configuración: se usan los valores por defecto */ })
     fetch("/api/settings")
       .then(response => (response.ok ? response.json() : Promise.reject(new Error("sin ajustes"))))
-      .then(data => { if (!cancelled && typeof data.orderPrefix === "string" && data.orderPrefix.trim()) setOrderPrefix(data.orderPrefix) })
-      .catch(() => { /* sin ajustes: folio con el prefijo por defecto */ })
+      .then(data => {
+        if (cancelled) return
+        if (typeof data.orderPrefix === "string" && data.orderPrefix.trim()) setOrderPrefix(data.orderPrefix)
+        // orderFolioDigits puede venir como número o texto; fuera de rango se acota (4–8).
+        const digits = Number(data.orderFolioDigits)
+        if (Number.isFinite(digits)) setFolioDigits(clampFolioDigits(digits))
+      })
+      .catch(() => { /* sin ajustes: folio con el formato por defecto */ })
     return () => { cancelled = true }
   }, [])
 
@@ -651,7 +659,7 @@ export default function ReceiveEquipmentPage() {
       if (!response.ok) throw new Error(data.error || "No se pudo crear la orden. Reintenta sin cambiar los datos.")
       operationKey.current = null
       setCreated(data.order)
-      toast.success(`Orden ${formatFolio(orderPrefix, data.order.number)} registrada`)
+      toast.success(`Orden ${formatFolio(orderPrefix, data.order.number, folioDigits)} registrada`)
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Error de conexión. Reintenta sin cambiar los datos.")
     } finally {
@@ -719,7 +727,7 @@ export default function ReceiveEquipmentPage() {
   // Enlace de WhatsApp para avisar al cliente que su equipo ya quedó registrado:
   // mismo armado que notifyWhatsApp de /api/workshop/[id] (folio + tracking).
   const trackingBase = typeof window === "undefined" ? "" : window.location.origin
-  const createdFolio = created ? formatFolio(orderPrefix, created.number) : ""
+  const createdFolio = created ? formatFolio(orderPrefix, created.number, folioDigits) : ""
   const createdPhone4 = form.customerPhone.replace(/\D/g, "").slice(-4)
   const createdWhatsApp = created && form.customerPhone.trim()
     ? waMeHref(form.customerPhone, `Hola ${form.customerName.trim()}, recibimos tu equipo con el folio ${createdFolio}. Sigue tu reparación aquí: ${trackingBase}/seguimiento?folio=${encodeURIComponent(createdFolio)}${createdPhone4 ? `&t=${createdPhone4}` : ""}`)

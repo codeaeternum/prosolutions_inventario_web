@@ -3,6 +3,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
+import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 import { ReservationStatus, SaleStatus, CreditMovementType } from "@prisma/client"
@@ -189,6 +190,8 @@ export async function GET(
 
     const eventos: TimelineEvent[] = []
 
+    // Largo del folio impreso configurado por el negocio (order_folio_digits).
+    const folioDigits = await getOrderFolioDigits(businessId)
     for (const order of repairs) {
       const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
       // Total real de la orden: mano de obra + refacciones autorizadas
@@ -197,7 +200,7 @@ export async function GET(
       eventos.push({
         kind: "repair",
         id: order.id,
-        folio: repairFolio(order.number),
+        folio: repairFolio(order.number, folioDigits),
         fecha: order.createdAt.toISOString(),
         descripcion: `${equipo} — ${order.reportedIssue}`.slice(0, 180),
         monto: totalCents > 0 ? totalCents / 100 : null,

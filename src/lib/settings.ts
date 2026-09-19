@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits } from "@/lib/workshop-labels"
 
 export const DEFAULT_SETTINGS = {
   tempReservationMinutes: 30,
@@ -38,6 +39,14 @@ export async function getBusinessSettingsMap(
     select: { key: true, value: true },
   })
   return new Map(rows.map((r) => [r.key, r.value]))
+}
+
+/** Dígitos del consecutivo del folio de taller del negocio
+ *  (SystemSettings `order_folio_digits`: 4–8, default 6). Una llave ausente,
+ *  valor inválido o falla de lectura cae al default — el folio siempre sale. */
+export async function getOrderFolioDigits(businessId: string): Promise<number> {
+  const raw = await getBusinessSetting(businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null)
+  return parseFolioDigits(raw)
 }
 
 /** Escribe una llave de SystemSettings del negocio. */

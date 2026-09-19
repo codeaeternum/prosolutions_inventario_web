@@ -3,7 +3,7 @@ import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
 import { syncLowStockAlerts } from "../low-stock"
-import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, WARRANTY_DAYS_KEY, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
+import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
 import { quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
@@ -52,6 +52,16 @@ const createSchema = z.object({
   // Anticipo cobrado en recepción; con caja abierta genera su asiento de caja.
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
+/** Dígitos del folio del negocio (SystemSettings `order_folio_digits`, 4–8)
+ *  leídos con el cliente de la operación para no salir de la transacción —
+ *  mismo patrón que warranty_days. Ajuste ausente/inválido o lectura fallida
+ *  caen al default: el movimiento de caja/inventario no se bloquea por ello. */
+async function folioDigitsOf(tx: Prisma.TransactionClient, businessId: string): Promise<number> {
+  try {
+    const row = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: ORDER_FOLIO_DIGITS_KEY } }, select: { value: true } })
+    return parseFolioDigits(row?.value)
+  } catch { return DEFAULT_FOLIO_DIGITS }
+}
 async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
   amountCents: number; method: "CASH" | "CARD" | "TRANSFER"; purpose: "ADVANCE" | "ABONO" | "SETTLEMENT"; note?: string
@@ -67,7 +77,7 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
   }
   const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
   if (register) {
-    const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller OT-${String(args.orderNumber).padStart(6, "0")} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
+    const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller ${repairFolio(args.orderNumber, await folioDigitsOf(tx, args.businessId))} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
     await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
   }
   return { payment }
@@ -132,7 +142,7 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
   if (!part.productId) return null
   args.touched?.add(part.productId)
   const productId = part.productId
-  const folio = repairFolio(order.number)
+  const folio = repairFolio(order.number, await folioDigitsOf(tx, businessId))
   if (type === "RETURN") {
     // Se repone solo lo que realmente se descontó (los movimientos OUT de esta
     // refacción, identificados por su id en `notes`) menos lo ya repuesto —
@@ -214,6 +224,11 @@ const PART_CLOSED_STATUSES: readonly string[] = ["NOT_AUTHORIZED", "NOT_REPAIRED
 // verá el total con la pieza al decidir) ni en terminales (PART_CLOSED_STATUSES
 // ya bloquea el ciclo de refacciones antes).
 const PART_REAUTH_STAGES: readonly string[] = ["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY"]
+// Orden delegada al taller asociado (delegatedOrderId, ver domain/delegation):
+// el trabajo vive en la orden espejo del tenant reparador y el cobro al
+// cliente se hace por POS — la orden local ya no admite movimientos de dinero
+// ni de stock. Las transiciones STATUS (incluido CANCELLED) siguen abiertas.
+const DELEGATED_BLOCKED_ACTIONS: readonly string[] = ["PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "REFUND"]
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
@@ -262,6 +277,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     // REFUND es la única acción permitida en órdenes cerradas: devolver un
     // anticipo no reabre el historial ni altera el estado.
     if ((order.status === "CANCELLED" || (order.status === "DELIVERED" && !reopeningToWarranty)) && input.action !== "REFUND") throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
+    // Guard de delegada: la espejo en el tenant reparador es quien mueve
+    // refacciones y cobra la reparación; aquí solo queda el seguimiento.
+    if (order.delegatedOrderId && DELEGATED_BLOCKED_ACTIONS.includes(input.action)) throw new BusinessError("La orden fue delegada al taller asociado; cobra al cliente por POS y gestiona el trabajo en el portal aliado.", 409)
     const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
     let detail = input.detail ?? ""
     let eventType: string = input.action
@@ -311,8 +329,18 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     } else if (input.action === "STATUS") {
       // DELIVERED no es destino válido de STATUS: la entrega física solo
       // ocurre por SETTLE_DELIVER, que cobra el saldo y cierra refacciones.
-      if (!input.status || !repairNextStages[order.status].includes(input.status)) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
+      // Excepción delegada: la orden local es solo referencia (el trabajo y el
+      // cobro de reparación viven en la espejo del taller asociado), así que
+      // DELIVERED y CANCELLED sí son destinos válidos por STATUS — de otro
+      // modo la orden quedaría abierta para siempre.
+      const delegatedTargets: readonly string[] = order.delegatedOrderId ? ["DELIVERED", "CANCELLED"] : []
+      if (!input.status || !(repairNextStages[order.status].includes(input.status) || delegatedTargets.includes(input.status))) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
       data.status = input.status
+      if (order.delegatedOrderId && input.status === "DELIVERED") {
+        // Cierre de una delegada: el QR del sticker muere como en cualquier
+        // entrega y se limpia la vigencia de garantía si quedara una abierta.
+        Object.assign(data, rotatedUploadToken(), { warrantyUntil: null })
+      }
       if (input.status === "READY") data.qualityCheck = input.detail ?? null
       // El detalle es opcional: sin texto del staff el evento conserva solo
       // la transición ("Etapa anterior → Etapa nueva.").
@@ -348,6 +376,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // abierta hasta la entrega (SETTLE_DELIVER) y el sticker todavía
         // sirve para documentar el estado en que sale el equipo.
         Object.assign(data, rotatedUploadToken())
+        if (order.delegatedOrderId) {
+          // La espejo vive en OTRO tenant: cancelar la local no la alcanza.
+          // El aviso queda en el evento para que el staff la cierre a mano
+          // en el portal aliado si corresponde.
+          detail = `${detail} Aviso: la orden espejo sigue activa en el taller asociado — su cierre se gestiona por separado en el portal aliado.`
+        }
       }
     } else if (input.action === "ASSIGN") {
       const assignee = input.assignedToId ? await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId } }) : null
@@ -394,7 +428,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // si no alcanza el efectivo se rechaza antes de registrar la salida.
         const availableCents = await registerCashCents(tx, register.id)
         if (input.paymentCents > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409)
-        const movement = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: input.paymentCents / 100, description: `Taller OT-${String(order.number).padStart(6, "0")} · reembolso`, referenceType: "REPAIR_REFUND", referenceId: payment.id } })
+        const movement = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: input.paymentCents / 100, description: `Taller ${repairFolio(order.number, await folioDigitsOf(tx, businessId))} · reembolso`, referenceType: "REPAIR_REFUND", referenceId: payment.id } })
         await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
       }
       eventType = "PAYMENT"

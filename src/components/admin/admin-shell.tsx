@@ -46,10 +46,12 @@ interface AdminShellProps {
   user: AdminShellUser
   // Sucursal base del usuario, usada como fallback del selector de sucursal.
   homeBranchId?: string | null
+  // El negocio tiene taller asociado configurado → muestra "Portal aliado".
+  hasPartner?: boolean
   children: React.ReactNode
 }
 
-export function AdminShell({ user, homeBranchId, children }: AdminShellProps) {
+export function AdminShell({ user, homeBranchId, hasPartner, children }: AdminShellProps) {
   const collapsed = useSyncExternalStore(subscribeCollapsed, getCollapsedSnapshot, () => false)
   const [restoring, setRestoring] = useState(false)
 
@@ -84,7 +86,7 @@ export function AdminShell({ user, homeBranchId, children }: AdminShellProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }} collapsed={collapsed} />
+      <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }} hasPartner={hasPartner} collapsed={collapsed} />
       <div className={cn("transition-all duration-300", collapsed ? "lg:pl-20" : "lg:pl-64")}>
         <AdminHeader
           user={user}

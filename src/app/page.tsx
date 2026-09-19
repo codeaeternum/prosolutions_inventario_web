@@ -7,28 +7,37 @@ import { listDirectoryBusinesses, type DirectoryBusiness } from "@/lib/directory
 import { directoryCategoryLabel } from "@/lib/directory-categories"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { Reveal } from "@/components/landing/reveal"
 import {
   ArrowRight,
   ArrowLeftRight,
+  BarChart3,
   Bell,
+  CalendarCheck,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   CreditCard,
   FileCheck,
   Globe,
+  Handshake,
   KeyRound,
   LayoutDashboard,
   Link2,
   Lock,
   Package,
   PackageSearch,
+  Printer,
   QrCode,
   Receipt,
+  Rocket,
   Search,
+  Send,
+  Settings2,
   ShieldCheck,
   Smartphone,
   Store,
+  UserPlus,
   Users,
   Wallet,
   Wrench,
@@ -63,6 +72,8 @@ const pains = [
   },
 ]
 
+// Bento de módulos: los "wide" caen en las posiciones 1, 6 y 11 para que el
+// grid de 3 columnas quede en filas completas (2+1 | 1+1+1 | 2+1 | 1+1+1 | 2+1).
 const features = [
   {
     icon: Lock,
@@ -108,9 +119,33 @@ const features = [
     wide: false,
   },
   {
+    icon: CalendarCheck,
+    title: "Reservas con depósito y QR",
+    desc: "Tus clientes apartan refacciones desde tu vitrina: reserva temporal o con anticipo, con QR para recoger en mostrador.",
+    wide: false,
+  },
+  {
     icon: Users,
     title: "Mercado entre talleres",
     desc: "Tus talleres aliados compran refacciones de tu stock con precio de mayoreo. Tú decides qué productos ven.",
+    wide: false,
+  },
+  {
+    icon: BarChart3,
+    title: "Reportes del negocio",
+    desc: "Ventas, piezas más movidas y desempeño por sucursal en gráficas claras, exportables para tus números de fin de mes.",
+    wide: false,
+  },
+  {
+    icon: Send,
+    title: "Avisos por Telegram",
+    desc: "El bot avisa a tu equipo sin abrir el panel: nueva orden, cotización autorizada, reserva por recoger. Todo el taller se entera al momento.",
+    wide: true,
+  },
+  {
+    icon: Printer,
+    title: "Tickets y etiquetas con tu marca",
+    desc: "Tickets de venta, etiquetas de equipos y comprobantes imprimibles con tu logo — tu nombre en cada papel que sale del mostrador.",
     wide: false,
   },
 ]
@@ -145,8 +180,50 @@ const vitrinaPoints = [
   "Mercado B2B: tus talleres aliados compran a tu stock",
 ]
 
+// Los 3 tipos de negocio que soporta BusinessKind (REPAIR, PARTNER, PARTS);
+// el modo completo (FULL) se menciona como nota al pie de la sección.
+const audiences = [
+  {
+    icon: Wrench,
+    title: "Taller de reparación",
+    desc: "Recibe equipos con patrón y evidencia, cotiza por link, descuenta refacciones del stock y cobra en caja. El flujo completo de la orden de servicio.",
+    tags: ["Órdenes y pipeline", "Refacciones", "Caja y crédito"],
+  },
+  {
+    icon: Handshake,
+    title: "Captador / punto de recepción",
+    desc: "Recibes equipos en tu mostrador y los mandas a tu taller asociado — el modelo de las cadenas. Cada pieza con folio y estatus visible para tu cliente.",
+    tags: ["Recepción propia", "Taller asociado", "Rastreo por folio"],
+  },
+  {
+    icon: Package,
+    title: "Tienda de refacciones",
+    desc: "Sin mesa de reparación: vende por mostrador con punto de venta, aparta piezas con reservas y surte a talleres aliados en el mercado B2B.",
+    tags: ["Punto de venta", "Reservas", "Mercado B2B"],
+  },
+]
+
+const steps = [
+  {
+    icon: UserPlus,
+    title: "Crea tu cuenta",
+    desc: "Registra el nombre de tu negocio y aparta tu dirección reficio.app/tu-negocio. Sin tarjeta ni instalaciones.",
+  },
+  {
+    icon: Settings2,
+    title: "Configura lo básico",
+    desc: "Define tu sucursal, tus servicios con precio y tus primeras refacciones. Tu vitrina se publica sola.",
+  },
+  {
+    icon: Rocket,
+    title: "Recibe tu primera orden",
+    desc: "Imprime el QR de mostrador, comparte tu link y registra el primer equipo con patrón, anticipo y folio.",
+  },
+]
+
 const navLinks = [
   { href: "#funciones", label: "Funciones" },
+  { href: "#para-quien", label: "Para quién" },
   { href: "#flujo", label: "Cómo funciona" },
   { href: "#vitrina", label: "Tu vitrina" },
   { href: "#precio", label: "Precio" },
@@ -170,6 +247,11 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col overflow-x-clip">
+      {/* Sin JS, los bloques [data-reveal] se muestran sin animación */}
+      <noscript>
+        <style>{`[data-reveal]{opacity:1!important;transform:none!important;translate:none!important}`}</style>
+      </noscript>
+
       {/* ===================== Navbar ===================== */}
       <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md safe-area-sticky">
         <div className="container mx-auto max-w-6xl flex h-16 items-center justify-between gap-4 px-4">
@@ -246,28 +328,52 @@ export default async function HomePage() {
             <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-14 items-center">
               {/* Copy */}
               <div className="text-center lg:text-left space-y-7">
-                <div className="inline-flex items-center gap-2 rounded-full border bg-card/80 backdrop-blur px-4 py-1.5 text-sm font-medium shadow-sm">
+                <div className="inline-flex items-center gap-2 rounded-full border bg-card/80 backdrop-blur px-4 py-1.5 text-sm font-medium shadow-sm animate-in fade-in slide-in-from-bottom-4 animation-duration-500 fill-mode-both ease-out motion-reduce:animate-none">
                   <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none" />
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                   </span>
                   Software para talleres de reparación
                 </div>
 
-                <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] font-extrabold tracking-tighter leading-[1.08]">
+                <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] font-extrabold tracking-tighter leading-[1.08] animate-in fade-in slide-in-from-bottom-4 animation-duration-500 delay-100 fill-mode-both ease-out motion-reduce:animate-none">
                   El sistema operativo de tu{" "}
                   <span className="bg-gradient-to-r from-primary via-violet-400 to-indigo-500 bg-clip-text text-transparent">
                     taller de reparación
                   </span>
                 </h1>
 
-                <p className="text-lg text-muted-foreground max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                  Órdenes de reparación, inventario por sucursal, punto de venta,
-                  crédito a tus clientes y una vitrina pública con tu marca — todo
-                  en una sola herramienta, en español y pensado para México.
+                <p className="text-lg text-muted-foreground max-w-xl mx-auto lg:mx-0 leading-relaxed animate-in fade-in slide-in-from-bottom-4 animation-duration-500 delay-200 fill-mode-both ease-out motion-reduce:animate-none">
+                  Reparaciones, refacciones, caja y clientes en un solo sistema:
+                  órdenes con folio, inventario por sucursal, punto de venta,
+                  crédito y una vitrina pública con tu marca — en español y
+                  pensado para México.
                 </p>
 
-                <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
+                <ul
+                  aria-label="Módulos incluidos"
+                  className="flex flex-wrap justify-center lg:justify-start gap-2 animate-in fade-in slide-in-from-bottom-4 animation-duration-500 delay-300 fill-mode-both ease-out motion-reduce:animate-none"
+                >
+                  {[
+                    { icon: Wrench, label: "Reparaciones" },
+                    { icon: Package, label: "Refacciones" },
+                    { icon: Store, label: "Punto de venta" },
+                    { icon: Wallet, label: "Caja y cortes" },
+                    { icon: CreditCard, label: "Fiado" },
+                    { icon: CalendarCheck, label: "Reservas" },
+                    { icon: Send, label: "Telegram" },
+                  ].map((m) => (
+                    <li
+                      key={m.label}
+                      className="inline-flex items-center gap-1.5 rounded-full border bg-card/70 backdrop-blur px-3 py-1 text-xs font-medium text-muted-foreground"
+                    >
+                      <m.icon className="h-3.5 w-3.5 text-primary" aria-hidden />
+                      {m.label}
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start animate-in fade-in slide-in-from-bottom-4 animation-duration-500 delay-300 fill-mode-both ease-out motion-reduce:animate-none">
                   <Button size="lg" className="h-12 px-7 text-base gap-2 shadow-lg shadow-primary/25" asChild>
                     <Link href="/registro">
                       Crea tu negocio gratis
@@ -282,13 +388,13 @@ export default async function HomePage() {
                   </Button>
                 </div>
 
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground animate-in fade-in animation-duration-500 delay-500 fill-mode-both ease-out motion-reduce:animate-none">
                   Gratis durante el piloto · Sin tarjeta · Tu dirección reficio.app/tu-negocio
                 </p>
               </div>
 
               {/* Mock: orden de reparación */}
-              <div className="relative mx-auto w-full max-w-md">
+              <div className="relative mx-auto w-full max-w-md animate-in fade-in zoom-in-95 slide-in-from-bottom-8 animation-duration-700 delay-200 fill-mode-both ease-out motion-reduce:animate-none">
                 <div
                   aria-hidden
                   className="absolute -inset-6 rounded-[2rem] bg-gradient-to-br from-primary/15 via-transparent to-indigo-500/15 blur-2xl"
@@ -396,11 +502,11 @@ export default async function HomePage() {
                 </div>
 
                 {/* Chips flotantes */}
-                <div className="absolute -right-3 -top-4 hidden sm:flex items-center gap-2 rounded-full border bg-card px-3.5 py-2 text-xs font-medium shadow-lg">
+                <div className="absolute -right-3 -top-4 hidden sm:flex items-center gap-2 rounded-full border bg-card px-3.5 py-2 text-xs font-medium shadow-lg animate-in fade-in slide-in-from-bottom-3 animation-duration-500 delay-700 fill-mode-both motion-reduce:animate-none">
                   <QrCode className="h-3.5 w-3.5 text-primary" />
                   QR de mostrador
                 </div>
-                <div className="absolute -left-4 -bottom-5 hidden sm:flex items-center gap-2 rounded-full border bg-card px-3.5 py-2 text-xs font-medium shadow-lg">
+                <div className="absolute -left-4 -bottom-5 hidden sm:flex items-center gap-2 rounded-full border bg-card px-3.5 py-2 text-xs font-medium shadow-lg animate-in fade-in slide-in-from-bottom-3 animation-duration-500 delay-1000 fill-mode-both motion-reduce:animate-none">
                   <Bell className="h-3.5 w-3.5 text-primary" />
                   Cliente notificado
                 </div>
@@ -412,7 +518,7 @@ export default async function HomePage() {
         {/* ===================== Pipeline ===================== */}
         <section id="flujo" className="scroll-mt-20">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-20">
-            <div className="text-center mb-10">
+            <Reveal className="text-center mb-10">
               <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
                 Flujo de trabajo
               </p>
@@ -423,8 +529,9 @@ export default async function HomePage() {
                 Un pipeline claro que todo tu equipo entiende. Cada orden lleva su
                 folio, su técnico y su historial.
               </p>
-            </div>
+            </Reveal>
 
+            <Reveal delay={150}>
             <div className="overflow-x-auto pb-2 -mx-4 px-4">
               <ol className="flex items-stretch gap-0 min-w-[640px] max-w-4xl mx-auto">
                 {pipeline.map((stage, i) => (
@@ -457,6 +564,7 @@ export default async function HomePage() {
                 ))}
               </ol>
             </div>
+            </Reveal>
           </div>
         </section>
 
@@ -465,7 +573,7 @@ export default async function HomePage() {
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
             <div className="grid lg:grid-cols-2 gap-12 items-start">
               <div className="space-y-8">
-                <div>
+                <Reveal>
                   <p className="text-xs font-semibold uppercase tracking-widest text-rose-500 mb-3">
                     Fugas de dinero
                   </p>
@@ -477,28 +585,28 @@ export default async function HomePage() {
                     Los talleres no quiebran por falta de trabajo — pierden por
                     descuido. Estas son las fugas que Reficio tapa desde el día uno.
                   </p>
-                </div>
+                </Reveal>
                 <div className="space-y-4">
-                  {pains.map((pain) => (
-                    <div
-                      key={pain.title}
-                      className="flex gap-4 rounded-xl border bg-card p-4 border-l-2 border-l-rose-500/60"
-                    >
-                      <div className="h-10 w-10 rounded-lg bg-rose-500/10 flex items-center justify-center shrink-0">
-                        <pain.icon className="h-5 w-5 text-rose-500" />
+                  {pains.map((pain, i) => (
+                    <Reveal key={pain.title} delay={i * 90}>
+                      <div className="flex gap-4 rounded-xl border bg-card p-4 border-l-2 border-l-rose-500/60">
+                        <div className="h-10 w-10 rounded-lg bg-rose-500/10 flex items-center justify-center shrink-0">
+                          <pain.icon className="h-5 w-5 text-rose-500" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold">{pain.title}</h3>
+                          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                            {pain.desc}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-semibold">{pain.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                          {pain.desc}
-                        </p>
-                      </div>
-                    </div>
+                    </Reveal>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-2xl border bg-card p-8 space-y-6 lg:sticky lg:top-24 shadow-lg shadow-primary/5">
+              <Reveal delay={150} className="lg:sticky lg:top-24 lg:self-start">
+              <div className="rounded-2xl border bg-card p-8 space-y-6 shadow-lg shadow-primary/5">
                 <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary to-indigo-500 flex items-center justify-center shadow-md shadow-primary/25">
                   <Zap className="h-6 w-6 text-primary-foreground" />
                 </div>
@@ -532,6 +640,7 @@ export default async function HomePage() {
                   </Link>
                 </Button>
               </div>
+              </Reveal>
             </div>
           </div>
         </section>
@@ -539,9 +648,9 @@ export default async function HomePage() {
         {/* ===================== Features (bento) ===================== */}
         <section id="funciones" className="border-t scroll-mt-20">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
-            <div className="text-center mb-12">
+            <Reveal className="text-center mb-12">
               <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
-                Funciones
+                Módulos
               </p>
               <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
                 Todo el mostrador en un solo lugar
@@ -550,27 +659,71 @@ export default async function HomePage() {
                 Diseñado para cómo trabaja un taller real: recepción, refacciones,
                 cobro y seguimiento — no otro sistema genérico.
               </p>
-            </div>
+            </Reveal>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {features.map((f) => (
-                <div
+              {features.map((f, i) => (
+                <Reveal
                   key={f.title}
-                  className={
-                    "group flex flex-col gap-3 rounded-2xl border bg-card p-6 transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5" +
-                    (f.wide ? " lg:col-span-2" : "")
-                  }
+                  delay={(i % 3) * 80}
+                  className={f.wide ? "lg:col-span-2" : undefined}
                 >
-                  <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center transition-colors group-hover:bg-primary/15">
-                    <f.icon className="h-5 w-5 text-primary" />
+                  <div className="group flex h-full flex-col gap-3 rounded-2xl border bg-card p-6 transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5">
+                    <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center transition-colors group-hover:bg-primary/15">
+                      <f.icon className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-lg tracking-tight">{f.title}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {f.desc}
+                    </p>
+                    {"tags" in f && f.tags && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {f.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <h3 className="font-semibold text-lg tracking-tight">{f.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    {f.desc}
-                  </p>
-                  {"tags" in f && f.tags && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {f.tags.map((tag) => (
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ===================== Para quién es ===================== */}
+        <section id="para-quien" className="border-t bg-accent/40 scroll-mt-20">
+          <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
+            <Reveal className="text-center mb-12">
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
+                Para quién es
+              </p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
+                Tres negocios, un mismo sistema
+              </h2>
+              <p className="text-muted-foreground mt-3 max-w-xl mx-auto">
+                Reficio se adapta a cómo ganas dinero: reparando equipos,
+                captándolos para otro taller o vendiendo refacciones.
+              </p>
+            </Reveal>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {audiences.map((a, i) => (
+                <Reveal key={a.title} delay={i * 100} className="h-full">
+                  <div className="group flex h-full flex-col gap-3 rounded-2xl border bg-card p-6 transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5">
+                    <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center transition-colors group-hover:bg-primary/15">
+                      <a.icon className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold text-lg tracking-tight">{a.title}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {a.desc}
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1 mt-auto">
+                      {a.tags.map((tag) => (
                         <span
                           key={tag}
                           className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
@@ -579,30 +732,35 @@ export default async function HomePage() {
                         </span>
                       ))}
                     </div>
-                  )}
-                </div>
+                  </div>
+                </Reveal>
               ))}
             </div>
+
+            <Reveal delay={250}>
+              <p className="text-center text-sm text-muted-foreground mt-8">
+                ¿Reparas <em>y</em> vendes? El modo completo combina taller y
+                tienda en el mismo panel.
+              </p>
+            </Reveal>
           </div>
         </section>
 
         {/* ===================== Workflow ===================== */}
         <section className="border-t bg-muted/30">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
-            <div className="text-center mb-12">
+            <Reveal className="text-center mb-12">
               <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
                 Día a día
               </p>
               <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
                 Cada pieza conecta con la siguiente
               </h2>
-            </div>
+            </Reveal>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
               {workflow.map((step, i) => (
-                <div
-                  key={step.title}
-                  className="relative flex flex-col items-center text-center gap-3"
-                >
+                <Reveal key={step.title} delay={i * 100} className="h-full">
+                <div className="relative flex flex-col items-center text-center gap-3">
                   {i < workflow.length - 1 && (
                     <ChevronRight
                       className="hidden lg:block absolute top-5 -right-5 h-5 w-5 text-muted-foreground/40"
@@ -620,6 +778,7 @@ export default async function HomePage() {
                     {step.desc}
                   </p>
                 </div>
+                </Reveal>
               ))}
             </div>
           </div>
@@ -629,7 +788,7 @@ export default async function HomePage() {
         <section id="vitrina" className="border-t scroll-mt-20">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
             <div className="grid lg:grid-cols-2 gap-12 items-center">
-              <div className="space-y-6 order-2 lg:order-1">
+              <Reveal className="space-y-6 order-2 lg:order-1">
                 <p className="text-xs font-semibold uppercase tracking-widest text-primary">
                   Tu propia dirección
                 </p>
@@ -657,10 +816,10 @@ export default async function HomePage() {
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                 </Button>
-              </div>
+              </Reveal>
 
               {/* Mock de navegador */}
-              <div className="order-1 lg:order-2">
+              <Reveal delay={150} className="order-1 lg:order-2">
                 <div className="rounded-2xl border bg-card shadow-2xl shadow-primary/10 overflow-hidden">
                   <div className="flex items-center gap-2 border-b bg-muted/50 px-4 py-3">
                     <span className="h-3 w-3 rounded-full bg-rose-400/80" />
@@ -717,8 +876,47 @@ export default async function HomePage() {
                     </div>
                   </div>
                 </div>
-              </div>
+              </Reveal>
             </div>
+          </div>
+        </section>
+
+        {/* ===================== Cómo empiezas ===================== */}
+        <section id="empieza" className="border-t scroll-mt-20">
+          <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
+            <Reveal className="text-center mb-12">
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
+                Cómo empiezas
+              </p>
+              <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
+                De cero a tu primera orden en minutos
+              </h2>
+              <p className="text-muted-foreground mt-3 max-w-xl mx-auto">
+                Sin semana de capacitación ni consultores: si sabes usar WhatsApp,
+                sabes usar Reficio.
+              </p>
+            </Reveal>
+
+            <ol className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              {steps.map((step, i) => (
+                <li key={step.title} className="h-full">
+                  <Reveal delay={i * 120} className="h-full">
+                    <div className="relative flex h-full flex-col items-center text-center gap-3 rounded-2xl border bg-card p-6 pt-8 shadow-sm">
+                      <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center relative">
+                        <step.icon className="h-6 w-6 text-primary" />
+                        <span className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-primary text-primary-foreground text-[11px] font-bold flex items-center justify-center shadow-sm">
+                          {i + 1}
+                        </span>
+                      </div>
+                      <h3 className="font-semibold">{step.title}</h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {step.desc}
+                      </p>
+                    </div>
+                  </Reveal>
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
 
@@ -726,7 +924,7 @@ export default async function HomePage() {
         <section id="precio" className="border-t bg-muted/30 scroll-mt-20">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
             <div className="mx-auto max-w-2xl">
-              <div className="text-center mb-10">
+              <Reveal className="text-center mb-10">
                 <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
                   Precio
                 </p>
@@ -737,8 +935,9 @@ export default async function HomePage() {
                   Estamos en piloto con talleres reales. Entra hoy y crece con el
                   producto.
                 </p>
-              </div>
+              </Reveal>
 
+              <Reveal delay={120}>
               <div className="rounded-2xl border bg-card p-8 sm:p-10 shadow-xl shadow-primary/10 relative overflow-hidden">
                 <div
                   aria-hidden
@@ -779,6 +978,7 @@ export default async function HomePage() {
                   </p>
                 </div>
               </div>
+              </Reveal>
             </div>
           </div>
         </section>
@@ -787,7 +987,7 @@ export default async function HomePage() {
         {directoryBusinesses.length > 0 && (
           <section className="border-t">
             <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-20">
-              <div className="text-center mb-10">
+              <Reveal className="text-center mb-10">
                 <p className="text-xs font-semibold uppercase tracking-widest text-primary mb-3">
                   Vitrinas reales
                 </p>
@@ -798,49 +998,52 @@ export default async function HomePage() {
                   Cada uno tiene su vitrina pública en reficio.app — visítalos y
                   mira cómo se ve la tuya.
                 </p>
-              </div>
+              </Reveal>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 max-w-5xl mx-auto">
-                {directoryBusinesses.map((business) => (
-                  <Link
-                    key={business.slug}
-                    href={`/${business.slug}`}
-                    className="group flex flex-col items-center gap-3 rounded-2xl border bg-card p-5 text-center transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5"
-                  >
-                    {business.logoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
-                      <img
-                        src={business.logoUrl}
-                        alt=""
-                        className="h-12 w-12 shrink-0 rounded-xl object-contain bg-primary/5"
-                      />
-                    ) : (
-                      <div
-                        aria-hidden
-                        className="h-12 w-12 shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg"
-                      >
-                        {business.name.trim().charAt(0).toUpperCase() || "N"}
+                {directoryBusinesses.map((business, i) => (
+                  <Reveal key={business.slug} delay={(i % 6) * 60}>
+                    <Link
+                      href={`/${business.slug}`}
+                      className="group flex h-full flex-col items-center gap-3 rounded-2xl border bg-card p-5 text-center transition-all duration-200 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5"
+                    >
+                      {business.logoUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- logo subido por el negocio, path dinámico
+                        <img
+                          src={business.logoUrl}
+                          alt=""
+                          className="h-12 w-12 shrink-0 rounded-xl object-contain bg-primary/5"
+                        />
+                      ) : (
+                        <div
+                          aria-hidden
+                          className="h-12 w-12 shrink-0 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg"
+                        >
+                          {business.name.trim().charAt(0).toUpperCase() || "N"}
+                        </div>
+                      )}
+                      <div className="min-w-0 w-full">
+                        <p className="text-sm font-semibold truncate">{business.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {directoryCategoryLabel(business.category)}
+                        </p>
                       </div>
-                    )}
-                    <div className="min-w-0 w-full">
-                      <p className="text-sm font-semibold truncate">{business.name}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {directoryCategoryLabel(business.category)}
-                      </p>
-                    </div>
-                  </Link>
+                    </Link>
+                  </Reveal>
                 ))}
               </div>
 
-              <p className="text-center mt-8">
-                <Link
-                  href="/mercado"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-                >
-                  Ver todos en el mercado
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </p>
+              <Reveal delay={200}>
+                <p className="text-center mt-8">
+                  <Link
+                    href="/mercado"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                  >
+                    Ver todos en el mercado
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </p>
+              </Reveal>
             </div>
           </section>
         )}
@@ -848,6 +1051,7 @@ export default async function HomePage() {
         {/* ===================== CTA final ===================== */}
         <section className="border-t">
           <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
+            <Reveal>
             <div className="relative overflow-hidden rounded-3xl border bg-gradient-to-br from-primary via-indigo-500 to-violet-600 px-6 py-14 sm:px-12 text-center text-primary-foreground">
               <div
                 aria-hidden
@@ -889,6 +1093,7 @@ export default async function HomePage() {
                 </div>
               </div>
             </div>
+            </Reveal>
           </div>
         </section>
       </main>

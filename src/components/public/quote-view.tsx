@@ -114,12 +114,14 @@ export function QuoteExpired({ trackingHref }: { trackingHref: string }) {
  * `businessName` es el membrete: en la página global llega de
  * ticket_business_name (o "PROSOLUTIONS"); en la brandeada, el nombre del slug.
  */
-export function QuoteDocument({ order, businessName, token }: {
+export function QuoteDocument({ order, businessName, token, folioDigits }: {
   order: PublicQuote
   businessName: string
   token: string
+  /** Largo del consecutivo impreso (order_folio_digits del negocio, 4–8). */
+  folioDigits?: number
 }) {
-  const folio = repairFolio(order.number)
+  const folio = repairFolio(order.number, folioDigits)
   const { service, issue } = parseIssue(order.reportedIssue)
   const laborCents = order.approvedQuoteCents ?? order.quoteCents
   const parts = order.parts.map(part => ({

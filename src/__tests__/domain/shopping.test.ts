@@ -62,8 +62,8 @@ describe("refacciones faltantes", () => {
     expect(partsShortage).toHaveLength(1)
     expect(partsShortage[0]).toMatchObject({ productId: "p1", needed: 5, available: 4, shortage: 1 })
     expect(partsShortage[0].orders).toEqual([
-      { orderId: "o1", number: 7, qty: 2 },
-      { orderId: "o2", number: 9, qty: 3 },
+      { orderId: "o1", number: 7, qty: 2, folio: "OT-000007" },
+      { orderId: "o2", number: 9, qty: 3, folio: "OT-000009" },
     ])
   })
 

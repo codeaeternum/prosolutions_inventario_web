@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -25,6 +25,8 @@ type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?
 type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; status: "REQUESTED" | "APPROVED" | "REJECTED"; createdById?: string; decisionNote?: string | null; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
 type Order = {
   id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string; quoteToken?: string;
+  // Folio formateado por el servidor con los dígitos del negocio (si viene).
+  folio?: string;
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;
   equipmentColor: string | null; deviceAccessType: string | null; deviceAccessValue: string | null;
   intakeCondition: string | null; reportedIssue: string; serviceName?: string | null; diagnosis: string | null; quoteCents: number | null;
@@ -46,6 +48,12 @@ type Order = {
   originBusinessName?: string | null;
   originContact?: string | null;
   partnerPriceCents?: number | null;
+  // Delegación saliente: esta orden fue enviada al taller asociado — la espejo
+  // vive en su tenant (delegatedOrderId) y aquí solo queda la referencia.
+  delegatedToBusinessId?: string | null;
+  delegatedToBusiness?: { id: string; name: string } | null;
+  delegatedOrderId?: string | null;
+  delegatedAt?: string | null;
   // Garantía con vigencia: la API los fija al reabrir una entregada.
   warrantyUntil?: string | null;
   warrantyCount?: number | null;
@@ -53,6 +61,10 @@ type Order = {
   uploadTokenExpiresAt?: string | null;
   photos?: { id: string; label: string | null; createdAt: string; uploadedBy?: { name: string } | null }[];
 }
+
+// El API ya manda el folio formateado con los dígitos configurados del
+// negocio (order_folio_digits); repairFolio queda como respaldo de 6 dígitos.
+const folioOf = (order: { folio?: string; number: number }) => order.folio ?? repairFolio(order.number)
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
 const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
@@ -119,7 +131,7 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
     <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
       {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
         : orders.map(order => <button key={order.id} onClick={() => onOpen(order.id)} className="w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
-          <p className="flex items-center justify-between gap-2"><strong className="text-xs text-muted-foreground">{repairFolio(order.number)}</strong>{showStage && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[order.status].badge}`}>{repairLabels[order.status]}</span>}</p>
+          <p className="flex items-center justify-between gap-2"><strong className="text-xs text-muted-foreground">{folioOf(order)}</strong>{showStage && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[order.status].badge}`}>{repairLabels[order.status]}</span>}</p>
           <p className="font-medium leading-snug">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</p>
           <p className="text-xs text-muted-foreground">{order.customerName}</p>
           <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
@@ -168,6 +180,12 @@ export default function WorkshopPage() {
   const [settleOpen, setSettleOpen] = useState(false)
   const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", location: "" })
   const [showAccess, setShowAccess] = useState(false)
+  // Delegación al taller asociado: partnerConfigured lo sirve el detalle de la
+  // orden; mirrorLive es el estado en vivo de la espejo vía /api/workshop/partner.
+  const [partnerConfigured, setPartnerConfigured] = useState(false)
+  const [delegateOpen, setDelegateOpen] = useState(false)
+  const [delegateForm, setDelegateForm] = useState<{ price: string; note: string }>({ price: "", note: "" })
+  const [mirrorLive, setMirrorLive] = useState<{ folio: string; status: string; statusLabel: string } | null>(null)
   // El PIN/patrón solo viaja al pedirlo (?reveal=1): se conserva lo revelado
   // para no repetir la consulta al alternar Mostrar/Ocultar.
   const [accessSecret, setAccessSecret] = useState<{ loading: boolean; fetched: boolean; value: string | null }>({ loading: false, fetched: false, value: null })
@@ -252,6 +270,7 @@ export default function WorkshopPage() {
     setDrafts({}); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setFeeDraft(""); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
     setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null }); setDiscardDialog(false)
+    setPartnerConfigured(false); setDelegateOpen(false); setDelegateForm({ price: "", note: "" }); setMirrorLive(null)
   }
 
   function backToOrders() {
@@ -319,6 +338,20 @@ export default function WorkshopPage() {
       setEvidenceLinkExpired(Boolean(order.uploadTokenExpiresAt && new Date(order.uploadTokenExpiresAt).getTime() < Date.now()))
       setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
       setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null })
+      setPartnerConfigured(Boolean(data.partnerConfigured))
+      // Estado en vivo de la espejo delegada: /api/workshop/partner lista las
+      // órdenes que este negocio originó en el tenant reparador — se empata
+      // por el id que el servidor guardó en delegatedOrderId.
+      if (order.delegatedOrderId) {
+        fetch("/api/workshop/partner")
+          .then(response => response.ok ? response.json() : null)
+          .then(partner => {
+            if (!partner || version !== detailVersion.current) return
+            const mirror = ((partner.orders ?? []) as { id?: string; folio: string; status: string; statusLabel: string }[]).find(row => row.id === order.delegatedOrderId)
+            setMirrorLive(mirror ? { folio: mirror.folio, status: mirror.status, statusLabel: mirror.statusLabel } : null)
+          })
+          .catch(() => {})
+      } else setMirrorLive(null)
     } catch {
       if (!controller.signal.aborted && version === detailVersion.current) toast.error("No se pudo abrir la orden. Intenta de nuevo.")
     } finally {
@@ -489,6 +522,27 @@ export default function WorkshopPage() {
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
     finally { inFlight.current = false; setSaving(false) }
   }
+  // Delegación saliente: envía la orden abierta al taller asociado — crea la
+  // espejo en su tenant y marca la local como laboratorio externo. Es
+  // idempotente: un reintento con la misma llave devuelve la misma espejo.
+  async function submitDelegate() {
+    if (inFlight.current || opening || !selected) return
+    const priceText = delegateForm.price.trim()
+    let partnerPriceCents: number | undefined
+    if (priceText !== "") {
+      const price = Number(priceText)
+      if (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 0.000001) { toast.error("El precio de convenio admite hasta dos decimales"); return }
+      partnerPriceCents = Math.round(price * 100)
+    }
+    inFlight.current = true; setSaving(true)
+    try {
+      const result = await post(`/api/workshop/${selected.id}/delegar`, { partnerPriceCents, note: delegateForm.note.trim() || undefined })
+      setDelegateOpen(false); setDelegateForm({ price: "", note: "" })
+      await openOrder(selected.id, true); await load()
+      toast.success(`Orden delegada a ${result.partnerName ?? "el taller asociado"}${result.mirrorFolio ? ` · folio ${result.mirrorFolio}` : ""}`)
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó la delegación. Reintenta sin cambiar los datos.") }
+    finally { inFlight.current = false; setSaving(false) }
+  }
   // El detalle de la orden trae deviceAccessValue en null; el valor real solo
   // viaja con ?reveal=1. Al primer "Mostrar" se consulta con revelado y se
   // guarda — los toggles siguientes no repiten la consulta.
@@ -516,9 +570,9 @@ export default function WorkshopPage() {
 
   return <div className="mx-auto max-w-6xl space-y-6 pb-20">
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? repairFolio(selected.number) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
+      <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={repairFolio(selected.number)} phone={selected.customerPhone} quote={quoteShare(selected)} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button></>}
+        {selected && <><ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button>{partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}><Send className="mr-2 h-4 w-4" />Enviar a taller</Button>}</>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
         : <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div>}
@@ -539,19 +593,22 @@ export default function WorkshopPage() {
             total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0} />
         </div>
         <p className="text-xs text-muted-foreground">{total} órdenes{board && boardStages.some(value => board.totals[value] > board.orders[value].length) ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto." : ""}</p>
-      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{repairFolio(order.number)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
+      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
     </>}
-    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
+    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}{selected.delegatedOrderId && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Send size={12} />Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}</span>{mirrorLive && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Folio espejo {mirrorLive.folio}<span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>{mirrorLive.statusLabel}</span></span>}{selected.delegatedAt && <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>}<Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">Ver en portal aliado</Link></p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
       <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
         canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening} branches={branches} currentBranchId={selected.currentBranch.id}
-        readOnly={partsClosedStages.includes(selected.status)}
+        readOnly={partsClosedStages.includes(selected.status) || Boolean(selected.delegatedOrderId)}
         onAction={async payload => { await handlePartAction(payload) }} />
       <section className="space-y-3 rounded-xl border bg-card p-5"><h2 className="font-semibold">Diagnóstico y presupuesto</h2><p className="whitespace-pre-wrap text-sm">{selected.diagnosis || "Pendiente de diagnóstico"}</p><p className="text-2xl font-semibold">{selected.quoteCents === null ? "Sin cotizar" : money(selected.quoteCents)}</p><p className="text-sm text-muted-foreground">{selected.approvedQuoteCents === null ? "Sin autorización registrada" : `Autorizado: ${money(selected.approvedQuoteCents)}`}</p></section>
       <PaymentsPanel status={selected.status} quoteCents={selected.quoteCents} approvedQuoteCents={selected.approvedQuoteCents} diagnosticFeeCents={selected.diagnosticFeeCents}
         closedWithoutRepair={selected.closedWithoutRepair} parts={selectedParts} payments={selected.payments}
-        canCharge={!terminalStages.includes(selected.status)} canDeliver={repairDeliverableStages.includes(selected.status)} canRefund={isAdmin} disabled={saving || opening}
+        // Una orden delegada no mueve dinero ni refacciones aquí (el dominio
+        // también lo rechaza): el cobro al cliente va por POS y el trabajo se
+        // gestiona en el portal aliado.
+        canCharge={!terminalStages.includes(selected.status) && !selected.delegatedOrderId} canDeliver={repairDeliverableStages.includes(selected.status) && !selected.delegatedOrderId} canRefund={isAdmin && !selected.delegatedOrderId} disabled={saving || opening}
         paymentForm={paymentForm} onPaymentChange={setPaymentForm} onPaymentSubmit={e => void submitPayment(e)}
         settleOpen={settleOpen} onSettleOpenChange={open => { if (open) setSettleForm({ ...emptySettleForm, deliveredTo: selected.customerName }); setSettleOpen(open) }}
         settleForm={settleForm} onSettleChange={handleSettleChange} onSettleSubmit={e => void submitSettle(e)}
@@ -572,11 +629,21 @@ export default function WorkshopPage() {
       {action === "ASSIGN" && <label className="block text-sm">Responsable técnico<select name="assignedToId" required value={draft.assignedToId ?? ""} onChange={e => updateDraft({ assignedToId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona una persona</option>{staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>}
       {action === "TRANSFER" && <label className="block text-sm">Sucursal donde se recibió el equipo<select name="branchId" required value={draft.branchId ?? ""} onChange={e => updateDraft({ branchId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona la sucursal destino</option>{branches.filter(b => b.id !== selected.currentBranch.id).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>}
       <label className="block text-sm">{action === "APPROVE" ? "Quién autorizó y por qué medio" : action === "QUOTE" ? "Diagnóstico y alcance del trabajo" : "Detalle de la acción"}<textarea name="detail" value={draft.detail ?? ""} onChange={e => updateDraft({ detail: e.target.value })} required={action !== "STATUS" && selected.status !== "DELIVERED"} maxLength={2000} rows={3} className={`${inputClass} mt-2`} placeholder={action === "STATUS" ? "Para entregar: quién recibe. Para listo: resultado de la revisión final." : "Deja contexto para la siguiente persona que atienda la orden."} /></label>{action === "NOTE" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noteIsPublic" checked={draft.noteIsPublic ?? false} onChange={e => updateDraft({ noteIsPublic: e.target.checked })} className="h-4 w-4 rounded border" />Visible para el cliente en el rastreo</label>}<p className="text-xs text-muted-foreground">Cada acción conserva su propio borrador hasta guardarlo o salir de la orden.</p><Button disabled={saving || opening}>{saving ? "Guardando…" : "Guardar cambio"}</Button><Button variant="outline" type="button" disabled={saving || opening} onClick={() => void openOrder(selected.id, true)}>Actualizar orden</Button></fieldset></form>}
-      </div><OrderHistory events={selected.events} folio={repairFolio(selected.number)} phone={selected.customerPhone} /></div>}
+      </div><OrderHistory events={selected.events} folio={folioOf(selected)} phone={selected.customerPhone} /></div>}
     <AlertDialog open={discardDialog} onOpenChange={setDiscardDialog}>
       <AlertDialogContent>
         <AlertDialogHeader><AlertDialogTitle>¿Descartar los cambios sin guardar?</AlertDialogTitle><AlertDialogDescription>Los borradores de acciones y de refacciones que no guardaste se perderán al volver a la lista.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel>Seguir editando</AlertDialogCancel><AlertDialogAction onClick={backToOrders}>Descartar y volver</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={delegateOpen} onOpenChange={open => { if (!saving) { setDelegateOpen(open); if (!open) setDelegateForm({ price: "", note: "" }) } }}>
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>Enviar al taller asociado</AlertDialogTitle><AlertDialogDescription>Se crea una orden espejo en el taller reparador y esta orden queda en laboratorio externo. El cobro a tu cliente lo registras por POS; el trabajo se gestiona en el portal aliado.</AlertDialogDescription></AlertDialogHeader>
+        <div className="space-y-3">
+          <label className="block text-sm">Precio convenio en MXN (opcional)<Input type="number" min={0} max={1000000} step="0.01" inputMode="decimal" value={delegateForm.price} onChange={e => setDelegateForm(previous => ({ ...previous, price: e.target.value }))} placeholder="0.00" className="mt-1" /></label>
+          <label className="block text-sm">Nota interna para el taller (opcional)<textarea rows={2} maxLength={500} value={delegateForm.note} onChange={e => setDelegateForm(previous => ({ ...previous, note: e.target.value }))} className={`${inputClass} mt-1`} placeholder="Contexto para quien repara — el cliente nunca la ve." /></label>
+        </div>
+        <AlertDialogFooter><AlertDialogCancel disabled={saving}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={saving} onClick={event => { event.preventDefault(); void submitDelegate() }}>{saving ? "Enviando…" : "Delegar orden"}</AlertDialogAction></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   </div>

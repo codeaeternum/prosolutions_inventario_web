@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
-import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
 // Consulta pública de la cotización por su quoteToken (el token es el secreto;
@@ -99,7 +99,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         { status: 410, headers: NO_STORE },
       )
     }
-    const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
+    // Membrete y largo del folio salen del negocio DUEÑO de la orden.
+    const [businessName, folioDigitsRaw] = await Promise.all([
+      getBusinessSetting(order.businessId, "ticket_business_name"),
+      getBusinessSetting(order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+    ])
 
     const { service, issue } = parseIssue(order.reportedIssue)
     const laborCents = order.approvedQuoteCents ?? order.quoteCents
@@ -117,7 +121,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     return NextResponse.json(
       {
         quote: {
-          folio: repairFolio(order.number),
+          folio: repairFolio(order.number, parseFolioDigits(folioDigitsRaw)),
           businessName: businessName || "PROSOLUTIONS",
           issuedAt: order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt,
           customerName: order.customerName,

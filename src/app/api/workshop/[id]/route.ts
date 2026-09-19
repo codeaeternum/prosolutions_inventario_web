@@ -3,8 +3,10 @@ import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule 
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { updateRepair } from "@/lib/domain/workshop"
+import { REPAIR_PARTNER_KEY } from "@/lib/domain/delegation"
 import { decryptAccessValue } from "@/lib/device-secret"
 import { businessFailure } from "@/lib/domain/http"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
@@ -19,7 +21,7 @@ async function readySideEffects(order: { id: string; number: number; status: str
     where: { orderId: order.id, isPublic: true, detail: READY_PUBLIC_MESSAGE },
     select: { id: true },
   })
-  const folio = repairFolio(order.number)
+  const folio = repairFolio(order.number, await getOrderFolioDigits(order.businessId))
   if (!exists) {
     await prisma.repairEvent.create({
       data: { businessId: order.businessId, actorId, orderId: order.id, type: "NOTE", detail: READY_PUBLIC_MESSAGE, isPublic: true },
@@ -49,7 +51,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const { id } = await params
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, originBusiness: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } }, sourceBranch: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, originBusiness: { select: { id: true, name: true } }, delegatedToBusiness: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } }, sourceBranch: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
     if (!order) return NextResponse.json({ error: "Orden no encontrada" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
     // El PIN/patrón viaja cifrado en BD y solo sale con ?reveal=1; sin el
     // parámetro la ficha recibe null (deviceAccessType sigue indicando que
@@ -61,7 +63,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       try { deviceAccessValue = decryptAccessValue(order.deviceAccessValue) } catch { deviceAccessValue = null }
       await prisma.repairEvent.create({ data: { businessId: order.businessId, actorId: session.user.id, orderId: order.id, type: "NOTE", detail: "Consultó el dato de desbloqueo del equipo", isPublic: false } })
     }
-    return NextResponse.json({ order: { ...order, deviceAccessValue } }, { headers: { "Cache-Control": "private, no-store" } })
+    // El folio viaja ya formateado con los dígitos del negocio
+    // (order_folio_digits) — los clientes no recalculan el padding.
+    const folioDigits = await getOrderFolioDigits(order.businessId)
+    // partnerConfigured: el detalle decide si muestra "Enviar a taller"
+    // (delegación saliente al reparador configurado). Los campos de delegación
+    // (delegatedToBusinessId/delegatedOrderId/delegatedAt + delegatedToBusiness)
+    // ya viajan en order.
+    const partnerConfigured = Boolean((await getBusinessSetting(order.businessId, REPAIR_PARTNER_KEY).catch(() => null))?.trim())
+    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {

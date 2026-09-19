@@ -50,13 +50,18 @@ export function SearchBar({ className }: { className?: string }) {
           name: p.name,
           subtitle: `${p.category?.name || ""} - ${p.barcode || "Sin código"}`,
         }))
-        const orderResults = (ordersRes.orders || []).slice(0, 4).map((o: { id: string; number: number; customerName: string; equipmentType: string; brand?: string | null; model?: string | null }) => ({
-          type: "order" as const,
-          id: o.id,
-          folio: `OT-${String(o.number).padStart(6, "0")}`,
-          name: `OT-${String(o.number).padStart(6, "0")} · ${o.customerName}`,
-          subtitle: [o.equipmentType, o.brand, o.model].filter(Boolean).join(" · "),
-        }))
+        // El listado de taller ya trae `folio` con el formato del negocio
+        // (order_folio_digits); el padStart local queda como respaldo.
+        const orderResults = (ordersRes.orders || []).slice(0, 4).map((o: { id: string; number: number; folio?: string; customerName: string; equipmentType: string; brand?: string | null; model?: string | null }) => {
+          const folio = typeof o.folio === "string" && o.folio ? o.folio : `OT-${String(o.number).padStart(6, "0")}`
+          return {
+            type: "order" as const,
+            id: o.id,
+            folio,
+            name: `${folio} · ${o.customerName}`,
+            subtitle: [o.equipmentType, o.brand, o.model].filter(Boolean).join(" · "),
+          }
+        })
         setResults([...orderResults, ...productResults])
         setShowResults(true)
       } catch (error) {

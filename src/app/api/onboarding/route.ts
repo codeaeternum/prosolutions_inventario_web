@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server"
 import { requireAdmin, requireAdminOrEmployee } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
-import { getBusinessSetting, setBusinessSetting } from "@/lib/settings"
+import { getBusinessSettingsMap, setBusinessSetting } from "@/lib/settings"
 import { isValidSlug } from "@/lib/slug-rules"
 
 // Checklist de onboarding por negocio. El progreso NO se persiste: cada paso
 // se deriva de conteos reales en el momento del GET. Lo único guardado es el
 // "dismiss" en SystemSettings scoped por businessId.
 const DISMISS_KEY = "onboarding_dismissed"
+// Vínculo captador → taller reparador (modelo "Telcel trae → otro taller repara").
+const REPAIR_PARTNER_KEY = "repair_partner_business_id"
 
 // Nombres placeholder que no cuentan como identidad propia del negocio
 // (semillas y defaults conocidos). La comparación es case-insensitive.
@@ -34,28 +36,32 @@ export async function GET() {
     if (auth.error) return auth.error
     const businessId = auth.session.user.businessId
 
-    const [business, branches, products, services, orders, staffCount, dismissed] =
+    const [business, branches, products, services, orders, delegatedOrders, staffCount, settingsMap] =
       await Promise.all([
         prisma.business.findUnique({
           where: { id: businessId },
-          select: { name: true, slug: true, logoUrl: true },
+          select: { name: true, slug: true, logoUrl: true, businessKind: true },
         }),
         prisma.branch.count({ where: { businessId } }),
         prisma.product.count({ where: { businessId } }),
         prisma.workshopService.count({ where: { businessId } }),
         prisma.repairOrder.count({ where: { businessId } }),
+        // Órdenes que este negocio captó para otro taller (originBusinessId).
+        prisma.repairOrder.count({ where: { originBusinessId: businessId } }),
         prisma.user.count({
           where: { businessId, role: { in: ["ADMIN", "EMPLOYEE"] } },
         }),
-        getBusinessSetting(businessId, DISMISS_KEY),
+        getBusinessSettingsMap(businessId, [DISMISS_KEY, REPAIR_PARTNER_KEY]),
       ])
+    const dismissed = settingsMap.get(DISMISS_KEY)
+    const repairPartnerId = settingsMap.get(REPAIR_PARTNER_KEY)?.trim()
 
     const businessName = (business?.name ?? "").trim().toLowerCase()
     const hasIdentity =
       Boolean(business?.logoUrl) ||
       (businessName !== "" && !GENERIC_BUSINESS_NAMES.has(businessName))
 
-    const steps: OnboardingStep[] = [
+    const baseSteps: OnboardingStep[] = [
       {
         key: "identity",
         label: "Ponle nombre y logo a tu negocio",
@@ -99,6 +105,38 @@ export async function GET() {
         href: "/admin/usuarios",
       },
     ]
+
+    // Ajustes por giro del negocio (Business.businessKind). No restringen
+    // módulos — solo cambian qué pasos del checklist aplican.
+    const kind = business?.businessKind ?? "FULL"
+    let steps = baseSteps
+    if (kind === "PARTS") {
+      // Sin taller: no aplican los pasos de servicios ni órdenes de reparación.
+      steps = steps.filter((step) => step.key !== "service" && step.key !== "order")
+    } else if (kind === "REPAIR") {
+      // Sin inventario/mercado: no aplica el paso de productos.
+      steps = steps.filter((step) => step.key !== "product")
+    } else if (kind === "PARTNER") {
+      // Captador: el paso clave es vincular su taller reparador; sus órdenes
+      // nacen en el tenant del reparador (se cuentan por originBusinessId).
+      steps = steps.map((step) =>
+        step.key === "order"
+          ? {
+              key: "order",
+              label: "Envía tu primer equipo a reparar",
+              done: delegatedOrders >= 1,
+              href: "/aliado",
+            }
+          : step,
+      )
+      const insertAt = steps.findIndex((step) => step.key === "branch")
+      steps.splice(insertAt === -1 ? steps.length : insertAt, 0, {
+        key: "partner-link",
+        label: "Vincula tu taller reparador",
+        done: Boolean(repairPartnerId),
+        href: "/admin/configuracion",
+      })
+    }
 
     return NextResponse.json(
       {

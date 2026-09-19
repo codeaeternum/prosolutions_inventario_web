@@ -1,6 +1,29 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
 import { safeRedirectPath } from "@/lib/safe-redirect"
+
+/**
+ * Aterrizaje sugerido del staff por giro del negocio (Business.businessKind):
+ * no restringe módulos, solo decide la pantalla inicial tras el login.
+ * FULL y negocios sin dato conservan el destino actual (/admin).
+ */
+async function staffLanding(businessId: string): Promise<string> {
+  try {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { businessKind: true },
+    })
+    switch (business?.businessKind) {
+      case "PARTNER": return "/aliado"
+      case "PARTS": return "/admin/ventas"
+      case "REPAIR": return "/admin/taller"
+      default: return "/admin"
+    }
+  } catch {
+    return "/admin"
+  }
+}
 
 // Destino post-login por rol. /login navega aquí (con ?next= cuando el flujo
 // traía un callbackUrl explícito) y este handler decide la ruta real según la
@@ -25,10 +48,12 @@ export async function GET(req: Request) {
     return NextResponse.redirect(new URL("/login", origin))
   }
 
-  const { role, status } = session.user
+  const { role, status, businessId, isSuperAdmin } = session.user
   let dest = "/pending"
   if (status === "APPROVED") {
-    if (role === "ADMIN" || role === "EMPLOYEE") dest = "/admin"
+    // Espejo de la regla 4 de getAuthRedirect: el operador va a la consola.
+    if (isSuperAdmin) dest = "/platform"
+    else if (role === "ADMIN" || role === "EMPLOYEE") dest = await staffLanding(businessId)
     else if (role === "WORKSHOP") dest = "/admin/mercado"
     else dest = "/catalogo"
   }

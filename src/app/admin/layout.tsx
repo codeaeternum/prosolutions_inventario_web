@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { AdminShell } from "@/components/admin/admin-shell"
+import { getBusinessSetting } from "@/lib/settings"
 
 export default async function AdminLayout({
   children,
@@ -20,8 +21,14 @@ export default async function AdminLayout({
     select: { homeBranchId: true },
   })
 
+  // ¿El negocio tiene taller asociado? Habilita "Portal aliado" en el menú
+  // para mandar/seguir órdenes delegadas (modelo captador).
+  const partnerLink = session.user.businessId
+    ? await getBusinessSetting(session.user.businessId, "repair_partner_business_id")
+    : null
+
   return (
-    <AdminShell user={session.user} homeBranchId={dbUser?.homeBranchId}>
+    <AdminShell user={session.user} homeBranchId={dbUser?.homeBranchId} hasPartner={Boolean(partnerLink)}>
       {children}
     </AdminShell>
   )

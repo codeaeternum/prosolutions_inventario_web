@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -28,9 +29,31 @@ import {
 import { cn } from "@/lib/utils"
 import { generateSlug } from "@/lib/utils"
 import { normalizeSlug, RESERVED_SLUGS, SLUG_RE } from "@/lib/slug-rules"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+// Giro del negocio (Business.businessKind): no restringe módulos, solo adapta
+// el onboarding y las opciones visibles del panel.
+type BusinessKindOption = "FULL" | "REPAIR" | "PARTNER" | "PARTS"
+
+const BUSINESS_KINDS: { value: BusinessKindOption; label: string; description: string }[] = [
+  { value: "FULL", label: "Completo", description: "Taller de reparación + venta de refacciones" },
+  { value: "REPAIR", label: "Solo taller de reparación", description: "Recibes equipos, los reparas y los entregas" },
+  { value: "PARTNER", label: "Captador", description: "Mando equipos a reparar a otro taller" },
+  { value: "PARTS", label: "Solo venta de refacciones", description: "Inventario, mostrador y mercado de refacciones" },
+]
 
 type SignupResult = {
   slug: string
+  verification?: {
+    emailSent: boolean
+    telegramUrl: string | null
+  }
   urls: {
     home: string
     market: string
@@ -47,9 +70,11 @@ const SLUG_HELP: Record<Exclude<SlugState, "ok" | "empty">, string> = {
 }
 
 export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
+  const router = useRouter()
   const [form, setForm] = useState({
     businessName: "",
     slug: "",
+    businessKind: "FULL" as BusinessKindOption,
     adminName: "",
     email: "",
     phone: "",
@@ -115,12 +140,14 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
           email: form.email.trim(),
           phone: form.phone.trim() || undefined,
           password: form.password,
+          businessKind: form.businessKind,
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         error?: string
         slug?: string
         urls?: SignupResult["urls"]
+        verification?: SignupResult["verification"]
       }
 
       if (res.status === 403) {
@@ -132,7 +159,15 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
         return
       }
       if (data.slug && data.urls) {
-        setResult({ slug: data.slug, urls: data.urls })
+        // Siguiente paso: verificar el contacto (correo / teléfono vía Telegram).
+        // El deep-link viaja como ?tg= — ese link ES el canal de entrega del código.
+        const params = new URLSearchParams({
+          identifier: form.email.trim().toLowerCase(),
+          sent: data.verification?.emailSent ? "1" : "0",
+        })
+        if (data.verification?.telegramUrl) params.set("tg", data.verification.telegramUrl)
+        router.push(`/verificar?${params.toString()}`)
+        setResult({ slug: data.slug, urls: data.urls, verification: data.verification })
       } else {
         setError("Respuesta inesperada del servidor")
       }
@@ -299,6 +334,30 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
               )}
             >
               {slugMessage}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="businessKind">Tipo de negocio</Label>
+            <Select
+              value={form.businessKind}
+              onValueChange={(value) =>
+                setForm((f) => ({ ...f, businessKind: value as BusinessKindOption }))
+              }
+            >
+              <SelectTrigger id="businessKind" disabled={isLoading}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BUSINESS_KINDS.map((kind) => (
+                  <SelectItem key={kind.value} value={kind.value}>
+                    {kind.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {BUSINESS_KINDS.find((kind) => kind.value === form.businessKind)?.description}
             </p>
           </div>
 

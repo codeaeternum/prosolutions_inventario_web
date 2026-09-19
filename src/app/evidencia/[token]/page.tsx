@@ -84,8 +84,11 @@ function EvidenceUploader() {
         // mensaje distinto al 404 genérico de enlace inválido.
         if (res.status === 410) { setExpired(true); return }
         if (!res.ok) { setInvalid(true); return }
-        const data = await res.json() as { orderNumber: number; photos: EvidencePhoto[] }
-        setFolio(repairFolio(data.orderNumber))
+        const data = await res.json() as { orderNumber: number; folio?: string; photos: EvidencePhoto[] }
+        // El API ya manda el folio con el formato del negocio (prefijo +
+        // dígitos configurados); repairFolio queda como respaldo de respuestas
+        // anteriores al campo.
+        setFolio(data.folio ?? repairFolio(data.orderNumber))
         setPhotos(data.photos)
       })
       .catch(() => { if (!cancelled) setInvalid(true) })

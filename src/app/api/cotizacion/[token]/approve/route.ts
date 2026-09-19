@@ -4,7 +4,8 @@ import { z, ZodError } from "zod"
 import { prisma } from "@/lib/prisma"
 import { transaction, BusinessError } from "@/lib/domain/operations"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
-import { repairFolio } from "@/lib/workshop-labels"
+import { getBusinessSetting } from "@/lib/settings"
+import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio } from "@/lib/workshop-labels"
 import { approvedPartsTotal } from "@/lib/workshop-money"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
@@ -161,7 +162,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
 
     // Aviso al staff conectado (SSE). Un fallo del aviso no debe reportarse
     // como error: la decisión ya quedó comprometida en la transacción.
-    const folio = repairFolio(decided.order.number)
+    // El folio del aviso usa el largo configurado por el negocio dueño de la
+    // orden (order_folio_digits); un ajuste ausente/inválido cae al default.
+    const folio = repairFolio(decided.order.number, parseFolioDigits(await getBusinessSetting(decided.order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null)))
     const equipment = [decided.order.equipmentType, decided.order.brand, decided.order.model].filter(Boolean).join(" ")
     void sendNotificationToStaff({
       type: "repair_ready",

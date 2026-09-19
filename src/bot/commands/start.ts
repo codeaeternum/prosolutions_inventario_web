@@ -1,5 +1,6 @@
-import type { Telegraf } from "telegraf"
+import type { Context, Telegraf } from "telegraf"
 import type { PrismaClient } from "@prisma/client"
+import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
 
 export interface WizardState {
   step: "NAME" | "TYPE" | "BUSINESS" | "PHONE" | "GOAL"
@@ -13,6 +14,63 @@ export interface WizardState {
   }
 }
 
+/**
+ * Deep-link de verificación: /start verify_<6 dígitos>. El código viaja en el
+ * link (canal TELEGRAM); aquí se consume, se marca phoneVerifiedAt y se liga
+ * el telegramId a la cuenta que lo generó — nunca se le quita a otro usuario.
+ */
+async function handleVerifyPayload(ctx: Context, prisma: PrismaClient, telegramId: string, code: string) {
+  try {
+    const consumed = await consumeVerificationCode(prisma, { code, channel: "TELEGRAM" })
+
+    if (!consumed.userId) {
+      return ctx.reply("⚠️ Ese código no está ligado a ninguna cuenta. Genera uno nuevo desde /verificar.")
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: consumed.userId },
+      select: { id: true, name: true, telegramId: true },
+    })
+    if (!target) {
+      return ctx.reply("⚠️ La cuenta ligada a ese código ya no existe.")
+    }
+
+    // El telegramId es único global: si ya es de otro usuario no se mueve.
+    const holder = await prisma.user.findUnique({
+      where: { telegramId },
+      select: { id: true, name: true },
+    })
+    const conflict = holder && holder.id !== target.id
+
+    await markVerified(prisma, target.id, consumed.channel)
+
+    if (!conflict && !target.telegramId) {
+      await prisma.user.update({ where: { id: target.id }, data: { telegramId } })
+    }
+
+    if (conflict) {
+      return ctx.reply(
+        `✅ Teléfono verificado para ${target.name}.\n\n` +
+        `⚠️ Esta cuenta de Telegram ya está ligada a otro usuario, así que no la moví. ` +
+        `Si es un error, contacta al administrador.`
+      )
+    }
+    return ctx.reply(`✅ ¡Teléfono verificado, ${target.name}! Ya puedes recibir avisos por aquí.`)
+  } catch (error) {
+    if (error instanceof VerificationError) {
+      if (error.reason === "EXPIRED") {
+        return ctx.reply("⏰ Ese código ya expiró (duran 15 min). Genera uno nuevo desde la app en /verificar.")
+      }
+      if (error.reason === "TOO_MANY_ATTEMPTS") {
+        return ctx.reply("🔒 Ese código se bloqueó por muchos intentos. Genera uno nuevo desde la app.")
+      }
+      return ctx.reply("❌ Código no válido o ya utilizado. Si necesitas uno nuevo, pídelo desde /verificar.")
+    }
+    console.error("[bot/start] Error verificando código:", error)
+    return ctx.reply("⚠️ No pude verificar el código. Intenta de nuevo en unos minutos.")
+  }
+}
+
 export function registerStart(
   bot: Telegraf,
   prisma: PrismaClient | null,
@@ -20,6 +78,13 @@ export function registerStart(
 ) {
   bot.start(async (ctx) => {
     const telegramId = ctx.from.id.toString()
+
+    // /start verify_<6 dígitos> — verificación de teléfono post-registro web.
+    const payload = typeof ctx.payload === "string" ? ctx.payload : ""
+    const verifyMatch = payload.match(/^verify_(\d{6})$/)
+    if (verifyMatch && prisma) {
+      return handleVerifyPayload(ctx, prisma, telegramId, verifyMatch[1])
+    }
 
     if (prisma) {
       const user = await prisma.user.findUnique({ where: { telegramId } })

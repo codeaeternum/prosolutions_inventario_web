@@ -112,6 +112,16 @@ const platformGroup = {
   ]
 }
 
+// Negocio captador con taller asociado configurado: portal para captar equipos
+// y dar seguimiento a las órdenes delegadas. Solo aparece cuando el tenant
+// tiene repair_partner_business_id en su configuración.
+const partnerGroup = {
+  name: "Aliados",
+  items: [
+    { name: "Portal aliado", href: "/aliado", icon: Handshake },
+  ]
+}
+
 // Un ítem está activo solo si su href es el prefijo MÁS LARGO del menú que
 // coincide con la ruta — así /admin/taller/catalogo marca "Catálogo de
 // servicios" y no también "Órdenes de servicio".
@@ -131,10 +141,12 @@ interface AdminSidebarProps {
     isSuperAdmin?: boolean
     allowedModules?: string[]
   }
+  // El negocio tiene taller asociado configurado (repair_partner_business_id).
+  hasPartner?: boolean
   collapsed?: boolean
 }
 
-export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
+export function AdminSidebar({ user, hasPartner = false, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -160,6 +172,13 @@ export function AdminSidebar({ user, collapsed = false }: AdminSidebarProps) {
       }
       return true
     })
+
+  // Captadores con taller asociado (staff normal, no rol WORKSHOP — ese ya
+  // tiene su menú propio): el portal aliado aparece tras el grupo Taller.
+  if (hasPartner && user.role !== "WORKSHOP") {
+    const tallerIndex = filteredNavigation.findIndex(g => g.name === "Taller")
+    filteredNavigation.splice(tallerIndex >= 0 ? tallerIndex + 1 : filteredNavigation.length, 0, partnerGroup)
+  }
 
   if (user.isSuperAdmin) {
     filteredNavigation.push(platformGroup)

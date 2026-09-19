@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Wrench } from "lucide-react"
 import { prisma } from "@/lib/prisma"
-import { getBusinessSetting } from "@/lib/settings"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { isQuoteExpired, QuoteDocument, QuoteExpired, QuoteNotFound } from "@/components/public/quote-view"
@@ -16,9 +16,9 @@ export const dynamic = "force-dynamic"
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
   const { token } = await params
-  const order = await prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true } })
+  const order = await prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true, businessId: true } })
   return {
-    title: order ? `Cotización ${repairFolio(order.number)}` : "Cotización",
+    title: order ? `Cotización ${repairFolio(order.number, await getOrderFolioDigits(order.businessId))}` : "Cotización",
     description: "Consulta y autoriza la cotización de tu reparación.",
     // Enlace privado por WhatsApp: nunca indexable.
     robots: { index: false, follow: false },
@@ -82,8 +82,12 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
     )
   }
 
-  // El branding sale del negocio DUEÑO de la orden, no del negocio por defecto.
-  const businessName = await getBusinessSetting(order.businessId, "ticket_business_name")
+  // El branding y el largo del folio salen del negocio DUEÑO de la orden,
+  // no del negocio por defecto.
+  const [businessName, folioDigits] = await Promise.all([
+    getBusinessSetting(order.businessId, "ticket_business_name"),
+    getOrderFolioDigits(order.businessId),
+  ])
 
   return (
     <PageShell>
@@ -91,6 +95,7 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
         order={order}
         businessName={businessName || "PROSOLUTIONS"}
         token={token}
+        folioDigits={folioDigits}
       />
     </PageShell>
   )

@@ -1,6 +1,7 @@
 import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
+import { DEFAULT_FOLIO_DIGITS, repairFolio } from "../workshop-labels"
 
 // Mismo folio que purchaseFolio (purchasing.ts). Se declara local porque
 // importar purchasing.ts arrastra ../low-stock → ruta SSE → next-auth, y esa
@@ -33,7 +34,7 @@ export interface PartsShortageRow {
   available: number
   shortage: number
   costPrice: number | null
-  orders: { orderId: string; number: number; qty: number }[]
+  orders: { orderId: string; number: number; qty: number; folio: string }[]
 }
 
 export interface LowStockRow {
@@ -48,8 +49,11 @@ export interface LowStockRow {
 /**
  * Demanda de compra del negocio. Con branchId, `available` de las refacciones
  * es el stock de ESA sucursal (BranchStock); sin él, el total (Product.stock).
+ * `folioDigits` es el largo del folio impreso del negocio (order_folio_digits,
+ * 4–8): el llamador lo resuelve con getOrderFolioDigits (la capa de dominio no
+ * importa lib/settings para no arrastrar el cliente prisma a los tests).
  */
-export async function listShoppingNeeds(db: PrismaClient, businessId: string, branchId?: string) {
+export async function listShoppingNeeds(db: PrismaClient, businessId: string, branchId?: string, folioDigits: number = DEFAULT_FOLIO_DIGITS) {
   // a) Refacciones pedidas/autorizadas en órdenes no terminales.
   const parts = await db.repairPart.findMany({
     where: {
@@ -76,7 +80,7 @@ export async function listShoppingNeeds(db: PrismaClient, businessId: string, br
     : []
   const branchQty = new Map(branchRows.map(row => [row.productId, row.quantity]))
 
-  const grouped = new Map<string, PartsShortageRow & { ordersById: Map<string, { orderId: string; number: number; qty: number }> }>()
+  const grouped = new Map<string, PartsShortageRow & { ordersById: Map<string, { orderId: string; number: number; qty: number; folio: string }> }>()
   for (const part of parts) {
     if (!part.productId || !part.product) continue
     const entry = grouped.get(part.productId) ?? {
@@ -90,7 +94,7 @@ export async function listShoppingNeeds(db: PrismaClient, businessId: string, br
       ordersById: new Map(),
     }
     entry.needed += part.qty
-    const order = entry.ordersById.get(part.orderId) ?? { orderId: part.orderId, number: part.order.number, qty: 0 }
+    const order = entry.ordersById.get(part.orderId) ?? { orderId: part.orderId, number: part.order.number, qty: 0, folio: repairFolio(part.order.number, folioDigits) }
     order.qty += part.qty
     entry.ordersById.set(part.orderId, order)
     grouped.set(part.productId, entry)

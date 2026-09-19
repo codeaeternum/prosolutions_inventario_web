@@ -218,9 +218,10 @@ function splitIssue(raw: string): { service?: string; issue: string } {
 }
 
 // Folios válidos: "OT-000001", "PS-000001" (prefijo configurable), "000001" o
-// "1" (ver /api/seguimiento). 16 chars cubren prefijo de 8 + guion + 6 dígitos.
+// "1" (ver /api/seguimiento). 17 chars cubren prefijo de 8 + guion + 8 dígitos
+// (order_folio_digits llega hasta 8).
 export const sanitizeFolio = (value: string | null) =>
-  (value ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 16)
+  (value ?? "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 17)
 
 export const sanitizePhone4 = (value: string | null) =>
   (value ?? "").replace(/\D/g, "").slice(0, 4)

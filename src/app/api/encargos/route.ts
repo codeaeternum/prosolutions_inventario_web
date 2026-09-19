@@ -4,6 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { addShoppingItem, listShoppingNeeds } from "@/lib/domain/shopping"
 import { businessFailure } from "@/lib/domain/http"
+import { getOrderFolioDigits } from "@/lib/settings"
 
 /** Lista de encargos: refacciones faltantes, stock bajo e insumos manuales. */
 export async function GET(request: NextRequest) {
@@ -13,7 +14,8 @@ export async function GET(request: NextRequest) {
     const businessId = businessIdOf(getSession(auth)!)
 
     const branchId = new URL(request.url).searchParams.get("branchId") || undefined
-    const needs = await listShoppingNeeds(prisma, businessId, branchId)
+    // El folio de cada orden sale con los dígitos del negocio (order_folio_digits).
+    const needs = await listShoppingNeeds(prisma, businessId, branchId, await getOrderFolioDigits(businessId))
     return NextResponse.json(needs, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return businessFailure(error)

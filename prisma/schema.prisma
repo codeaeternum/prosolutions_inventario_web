@@ -15,11 +15,26 @@ datasource db {
 
 // ==================== ENUMS ====================
 
+// Tipo de negocio elegido al registrarse. No restringe módulos (todo tenant
+// conserva caja/POS/inventario); cambia el onboarding, el aterrizaje sugerido
+// y qué opciones de canal se ofrecen:
+//   FULL    → taller + venta de refacciones (default)
+//   REPAIR  → solo taller de reparación
+//   PARTNER → captador: manda equipos a un taller asociado (modelo "Telcel")
+//   PARTS   → solo venta de refacciones, sin taller
+enum BusinessKind {
+  FULL
+  REPAIR
+  PARTNER
+  PARTS
+}
+
 model Business {
   id                  String               @id @default(cuid())
   name                String
   slug                String               @unique
   category            String               @default("electronics-repair")
+  businessKind        BusinessKind         @default(FULL)
   phone               String?
   address             String?
   logoUrl             String?
@@ -69,6 +84,9 @@ model Business {
   directoryEvents     DirectoryEvent[]
   deviceModels        DeviceModel[]
   shoppingItems       ShoppingItem[]
+  // Órdenes de OTROS tenants delegadas a este negocio como taller reparador.
+  receivedDelegations RepairOrder[]       @relation("DelegatedToBusiness")
+  verificationCodes   VerificationCode[]
 
   @@index([isActive])
 }
@@ -84,6 +102,34 @@ enum CustomerType {
   TECHNICIAN // Técnico de reparación
   STORE // Local de venta de refacciones
   NORMAL // Cliente particular
+}
+
+// Código OTP de verificación de contacto (correo o teléfono) emitido al
+// registrarse. El código viaja por Telegram (deep-link al bot) o correo
+// (Resend cuando está configurado); aquí solo vive el hash SHA-256.
+enum VerificationChannel {
+  EMAIL
+  PHONE
+  TELEGRAM
+}
+
+model VerificationCode {
+  id         String              @id @default(cuid())
+  businessId String?
+  business   Business?           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identifier String              // correo o teléfono que se verifica
+  channel    VerificationChannel
+  codeHash   String
+  purpose    String              @default("SIGNUP")
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int                 @default(0)
+  createdAt  DateTime            @default(now())
+
+  @@index([identifier, purpose])
+  @@index([userId])
 }
 
 enum UserStatus {
@@ -230,6 +276,12 @@ model User {
   inventoryCounts       InventoryCount[]
   shoppingItemsCreated  ShoppingItem[]       @relation("ShoppingItemCreatedBy")
   shoppingItemsResolved ShoppingItem[]       @relation("ShoppingItemResolvedBy")
+  verificationCodes     VerificationCode[]
+
+  // Verificación de contacto al registrarse (código por correo/Telegram).
+  // No bloquea el acceso: es una señal de confianza sobre la cuenta.
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -833,6 +885,19 @@ model RepairOrder {
   originBusinessName   String?
   originContact        String?
   partnerPriceCents    Int?
+  // Delegación saliente: esta orden fue enviada a un taller asociado externo
+  // (el negocio captador crea la orden local y luego la asigna al reparador).
+  // La orden local queda en EXTERNAL_LAB como referencia; el trabajo vive en
+  // la orden espejo del tenant reparador (delegatedOrderId). El cobro al
+  // cliente final es una venta POS aparte — la reparación no se mezcla.
+  delegatedToBusinessId String?
+  delegatedToBusiness   Business?      @relation("DelegatedToBusiness", fields: [delegatedToBusinessId], references: [id], onDelete: SetNull)
+  delegatedOrderId      String?
+  delegatedAt           DateTime?
+  // En la orden espejo del tenant reparador: id de la orden local que la
+  // originó. Sirve para hacer la delegación idempotente (si la marca local
+  // falló tras crear la espejo, el reintento la reconoce).
+  delegatedFromOrderId  String?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
   uploadTokenExpiresAt DateTime?
