@@ -13,11 +13,16 @@ export async function GET(req: Request) {
     const page = Math.max(1, Math.min(1000, Number(query.get("page")) || 1))
     const branchId = query.get("branchId") || undefined
     const status = query.get("status")
-    if (status && !["COMPLETED", "VOIDED"].includes(status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
+    if (status && !["DRAFT", "OPEN", "COMPLETED", "VOIDED"].includes(status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     // ?kind=WORKSHOP|RETAIL separa notas a taller de la venta al público.
     const kind = query.get("kind")
-    if (kind && !["WORKSHOP", "RETAIL"].includes(kind)) return NextResponse.json({ error: "Tipo de venta inválido" }, { status: 400 })
-    const where = { businessId: businessIdOf(getSession(auth)!), ...(branchId ? { branchId } : {}), ...(status ? { status: status as "COMPLETED" | "VOIDED" } : {}), ...(kind ? { kind: kind as "WORKSHOP" | "RETAIL" } : {}) }
+    if (kind && !["WORKSHOP", "RETAIL", "LAYAWAY", "QUOTE"].includes(kind)) return NextResponse.json({ error: "Tipo de venta inválido" }, { status: 400 })
+    // Sin filtro explícito, el historial muestra solo documentos comprometidos;
+    // los vivos (DRAFT/OPEN) se operan desde /api/pos/documents.
+    const statusFilter = status
+      ? { status: status as "DRAFT" | "OPEN" | "COMPLETED" | "VOIDED" }
+      : { status: { in: ["COMPLETED", "VOIDED"] as ("COMPLETED" | "VOIDED")[] } }
+    const where = { businessId: businessIdOf(getSession(auth)!), ...(branchId ? { branchId } : {}), ...statusFilter, ...(kind ? { kind: kind as "WORKSHOP" | "RETAIL" | "LAYAWAY" | "QUOTE" } : {}) }
     const [sales, total] = await Promise.all([
       prisma.sale.findMany({
         where, take: 20, skip: (page - 1) * 20, orderBy: [{ number: "desc" }],

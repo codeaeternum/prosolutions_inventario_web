@@ -93,7 +93,8 @@ async function exportProducts(businessId: string): Promise<string> {
 
 async function exportSales(businessId: string, branchId?: string): Promise<string> {
   const sales = await prisma.sale.findMany({
-    where: { businessId, ...(branchId ? { branchId } : {}) },
+    // Solo documentos comprometidos: los vivos (DRAFT/OPEN) no son venta aún.
+    where: { businessId, status: { in: ["COMPLETED", "VOIDED"] }, ...(branchId ? { branchId } : {}) },
     orderBy: { number: "desc" },
     take: MAX_ROWS,
     include: {

@@ -1,117 +1,70 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
-import { EmptyState } from "@/components/admin/empty-state"
-import {
-    ShoppingCart,
-    Search,
-    ScanBarcode,
-    Loader2,
-    Plus,
-    Minus,
-    CheckCircle,
-    Package,
-    DollarSign,
-    X,
-} from "lucide-react"
-import { BarcodeScanner } from "@/components/barcode-scanner"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
+import { BarcodeScanner } from "@/components/barcode-scanner"
+import { CheckCircle, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
+import { CartPanel } from "@/components/pos/cart-panel"
+import { CheckoutDialog } from "@/components/pos/checkout-dialog"
+import { LayawaysSheet } from "@/components/pos/layaways-sheet"
+import { ParkedSalesSheet } from "@/components/pos/parked-sales-sheet"
+import { ProductCatalog } from "@/components/pos/product-catalog"
+import { ShortcutHints } from "@/components/pos/shortcut-hints"
+import { SuspendDialog } from "@/components/pos/suspend-dialog"
+import { usePosDocuments } from "@/components/pos/use-pos-documents"
+import {
+    cartTotalOf, cartUnitsOf,
+    type CartItem, type CheckoutResult, type PosCustomer, type PosProduct,
+} from "@/components/pos/types"
 
-import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-
-interface CreditCustomer { id: string; name: string; customerType?: string; creditLimit: number | null; creditBalance: number }
-
-interface Product {
-    id: string
-    name: string
-    barcode: string | null
-    stock: number
-    retailPrice: number
-    wholesalePrice: number
-    images: string[]
-}
-
-interface SaleItem {
-    product: Product
-    quantity: number
-}
+interface LastTicket { kind: CheckoutResult["kind"]; description: string; quantity: number; total: number; ticketUrl?: string }
+const KIND_BADGE: Record<CheckoutResult["kind"], string | null> = { SALE: null, WORKSHOP: "Nota a taller", LAYAWAY: "Apartado", QUOTE: "Cotización" }
 
 export default function VentasPage() {
-    const [showScanner, setShowScanner] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
-    const [products, setProducts] = useState<Product[]>([])
-    const [searching, setSearching] = useState(false)
-    const [cart, setCart] = useState<SaleItem[]>([])
+    const [showScanner, setShowScanner] = useState(false)
+    const [cart, setCart] = useState<CartItem[]>([])
+    const [customer, setCustomer] = useState<PosCustomer | null>(null)
+    // Nota a taller: precio de mayoreo. Un cliente STORE/TECHNICIAN la fuerza.
+    const [workshopSale, setWorkshopSale] = useState(false)
+    const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number } | null>(null)
+    const [lastTicket, setLastTicket] = useState<LastTicket | null>(null)
     const [processing, setProcessing] = useState(false)
     const submitting = useRef(false)
-    const pendingOperation = useRef<ClientOperationKey | null>(null)
-    const [lastSale, setLastSale] = useState<{ product: string; quantity: number; total: number; ticketUrl?: string; kind?: string } | null>(null)
-    // "Venta a taller": nota de venta a mayoreo. El servidor decide el kind
-    // final; un cliente STORE/TECHNICIAN la fuerza aunque el toggle esté apagado.
-    const [workshopSale, setWorkshopSale] = useState(false)
-
-    // Checkout modal state
+    const [docsRefreshKey, setDocsRefreshKey] = useState(0)
     const [showCheckout, setShowCheckout] = useState(false)
-    const [paymentMethod, setPaymentMethod] = useState("EFECTIVO")
-    const [cashGiven, setCashGiven] = useState("")
-    const [transferRef, setTransferRef] = useState("") // folio SPEI/autorización de la transferencia
-    const [splitMode, setSplitMode] = useState(false)
-    const [splitPayments, setSplitPayments] = useState<{ method: string; amount: string; reference?: string }[]>([
-        { method: "EFECTIVO", amount: "" },
-    ])
-
-    // Credit payment state
-    const [creditSearch, setCreditSearch] = useState("")
-    const [creditResults, setCreditResults] = useState<CreditCustomer[]>([])
-    const [creditSearching, setCreditSearching] = useState(false)
-    const [creditCustomer, setCreditCustomer] = useState<CreditCustomer | null>(null)
-
-    // Cash register state
+    const [showSuspend, setShowSuspend] = useState(false)
+    const [showParked, setShowParked] = useState(false)
+    const [showLayaways, setShowLayaways] = useState(false)
+    const [showMobileCart, setShowMobileCart] = useState(false)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
-
-    // sale_auto_ticket del negocio: abrir el ticket en pestaña nueva tras
-    // cobrar. Default activado (una falla de lectura no apaga la impresión).
-    const [autoTicket, setAutoTicket] = useState(true)
-
-    useEffect(() => {
-        fetch("/api/settings").then(r => r.ok ? r.json() : null)
-            .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) })
-            .catch(() => {})
-    }, [])
-
-    // Sucursal activa del mostrador (stock, caja y venta se ligan a ella)
+    const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
     const [branchId, setBranchId] = useState("")
 
     useEffect(() => {
-        fetch('/api/branches').then(r => r.ok ? r.json() : null).then(d => {
+        fetch("/api/settings").then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) }).catch(() => {})
+        fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
             const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
             setBranches(list)
-            if (list.length) setBranchId(prev => prev ?? list[0].id)
+            if (list.length) setBranchId(prev => prev || list[0].id)
         }).catch(() => {})
+        // ?cliente=<id> — atajo "Nueva venta" desde la ficha Cliente 360.
+        const preselectId = new URLSearchParams(window.location.search).get("cliente")
+        if (preselectId) {
+            fetch(`/api/users/pos?id=${preselectId}`).then(r => r.ok ? r.json() : null)
+                .then(d => { const u = d?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
+        }
     }, [])
 
     useEffect(() => {
@@ -119,712 +72,200 @@ export default function VentasPage() {
         fetch(`/api/caja?branchId=${branchId}`).then(r => r.json()).then(d => setCajaOpen(!!d.active)).catch(() => {})
     }, [branchId])
 
-    const handleScan = async (code: string) => {
-        const cleanCode = code.trim()
-        if (!cleanCode) return
+    const workshopCustomer = customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN"
+    const workshopActive = workshopSale || workshopCustomer
+    const cartTotal = cartTotalOf(cart, workshopActive)
+    const cartUnits = cartUnitsOf(cart)
+    const clearTicket = useCallback(() => { setCart([]); setCustomer(null); setWorkshopSale(false); setResumedDoc(null) }, [])
 
-        setShowScanner(false)
-        setSearching(true)
-        try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanCode)}${branchId ? `&branchId=${branchId}` : ""}`)
-            if (!res.ok) throw new Error("No se pudo consultar el producto")
-            const data = await res.json()
-            const matches = (data.products as Product[] | undefined)?.filter((product) => product.barcode?.trim() === cleanCode || product.id === cleanCode) ?? []
-            if (matches.length === 1) addToCart(matches[0])
-            else toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "No se encontró una coincidencia exacta. Busca y selecciona el producto manualmente.")
-        } catch {
-            toast.error("Error al buscar producto")
-        } finally {
-            setSearching(false)
-        }
+    // Un documento suspendido se cobra con sus líneas snapshot: si el cajero
+    // edita el ticket retomado, se desliga y cobra como venta nueva (la
+    // suspendida queda guardada para retomarla o descartarla).
+    const detachIfResumed = () => {
+        setResumedDoc(prev => {
+            if (prev) toast.info("Ticket desligado de la suspendida — se cobra como venta nueva")
+            return null
+        })
     }
 
-    const searchProducts = useCallback(async (query: string) => {
-        const cleanQuery = query.trim()
-        if (cleanQuery.length < 2) {
-            setProducts([])
-            return
-        }
-        setSearching(true)
-        try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(cleanQuery)}${branchId ? `&branchId=${branchId}` : ""}`)
-            const data = await res.json()
-            setProducts(data.products || [])
-        } catch (error) {
-            console.error("Error searching products:", error)
-        } finally {
-            setSearching(false)
-        }
-    }, [branchId])
-
-    // Debounce search
-    useEffect(() => {
-        const delayDebounceFn = setTimeout(() => {
-            if (searchQuery) {
-                searchProducts(searchQuery)
-            } else {
-                setProducts([])
-            }
-        }, 300)
-
-        return () => clearTimeout(delayDebounceFn)
-    }, [searchQuery, searchProducts])
-
-    const addToCart = (product: Product) => {
+    const addToCart = (product: PosProduct) => {
         if (submitting.current) return
-        const existing = cart.find((item) => item.product.id === product.id)
+        const existing = cart.find(item => item.product.id === product.id)
         if (product.stock < 1 || (existing?.quantity ?? 0) >= product.stock) {
             toast.error("No hay más existencias disponibles de este producto")
             return
         }
+        detachIfResumed()
         setCart(prev => {
-            const existing = prev.find(item => item.product.id === product.id)
-            if (existing) {
-                return prev.map(item =>
-                    item.product.id === product.id
-                        ? { ...item, quantity: Math.min(item.product.stock, item.quantity + 1) }
-                        : item
-                )
-            }
+            const found = prev.find(item => item.product.id === product.id)
+            if (found) return prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + 1) } : item)
             return [...prev, { product, quantity: 1 }]
         })
         setSearchQuery("")
-        setProducts([])
-        toast.success(`${product.name} agregado`)
     }
 
     const updateQuantity = (productId: string, delta: number) => {
-        setCart(prev => prev.map(item => {
-            if (item.product.id === productId) {
-                const newQty = Math.max(1, Math.min(item.product.stock, item.quantity + delta))
-                return { ...item, quantity: newQty }
-            }
-            return item
-        }))
+        detachIfResumed()
+        setCart(prev => prev.map(item => item.product.id === productId
+            ? { ...item, quantity: Math.max(1, Math.min(item.product.stock, item.quantity + delta)) } : item))
     }
-
     const removeFromCart = (productId: string) => {
+        detachIfResumed()
         setCart(prev => prev.filter(item => item.product.id !== productId))
     }
 
-    const searchCreditCustomers = async (query: string) => {
-        if (query.length < 2) { setCreditResults([]); return }
-        setCreditSearching(true)
+    const handleScan = async (code: string) => {
+        const clean = code.trim()
+        if (!clean) return
+        setShowScanner(false)
         try {
-            const res = await fetch(`/api/users/pos?search=${encodeURIComponent(query)}&limit=8`)
-            const data = await res.json()
-            if (!res.ok) throw new Error("No se pudieron consultar los clientes")
-            setCreditResults((data.users ?? []).filter((u: CreditCustomer) => u.creditLimit != null))
-        } catch { setCreditResults([]) }
-        finally { setCreditSearching(false) }
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(clean)}${branchId ? `&branchId=${branchId}` : ""}`)
+            if (!res.ok) throw new Error()
+            const data: { products?: PosProduct[] } = await res.json()
+            const matches = (data.products ?? []).filter(p => p.barcode?.trim() === clean || p.id === clean)
+            if (matches.length === 1) addToCart(matches[0])
+            else toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "Sin coincidencia exacta. Busca y selecciona el producto manualmente.")
+        } catch {
+            toast.error("Error al buscar producto")
+        }
     }
 
-    const processSale = async () => {
-        if (cart.length === 0 || submitting.current) return
+    const { suspendSale, resumeDoc } = usePosDocuments({
+        cart, customer, branchId, workshopActive, submittingRef: submitting,
+        setCart, setCustomer, setWorkshopSale, setResumedDoc, clearTicket,
+        onDocumentsChanged: () => setDocsRefreshKey(k => k + 1),
+    })
 
-        const usesCredit = splitMode
-            ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0)
-            : paymentMethod === "CREDITO"
-        const creditPortion = splitMode
-            ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-            : (paymentMethod === "CREDITO" ? cartTotal : 0)
-
-        // Validar crédito si aplica
-        if (usesCredit) {
-            if (!creditCustomer) {
-                toast.error("Selecciona un cliente para venta a crédito")
-                return
-            }
-            const available = (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)
-            if (creditPortion > available) {
-                toast.error(`Crédito insuficiente. Disponible: $${available.toLocaleString()}, Cargo: $${creditPortion.toLocaleString()}`)
-                return
-            }
-        }
-
-        const payload: Record<string, unknown> = {
-            items: cart.map((item) => ({ productId: item.product.id, quantity: item.quantity })),
-            customerId: usesCredit ? creditCustomer?.id : undefined,
-            branchId: branchId || undefined,
-            workshopSale: workshopActive || undefined,
-        }
-        if (splitMode) {
-            const payments = splitPayments
-                .filter(p => p.method && parseFloat(p.amount) > 0)
-            const sum = payments.reduce((s, p) => s + parseFloat(p.amount), 0)
-            if (payments.length === 0 || Math.abs(sum - cartTotal) > 0.009) {
-                toast.error(`Los pagos deben sumar ${formatPrice(cartTotal)} (suman ${formatPrice(sum)})`)
-                return
-            }
-            if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference?.trim())) {
-                toast.error("Captura la referencia de cada transferencia")
-                return
-            }
-            payload.payments = payments.map(p => ({
-                method: p.method, amount: parseFloat(p.amount),
-                ...(p.method === "TRANSFERENCIA" ? { reference: p.reference!.trim() } : {}),
-            }))
-        } else if (paymentMethod === "TRANSFERENCIA") {
-            if (!transferRef.trim()) {
-                toast.error("Captura la referencia de la transferencia")
-                return
-            }
-            payload.payments = [{ method: "TRANSFERENCIA", reference: transferRef.trim() }]
+    const handleCompleted = useCallback((result: CheckoutResult) => {
+        const ticketUrl = result.ticketId ? `/admin/tickets/venta/${result.ticketId}${result.paidWithCard ? "?copias=2" : ""}` : undefined
+        setLastTicket({ kind: result.kind, description: result.description, quantity: result.quantity, total: result.total, ticketUrl })
+        clearTicket()
+        setShowCheckout(false)
+        setDocsRefreshKey(k => k + 1)
+        const folio = result.number != null ? ` #${String(result.number).padStart(6, "0")}` : ""
+        const detail = `${result.description} — ${result.quantity} ud(s) · ${formatPrice(result.total)}`
+        if (result.kind === "LAYAWAY") {
+            toast.success(`Apartado${folio} creado: ${detail}`, { action: { label: "Ver apartados", onClick: () => setShowLayaways(true) } })
+        } else if (result.kind === "QUOTE") {
+            toast.success(`Cotización${folio} creada: ${detail}`, {
+                action: ticketUrl ? { label: "Imprimir cotización", onClick: () => window.open(ticketUrl, "_blank", "noopener,noreferrer") } : undefined,
+            })
         } else {
-            payload.paymentMethod = paymentMethod
+            toast.success(`${result.kind === "WORKSHOP" ? "Nota a taller" : "Venta"}${folio} registrada: ${detail}`)
         }
-        pendingOperation.current = getClientOperationKey(pendingOperation.current, payload)
-        submitting.current = true
-        setProcessing(true)
-        try {
-            const res = await fetch("/api/sales", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...payload, idempotencyKey: pendingOperation.current.key }),
-            })
-            const data = await res.json().catch(() => null)
-            if (!res.ok) throw new Error(data?.error || "No se pudo registrar la venta. El carrito se conserva.")
-            pendingOperation.current = null
-            // Cobro con tarjeta (único o dividido): además del ticket del
-            // cliente se imprime la copia que queda en caja (?copias=2).
-            // Se detecta por los pagos confirmados que devuelve el servidor
-            // (method CARD) o por lo elegido en el checkout como respaldo.
-            const paidWithCard =
-                (Array.isArray(data?.payments) && data.payments.some((p: { method?: string }) => p.method === "CARD"))
-                || (splitMode
-                    ? splitPayments.some(p => p.method === "TARJETA" && parseFloat(p.amount) > 0)
-                    : paymentMethod === "TARJETA")
-            const ticketUrl = data.sale?.id
-                ? `/admin/tickets/venta/${data.sale.id}${paidWithCard ? "?copias=2" : ""}`
-                : undefined
-            setLastSale({
-                product: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
-                quantity: data.quantity,
-                total: data.total,
-                ticketUrl,
-                kind: data.sale?.kind ?? data.kind,
-            })
-            toast.success(`${data.sale?.kind === "WORKSHOP" ? "Nota a taller" : "Venta"} ${data.sale?.kind === "WORKSHOP" ? "NT" : "V"}-${String(data.sale?.number ?? "").padStart(6, "0")} registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
-            // Auto-impresión (sale_auto_ticket): el ticket abre en pestaña
-            // nueva. Si el navegador bloquea el popup queda el botón
-            // "Abrir ticket" de la tarjeta de última venta.
-            if (autoTicket && ticketUrl && !window.open(ticketUrl, "_blank", "noopener,noreferrer")) {
-                toast.info("El navegador bloqueó la pestaña del ticket; usa el botón «Abrir ticket».")
-            }
-            setCart([])
-            setWorkshopSale(false)
-            setCreditCustomer(null)
-            setCreditSearch("")
-            setCreditResults([])
-            setCashGiven("")
-            setTransferRef("")
-            setSplitMode(false)
-            setSplitPayments([{ method: "EFECTIVO", amount: "" }])
-            setShowCheckout(false)
-        } catch (error) {
-            toast.error(error instanceof TypeError
-                ? "No se pudo confirmar el resultado. Reintenta sin cambiar la venta para evitar duplicados."
-                : error instanceof Error ? error.message : "No se pudo registrar la venta. El carrito se conserva.")
-        } finally {
-            submitting.current = false
-            setProcessing(false)
+        // Auto-impresión (sale_auto_ticket): ventas y apartados imprimen recibo;
+        // la cotización se imprime solo desde la acción del toast.
+        if (result.kind !== "QUOTE" && autoTicket && ticketUrl && !window.open(ticketUrl, "_blank", "noopener,noreferrer")) {
+            toast.info("El navegador bloqueó la pestaña del ticket; usa «Abrir ticket».")
         }
-    }
+    }, [autoTicket, clearTicket])
 
-    // Cliente taller/negocio (STORE/TECHNICIAN): la nota a taller se activa sola.
-    const workshopCustomer = creditCustomer?.customerType === "STORE" || creditCustomer?.customerType === "TECHNICIAN"
-    const workshopActive = workshopSale || workshopCustomer
-    // Con nota a taller activa el mostrador cobra (y muestra) precio de mayoreo,
-    // igual que lo resolverá el servidor al registrar la venta.
-    const unitPrice = (product: Product) => (workshopActive ? product.wholesalePrice : product.retailPrice)
-    const cartTotal = cart.reduce((sum, item) => sum + (unitPrice(item.product) * item.quantity), 0)
-    const cartItems = cart.reduce((sum, item) => sum + item.quantity, 0)
+    // Atajos de mostrador: F2/Ctrl+Enter cobran, Esc limpia. +/−/Supr van en cada línea del ticket.
+    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showScanner || showMobileCart
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const t = e.target as HTMLElement | null
+            const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
+            if (e.key === "F2" || ((e.ctrlKey || e.metaKey) && e.key === "Enter")) {
+                if (e.key === "F2" || !typing) { e.preventDefault(); if (cart.length > 0 && !submitting.current) setShowCheckout(true) }
+                return
+            }
+            if (e.key === "Escape" && !anyOverlayOpen && searchQuery) setSearchQuery("")
+        }
+        window.addEventListener("keydown", onKey)
+        return () => window.removeEventListener("keydown", onKey)
+    }, [cart.length, searchQuery, anyOverlayOpen])
+
+    const setBusy = (busy: boolean) => { submitting.current = busy; setProcessing(busy) }
+    const panelProps = {
+        cart, workshopActive, customer, onCustomerChange: setCustomer, resumedDoc,
+        onDetachResumed: () => setResumedDoc(null), processing, cajaOpen,
+        onUpdateQuantity: updateQuantity, onRemove: removeFromCart, onClear: clearTicket,
+        onCheckout: () => setShowCheckout(true), onSuspend: () => setShowSuspend(true),
+        onOpenParked: () => setShowParked(true), onOpenLayaways: () => setShowLayaways(true),
+    }
 
     return (
-        <div className="space-y-6 pb-20 lg:pb-0">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="space-y-4 pb-24 lg:pb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                        <ShoppingCart className="h-6 w-6" />
-                        Venta Rápida
-                        {cajaOpen !== null && (
-                            cajaOpen ? (
-                                <Badge variant="default" className="bg-green-600 text-xs font-normal ml-2">Caja abierta</Badge>
-                            ) : (
-                                <Link href="/admin/caja">
-                                    <Badge variant="destructive" className="text-xs font-normal ml-2 cursor-pointer hover:opacity-80">Caja cerrada — Abrir</Badge>
-                                </Link>
-                            )
-                        )}
+                    <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                        <ShoppingCart className="h-6 w-6" /> Punto de Venta
+                        {cajaOpen !== null && (cajaOpen
+                            ? <Badge className="bg-green-600 text-xs font-normal">Caja abierta</Badge>
+                            : <Link href="/admin/caja"><Badge variant="destructive" className="text-xs font-normal cursor-pointer hover:opacity-80">Caja cerrada — Abrir</Badge></Link>)}
                     </h1>
-                    <p className="text-muted-foreground">
-                        Registra ventas en local y actualiza el inventario
-                    </p>
-                    {lastSale && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-1">
-                            Última venta: {lastSale.product} — {lastSale.quantity} ud(s)
+                    {lastTicket && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-0.5">
+                            Último: {lastTicket.description} — {lastTicket.quantity} ud(s)
                         </p>
                     )}
                 </div>
                 <div className="flex items-center gap-2">
                     {branches.length > 1 && (
                         <Select value={branchId} onValueChange={setBranchId}>
-                            <SelectTrigger className="w-[180px]">
-                                <SelectValue placeholder="Sucursal" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {branches.map(b => (
-                                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                                ))}
-                            </SelectContent>
+                            <SelectTrigger className="w-[160px]"><SelectValue placeholder="Sucursal" /></SelectTrigger>
+                            <SelectContent>{branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
                         </Select>
                     )}
                     <ExportButton type="sales" branchId={branchId || undefined} />
-                    <Button onClick={() => setShowScanner(true)} disabled={processing} size="lg" variant="outline">
-                        <ScanBarcode className="h-5 w-5 mr-2" />
-                        Escanear
+                    <Button onClick={() => setShowScanner(true)} disabled={processing} variant="outline">
+                        <ScanBarcode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Escanear</span>
                     </Button>
                 </div>
             </div>
 
-            {/* Search */}
-            <Card>
-                <CardContent className="p-4">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            aria-label="Buscar producto para vender"
-                            disabled={processing}
-                            placeholder="Buscar producto por nombre o código..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="pl-9 text-lg h-12"
-                            autoFocus
-                        />
-                        {searching && (
-                            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin" />
-                        )}
-                    </div>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
+                <ProductCatalog branchId={branchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} />
+                <div className="hidden lg:block"><CartPanel {...panelProps} /></div>
+            </div>
 
-                    {products.length > 0 && (
-                        <div className="mt-3 border rounded-lg max-h-64 overflow-y-auto">
-                            {products.map((product) => (
-                                <button
-                                    key={product.id}
-                                    className="w-full text-left p-4 hover:bg-muted border-b last:border-0 flex items-center justify-between"
-                                    onClick={() => addToCart(product)}
-                                    disabled={product.stock === 0}
-                                >
-                                    <div>
-                                        <p className="font-medium">{product.name}</p>
-                                        <p className="text-sm text-muted-foreground">
-                                            Stock: {product.stock} • ${product.retailPrice.toLocaleString()}
-                                        </p>
-                                    </div>
-                                    {product.stock > 0 ? (
-                                        <Plus className="h-5 w-5 text-green-600" />
-                                    ) : (
-                                        <Badge variant="destructive">Sin stock</Badge>
-                                    )}
-                                </button>
-                            ))}
+            {lastTicket && (
+                <Card className="border-green-200 bg-green-50 dark:bg-green-950/20">
+                    <CardContent className="p-4 flex items-center gap-3">
+                        <CheckCircle className="h-7 w-7 text-green-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                            <p className="font-medium text-green-800 dark:text-green-400 text-sm">
+                                Último movimiento registrado
+                                {KIND_BADGE[lastTicket.kind] && <Badge variant="secondary" className="ml-2">{KIND_BADGE[lastTicket.kind]}</Badge>}
+                            </p>
+                            <p className="text-sm text-green-600 dark:text-green-500 truncate">{lastTicket.description} × {lastTicket.quantity} — {formatPrice(lastTicket.total)}</p>
                         </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            {/* Cart */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center justify-between">
-                        <span className="flex items-center gap-2">
-                            <ShoppingCart className="h-5 w-5" />
-                            Carrito
-                            {cartItems > 0 && (
-                                <Badge>{cartItems}</Badge>
-                            )}
-                        </span>
-                        {cart.length > 0 && (
-                            <span className="text-xl font-bold text-green-600">
-                                ${cartTotal.toLocaleString()}
-                            </span>
-                        )}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="p-3 sm:p-6">
-                    {cart.length === 0 ? (
-                        <EmptyState 
-                            icon={Package} 
-                            title="Carrito vacío" 
-                            description="Escanea o busca productos para agregar" 
-                        />
-                    ) : (
-                        <div className="space-y-3">
-                            {cart.map((item) => (
-                                <div
-                                    key={item.product.id}
-                                    className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 border rounded-lg"
-                                >
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-medium truncate">{item.product.name}</p>
-                                        <p className="text-sm text-muted-foreground">
-                                            ${unitPrice(item.product).toLocaleString()} c/u{workshopActive ? " · mayoreo" : ""}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-                                        <div className="flex items-center gap-2">
-                                            <Button
-                                                variant="outline"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                onClick={() => updateQuantity(item.product.id, -1)}
-                                                disabled={processing || item.quantity <= 1}
-                                                aria-label={`Reducir cantidad de ${item.product.name}`}
-                                            >
-                                                <Minus className="h-4 w-4" />
-                                            </Button>
-                                            <span className="w-8 text-center font-bold">{item.quantity}</span>
-                                            <Button
-                                                variant="outline"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                onClick={() => updateQuantity(item.product.id, 1)}
-                                                disabled={processing || item.quantity >= item.product.stock}
-                                                aria-label={`Aumentar cantidad de ${item.product.name}`}
-                                            >
-                                                <Plus className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <p className="font-bold min-w-[3rem] text-right">
-                                                ${(unitPrice(item.product) * item.quantity).toLocaleString()}
-                                            </p>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="text-red-600 hover:text-red-700 h-8 w-8 p-0"
-                                                onClick={() => removeFromCart(item.product.id)}
-                                                disabled={processing}
-                                                aria-label={`Quitar ${item.product.name} de la venta`}
-                                            >
-                                                <X className="h-5 w-5" />
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-
-                            <div className="pt-4 border-t sticky bottom-0 bg-background pb-4 sm:pb-0">
-                                <Button
-                                    className="w-full h-14 text-lg"
-                                    size="lg"
-                                    onClick={() => setShowCheckout(true)}
-                                    disabled={processing}
-                                >
-                                    {processing ? (
-                                        <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                                    ) : (
-                                        <DollarSign className="h-5 w-5 mr-2" />
-                                    )}
-                                    Cobrar ${cartTotal.toLocaleString()}
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            {/* Last Sale Success */}
-            {lastSale && (
-                <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 mt-4">
-                    <CardContent className="p-4">
-                        <div className="flex items-center gap-3">
-                            <CheckCircle className="h-8 w-8 text-green-600" />
-                            <div>
-                                <p className="font-medium text-green-800 dark:text-green-400">
-                                    Última venta registrada
-                                    {lastSale.kind === "WORKSHOP" && <Badge variant="secondary" className="ml-2">Nota a taller</Badge>}
-                                </p>
-                                <p className="text-sm text-green-600 dark:text-green-500">
-                                    {lastSale.product} × {lastSale.quantity} — {formatPrice(lastSale.total)}
-                                </p>
-                            </div>
-                        </div>
-                        {lastSale.ticketUrl && <Button variant="outline" size="sm" className="mt-3" asChild><Link href={lastSale.ticketUrl} target="_blank" rel="noopener noreferrer">Abrir ticket</Link></Button>}
+                        {lastTicket.ticketUrl && <Button variant="outline" size="sm" asChild><Link href={lastTicket.ticketUrl} target="_blank" rel="noopener noreferrer">Abrir ticket</Link></Button>}
                     </CardContent>
                 </Card>
             )}
 
-            {/* Scanner Dialog */}
+            <ShortcutHints />
+
+            {/* Ticket como barra inferior en pantallas angostas */}
+            <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <Button className="w-full h-12" onClick={() => setShowMobileCart(true)} disabled={cart.length === 0}>
+                    <ReceiptText className="h-5 w-5 mr-2" />
+                    Ticket {cartUnits > 0 && `(${cartUnits})`} — {formatPrice(cartTotal)}
+                </Button>
+            </div>
+            <Sheet open={showMobileCart} onOpenChange={setShowMobileCart}>
+                <SheetContent side="bottom" className="max-h-[85dvh] p-4">
+                    <SheetHeader className="pb-2"><SheetTitle className="sr-only">Ticket</SheetTitle></SheetHeader>
+                    <CartPanel {...panelProps} variant="plain" />
+                </SheetContent>
+            </Sheet>
+
             <Dialog open={showScanner} onOpenChange={setShowScanner}>
                 <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Escanear Producto</DialogTitle>
-                    </DialogHeader>
-                    <BarcodeScanner
-                        onScan={handleScan}
-                        onClose={() => setShowScanner(false)}
-                    />
-                </DialogContent>
-            </Dialog>
-            <Dialog open={showCheckout} onOpenChange={(open) => { if (!submitting.current) setShowCheckout(open) }}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Finalizar Venta</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        <div className="bg-primary/10 p-4 rounded-lg flex justify-between items-center">
-                            <span className="font-medium text-lg">Total a pagar:</span>
-                            <span className="text-2xl font-bold text-primary">{formatPrice(cartTotal)}</span>
-                        </div>
-
-                        {/* Nota de venta a taller: cobra mayoreo y emite folio NT-.
-                            Con cliente STORE/TECHNICIAN el servidor la impone:
-                            el toggle queda marcado y solo se muestra el badge. */}
-                        <div className="flex items-center gap-2">
-                            <Checkbox
-                                id="workshop-sale"
-                                checked={workshopActive}
-                                disabled={processing || workshopCustomer}
-                                onCheckedChange={(checked) => setWorkshopSale(checked === true)}
-                            />
-                            <Label htmlFor="workshop-sale" className="cursor-pointer font-normal">
-                                Venta a taller <span className="text-xs text-muted-foreground">(precio de mayoreo)</span>
-                            </Label>
-                            {workshopCustomer && <Badge variant="secondary">Taller — mayoreo automático</Badge>}
-                        </div>
-
-                        {!splitMode ? (
-                            <div className="space-y-2">
-                                <Label>Método de Pago</Label>
-                                <div className="flex gap-2">
-                                    <div className="flex-1">
-                                        <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                                            <SelectTrigger disabled={processing}>
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="EFECTIVO">Efectivo</SelectItem>
-                                                <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
-                                                <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
-                                                <SelectItem value="CREDITO">💳 A crédito (cobro a cuenta)</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <Button type="button" variant="outline" disabled={processing} onClick={() => {
-                                        setSplitMode(true)
-                                        setSplitPayments([{ method: paymentMethod === "CREDITO" ? "EFECTIVO" : paymentMethod, amount: cartTotal.toString() }])
-                                    }}>
-                                        Dividir
-                                    </Button>
-                                </div>
-                                {paymentMethod === "TRANSFERENCIA" && (
-                                    <div className="space-y-1.5">
-                                        <Label htmlFor="transfer-ref">Referencia de la transferencia *</Label>
-                                        <Input
-                                            id="transfer-ref"
-                                            placeholder="Folio SPEI / clave de rastreo"
-                                            maxLength={200}
-                                            disabled={processing}
-                                            value={transferRef}
-                                            onChange={e => setTransferRef(e.target.value)}
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <Label>Pago dividido</Label>
-                                    <Button type="button" variant="ghost" size="sm" disabled={processing} onClick={() => setSplitMode(false)}>
-                                        Pago único
-                                    </Button>
-                                </div>
-                                {splitPayments.map((p, i) => (
-                                    <div key={i} className="space-y-1.5">
-                                        <div className="flex gap-2 items-center">
-                                            <div className="flex-1">
-                                                <Select value={p.method} onValueChange={(m) => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, method: m } : x))}>
-                                                    <SelectTrigger disabled={processing}>
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="EFECTIVO">Efectivo</SelectItem>
-                                                        <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
-                                                        <SelectItem value="TARJETA">Tarjeta / Terminal</SelectItem>
-                                                        <SelectItem value="CREDITO">💳 Crédito</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                placeholder="0.00"
-                                                aria-label={`Monto pago ${i + 1}`}
-                                                disabled={processing}
-                                                value={p.amount}
-                                                onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
-                                                className="w-28"
-                                            />
-                                            {splitPayments.length > 1 && (
-                                                <Button type="button" variant="ghost" size="icon" disabled={processing} aria-label="Quitar método" onClick={() => setSplitPayments(prev => prev.filter((_, j) => j !== i))}>
-                                                    <X className="h-4 w-4" />
-                                                </Button>
-                                            )}
-                                        </div>
-                                        {p.method === "TRANSFERENCIA" && (
-                                            <Input
-                                                placeholder="Referencia SPEI / folio de la transferencia *"
-                                                aria-label={`Referencia transferencia ${i + 1}`}
-                                                maxLength={200}
-                                                disabled={processing}
-                                                value={p.reference ?? ""}
-                                                onChange={e => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, reference: e.target.value } : x))}
-                                            />
-                                        )}
-                                    </div>
-                                ))}
-                                {splitPayments.length < 4 && (
-                                    <Button type="button" variant="outline" size="sm" disabled={processing} onClick={() => {
-                                        const used = new Set(splitPayments.map(p => p.method))
-                                        const next = ["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"].find(m => !used.has(m)) ?? "EFECTIVO"
-                                        const remaining = cartTotal - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                        setSplitPayments(prev => [...prev, { method: next, amount: remaining > 0 ? remaining.toFixed(2) : "" }])
-                                    }}>
-                                        <Plus className="h-4 w-4 mr-1" /> Agregar método
-                                    </Button>
-                                )}
-                                {(() => {
-                                    const sum = splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                    const diff = cartTotal - sum
-                                    return Math.abs(diff) > 0.009 ? (
-                                        <p className={`text-sm font-medium ${diff > 0 ? "text-destructive" : "text-amber-600"}`}>
-                                            {diff > 0 ? `Faltan ${formatPrice(diff)}` : `Sobran ${formatPrice(-diff)}`}
-                                        </p>
-                                    ) : (
-                                        <p className="text-sm font-medium text-green-600">✓ Los pagos cubren el total</p>
-                                    )
-                                })()}
-                            </div>
-                        )}
-
-                        {!splitMode && paymentMethod === "EFECTIVO" && (
-                            <div className="space-y-2">
-                                <Label>Efectivo Recibido (Calculadora de Cambio)</Label>
-                                <Input 
-                                    type="number" 
-                                    placeholder="Ej: 500"
-                                    disabled={processing}
-                                    aria-label="Efectivo recibido"
-                                    value={cashGiven}
-                                    onChange={e => setCashGiven(e.target.value)}
-                                />
-                                {cashGiven && parseFloat(cashGiven) >= cartTotal && (
-                                    <p className="text-green-600 font-medium text-sm mt-1">
-                                        Cambio: {formatPrice(parseFloat(cashGiven) - cartTotal)}
-                                    </p>
-                                )}
-                                {cashGiven && parseFloat(cashGiven) < cartTotal && (
-                                    <p className="text-destructive font-medium text-sm mt-1">
-                                        Faltan: {formatPrice(cartTotal - parseFloat(cashGiven))}
-                                    </p>
-                                )}
-                            </div>
-                        )}
-
-                        {(splitMode ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0) : paymentMethod === "CREDITO") && (
-                            <div className="space-y-3">
-                                {!creditCustomer ? (
-                                    <>
-                                        <div className="space-y-2">
-                                            <Label>Buscar Cliente con Crédito</Label>
-                                            <div className="relative">
-                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                                <Input
-                                                    placeholder="Nombre o teléfono..."
-                                                    disabled={processing}
-                                                    aria-label="Buscar cliente para venta a crédito"
-                                                    value={creditSearch}
-                                                    onChange={(e) => {
-                                                        setCreditSearch(e.target.value)
-                                                        searchCreditCustomers(e.target.value)
-                                                    }}
-                                                    className="pl-9"
-                                                />
-                                                {creditSearching && (
-                                                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin" />
-                                                )}
-                                            </div>
-                                        </div>
-                                        {creditResults.length > 0 && (
-                                            <div className="border rounded-lg max-h-36 overflow-y-auto">
-                                                {creditResults.map((u) => {
-                                                    const available = Math.max(0, (u.creditLimit || 0) - (u.creditBalance || 0))
-                                                    return (
-                                                        <button
-                                                            key={u.id}
-                                                            className="w-full text-left p-2.5 hover:bg-muted border-b last:border-0 text-sm"
-                                                            onClick={() => { setCreditCustomer(u); setCreditSearch(""); setCreditResults([]) }}
-                                                        >
-                                                            <p className="font-medium">{u.name}</p>
-                                                            <p className="text-xs text-muted-foreground">
-                                                                Disponible: ${available.toLocaleString()} de ${(u.creditLimit || 0).toLocaleString()}
-                                                            </p>
-                                                        </button>
-                                                    )
-                                                })}
-                                            </div>
-                                        )}
-                                        {creditSearch.length >= 2 && creditResults.length === 0 && !creditSearching && (
-                                            <p className="text-xs text-muted-foreground text-center py-2">
-                                                No se encontraron clientes con crédito
-                                            </p>
-                                        )}
-                                    </>
-                                ) : (
-                                    <div className="p-3 bg-primary/10 rounded-lg">
-                                        <div className="flex justify-between items-center">
-                                            <div>
-                                                <p className="font-semibold text-sm">💳 {creditCustomer.name}</p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    Disponible: ${Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)).toLocaleString()}
-                                                    {" "}de ${(creditCustomer.creditLimit ?? 0).toLocaleString()}
-                                                </p>
-                                            </div>
-                                            <Button variant="ghost" size="sm" disabled={processing} onClick={() => setCreditCustomer(null)}>Cambiar</Button>
-                                        </div>
-                                        {(() => {
-                                            const charge = splitMode
-                                                ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                                : cartTotal
-                                            const available = Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0))
-                                            return charge > available ? (
-                                                <p className="text-destructive text-xs font-medium mt-2">
-                                                    ⚠️ El cargo a crédito ({formatPrice(charge)}) supera lo disponible ({formatPrice(available)})
-                                                </p>
-                                            ) : null
-                                        })()}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setShowCheckout(false)} disabled={processing}>Cancelar</Button>
-                        <Button 
-                            onClick={async (e) => {
-                                e.preventDefault();
-                                await processSale();
-                            }} 
-                            disabled={processing || (!splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal)) || (splitMode ? (splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0) && !creditCustomer) : (paymentMethod === "CREDITO" && (!creditCustomer || cartTotal > Math.max(0, (creditCustomer.creditLimit ?? 0) - (creditCustomer.creditBalance ?? 0)))))}
-                        >
-                            {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                            Confirmar venta
-                        </Button>
-                    </DialogFooter>
+                    <DialogHeader><DialogTitle>Escanear producto</DialogTitle></DialogHeader>
+                    <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
                 </DialogContent>
             </Dialog>
 
+            <CheckoutDialog open={showCheckout} onOpenChange={setShowCheckout} cart={cart} cartTotal={cartTotal}
+                workshopActive={workshopActive} workshopCustomer={workshopCustomer} onWorkshopSaleChange={setWorkshopSale}
+                customer={customer} onCustomerChange={setCustomer} branchId={branchId} cajaOpen={cajaOpen}
+                resumedDoc={resumedDoc} onBusyChange={setBusy} onCompleted={handleCompleted} />
+            <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
+            <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={branchId} refreshKey={docsRefreshKey} />
         </div>
     )
 }

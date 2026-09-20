@@ -6,11 +6,10 @@ import { normalizePhone } from "@/lib/utils"
 import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
-import { ReservationStatus, SaleStatus, CreditMovementType } from "@prisma/client"
 
 /**
- * Vista 360 del cliente: perfil, KPIs y un timeline unificado con todo lo que
- * ha hecho en el negocio (taller, ventas, reservas y crédito).
+ * Vista 360 del cliente: perfil, KPIs y las secciones que alimentan las
+ * pestañas de la ficha (compras, crédito, apartados/reservas y taller).
  *
  * Las RepairOrder ligan al cliente por FK (customerId, estampado en recepción
  * por linkCustomerByPhone). Las históricas anteriores a la FK —o capturadas
@@ -20,39 +19,12 @@ import { ReservationStatus, SaleStatus, CreditMovementType } from "@prisma/clien
  * unen y deduplican por id de orden.
  */
 
-const reservationLabels: Record<ReservationStatus, string> = {
-  PENDING: "Pendiente",
-  PENDING_PAYMENT: "Esperando pago",
-  DEPOSIT_VERIFIED: "Depósito verificado",
-  APPROVED: "Lista para recoger",
-  REJECTED: "Rechazada",
-  COMPLETED: "Entregada",
-  CANCELLED: "Cancelada",
-  EXPIRED: "Expirada",
-}
-
-const saleLabels: Record<SaleStatus, string> = {
-  COMPLETED: "Completada",
-  VOIDED: "Anulada",
-}
-
-const creditLabels: Record<CreditMovementType, string> = {
-  DEBT: "Cargo a crédito",
-  PAYMENT: "Abono a crédito",
-  REVERSAL: "Reversión de deuda",
-}
-
-interface TimelineEvent {
-  kind: "repair" | "sale" | "credit" | "reservation"
-  id: string
-  folio: string
-  fecha: string
-  descripcion: string
-  monto: number | null
-  status: string
-  statusLabel: string
-  href: string
-}
+// Reservas que siguen vivas (esperando pago/verificación o listas para recoger).
+const PENDING_RESERVATION_STATUSES = ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"] as const
+// Órdenes de taller aún abiertas: entregadas y canceladas ya cerraron ciclo.
+const CLOSED_REPAIR_STATUSES = ["DELIVERED", "CANCELLED"] as const
+// Documentos de venta vivos: apartados (OPEN) y ventas suspendidas/cotizaciones (DRAFT).
+const OPEN_DOCUMENT_STATUSES = ["OPEN", "DRAFT"] as const
 
 // Misma transformación que normalizePhone pero en SQL: quita no-dígitos y
 // conserva los últimos 10. Los teléfonos cortos quedan intactos (RIGHT con n
@@ -93,6 +65,8 @@ export async function GET(
         creditLimit: true,
         creditBalance: true,
         totalPurchases: true,
+        emailVerifiedAt: true,
+        phoneVerifiedAt: true,
         createdAt: true,
       },
     })
@@ -110,7 +84,7 @@ export async function GET(
     ])
     const repairIds = [...new Set([...linkedOrders.map((o) => o.id), ...phoneIds])]
 
-    const [repairs, sales, salesAgg, reservations, reservationsCount, credits, creditsCount, repairPaidAgg] =
+    const [repairs, openRepairs, sales, salesAgg, lastSale, reservations, pendingReservations, creditMovements, repairPaidAgg, documents] =
       await Promise.all([
         repairIds.length
           ? prisma.repairOrder.findMany({
@@ -119,7 +93,6 @@ export async function GET(
                 id: true,
                 number: true,
                 status: true,
-                customerName: true,
                 equipmentType: true,
                 brand: true,
                 model: true,
@@ -127,6 +100,7 @@ export async function GET(
                 quoteCents: true,
                 approvedQuoteCents: true,
                 diagnosticFeeCents: true,
+                closedWithoutRepair: true,
                 // Solo autorizadas: son las que suman al total de la orden.
                 parts: {
                   where: { status: "APPROVED" },
@@ -135,28 +109,40 @@ export async function GET(
                 createdAt: true,
               },
               orderBy: { createdAt: "desc" },
-              take: 100,
+              take: 50,
             })
           : Promise.resolve([]),
+        repairIds.length
+          ? prisma.repairOrder.count({
+              where: { businessId, id: { in: repairIds }, status: { notIn: [...CLOSED_REPAIR_STATUSES] } },
+            })
+          : Promise.resolve(0),
         prisma.sale.findMany({
           where: { businessId, customerId: id },
           select: {
             id: true,
             number: true,
             status: true,
+            kind: true,
             total: true,
             createdAt: true,
             branch: { select: { name: true } },
+            items: { select: { quantity: true, product: { select: { name: true } } }, take: 4 },
             _count: { select: { items: true } },
           },
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: 20,
         }),
-        // "Total gastado": solo ventas vigentes (las anuladas no son gasto real).
+        // "Total comprado": solo ventas vigentes (las anuladas no son gasto real).
         prisma.sale.aggregate({
           where: { businessId, customerId: id, status: "COMPLETED" },
           _sum: { total: true },
           _count: { _all: true },
+        }),
+        prisma.sale.findFirst({
+          where: { businessId, customerId: id, status: "COMPLETED" },
+          select: { createdAt: true },
+          orderBy: { createdAt: "desc" },
         }),
         prisma.reservation.findMany({
           where: { businessId, userId: id },
@@ -164,21 +150,33 @@ export async function GET(
             id: true,
             quantity: true,
             totalPrice: true,
+            depositAmount: true,
+            depositPaid: true,
             status: true,
             type: true,
+            expiresAt: true,
             createdAt: true,
             product: { select: { name: true } },
           },
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: 50,
         }),
-        prisma.reservation.count({ where: { businessId, userId: id } }),
+        prisma.reservation.count({
+          where: { businessId, userId: id, status: { in: [...PENDING_RESERVATION_STATUSES] } },
+        }),
         prisma.creditMovement.findMany({
           where: { businessId, userId: id },
+          select: {
+            id: true,
+            type: true,
+            amount: true,
+            referenceType: true,
+            notes: true,
+            createdAt: true,
+          },
           orderBy: { createdAt: "desc" },
-          take: 100,
+          take: 50,
         }),
-        prisma.creditMovement.count({ where: { businessId, userId: id } }),
         // Lo pagado en taller (anticipos/abonos/liquidaciones confirmados).
         repairIds.length
           ? prisma.payment.aggregate({
@@ -186,88 +184,83 @@ export async function GET(
               _sum: { amount: true },
             })
           : Promise.resolve({ _sum: { amount: null as number | null } }),
+        // Documentos vivos del cliente: apartados y cotizaciones/suspendidas
+        // con lo cobrado a cuenta (pagos confirmados) para saber el saldo.
+        prisma.sale.findMany({
+          where: { businessId, customerId: id, status: { in: [...OPEN_DOCUMENT_STATUSES] } },
+          select: {
+            id: true,
+            number: true,
+            kind: true,
+            status: true,
+            total: true,
+            expiresAt: true,
+            note: true,
+            createdAt: true,
+            payments: { where: { status: "CONFIRMED" }, select: { amount: true } },
+            _count: { select: { items: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        }),
       ])
-
-    const eventos: TimelineEvent[] = []
 
     // Largo del folio impreso configurado por el negocio (order_folio_digits).
     const folioDigits = await getOrderFolioDigits(businessId)
-    for (const order of repairs) {
-      const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
-      // Total real de la orden: mano de obra + refacciones autorizadas
-      // (o solo el cargo por diagnóstico en cierres sin reparación).
+
+    const repairOrders = repairs.map((order) => {
       const totalCents = orderTotalCents(order, order.parts)
-      eventos.push({
-        kind: "repair",
+      return {
         id: order.id,
+        number: order.number,
         folio: repairFolio(order.number, folioDigits),
-        fecha: order.createdAt.toISOString(),
-        descripcion: `${equipo} — ${order.reportedIssue}`.slice(0, 180),
-        monto: totalCents > 0 ? totalCents / 100 : null,
         status: order.status,
         statusLabel: repairLabels[order.status as RepairStage] ?? order.status,
-        href: `/admin/taller?orden=${order.id}`,
-      })
+        equipment: [order.equipmentType, order.brand, order.model].filter(Boolean).join(" "),
+        reportedIssue: order.reportedIssue,
+        total: totalCents > 0 ? totalCents / 100 : null,
+        createdAt: order.createdAt,
+      }
+    })
+
+    const salesOut = sales.map(({ _count, items, branch, ...sale }) => ({
+      ...sale,
+      branch: branch.name,
+      itemsCount: _count.items,
+      itemNames: items.map((it) => `${it.quantity} × ${it.product.name}`),
+    }))
+
+    const documentsOut = documents.map(({ payments, _count, ...doc }) => {
+      const paid = payments.reduce((sum, p) => sum + p.amount, 0)
+      return {
+        ...doc,
+        itemsCount: _count.items,
+        paid,
+        balance: Math.max(0, doc.total - paid),
+      }
+    })
+
+    const stats = {
+      totalPurchased: (salesAgg._sum.total ?? 0) + (repairPaidAgg._sum.amount ?? 0),
+      salesCount: salesAgg._count._all,
+      lastPurchaseAt: lastSale?.createdAt ?? null,
+      pendingReservations,
+      openRepairs,
+      activeDocuments: documentsOut.length,
     }
 
-    for (const sale of sales) {
-      const items = sale._count.items
-      eventos.push({
-        kind: "sale",
-        id: sale.id,
-        folio: `V-${String(sale.number).padStart(6, "0")}`,
-        fecha: sale.createdAt.toISOString(),
-        descripcion: `${items} producto${items === 1 ? "" : "s"} · ${sale.branch.name}`,
-        monto: sale.total,
-        status: sale.status,
-        statusLabel: saleLabels[sale.status],
-        href: `/admin/tickets/venta/${sale.id}`,
-      })
-    }
-
-    for (const res of reservations) {
-      eventos.push({
-        kind: "reservation",
-        id: res.id,
-        folio: res.id.slice(-8).toUpperCase(),
-        fecha: res.createdAt.toISOString(),
-        descripcion: `${res.quantity} × ${res.product.name}${res.type === "DEPOSIT" ? " · con anticipo" : ""}`,
-        monto: res.totalPrice,
-        status: res.status,
-        statusLabel: reservationLabels[res.status],
-        href: `/admin/tickets/reserva/${res.id}`,
-      })
-    }
-
-    for (const mov of credits) {
-      const isDebt = mov.type === "DEBT"
-      eventos.push({
-        kind: "credit",
-        id: mov.id,
-        folio: mov.id.slice(-8).toUpperCase(),
-        fecha: mov.createdAt.toISOString(),
-        descripcion: mov.notes?.trim() || creditLabels[mov.type],
-        // Signo: DEBT aumenta lo que debe; PAYMENT/REVERSAL lo reducen.
-        monto: isDebt ? mov.amount : -mov.amount,
-        status: mov.type,
-        statusLabel: creditLabels[mov.type],
-        href: mov.type === "PAYMENT" ? `/admin/tickets/abono/${mov.id}` : "/admin/credito",
-      })
-    }
-
-    eventos.sort((a, b) => b.fecha.localeCompare(a.fecha))
-
-    const ultimaActividad = eventos[0]?.fecha ?? null
-    const kpis = {
-      totalGastado: (salesAgg._sum.total ?? 0) + (repairPaidAgg._sum.amount ?? 0),
-      ventas: salesAgg._count._all,
-      reparaciones: repairIds.length,
-      reservas: reservationsCount,
-      movimientosCredito: creditsCount,
-      ultimaActividad,
-    }
-
-    return NextResponse.json({ cliente: user, kpis, eventos })
+    return NextResponse.json(
+      {
+        customer: user,
+        stats,
+        sales: salesOut,
+        creditMovements,
+        reservations,
+        repairOrders,
+        documents: documentsOut,
+      },
+      { headers: { "Cache-Control": "private, no-store" } }
+    )
   } catch (error) {
     console.error("Error fetching cliente 360:", error)
     return NextResponse.json({ error: "Error al obtener el cliente" }, { status: 500 })

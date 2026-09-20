@@ -349,9 +349,10 @@ async function buildReportSeries(businessId: string) {
     newCustomers,
     customerGroups,
   ] = await Promise.all([
-    // Ventas de los últimos 30 días (VOIDED = anulada, se excluye).
+    // Ventas de los últimos 30 días: solo COMPLETED cuenta como ingreso
+    // (DRAFT/OPEN son documentos vivos sin comprometer; VOIDED se excluye).
     prisma.sale.findMany({
-      where: { businessId, status: { not: "VOIDED" }, createdAt: { gte: since30 } },
+      where: { businessId, status: "COMPLETED", createdAt: { gte: since30 } },
       select: { createdAt: true, total: true },
     }),
     // Movimientos de caja: IN suma efectivo, OUT lo retira.

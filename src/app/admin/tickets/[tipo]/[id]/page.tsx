@@ -117,17 +117,30 @@ export default async function TicketPage({
       // Nota de venta a taller (SaleKind.WORKSHOP): otro encabezado, folio NT-,
       // sello de mayoreo y el cliente se identifica por su negocio.
       const isWorkshop = saleDoc.kind === "WORKSHOP"
+      const isQuote = saleDoc.kind === "QUOTE"
+      const isLayaway = saleDoc.kind === "LAYAWAY"
+      const isLive = saleDoc.status === "DRAFT" || saleDoc.status === "OPEN"
+      const paid = saleDoc.payments.filter(p => p.status === "CONFIRMED").reduce((sum, p) => sum + p.amount, 0)
+      const balance = Math.max(0, saleDoc.total - paid)
+      const title = saleDoc.status === "VOIDED"
+        ? (isWorkshop ? "NOTA DE VENTA A TALLER ANULADA" : isLayaway ? "APARTADO CANCELADO" : isQuote ? "COTIZACIÓN ANULADA" : "VENTA ANULADA")
+        : isQuote ? "COTIZACIÓN"
+          : isLayaway ? "APARTADO"
+            : isWorkshop ? "NOTA DE VENTA A TALLER"
+              : saleDoc.status === "DRAFT" ? "VENTA SUSPENDIDA" : "TICKET DE VENTA"
+      const folioPrefix = isQuote ? "C" : isLayaway ? "A" : isWorkshop ? "NT" : "V"
       ticketData = {
-        title: saleDoc.status === "VOIDED"
-          ? (isWorkshop ? "NOTA DE VENTA A TALLER ANULADA" : "VENTA ANULADA")
-          : (isWorkshop ? "NOTA DE VENTA A TALLER" : "TICKET DE VENTA"),
-        folio: `${isWorkshop ? "NT" : "V"}-${String(saleDoc.number).padStart(6, "0")}`,
+        title,
+        folio: `${folioPrefix}-${String(saleDoc.number).padStart(6, "0")}`,
         date: saleDoc.createdAt.toISOString(),
         client: isWorkshop
           ? (saleDoc.customer?.businessName ?? saleDoc.customer?.name)
           : saleDoc.customer?.name,
         clientLabel: isWorkshop && saleDoc.customer ? "Taller/Negocio" : undefined,
-        badge: isWorkshop ? "Documento para taller — precio de mayoreo" : undefined,
+        badge: isWorkshop ? "Documento para taller — precio de mayoreo"
+          : isQuote && saleDoc.expiresAt ? `Vigente hasta ${new Date(saleDoc.expiresAt).toLocaleDateString("es-MX")}`
+            : isLayaway && balance > 0 ? `Saldo pendiente: ${formatPrice(balance)}`
+              : undefined,
         items: saleDoc.items.map(item => ({
           name: item.product.name,
           qty: item.quantity,
@@ -135,8 +148,10 @@ export default async function TicketPage({
           total: item.totalPrice,
         })),
         total: saleDoc.total,
-        paymentMethod: saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
-        notes: saleDoc.branch.name,
+        paymentMethod: isLive
+          ? (isLayaway && paid > 0 ? `Anticipos: ${formatPrice(paid)}` : "")
+          : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
+        notes: [saleDoc.note, saleDoc.branch.name].filter(Boolean).join("\n"),
         cashier: saleDoc.seller.name,
         // Doble copia (cliente + caja) cuando el mostrador lo pidió
         // (?copias=2 — ventas con tarjeta abren el ticket así).

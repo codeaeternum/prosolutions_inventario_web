@@ -4,15 +4,137 @@ import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, 
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
-const METHODS = z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"])
-const METHOD_MAP = { EFECTIVO: "CASH", TARJETA: "CARD", TRANSFERENCIA: "TRANSFER", CREDITO: "CREDIT" } as const
-type MethodInput = z.infer<typeof METHODS>
+export const METHODS = z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDITO"])
+export const METHOD_MAP = { EFECTIVO: "CASH", TARJETA: "CARD", TRANSFERENCIA: "TRANSFER", CREDITO: "CREDIT" } as const
+export type MethodInput = z.infer<typeof METHODS>
 
-const paymentInput = z.object({
+export const paymentInput = z.object({
   method: METHODS,
   amount: z.number().positive().max(1000000).optional(), // obligatorio salvo que sea el único pago
   reference: z.string().trim().max(200).optional(),
 })
+export type PaymentInput = z.infer<typeof paymentInput>
+
+/** Pago ya valuado en centavos, listo para que el núcleo lo asiente. */
+export type SettledPayment = { method: MethodInput; reference?: string; cents: number }
+
+/**
+ * Reglas del cobro de mostrador que no dependen del total: CREDITO exige
+ * cliente (la deuda necesita un deudor), pago dividido exige monto por medio
+ * y TRANSFERENCIA exige folio — sin referencia el movimiento no cuadra contra
+ * el estado de cuenta.
+ */
+export function checkSalePayments(payments: PaymentInput[], customerId?: string | null) {
+  if (payments.some(p => p.method === "CREDITO") && !customerId) throw new BusinessError("Selecciona al cliente del crédito.")
+  if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
+  // Una transferencia sin folio queda imposible de cuadrar contra el estado de cuenta.
+  if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference)) throw new BusinessError("Captura la referencia de cada transferencia.")
+}
+
+/**
+ * Valúa los pagos en centavos y exige que cuadren exacto con el total: una
+ * venta cobrada no puede quedar con saldo ni sobrante. Un pago único sin
+ * monto se interpreta como liquidación completa.
+ */
+export function settleSalePayments(payments: PaymentInput[], totalCents: number): SettledPayment[] {
+  const settled = payments.map(p => ({ method: p.method, reference: p.reference, cents: payments.length === 1 ? totalCents : cents(p.amount!, true) }))
+  if (settled.reduce((sum, p) => sum + p.cents, 0) !== totalCents) throw new BusinessError(`Los pagos no cuadran con el total (${amount(totalCents)}).`, 409)
+  return settled
+}
+
+/**
+ * Asienta el dinero cobrado de un documento ya numerado: el efectivo entra a
+ * la caja abierta de la sucursal, CREDITO abre cuenta por cobrar del cliente
+ * y cada medio deja su Payment CONFIRMED como comprobante. Lo usan sell(),
+ * el checkout de documentos vivos y los abonos del apartado.
+ */
+export async function settlePayments(tx: Transaction, input: {
+  sale: { id: string; number: number }
+  businessId: string
+  actorId: string
+  branchId: string
+  customerId: string | null
+  payments: SettledPayment[]
+  // Descripción del asiento de caja y nota de la deuda ("Venta V-7", "Abono apartado V-9").
+  description: string
+}) {
+  const created = []
+  let register: Awaited<ReturnType<typeof openRegister>> | null = null
+  for (const payment of input.payments) {
+    const method = METHOD_MAP[payment.method]
+    let cashMovementId: string | undefined
+    if (method === "CASH") {
+      register ??= await openRegister(tx, input.branchId, input.businessId)
+      const cashIn = await tx.cashMovement.create({ data: {
+        businessId: input.businessId, registerId: register.id, userId: input.actorId, amount: amount(payment.cents), type: "IN",
+        referenceType: "SALE", referenceId: input.sale.id, description: input.description,
+      } })
+      cashMovementId = cashIn.id
+    }
+    if (method === "CREDIT") {
+      await addDebt(tx, input.customerId!, payment.cents, { type: "SALE", id: input.sale.id, notes: input.description }, input.businessId)
+    }
+    created.push(await tx.payment.create({ data: {
+      businessId: input.businessId, saleId: input.sale.id, method, amount: amount(payment.cents), status: "CONFIRMED",
+      reference: payment.reference ?? null, cashMovementId: cashMovementId ?? null, createdById: input.actorId,
+    } }))
+  }
+  return created
+}
+
+/**
+ * Núcleo contable de un documento de venta ya numerado: por cada línea crea
+ * su SaleItem (cuando viene sin id — venta directa) y su movimiento OUT con
+ * los precios ya valuados, luego asienta el dinero con settlePayments. Lo
+ * comparten sell() —que numera y liquida de un golpe— y los documentos vivos
+ * de documents.ts (checkout de suspensión/cotización, anticipo de apartado),
+ * donde Sale y renglones ya existen con precio snapshot.
+ */
+export async function commitSale(tx: Transaction, input: {
+  sale: { id: string; number: number }
+  businessId: string
+  actorId: string
+  branchId: string
+  customerId: string | null
+  lines: { productId: string; quantity: number; unitCents: number; lineCents: number; saleItemId?: string }[]
+  payments: SettledPayment[]
+  // Motivo del movimiento OUT y descripción del cobro ("Venta V-7", "Apartado V-9").
+  reason: string
+}) {
+  // Medio dominante (el de mayor monto): clasifica el OUT como venta en el
+  // historial (paymentMethod != null) y fija el canal de devolución simple.
+  // Sin pagos queda null — un apartado sin anticipo no declara medio aún.
+  let dominantMethod: MethodInput | null = input.payments[0]?.method ?? null
+  let topCents = -1
+  for (const payment of input.payments) {
+    if (payment.cents > topCents) { topCents = payment.cents; dominantMethod = payment.method }
+  }
+  const items = []
+  const movements = []
+  for (const line of input.lines) {
+    const saleItem = line.saleItemId
+      ? await tx.saleItem.findUniqueOrThrow({ where: { id: line.saleItemId } })
+      : await tx.saleItem.create({ data: {
+          businessId: input.businessId, saleId: input.sale.id, productId: line.productId, quantity: line.quantity,
+          unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
+        } })
+    const updated = await tx.product.findUniqueOrThrow({ where: { id: line.productId } })
+    const movement = await tx.inventoryMovement.create({ data: {
+      businessId: input.businessId, productId: line.productId, userId: input.actorId, type: "OUT", quantity: line.quantity,
+      previousStock: updated.stock + line.quantity, newStock: updated.stock,
+      reason: input.reason, unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
+      paymentMethod: dominantMethod, customerId: input.customerId, businessVersion: 1, branchId: input.branchId, saleId: input.sale.id,
+    }, include: { product: { select: { id: true, name: true } } } })
+    items.push(saleItem)
+    movements.push(movement)
+  }
+  const payments = await settlePayments(tx, {
+    sale: input.sale, businessId: input.businessId, actorId: input.actorId, branchId: input.branchId,
+    customerId: input.customerId, payments: input.payments, description: input.reason,
+  })
+  return { items, payments, movements }
+}
+
 const saleSchema = z.object({
   idempotencyKey: operationKeySchema, items: itemsSchema,
   payments: z.array(paymentInput).min(1).max(6).optional(),
@@ -33,10 +155,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
   const input = saleSchema.parse(raw)
   const items = mergeItems(input.items)
   const payments = input.payments ?? [{ method: input.paymentMethod! }]
-  if (payments.some(p => p.method === "CREDITO") && !input.customerId) throw new BusinessError("Selecciona al cliente del crédito.")
-  if (payments.length > 1 && payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
-  // Una transferencia sin folio queda imposible de cuadrar contra el estado de cuenta.
-  if (payments.some(p => p.method === "TRANSFERENCIA" && !p.reference)) throw new BusinessError("Captura la referencia de cada transferencia.")
+  checkSalePayments(payments, input.customerId)
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
     const seller = await actor(tx, actorId, "staff", businessId)
     const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId, businessId)
@@ -68,61 +187,15 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
       totalCents += lineCents
     }
     const total = amount(totalCents)
-    const totalPaidCents = payments.length === 1 ? totalCents : payments.reduce((sum, p) => sum + cents(p.amount!, true), 0)
-    if (totalPaidCents !== totalCents) throw new BusinessError(`Los pagos no cuadran con el total (${total}).`, 409)
+    const settled = settleSalePayments(payments, totalCents)
 
     const sale = await tx.sale.create({ data: { businessId, total, kind, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
-    // Medio dominante (el de mayor monto): clasifica el OUT como venta en el
-    // historial (paymentMethod != null) y fija el canal de devolución simple.
-    // La venta conserva el desglose completo en sus pagos.
-    let dominantMethod: MethodInput = payments[0].method
-    let topCents = -1
-    for (const payment of payments) {
-      const paymentCents = payments.length === 1 ? totalCents : cents(payment.amount!, true)
-      if (paymentCents > topCents) { topCents = paymentCents; dominantMethod = payment.method }
-    }
-    const movements = []
-    const saleItems = []
-    for (const line of lines) {
-      const saleItem = await tx.saleItem.create({ data: {
-        businessId, saleId: sale.id, productId: line.product.id, quantity: line.item.quantity,
-        unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
-      } })
-      const updated = await tx.product.findUniqueOrThrow({ where: { id: line.product.id } })
-      const movement = await tx.inventoryMovement.create({ data: {
-        businessId, productId: line.product.id, userId: actorId, type: "OUT", quantity: line.item.quantity,
-        previousStock: updated.stock + line.item.quantity, newStock: updated.stock,
-        reason: `Venta V-${sale.number}`, unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
-        paymentMethod: dominantMethod,
-        customerId: customer?.id, businessVersion: 1, branchId: branch.id, saleId: sale.id,
-      }, include: { product: { select: { id: true, name: true } } } })
-      saleItems.push(saleItem)
-      movements.push(movement)
-    }
-
-    const created = []
-    let register: Awaited<ReturnType<typeof openRegister>> | null = null
-    for (const payment of payments) {
-      const method = METHOD_MAP[payment.method]
-      const paymentCents = payments.length === 1 ? totalCents : cents(payment.amount!, true)
-      let cashMovementId: string | undefined
-      if (method === "CASH") {
-        register ??= await openRegister(tx, branch.id, businessId)
-        const cashIn = await tx.cashMovement.create({ data: {
-          businessId, registerId: register.id, userId: actorId, amount: amount(paymentCents), type: "IN",
-          referenceType: "SALE", referenceId: sale.id, description: `Venta V-${sale.number}`,
-        } })
-        cashMovementId = cashIn.id
-      }
-      if (method === "CREDIT") {
-        await addDebt(tx, customer!.id, paymentCents, { type: "SALE", id: sale.id, notes: `Venta V-${sale.number}` }, businessId)
-      }
-      created.push(await tx.payment.create({ data: {
-        businessId, saleId: sale.id, method, amount: amount(paymentCents), status: "CONFIRMED",
-        reference: payment.reference ?? null, cashMovementId: cashMovementId ?? null, createdById: actorId,
-      } }))
-    }
-    return { sale, items: saleItems, payments: created, movements, quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind }
+    const committed = await commitSale(tx, {
+      sale, businessId, actorId, branchId: branch.id, customerId: customer?.id ?? null,
+      lines: lines.map(line => ({ productId: line.product.id, quantity: line.item.quantity, unitCents: line.unitCents, lineCents: line.lineCents })),
+      payments: settled, reason: `Venta V-${sale.number}`,
+    })
+    return { sale, items: committed.items, payments: committed.payments, movements: committed.movements, quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind }
   })
   // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
   await syncLowStockAlerts(db, businessId, collectLowStockIds(items))
@@ -130,7 +203,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
 }
 
 /** Devuelve el stock a la sucursal de la venta y revierte el dinero por cada medio. */
-async function refund(tx: Transaction, input: {
+export async function refund(tx: Transaction, input: {
   saleId: string; actorId: string; businessId: string; branchId: string; customerId: string | null;
   refundCents: number; channel: MethodInput; note: string;
 }) {

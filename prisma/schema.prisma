@@ -708,6 +708,8 @@ model BranchStock {
 // ==================== DOCUMENTO DE VENTA ====================
 
 enum SaleStatus {
+  DRAFT // documento vivo sin stock ni dinero: venta suspendida o cotización
+  OPEN // apartado de mostrador: stock comprometido, saldo por liquidar/entregar
   COMPLETED
   VOIDED // anulada mediante contramovimientos; el documento se conserva
 }
@@ -716,9 +718,14 @@ enum SaleStatus {
 // "Nota de venta a taller" — venta de refacciones a un taller/negocio
 // (cliente tipo STORE o TECHNICIAN, precio de mayoreo). Separa la
 // contabilidad del negocio de refacciones de la venta al público.
+// LAYAWAY: apartado de mostrador multi-producto con anticipos parciales;
+// QUOTE: cotización de mostrador con vigencia, convierte a venta sin
+// mover stock mientras vive en DRAFT.
 enum SaleKind {
   RETAIL
   WORKSHOP
+  LAYAWAY
+  QUOTE
 }
 
 enum PaymentMethod {
@@ -753,6 +760,10 @@ model Sale {
   items              SaleItem[]
   payments           Payment[]
   marketplaceRequest MarketplaceRequest?
+  // Documentos vivos: vigencia de cotización/apartado y nota interna del
+  // mostrador ("cliente dijo que vuelve por el resto").
+  expiresAt          DateTime?
+  note               String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
