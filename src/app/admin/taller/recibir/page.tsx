@@ -13,6 +13,7 @@ import { PhoneInput, parsePhone } from "@/components/admin/taller/phone-input"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
+import { resolveServicePrice } from "@/lib/service-pricing"
 import { formatAccessPattern, titleCaseName } from "@/lib/utils"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio } from "@/lib/workshop-labels"
 import { waMeHref } from "@/components/public/whatsapp-button"
@@ -26,7 +27,9 @@ type Aesthetics = "BUENO" | "REGULAR" | "MALO"
 type AdvanceMethod = "CASH" | "CARD" | "TRANSFER"
 type CreatedOrder = { id: string; number: number; customerName: string; originBusinessName?: string | null }
 type LookupField = "customerName" | "customerPhone"
-type WorkshopService = { id: string; name: string; description: string | null; priceCents: number | null; equipmentType: string | null }
+// prices: precios específicos por modelo/tipo de equipo (WorkshopServicePrice)
+// — ganan sobre priceCents cuando el equipo recibido coincide.
+type WorkshopService = { id: string; name: string; description: string | null; priceCents: number | null; equipmentType: string | null; prices?: { deviceModelId: string | null; equipmentType: string | null; priceCents: number }[] }
 type DeviceModel = { id: string; brand: string; model: string; code: string | null; type: string }
 
 const STEPS = ["Cliente", "Equipo", "Acceso y estado", "Entrega y cobro", "Resumen"]
@@ -71,6 +74,26 @@ const EQUIPMENT_COLORS: { label: string; hex: string }[] = [
   { label: "Plata", hex: "#c0c0c0" }, { label: "Gris", hex: "#6b7280" }, { label: "Verde", hex: "#16a34a" },
   { label: "Morado", hex: "#9333ea" }, { label: "Naranja", hex: "#ea580c" }, { label: "Amarillo", hex: "#eab308" },
 ]
+// Marcas frecuentes en recepción: chip con monograma en un círculo con el color
+// de marca. Solo clases Tailwind inline — sin logos ni librerías nuevas.
+const QUICK_BRANDS: { name: string; monogram: string; badge: string }[] = [
+  { name: "Apple", monogram: "", badge: "bg-zinc-800 text-zinc-100" },
+  { name: "Samsung", monogram: "S", badge: "bg-blue-600 text-white" },
+  { name: "Xiaomi", monogram: "MI", badge: "bg-orange-500 text-white" },
+  { name: "Motorola", monogram: "M", badge: "bg-blue-800 text-white" },
+  { name: "Honor", monogram: "H", badge: "bg-sky-500 text-white" },
+  { name: "Huawei", monogram: "HW", badge: "bg-red-600 text-white" },
+  { name: "Oppo", monogram: "O", badge: "bg-green-600 text-white" },
+  { name: "Zuum", monogram: "Z", badge: "bg-indigo-600 text-white" },
+  { name: "Lenovo", monogram: "L", badge: "bg-red-700 text-white" },
+  { name: "HP", monogram: "hp", badge: "bg-sky-700 text-white" },
+  { name: "Dell", monogram: "D", badge: "bg-sky-400 text-sky-950" },
+  { name: "LG", monogram: "LG", badge: "bg-rose-600 text-white" },
+  { name: "Asus", monogram: "AS", badge: "bg-blue-950 text-white" },
+  { name: "Acer", monogram: "Ac", badge: "bg-green-500 text-white" },
+]
+// En equipos de cómputo (Computadora/Laptop) estas marcas van primero en los chips.
+const COMPUTER_BRAND_ORDER = ["HP", "Dell", "Lenovo", "Apple", "Asus", "Acer"]
 const ACCESS_OPTIONS: { value: AccessType; label: string; icon: LucideIcon }[] = [
   { value: "NONE", label: "Sin bloqueo", icon: LockOpen },
   { value: "PATTERN", label: "Patrón", icon: Grid3x3 },
@@ -80,11 +103,14 @@ const ACCESS_OPTIONS: { value: AccessType; label: string; icon: LucideIcon }[] =
 const emptyForm = {
   customerName: "", customerPhone: "", customerPhoneDial: "+52", phoneAltVisible: false, customerPhoneAlt: "", customerPhoneAltDial: "+52",
   intakeBranchId: "", assignedToId: "",
-  equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", equipmentColorCustom: false, serialNumber: "",
+  equipmentType: "", equipmentTypeOther: "", brand: "", model: "", equipmentColor: "", equipmentColorCustom: false, serialNumber: "", serialLast4: false,
   serviceName: "", servicePriceCents: null as number | null, otherService: "", budgetAmount: "", signatureData: "",
   services: [] as WorkshopService[],
   accessType: "NONE" as AccessType, pattern: [] as number[], accessValue: "",
-  accessories: [] as string[], accessoryOther: "",
+  // Modo "pin": el cliente confirma la recepción con la terminación de su
+  // teléfono (no se envía ni se guarda — solo habilita el paso).
+  pinConfirm: "",
+  accessories: [] as string[], accessoryOther: "", components: [] as string[],
   functionalConditions: [] as FunctionalCondition[], aesthetics: "" as Aesthetics | "",
   intakeCondition: "", reportedIssue: "",
   promisedAt: "", scheduledAt: "", location: "",
@@ -168,6 +194,8 @@ export default function ReceiveEquipmentPage() {
   const [orderPrefix, setOrderPrefix] = useState(DEFAULT_ORDER_PREFIX)
   // Largo del consecutivo impreso (ajuste `order_folio_digits`, 4–8); 6 por defecto.
   const [folioDigits, setFolioDigits] = useState(DEFAULT_FOLIO_DIGITS)
+  // Modo de confirmación del cliente (repair_signature_mode): canvas | ticket | pin.
+  const [signatureMode, setSignatureMode] = useState<"canvas" | "ticket" | "pin">("canvas")
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const searchVersion = useRef(0)
@@ -227,6 +255,9 @@ export default function ReceiveEquipmentPage() {
         // orderFolioDigits puede venir como número o texto; fuera de rango se acota (4–8).
         const digits = Number(data.orderFolioDigits)
         if (Number.isFinite(digits)) setFolioDigits(clampFolioDigits(digits))
+        // repair_signature_mode: "ticket" (firma en comprobante impreso) o
+        // "pin" (terminación telefónica) sustituyen el canvas de firma.
+        if (data.repairSignatureMode === "ticket" || data.repairSignatureMode === "pin") setSignatureMode(data.repairSignatureMode)
       })
       .catch(() => { /* sin ajustes: folio con el formato por defecto */ })
     return () => { cancelled = true }
@@ -459,11 +490,19 @@ export default function ReceiveEquipmentPage() {
     setMatchedCustomer(null)
   }
 
+  // Precio efectivo del servicio para el equipo en captura: un precio
+  // específico por modelo exacto o tipo de equipo (service.prices) gana sobre
+  // el precio base del catálogo. ctx explícito porque el precio se recalcula
+  // al cambiar modelo/tipo DESPUÉS de elegir servicios.
+  const serviceCtx = { deviceModelId: pickedModel?.id ?? null, equipmentType: form.equipmentType || null }
+  const effectivePrice = (service: WorkshopService, ctx: { deviceModelId: string | null; equipmentType: string | null } = serviceCtx) =>
+    resolveServicePrice(service, ctx)
+
   // Une los servicios elegidos en serviceName ("A + B") y, solo si TODOS traen
-  // precio fijo, propone la suma como presupuesto estimado.
-  const servicesPatch = (services: WorkshopService[]) => {
-    const total = services.length > 0 && services.every(service => typeof service.priceCents === "number")
-      ? services.reduce((sum, service) => sum + (service.priceCents ?? 0), 0)
+  // precio resoluble, propone la suma como presupuesto estimado.
+  const servicesPatch = (services: WorkshopService[], ctx = serviceCtx) => {
+    const total = services.length > 0 && services.every(service => typeof effectivePrice(service, ctx) === "number")
+      ? services.reduce((sum, service) => sum + (effectivePrice(service, ctx) ?? 0), 0)
       : null
     return {
       services,
@@ -502,6 +541,15 @@ export default function ReceiveEquipmentPage() {
     setBrandHits([])
   }
 
+  // Chip de marca frecuente: llena Marca y, si ya estaba igual, lo deselecciona.
+  // Si el usuario editó el campo a mano ya no se borra — solo se repone el chip.
+  const toggleQuickBrand = (name: string) => {
+    brandVersion.current += 1
+    update({ brand: form.brand.trim().toLowerCase() === name.toLowerCase() ? "" : name })
+    setBrandTerm("")
+    setBrandHits([])
+  }
+
   const pickDeviceModel = (device: DeviceModel) => {
     modelVersion.current += 1
     brandVersion.current += 1
@@ -513,6 +561,9 @@ export default function ReceiveEquipmentPage() {
     setBrandTerm("")
     setBrandHits([])
     setPickedModel(device)
+    // El precio por dispositivo del catálogo puede cambiar con el modelo:
+    // se re-resuelve la suma propuesta con los servicios ya elegidos.
+    setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: device.id, equipmentType: previous.equipmentType || null }) }))
   }
 
   const toggleCondition = (value: FunctionalCondition) => {
@@ -546,6 +597,8 @@ export default function ReceiveEquipmentPage() {
       // El servicio del catálogo es un dato aparte; la falla exige texto propio del cliente.
       if (!form.reportedIssue.trim()) return "Describe la falla que reporta el cliente."
       if (reportedIssueText.length > 500) return `La falla junto con Otro servicio suma ${reportedIssueText.length} caracteres y el límite es 500. Acorta alguno de los dos campos.`
+      // Modo pin: la terminación capturada debe empatar con el teléfono del paso 1.
+      if (signatureMode === "pin" && form.pinConfirm !== parsePhone(form.customerPhone).local.slice(-4)) return "La terminación telefónica no coincide con el teléfono del cliente."
     }
     if (index === 3) {
       const startOfToday = new Date()
@@ -595,7 +648,10 @@ export default function ReceiveEquipmentPage() {
   }
   const goBack = () => { setStepError(""); closeDropdowns(); setStep(current => current - 1); scrollToTop() }
 
-  const accessoryText = form.accessories.map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item).join(" · ")
+  // Los componentes marcados ("Componentes que incluye") viajan dentro del mismo
+  // campo `accessories` de la orden; se deduplica por si un nombre coincide con
+  // un accesorio ya seleccionado (p. ej. "Cargador" en Laptop).
+  const accessoryText = [...new Set([...form.accessories.map(item => item === "Otro" ? `Otro: ${form.accessoryOther.trim()}` : item), ...form.components])].join(" · ")
   const equipmentLabel = form.equipmentType === "Otro" ? form.equipmentTypeOther.trim() : form.equipmentType
   // serviceName viaja en su propio campo del payload; no se repite dentro de la falla.
   const reportedIssueText = [form.otherService.trim(), form.reportedIssue.trim()].filter(Boolean).join(" · ")
@@ -623,7 +679,7 @@ export default function ReceiveEquipmentPage() {
       brand: form.brand.trim(),
       model: form.model.trim(),
       equipmentColor: form.equipmentColor.trim(),
-      serialNumber: form.serialNumber.trim(),
+      serialNumber: serialSubmit,
       serviceName: form.serviceName.trim(),
       deviceAccessType: form.accessType,
       deviceAccessValue: accessValue,
@@ -697,6 +753,23 @@ export default function ReceiveEquipmentPage() {
   const lookupFailed = lookupDown && searchedTerm === lookupTermSearched && searchedTerm.length >= 3
   const showNewCustomerNote = !lookupDown && searchedTerm === lookupTermSearched && searchedTerm.length >= 3 && suggestions.length === 0 && !matchedCustomer
   const profile = deviceProfileFor(form.equipmentType)
+  // En equipos de cómputo las marcas de PC van primero en los chips rápidos.
+  const isComputerType = form.equipmentType === "Computadora" || form.equipmentType === "Laptop"
+  const quickBrands = isComputerType
+    ? [...QUICK_BRANDS].sort((a, b) => {
+        const rank = (name: string) => {
+          const index = COMPUTER_BRAND_ORDER.indexOf(name)
+          return index === -1 ? COMPUTER_BRAND_ORDER.length : index
+        }
+        return rank(a.name) - rank(b.name)
+      })
+    : QUICK_BRANDS
+  // Serie/IMEI parcial: con "Solo últimos 4" se guarda con prefijo **** para que
+  // el ticket y el seguimiento muestren que fue una captura parcial.
+  const serialCaptured = form.serialNumber.trim()
+  const serialSubmit = form.serialLast4 && serialCaptured ? `****${serialCaptured}` : serialCaptured
+  const serialSummary = form.serialLast4 && serialCaptured ? `****${serialCaptured} (captura parcial)` : serialCaptured
+  const componentText = form.components.join(" · ")
   // Sugerencias del perfil + lo ya seleccionado aunque no aplique al tipo + "Otro" libre.
   // Los faltantes ("Sin …") se capturan en su propio grupo más abajo.
   const accessoryChips = [...new Set([...profile.accessorySuggestions, ...form.accessories, "Otro"])].filter(item => !MISSING_SET.has(item))
@@ -881,7 +954,13 @@ export default function ReceiveEquipmentPage() {
                             const next = deviceProfileFor(value)
                             // Otro equipo = otro bloqueo: el patrón/PIN capturado no se hereda.
                             const resetAccess = { pattern: [] as number[], accessValue: "" }
-                            update(next.accessTypes.includes(form.accessType) ? { equipmentType: value, ...resetAccess } : { equipmentType: value, accessType: "NONE", ...resetAccess })
+                            // Los componentes marcados solo se conservan si el nuevo
+                            // perfil también los lista (p. ej. Mouse en Laptop).
+                            const keptComponents = form.components.filter(item => next.componentChecklist?.includes(item))
+                            update(next.accessTypes.includes(form.accessType) ? { equipmentType: value, components: keptComponents, ...resetAccess } : { equipmentType: value, accessType: "NONE", components: keptComponents, ...resetAccess })
+                            // Precios por tipo de equipo del catálogo: la suma de
+                            // servicios se re-resuelve con el nuevo tipo.
+                            setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: pickedModel?.id ?? null, equipmentType: value }) }))
                           }} className={chipClass(form.equipmentType === value)}>
                             <Icon size={15} />{value}
                           </button>
@@ -904,7 +983,7 @@ export default function ReceiveEquipmentPage() {
                             <p key={service.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
                               <Wrench size={14} aria-hidden />
                               <span className="truncate">{service.name}</span>
-                              <span className="text-xs font-normal text-primary/80">{typeof service.priceCents === "number" ? money(service.priceCents) : "Precio según dispositivo"}</span>
+                              <span className="text-xs font-normal text-primary/80">{(() => { const price = effectivePrice(service); return price !== null ? money(price) : "Precio según dispositivo" })()}</span>
                               <button type="button" aria-label={`Quitar ${service.name}`} onClick={() => removeService(service.id)} className="rounded-full p-0.5 transition hover:bg-primary/15">
                                 <X size={13} />
                               </button>
@@ -929,7 +1008,7 @@ export default function ReceiveEquipmentPage() {
                                         <span className="truncate font-medium">{service.name}</span>
                                         {serviceMatchesEquipment(service) && <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">para {equipmentLabel}</span>}
                                       </span>
-                                      <span className="shrink-0 text-xs text-muted-foreground">{typeof service.priceCents === "number" ? money(service.priceCents) : "Precio según dispositivo"}</span>
+                                      <span className="shrink-0 text-xs text-muted-foreground">{(() => { const price = effectivePrice(service); return price !== null ? money(price) : "Precio según dispositivo" })()}</span>
                                     </span>
                                     {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
                                   </button>
@@ -957,6 +1036,20 @@ export default function ReceiveEquipmentPage() {
                     </label>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
+                    <div className="space-y-2 sm:col-span-2">
+                      <p className="text-sm">Marcas frecuentes</p>
+                      <div className="flex flex-wrap gap-2">
+                        {quickBrands.map(brand => {
+                          const selected = form.brand.trim().toLowerCase() === brand.name.toLowerCase()
+                          return (
+                            <button key={brand.name} type="button" aria-pressed={selected} title={brand.name} onClick={() => toggleQuickBrand(brand.name)} className={chipClass(selected)}>
+                              <span aria-hidden className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none ${brand.badge}`}>{brand.monogram}</span>
+                              {brand.name}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                     <label ref={brandBoxRef} className="relative block space-y-2 text-sm">Marca
                       <Input value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
                       {brandOptions.length > 0 && (
@@ -973,7 +1066,7 @@ export default function ReceiveEquipmentPage() {
                       {!brandSearching && !brandCatalogDown && brandOptions.length === 0 && brandSearched === brandTerm.trim() && brandSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Sin coincidencias — escríbela a mano o dala de alta en Taller → Catálogo.</span>}
                     </label>
                     <label ref={modelBoxRef} className="relative block space-y-2 text-sm">Modelo
-                      <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
+                      <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null); setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: null, equipmentType: previous.equipmentType || null }) })) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
                       {modelHits.length > 0 && (
                         <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                           {modelHits.map(device => (
@@ -991,9 +1084,20 @@ export default function ReceiveEquipmentPage() {
                       {!modelSearching && !modelCatalogDown && modelHits.length === 0 && modelSearched === modelTerm.trim() && modelSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Sin coincidencias{form.brand.trim() ? ` en ${form.brand.trim()}` : ""} — escríbelo a mano o dalo de alta en el catálogo.</span>}
                       {pickedModel?.code && pickedModel.model === form.model && <span className="block text-xs text-muted-foreground">Código de referencia: {pickedModel.code}</span>}
                     </label>
-                    <label className="block space-y-2 text-sm">{profile.serialLabel}
-                      <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={100} placeholder={profile.serialPlaceholder} />
-                    </label>
+                    <div className="space-y-2">
+                      <label className="block space-y-2 text-sm">{profile.serialLabel}
+                        <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={form.serialLast4 ? 6 : 100} placeholder={form.serialLast4 ? "Últimos 4–6 caracteres" : profile.serialPlaceholder} />
+                      </label>
+                      <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={form.serialLast4}
+                          onChange={event => update({ serialLast4: event.target.checked, ...(event.target.checked ? { serialNumber: form.serialNumber.trim().slice(-6) } : {}) })}
+                          className="h-3.5 w-3.5 accent-primary"
+                        />
+                        Solo últimos 4 dígitos — se guarda como captura parcial (****XXXX)
+                      </label>
+                    </div>
                     {profile.colorRelevant && (
                       <div className="space-y-2 sm:col-span-2">
                         <p className="text-sm">Color</p>
@@ -1062,6 +1166,19 @@ export default function ReceiveEquipmentPage() {
                         ))}
                       </div>
                     </div>
+                    {profile.componentChecklist && profile.componentChecklist.length > 0 && (
+                      <div className="border-t border-dashed pt-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Componentes que incluye</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {profile.componentChecklist.map(item => (
+                            <button key={item} type="button" aria-pressed={form.components.includes(item)} onClick={() => update({ components: form.components.includes(item) ? form.components.filter(component => component !== item) : [...form.components, item] })} className={chipClass(form.components.includes(item))}>
+                              {item}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">Se agregan a los accesorios recibidos de la orden.</p>
+                      </div>
+                    )}
                   </div>
                   <div className="grid gap-5">
                     <div className="space-y-2">
@@ -1094,9 +1211,36 @@ export default function ReceiveEquipmentPage() {
                       <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
                     </label>
                   </div>
-                  <div className="rounded-lg border p-4">
-                    <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
-                  </div>
+                  {signatureMode === "canvas" ? (
+                    <div className="rounded-lg border p-4">
+                      <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
+                    </div>
+                  ) : signatureMode === "ticket" ? (
+                    // repair_signature_mode = "ticket": el cliente firma el
+                    // comprobante impreso; la recepción no exige trazo digital.
+                    <div className="rounded-lg border border-dashed p-4 text-sm">
+                      <p className="font-medium">Firma en el ticket impreso</p>
+                      <p className="mt-1 text-xs text-muted-foreground">El comprobante del cliente sale con línea de firma y leyenda de aceptación. Configurado en Configuración → Recepción.</p>
+                    </div>
+                  ) : (
+                    // repair_signature_mode = "pin": el cliente confirma con la
+                    // terminación de su teléfono; el dominio asienta la forma de
+                    // confirmación en el evento de recepción (nunca el pin).
+                    <div className="rounded-lg border p-4 text-sm">
+                      <label className="block space-y-2">El cliente confirma con los últimos 4 dígitos de su teléfono *
+                        <Input
+                          value={form.pinConfirm}
+                          onChange={event => update({ pinConfirm: event.target.value.replace(/\D/g, "").slice(0, 4) })}
+                          maxLength={4}
+                          inputMode="numeric"
+                          autoComplete="off"
+                          placeholder="••••"
+                          className="max-w-32 text-center tracking-widest"
+                        />
+                      </label>
+                      <p className="mt-2 text-xs text-muted-foreground">Debe coincidir con la terminación del teléfono de contacto capturado en el paso 1.</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1178,13 +1322,14 @@ export default function ReceiveEquipmentPage() {
                       ["Marca", form.brand.trim()],
                       ["Modelo", form.model.trim()],
                       ["Color", form.equipmentColor.trim()],
-                      [profile.serialLabel, form.serialNumber.trim()],
+                      [profile.serialLabel, serialSummary],
                       ["Servicio", serviceSummary],
                     ]} />
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[
                       ["Bloqueo del equipo", accessLabel],
                       ...(form.accessType !== "NONE" ? [[accessValueLabel, accessValueSummary] as [string, ReactNode]] : []),
                       ["Accesorios recibidos", receivedAccessoryText],
+                      ...(componentText ? [["Componentes que incluye", componentText] as [string, ReactNode]] : []),
                       ...(missingAccessoryText ? [["No incluye", missingAccessoryText] as [string, ReactNode]] : []),
                     ]} />
                     <SummaryGroup title="Estado" icon={ShieldCheck} items={[
@@ -1200,6 +1345,10 @@ export default function ReceiveEquipmentPage() {
                       ["Presupuesto estimado", budgetLabel],
                       ["Anticipo", advanceLabel],
                       ["Firma capturada", form.signatureData ? <img src={form.signatureData} alt="Firma capturada del cliente" className="h-16 rounded border bg-white object-contain" /> : ""],
+                      // Modos alternos de confirmación (repair_signature_mode):
+                      // el resumen asienta cómo acredita el cliente la entrega.
+                      ...(signatureMode === "ticket" ? [["Confirmación del cliente", "Firmará en el ticket impreso"] as [string, ReactNode]] : []),
+                      ...(signatureMode === "pin" ? [["Confirmación del cliente", `Terminación telefónica ••••${form.pinConfirm}`] as [string, ReactNode]] : []),
                     ]} />
                   </div>
                 </div>

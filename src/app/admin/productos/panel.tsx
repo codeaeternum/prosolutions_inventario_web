@@ -22,10 +22,12 @@ import {
   Edit,
   Download,
   Upload,
+  Zap,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
 import { EmptyState } from "@/components/admin/empty-state"
 import { ExportButton } from "@/components/admin/export-button"
+import { readPreferredBranchId, StockQtyEditor } from "@/components/admin/productos/stock-editor"
 import {
   Dialog,
   DialogContent,
@@ -58,7 +60,12 @@ interface Product {
   isUniversal: boolean
   models: ProductModel[]
   category: { name: string }
-  stocks?: { quantity: number; branch: { id: string; name: string } }[]
+  stocks?: { branchId: string; quantity: number; branch: { id: string; name: string } }[]
+}
+
+interface BranchOption {
+  id: string
+  name: string
 }
 
 type ViewMode = "grid-large" | "grid-small" | "list"
@@ -87,6 +94,26 @@ export function ProductosPanel() {
   const [exporting, setExporting] = useState(false)
   const [importResult, setImportResult] = useState<{ message: string; errors: string[] } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Sucursal para la edición inline de stock: la elegida en el selector del
+  // encabezado (cookie/localStorage) o la primera activa como respaldo.
+  const [branches, setBranches] = useState<BranchOption[]>([])
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/branches")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return
+        const list: BranchOption[] = (data?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
+        setBranches(list)
+        const preferred = readPreferredBranchId()
+        setSelectedBranchId(preferred && list.some((b) => b.id === preferred) ? preferred : list[0]?.id ?? null)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const fetchProducts = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -216,6 +243,32 @@ export function ProductosPanel() {
     return "success"
   }
 
+  // Existencias del producto en la sucursal seleccionada (el editor ajusta ahí).
+  const branchQtyOf = (product: Product): number => {
+    if (!selectedBranchId || !product.stocks) return product.stock
+    return product.stocks.find((s) => s.branchId === selectedBranchId)?.quantity ?? 0
+  }
+
+  // Refleja un ajuste confirmado sin recargar la página: total + fila por sucursal.
+  const applyStockDelta = (productId: string, delta: number) => {
+    setProducts((prev) =>
+      prev.map((p) => {
+        if (p.id !== productId) return p
+        const stocks = [...(p.stocks ?? [])]
+        if (selectedBranchId) {
+          const idx = stocks.findIndex((s) => s.branchId === selectedBranchId)
+          if (idx >= 0) {
+            stocks[idx] = { ...stocks[idx], quantity: stocks[idx].quantity + delta }
+          } else {
+            const branch = branches.find((b) => b.id === selectedBranchId)
+            stocks.push({ branchId: selectedBranchId, quantity: delta, branch: { id: selectedBranchId, name: branch?.name ?? "" } })
+          }
+        }
+        return { ...p, stock: p.stock + delta, stocks }
+      })
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap justify-end gap-2">
@@ -227,6 +280,12 @@ export function ProductosPanel() {
         <Button variant="outline" onClick={() => setShowImportDialog(true)}>
           <Upload className="mr-2 h-4 w-4" />
           Importar
+        </Button>
+        <Button variant="outline" asChild>
+          <Link href="/admin/productos?tab=captura">
+            <Zap className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Captura rápida</span>
+          </Link>
         </Button>
         <Button variant="outline" asChild>
           <Link href="/admin/productos/escanear">
@@ -564,11 +623,21 @@ export function ProductosPanel() {
                           </Badge>
                         </div>
 
-                        {/* Stock */}
+                        {/* Stock: edición inline sobre la sucursal seleccionada */}
                         <div className="col-span-6 md:col-span-1 text-right md:text-center">
-                          <Badge variant={getStockVariant(product)}>
+                          <Badge variant={getStockVariant(product)} title="Total en todas las sucursales">
                             {product.stock}
                           </Badge>
+                          <div className="mt-1 flex justify-end md:justify-center">
+                            <StockQtyEditor
+                              productId={product.id}
+                              productName={product.name}
+                              quantity={branchQtyOf(product)}
+                              branchId={selectedBranchId}
+                              reason="Ajuste rápido desde lista de productos"
+                              onAdjusted={(delta) => applyStockDelta(product.id, delta)}
+                            />
+                          </div>
                           {product.stocks && product.stocks.length > 1 && (
                             <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
                               {product.stocks.map(s => `${s.branch.name}: ${s.quantity}`).join(" · ")}

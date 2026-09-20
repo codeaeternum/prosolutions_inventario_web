@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client"
+import type { Prisma, PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
@@ -62,6 +62,17 @@ async function folioDigitsOf(tx: Prisma.TransactionClient, businessId: string): 
     return parseFolioDigits(row?.value)
   } catch { return DEFAULT_FOLIO_DIGITS }
 }
+/** Cómo acredita el cliente la recepción (SystemSettings
+ *  `repair_signature_mode`): "canvas" (firma digital, default), "ticket"
+ *  (línea de firma en el comprobante impreso) o "pin" (confirma con la
+ *  terminación telefónica — jamás se guarda el pin). Lectura con el cliente
+ *  de la operación; cualquier falla cae a "canvas". */
+async function signatureModeOf(tx: Prisma.TransactionClient, businessId: string): Promise<"canvas" | "ticket" | "pin"> {
+  try {
+    const row = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: "repair_signature_mode" } }, select: { value: true } })
+    return row?.value === "ticket" || row?.value === "pin" ? row.value : "canvas"
+  } catch { return "canvas" }
+}
 async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
   amountCents: number; method: "CASH" | "CARD" | "TRANSFER"; purpose: "ADVANCE" | "ABONO" | "SETTLEMENT"; note?: string
@@ -107,7 +118,15 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // lib/device-secret): llega en claro desde recepción y solo se descifra
     // con auditoría (reveal=1 de la ficha, hoja de taller impresa).
     const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
-    await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.`, isPublic: true } })
+    // Sin firma digital capturada, el evento asienta la forma alternativa de
+    // confirmación configurada: "pin" = terminación telefónica (el pin nunca
+    // se persiste); "ticket" = firma en el comprobante impreso.
+    const signatureMode = input.signatureData ? "canvas" : await signatureModeOf(tx, businessId)
+    const signatureNote =
+      signatureMode === "pin" ? " Confirmó con terminación telefónica."
+      : signatureMode === "ticket" ? " Firma del cliente en el ticket impreso."
+      : ""
+    await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "RECEIVED", detail: `Recepción en ${branch.name}.${signatureNote}`, isPublic: true } })
     // Origen aliado queda en bitácora privada: el nombre del negocio que captó
     // y el convenio no se publican en el seguimiento del cliente.
     if (input.originBusinessName) await tx.repairEvent.create({ data: { businessId, actorId: recorderId, orderId: order.id, type: "NOTE", detail: `Captado por ${input.originBusinessName}${order.partnerPriceCents != null ? ` · convenio ${(order.partnerPriceCents / 100).toFixed(2)} MXN` : ""}`, isPublic: false } })
@@ -269,6 +288,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
   // Productos cuyo stock mueven las refacciones de esta acción (OUT/RETURN):
   // syncPartStock los registra y la alerta se sincroniza post-commit.
   const touchedProductIds = new Set<string>()
+  // Si la orden es ESPEJO de una delegación (delegatedFromOrderId) y la etapa
+  // cambió —por STATUS o por cualquier acción que mueva status—, el tenant
+  // captador se avisa post-commit (notifyOriginOfMirrorUpdate en delegation).
+  // Colección mutable como touchedProductIds: un `let` reasignado dentro del
+  // callback no conserva el estrechamiento de tipos tras el await.
+  const mirrorStatusSync: { originOrderId: string; fromStatus: RepairStatus; toStatus: RepairStatus; mirrorNumber: number }[] = []
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: adminOnlyActions.includes(input.action) ? "admin" : "staff", payload: { id, ...input } }, async tx => {
     const order = await tx.repairOrder.findUnique({ where: { id } })
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
@@ -587,9 +612,23 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // seguimiento y el que marca "Entregado" en su timeline.
       await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "STATUS", detail: `${repairLabels[order.status]} → ${repairLabels.DELIVERED}. Entrega registrada.`, isPublic: true } })
     }
-    return { order: await tx.repairOrder.findUniqueOrThrow({ where: { id } }) }
+    const updated = await tx.repairOrder.findUniqueOrThrow({ where: { id } })
+    // Orden espejo: cualquier cambio de etapa se propaga al captador tras el
+    // commit. Se captura aquí (dentro de la tx) para que un replay idempotente
+    // de la operación —que no ejecuta este callback— no duplique el aviso.
+    if (order.delegatedFromOrderId && updated.status !== order.status) {
+      mirrorStatusSync.push({ originOrderId: order.delegatedFromOrderId, fromStatus: order.status, toStatus: updated.status, mirrorNumber: order.number })
+    }
+    return { order: updated }
   })
   // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
   await syncLowStockAlerts(db, businessId, [...touchedProductIds])
+  // Post-commit: espejo → origen. Import perezoso (delegation importa
+  // createRepair de este módulo: un import estático sería circular) y el
+  // helper es best-effort total — jamás revierte ni reporta el updateRepair.
+  if (mirrorStatusSync.length > 0) {
+    const { notifyOriginOfMirrorUpdate } = await import("./delegation")
+    await notifyOriginOfMirrorUpdate(db, { mirrorBusinessId: businessId, ...mirrorStatusSync[0] })
+  }
   return result
 }

@@ -10,6 +10,9 @@ export interface DeviceProfile {
   serialPlaceholder: string
   /** Chips de accesorios sugeridos; el asistente siempre agrega "Otro". */
   accessorySuggestions: string[]
+  /** Chips de "Componentes que incluye" (torre, monitor, dock…); opcionales y
+   *  se suman a los accesorios recibidos al enviar la orden. */
+  componentChecklist?: string[]
   /** Tipos de bloqueo que aplican al tipo de equipo. */
   accessTypes: DeviceAccessType[]
   /** Pistas de recepción mostradas como texto secundario. */
@@ -43,6 +46,7 @@ export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
   Laptop: {
     ...SERIAL,
     accessorySuggestions: ["Cargador", "Mochila", "Mouse"],
+    componentChecklist: ["Cargador", "Dock", "Mouse"],
     accessTypes: PIN_AND_PASSWORD,
     extraHints: ["Verifica que encienda antes de recibirlo."],
     colorRelevant: true,
@@ -50,6 +54,7 @@ export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
   Computadora: {
     ...SERIAL,
     accessorySuggestions: ["Teclado", "Mouse", "Monitor", "Cables"],
+    componentChecklist: ["CPU / Torre", "Monitor", "Teclado", "Mouse", "Cables de poder/datos"],
     accessTypes: PIN_AND_PASSWORD,
     extraHints: ["Anota qué periféricos deja el cliente junto con el equipo."],
     colorRelevant: true,

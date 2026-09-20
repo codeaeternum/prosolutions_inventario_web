@@ -6,6 +6,7 @@ import { transaction, BusinessError } from "@/lib/domain/operations"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio } from "@/lib/workshop-labels"
+import { isQuoteExpiredAt, parseQuoteValidityDays } from "@/app/api/cotizacion/quote-config"
 import { approvedPartsTotal } from "@/lib/workshop-money"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
@@ -60,7 +61,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
         select: {
           id: true, number: true, version: true, status: true, businessId: true,
           quoteCents: true, approvedQuoteCents: true, quoteApprovedAt: true,
-          quoteExpiresAt: true,
+          quoteExpiresAt: true, createdAt: true,
+          // Emisión de la cotización (último QUOTE): base de la vigencia
+          // configurable quote_validity_days.
+          events: {
+            where: { type: "QUOTE" },
+            orderBy: { createdAt: "desc" as const },
+            take: 1,
+            select: { createdAt: true },
+          },
           createdById: true, equipmentType: true, brand: true, model: true,
           // Tenant suspendido: el enlace muere igual que un token inválido
           // (sin mutar nada — el cliente no decide sobre un negocio inactivo).
@@ -81,10 +90,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       if (order.status !== "WAITING_APPROVAL" || order.quoteCents === null) {
         throw new BusinessError("Esta cotización no está pendiente de autorización.", 409)
       }
-      // Vigencia real: el documento dice "Válida por 15 días". Una cotización
-      // vencida sin decidir ya no puede aprobarse — el taller la reenvía con
-      // la acción QUOTE, que fija una vigencia nueva.
-      if (order.quoteExpiresAt && order.quoteExpiresAt.getTime() < Date.now()) {
+      // Vigencia real: el documento dice "Válida por N días" (quote_validity_days
+      // del negocio, default 15). Una cotización vencida sin decidir ya no
+      // puede aprobarse — el taller la reenvía con la acción QUOTE, que fija
+      // una vigencia nueva. Lectura de configuración fuera del tx: es un
+      // dato de negocio, no parte de la decisión.
+      const validityDays = parseQuoteValidityDays(
+        await getBusinessSetting(order.businessId, "quote_validity_days").catch(() => null)
+      )
+      const issuedAt = order.events?.[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt ?? null
+      if (isQuoteExpiredAt(order.quoteExpiresAt, issuedAt, validityDays)) {
         throw new BusinessError("La cotización venció. Contacta al taller para reenviarla.", 410, "QUOTE_EXPIRED")
       }
       // El cliente aprueba la cifra que VIO, no la vigente al llegar el POST:

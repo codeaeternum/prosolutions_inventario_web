@@ -19,10 +19,14 @@ export interface QuoteTicketData {
   // Solo refacciones AUTORIZADAS (status APPROVED), importes en pesos.
   parts: { description: string; qty: number; unitPrice: number; subtotal: number }[]
   elaboratedBy?: string
+  // Vigencia y términos configurables del negocio (quote_validity_days,
+  // quote_terms en SystemSettings). Ausentes caen a los defaults.
+  validityDays?: number
+  terms?: string
   businessName?: string
 }
 
-const TERMS =
+const DEFAULT_TERMS =
   "Esta cotización es un estimado basado en el diagnóstico inicial. Si se detectan daños adicionales se le contactará antes de proceder."
 
 // La falla registrada puede arrastrar texto de datos viejos:
@@ -185,8 +189,8 @@ export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
 
         {/* Vigencia y términos */}
         <section className="space-y-1 text-[10px] leading-snug text-gray-600">
-          <p className="font-bold text-black">Válida por 15 días naturales a partir de la fecha de emisión.</p>
-          <p className="text-justify">{TERMS}</p>
+          <p className="font-bold text-black">Válida por {data.validityDays ?? 15} días naturales a partir de la fecha de emisión.</p>
+          <p className="text-justify whitespace-pre-line">{data.terms || DEFAULT_TERMS}</p>
         </section>
 
         {/* Firmas */}

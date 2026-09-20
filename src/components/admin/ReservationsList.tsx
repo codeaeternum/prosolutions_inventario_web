@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import QRCode from 'qrcode'
 import { toast } from 'sonner'
@@ -42,6 +42,15 @@ export default function ReservationsList({ reservations }: { reservations: any[]
     const [isUpdating, setIsUpdating] = useState(false)
     const [actionDialog, setActionDialog] = useState<{ id: string, action: 'pay' | 'deliver' | 'cancel' } | null>(null)
     const [finalPaymentMethod, setFinalPaymentMethod] = useState<string>('EFECTIVO')
+    // sale_auto_ticket del negocio: al entregar el apartado el ticket abre
+    // solo si la auto-impresión sigue activa (default true).
+    const [autoTicket, setAutoTicket] = useState(true)
+
+    useEffect(() => {
+        fetch("/api/settings").then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) })
+            .catch(() => {})
+    }, [])
 
     const selectedRes = actionDialog ? reservations.find(r => r.id === actionDialog.id) : null;
 
@@ -60,7 +69,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
             })
             if (res.ok) {
                 router.refresh()
-                if (action === 'deliver') {
+                if (action === 'deliver' && autoTicket) {
                     // Abrir ticket en nueva pestaña
                     window.open(`/admin/tickets/reserva/${id}`, '_blank')
                 }

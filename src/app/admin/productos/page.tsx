@@ -3,14 +3,15 @@
 import { Suspense } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FolderTree, Package, QrCode } from "lucide-react"
+import { FolderTree, Package, QrCode, Zap } from "lucide-react"
 import { ProductosPanel } from "./panel"
+import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
 import { EtiquetasPanel } from "../etiquetas/panel"
 import { CategoriesPanel } from "../categorias/panel"
 import { BrandsPanel } from "../marcas/panel"
 import { ModelsPanel } from "../modelos/panel"
 
-const TABS = ["productos", "clasificacion", "etiquetas"] as const
+const TABS = ["productos", "captura", "clasificacion", "etiquetas"] as const
 type Tab = (typeof TABS)[number]
 
 const SUBTABS = ["categorias", "marcas", "modelos"] as const
@@ -18,6 +19,7 @@ type SubTab = (typeof SUBTABS)[number]
 
 const DESCRIPTIONS: Record<Tab, string> = {
   productos: "Gestiona las refacciones del inventario",
+  captura: "Alta rápida de productos en serie: escanea el código y captura",
   clasificacion: "Organiza tus productos por tipo de refacción, marca y modelo de equipo",
   etiquetas: "Genera etiquetas con código QR para pegar en los productos",
 }
@@ -65,6 +67,10 @@ function ProductosTabs() {
               <Package className="h-4 w-4" />
               Productos
             </TabsTrigger>
+            <TabsTrigger value="captura" className="flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              Captura rápida
+            </TabsTrigger>
             <TabsTrigger value="clasificacion" className="flex items-center gap-2">
               <FolderTree className="h-4 w-4" />
               Clasificación
@@ -78,6 +84,10 @@ function ProductosTabs() {
 
         <TabsContent value="productos" className="mt-0">
           <ProductosPanel />
+        </TabsContent>
+
+        <TabsContent value="captura" className="mt-0">
+          <CapturaRapidaPanel />
         </TabsContent>
 
         <TabsContent value="clasificacion" className="mt-0">

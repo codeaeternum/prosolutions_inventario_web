@@ -68,6 +68,10 @@ export interface WorkshopSheetData {
   // el cierre rota el token) — se imprime el aviso en lugar de un QR que
   // solo llevaría a un error.
   evidenceLinkDisabled?: boolean
+  // Etiqueta 50×40: toggles del negocio (label_show_problem,
+  // label_show_access). undefined = imprimir (default).
+  labelShowProblem?: boolean
+  labelShowAccess?: boolean
   businessName?: string
 }
 
@@ -483,15 +487,21 @@ function EquipmentLabel({ data, evidenceQr, evidenceDisabled }: { data: Workshop
   const brandModel = [equipmentValue(data, "Marca"), equipmentValue(data, "Modelo")].filter(Boolean).join(" ")
   const shortName = data.customerName.trim().split(/\s+/).slice(0, 2).join(" ")
   // Falla reportada, recortada para que quepa en el sticker (~2 líneas a 6pt).
+  // label_show_problem=false la omite por completo en la etiqueta.
   const issue = data.issue.trim()
-  const issueSnippet = issue.length > 80 ? `${issue.slice(0, 80).trimEnd()}…` : issue
+  const issueSnippet = data.labelShowProblem === false
+    ? ""
+    : issue.length > 80 ? `${issue.slice(0, 80).trimEnd()}…` : issue
   // Clave de desbloqueo para el técnico: el patrón se imprime como puntos 1-9
   // (formatAccessPattern), PIN y contraseña tal como las dictó el cliente.
-  const accessSnippet = data.accessType === "PATTERN" && data.accessValue
-    ? `Patrón: ${formatAccessPattern(data.accessValue)}`
-    : data.accessValue
-      ? `${data.accessTypeLabel ?? "Clave"}: ${data.accessValue}`
-      : ""
+  // label_show_access=false la omite en la etiqueta (sigue en la hoja interna).
+  const accessSnippet = data.labelShowAccess === false
+    ? ""
+    : data.accessType === "PATTERN" && data.accessValue
+      ? `Patrón: ${formatAccessPattern(data.accessValue)}`
+      : data.accessValue
+        ? `${data.accessTypeLabel ?? "Clave"}: ${data.accessValue}`
+        : ""
 
   return (
     <div className="mx-auto w-fit">

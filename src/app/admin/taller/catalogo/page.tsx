@@ -12,6 +12,7 @@ import {
   Loader2,
   Monitor,
   Pencil,
+  Plus,
   Power,
   Printer,
   Search,
@@ -38,11 +39,22 @@ import { DEFAULT_EQUIPMENT_TYPES } from "@/components/admin/configuracion/editab
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { cn } from "@/lib/utils"
 
+// Precio específico del servicio: deviceModelId (modelo exacto) XOR
+// equipmentType (tipo genérico); gana sobre priceCents al recibir el equipo.
+type ServicePrice = {
+  id: string; deviceModelId: string | null; equipmentType: string | null
+  priceCents: number; deviceModel: { brand: string; model: string } | null
+}
 type Service = {
   id: string; name: string; description: string | null; priceCents: number | null
-  equipmentType: string | null; isActive: boolean
+  equipmentType: string | null; isActive: boolean; prices?: ServicePrice[]
 }
 type ServiceForm = { name: string; price: string; equipmentType: string; description: string }
+// Fila editable del bloque "Precios por dispositivo" del formulario.
+type PriceRow = {
+  key: string; scope: "model" | "type"
+  deviceModelId: string; deviceLabel: string; equipmentType: string; price: string
+}
 // businessId null = fila del catálogo global de plataforma; con valor =
 // modelo privado del tenant (solo esos los puede borrar el staff del tenant).
 type DeviceModelRow = { id: string; businessId: string | null; brand: string; model: string; code: string | null; type: string }
@@ -94,6 +106,14 @@ export default function WorkshopCatalogPage() {
   const inFlight = useRef(false)
   const requestVersion = useRef(0)
   const modelRequestVersion = useRef(0)
+  // Precios por dispositivo del formulario de servicio + buscador de modelos
+  // (picker por fila: una sola lista de opciones para la fila enfocada).
+  const [priceRows, setPriceRows] = useState<PriceRow[]>([])
+  const [pickerRowKey, setPickerRowKey] = useState<string | null>(null)
+  const [pickerQuery, setPickerQuery] = useState("")
+  const [pickerOptions, setPickerOptions] = useState<DeviceModelRow[]>([])
+  const priceKeyCounter = useRef(0)
+  const pickerRequestVersion = useRef(0)
 
   // Se cargan todos los servicios (activos e inactivos) una sola vez; la búsqueda,
   // el filtro por tipo y "mostrar inactivos" se aplican del lado del cliente.
@@ -132,6 +152,26 @@ export default function WorkshopCatalogPage() {
     }
   }, [modelSearch])
   useEffect(() => { const timer = setTimeout(() => { void loadModels() }, 200); return () => clearTimeout(timer) }, [loadModels])
+
+  // Buscador del picker de modelos (filas "modelo exacto" del bloque de
+  // precios): consulta el mismo endpoint que el autocompletado de recepción.
+  useEffect(() => {
+    const version = ++pickerRequestVersion.current
+    const timer = setTimeout(() => {
+      if (pickerRowKey === null) { setPickerOptions([]); return }
+      void (async () => {
+        try {
+          const params = new URLSearchParams()
+          if (pickerQuery.trim()) params.set("q", pickerQuery.trim())
+          const response = await fetch(`/api/device-models?${params}`)
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok || version !== pickerRequestVersion.current) return
+          setPickerOptions(data.models ?? [])
+        } catch { if (version === pickerRequestVersion.current) setPickerOptions([]) }
+      })()
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [pickerRowKey, pickerQuery])
 
   useEffect(() => {
     let cancelled = false
@@ -182,8 +222,28 @@ export default function WorkshopCatalogPage() {
   function startEdit(service: Service) {
     setEditing(service)
     setForm({ name: service.name, price: service.priceCents === null ? "" : (service.priceCents / 100).toFixed(2), equipmentType: service.equipmentType ?? "", description: service.description ?? "" })
+    setPriceRows((service.prices ?? []).map(row => ({
+      key: `pr-${++priceKeyCounter.current}`,
+      scope: row.deviceModelId ? "model" : "type",
+      deviceModelId: row.deviceModelId ?? "",
+      deviceLabel: row.deviceModel ? `${row.deviceModel.brand} ${row.deviceModel.model}` : "",
+      equipmentType: row.equipmentType ?? "",
+      price: (row.priceCents / 100).toFixed(2),
+    })))
+    setPickerRowKey(null)
   }
-  function cancelEdit() { setEditing(null); setForm(emptyForm) }
+  function cancelEdit() { setEditing(null); setForm(emptyForm); setPriceRows([]); setPickerRowKey(null) }
+
+  function addPriceRow() {
+    setPriceRows(previous => [...previous, { key: `pr-${++priceKeyCounter.current}`, scope: "model", deviceModelId: "", deviceLabel: "", equipmentType: "", price: "" }])
+  }
+  function updatePriceRow(key: string, patch: Partial<PriceRow>) {
+    setPriceRows(previous => previous.map(row => (row.key === key ? { ...row, ...patch } : row)))
+  }
+  function removePriceRow(key: string) {
+    setPriceRows(previous => previous.filter(row => row.key !== key))
+    setPickerRowKey(current => (current === key ? null : current))
+  }
 
   async function submitService(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -194,15 +254,33 @@ export default function WorkshopCatalogPage() {
     const price = form.price === "" ? null : Number(form.price)
     if (name.length < 2) { toast.error("El nombre debe tener al menos 2 caracteres."); return }
     if (price !== null && (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 0.000001)) { toast.error("El precio admite hasta dos decimales."); return }
+    // Cada fila lleva exactamente un alcance (modelo elegido de la lista o
+    // tipo de equipo) y un precio de hasta dos decimales — igual que la API.
+    const prices: { deviceModelId?: string; equipmentType?: string; priceCents: number }[] = []
+    for (const row of priceRows) {
+      const value = row.price === "" ? Number.NaN : Number(row.price)
+      if (!Number.isFinite(value) || value < 0 || Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) {
+        toast.error("Cada precio por dispositivo admite hasta dos decimales."); return
+      }
+      const priceCents = Math.round(value * 100)
+      if (row.scope === "model") {
+        if (!row.deviceModelId) { toast.error("Elige un modelo de la lista en cada precio por modelo."); return }
+        prices.push({ deviceModelId: row.deviceModelId, priceCents })
+      } else {
+        const scopeType = row.equipmentType.trim()
+        if (!scopeType) { toast.error("Cada precio por tipo necesita el tipo de equipo."); return }
+        prices.push({ equipmentType: scopeType, priceCents })
+      }
+    }
     inFlight.current = true; setSaving(true)
     try {
       if (editing) {
-        const response = await fetch(`/api/workshop-services/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100) }) })
+        const response = await fetch(`/api/workshop-services/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100), prices }) })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || "No se pudo actualizar el servicio")
         toast.success("Servicio actualizado")
       } else {
-        await post("/api/workshop-services", { name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100) })
+        await post("/api/workshop-services", { name, description, equipmentType, priceCents: price === null ? null : Math.round(price * 100), prices })
         toast.success("Servicio creado")
       }
       cancelEdit()
@@ -320,7 +398,7 @@ export default function WorkshopCatalogPage() {
               <label className="block space-y-2 text-sm">Nombre *
                 <Input value={form.name} onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))} maxLength={120} placeholder="Ej. Cambio de pantalla" autoComplete="off" required />
               </label>
-              <label className="block space-y-2 text-sm">Precio sugerido (MXN) — opcional
+              <label className="block space-y-2 text-sm">Precio base (MXN) — opcional
                 <Input type="number" min="0" step="0.01" inputMode="decimal" value={form.price} onChange={event => setForm(previous => ({ ...previous, price: event.target.value }))} placeholder="Variable / según dispositivo" />
               </label>
               <label className="block space-y-2 text-sm">Tipo de equipo
@@ -330,6 +408,86 @@ export default function WorkshopCatalogPage() {
               <label className="block space-y-2 text-sm">Descripción
                 <Input value={form.description} onChange={event => setForm(previous => ({ ...previous, description: event.target.value }))} maxLength={300} placeholder="Detalle breve del servicio (opcional)" autoComplete="off" />
               </label>
+              <div className="space-y-3 rounded-lg border border-dashed p-4 sm:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">Precios por dispositivo</p>
+                    <p className="text-xs text-muted-foreground">Ganan sobre el precio base cuando el equipo recibido coincide con el modelo exacto o el tipo de equipo.</p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={addPriceRow} disabled={saving}>
+                    <Plus className="mr-1 h-3.5 w-3.5" />Agregar precio
+                  </Button>
+                </div>
+                {priceRows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Sin precios específicos: siempre se usa el precio base (o se cotiza al recibir si está vacío).</p>
+                ) : (
+                  <div className="space-y-2">
+                    {priceRows.map(row => (
+                      <div key={row.key} className="grid items-start gap-2 sm:grid-cols-[9.5rem_minmax(0,1fr)_7.5rem_2.25rem]">
+                        <select
+                          value={row.scope}
+                          onChange={event => updatePriceRow(row.key, { scope: event.target.value as PriceRow["scope"] })}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          disabled={saving}
+                        >
+                          <option value="model">Modelo exacto</option>
+                          <option value="type">Tipo de equipo</option>
+                        </select>
+                        {row.scope === "model" ? (
+                          <div className="relative">
+                            <Input
+                              value={row.deviceLabel}
+                              onChange={event => { updatePriceRow(row.key, { deviceLabel: event.target.value, deviceModelId: "" }); setPickerRowKey(row.key); setPickerQuery(event.target.value) }}
+                              onFocus={() => { setPickerRowKey(row.key); setPickerQuery(row.deviceLabel) }}
+                              onBlur={() => setTimeout(() => setPickerRowKey(current => (current === row.key ? null : current)), 150)}
+                              maxLength={140}
+                              placeholder="Buscar marca o modelo…"
+                              autoComplete="off"
+                              disabled={saving}
+                              className={row.deviceModelId ? "pr-8" : undefined}
+                            />
+                            {row.deviceModelId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-success" />}
+                            {pickerRowKey === row.key && pickerOptions.length > 0 && (
+                              <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+                                {pickerOptions.map(option => (
+                                  <li key={option.id}>
+                                    <button
+                                      type="button"
+                                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                                      onMouseDown={event => {
+                                        event.preventDefault()
+                                        updatePriceRow(row.key, { deviceModelId: option.id, deviceLabel: `${option.brand} ${option.model}` })
+                                        setPickerRowKey(null)
+                                      }}
+                                    >
+                                      <span>{option.brand} {option.model}</span>
+                                      {option.code && <span className="shrink-0 font-mono text-xs text-muted-foreground">{option.code}</span>}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ) : (
+                          <Input
+                            list="service-equipment-types"
+                            value={row.equipmentType}
+                            onChange={event => updatePriceRow(row.key, { equipmentType: event.target.value })}
+                            maxLength={80}
+                            placeholder="Ej. Celular"
+                            autoComplete="off"
+                            disabled={saving}
+                          />
+                        )}
+                        <Input type="number" min="0" step="0.01" inputMode="decimal" value={row.price} onChange={event => updatePriceRow(row.key, { price: event.target.value })} placeholder="0.00" disabled={saving} />
+                        <Button type="button" variant="ghost" size="sm" className="h-9 w-9 px-0" onClick={() => removePriceRow(row.key)} disabled={saving} aria-label="Quitar precio">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2 sm:col-span-2">
                 <Button type="submit" disabled={saving}>
                   {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -432,6 +590,9 @@ export default function WorkshopCatalogPage() {
                           {service.priceCents === null
                             ? <span className="text-muted-foreground">Según dispositivo</span>
                             : <span className="font-medium tabular-nums">{money(service.priceCents)}</span>}
+                          {(service.prices?.length ?? 0) > 0 && (
+                            <p className="mt-0.5 text-xs text-muted-foreground">+{service.prices!.length} por dispositivo</p>
+                          )}
                         </TableCell>
                         <TableCell className="hidden sm:table-cell">
                           {service.equipmentType

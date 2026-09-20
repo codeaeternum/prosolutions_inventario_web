@@ -6,7 +6,8 @@ import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
-import { releaseStock, transaction } from "@/lib/domain/operations"
+import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
+import { businessFailure } from "@/lib/domain/http"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 
 const createProductSchema = z
@@ -24,6 +25,7 @@ const createProductSchema = z
     categoryId: z.string().min(1, "La categoría es requerida"),
     modelIds: z.array(z.string().min(1)).optional().default([]),
     stockBranchId: z.string().min(1).optional(),
+    idempotencyKey: operationKeySchema.optional(),
   })
   .refine((data) => data.isUniversal || (data.modelIds && data.modelIds.length > 0), {
     message: "Selecciona al menos un modelo o marca como universal",
@@ -163,6 +165,7 @@ export async function POST(req: Request) {
       categoryId,
       modelIds,
       stockBranchId,
+      idempotencyKey,
     } = parseResult.data
 
     // La categoría, los modelos y la sucursal deben pertenecer a esta empresa.
@@ -200,21 +203,33 @@ export async function POST(req: Request) {
       if (denied) return denied
     }
 
-    // Check if barcode already exists
-    if (barcode) {
-      const existingProduct = await prisma.product.findFirst({
-        where: { barcode, businessId },
-      })
-      if (existingProduct) {
-        return NextResponse.json(
-          { error: "Ya existe un producto con este código de barras" },
-          { status: 400 }
-        )
-      }
-    }
-
     const creator = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
-    const product = await transaction(prisma, async tx => {
+    // Idempotente: la captura rápida manda idempotencyKey para que un
+    // doble-submit/reintento no duplique el producto. El recibo se crea junto
+    // al producto en la misma transacción; sin llave del cliente se genera una
+    // desechable (mismo comportamiento de siempre, pero la escritura queda
+    // auditada en BusinessOperation como el resto de operaciones del dominio).
+    const createdResult = await operation(prisma, {
+      key: idempotencyKey ?? `product-${crypto.randomUUID()}`,
+      actorId: session.user.id,
+      businessId,
+      kind: "PRODUCT_CREATE",
+      permission: "staff",
+      payload: parseResult.data,
+    }, async tx => {
+      // Dentro de la operación: un reintento con la misma llave devuelve el
+      // recibo guardado sin volver a evaluar el barcode (que ya existe porque
+      // ESTA operación lo creó).
+      if (barcode) {
+        const existingProduct = await tx.product.findFirst({
+          where: { barcode, businessId },
+          select: { id: true },
+        })
+        if (existingProduct) {
+          throw new BusinessError("Ya existe un producto con este código de barras", 400)
+        }
+      }
+
       const created = await tx.product.create({
         data: {
           businessId,
@@ -268,13 +283,14 @@ export async function POST(req: Request) {
           },
         })
       }
-      return created
+      return { product: created }
     })
 
     // Post-commit: un producto que nace bajo mínimo también avisa.
-    await syncLowStockAlerts(prisma, businessId, [product.id])
-    return NextResponse.json(product)
+    await syncLowStockAlerts(prisma, businessId, [createdResult.product.id])
+    return NextResponse.json(createdResult.product)
   } catch (error) {
+    if (error instanceof BusinessError) return businessFailure(error)
     console.error("Error creating product:", error)
     return NextResponse.json({ error: "Error al crear producto" }, { status: 500 })
   }

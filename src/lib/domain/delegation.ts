@@ -2,7 +2,7 @@ import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, actor, operationKeySchema, transaction } from "./operations"
 import { createRepair } from "./workshop"
-import { formatFolio, parseFolioDigits } from "../workshop-labels"
+import { formatFolio, parseFolioDigits, repairLabels } from "../workshop-labels"
 
 /**
  * Vínculo captador → taller reparador ("Telcel trae → nosotros reparamos").
@@ -81,6 +81,98 @@ async function folioOf(db: PrismaClient, businessId: string, number: number): Pr
 async function mirrorFolioOf(db: PrismaClient, mirror: MirrorRow | null): Promise<string | null> {
   if (!mirror) return null
   return folioOf(db, mirror.businessId, mirror.number)
+}
+
+// Telegram interpreta el mensaje como HTML (parse_mode HTML): un "<" o "&" en
+// el nombre del taller/folio invalidaría el envío, así que se escapan.
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+/**
+ * Sincronización espejo → origen: cuando el taller reparador cambia la etapa
+ * de una orden ESPEJO (delegatedFromOrderId != null, ver updateRepair), el
+ * tenant captador se entera por tres vías:
+ *  1) evento privado NOTE en SU orden local (la que quedó EXTERNAL_LAB) —
+ *     queda en la bitácora del detalle de la orden que el captador opera;
+ *  2) SSE al staff del captador (sendNotificationToStaff con SU businessId);
+ *  3) Telegram a los admins del captador.
+ *
+ * El actor del evento NO puede ser el staff del taller (otro tenant): se
+ * asienta el createdById de la orden origen —quien la delegó—, que es un
+ * usuario existente del propio negocio y cumple la FK no nula de RepairEvent.
+ *
+ * Si la espejo llegó a un estado terminal se sugiere el cierre, pero la orden
+ * local jamás se cierra sola: el captador decide y la cierra desde su detalle.
+ *
+ * DISEÑO: corre POST-COMMIT del updateRepair del taller, fuera de su
+ * transacción y en best-effort total — cualquier fallo (BD, SSE, Telegram) se
+ * registra con console.error y no se propaga: la espejo ya quedó actualizada
+ * y el aviso es secundario. Se importa perezoso desde workshop.ts (import
+ * estático crearía un ciclo delegation ↔ workshop).
+ */
+export async function notifyOriginOfMirrorUpdate(
+  db: PrismaClient,
+  args: { mirrorBusinessId: string; mirrorNumber: number; originOrderId: string; fromStatus: RepairStatus; toStatus: RepairStatus },
+): Promise<void> {
+  try {
+    const origin = await db.repairOrder.findUnique({
+      where: { id: args.originOrderId },
+      select: { id: true, businessId: true, number: true, createdById: true },
+    })
+    if (!origin) return
+    const [mirrorFolio, originFolio, repairer] = await Promise.all([
+      folioOf(db, args.mirrorBusinessId, args.mirrorNumber),
+      folioOf(db, origin.businessId, origin.number),
+      db.business.findUnique({ where: { id: args.mirrorBusinessId }, select: { name: true } }),
+    ])
+    const partnerName = repairer?.name?.trim() || "El taller asociado"
+    const fromLabel = repairLabels[args.fromStatus]
+    const toLabel = repairLabels[args.toStatus]
+    // Estado terminal en el taller: el captador decide el cierre de su orden
+    // local (entregada si el trabajo terminó, cancelada en el resto).
+    const terminal = DELEGATION_CLOSED_STATUSES.includes(args.toStatus)
+    const closingHint = terminal ? ` Puedes cerrar la orden local como ${args.toStatus === "DELIVERED" ? "entregada" : "cancelada"} desde su detalle.` : ""
+    await db.repairEvent.create({
+      data: {
+        businessId: origin.businessId,
+        orderId: origin.id,
+        actorId: origin.createdById,
+        type: "NOTE",
+        detail: `El taller asociado actualizó la orden ${mirrorFolio}: ${fromLabel} → ${toLabel}.${closingHint}`,
+        isPublic: false,
+      },
+    })
+    try {
+      // Import perezoso: el módulo del stream vive en una ruta (tira de
+      // api-auth/next-auth) y solo debe cargarse cuando de verdad hay aviso —
+      // un fallo aquí queda cubierto por el mismo best-effort.
+      const { sendNotificationToStaff } = await import("@/app/api/notifications/stream/route")
+      await sendNotificationToStaff({
+        type: "delegation_update",
+        title: "El taller asociado actualizó una orden",
+        message: `${partnerName}: ${originFolio} → ${toLabel}.${closingHint}`,
+        data: { orderId: origin.id, folio: originFolio, status: toLabel, statusKey: args.toStatus, mirrorFolio, partnerName },
+      }, origin.businessId)
+    } catch (error) {
+      console.error("[delegation] aviso SSE al captador falló:", error)
+    }
+    try {
+      // Igual que el SSE: lib/telegram tira de lib/prisma (exige DATABASE_URL
+      // al importar), así que solo se carga cuando hay aviso que enviar.
+      const { sendTelegramToUsers } = await import("../telegram")
+      await sendTelegramToUsers(
+        origin.businessId,
+        `🔧 <b>${escapeHtml(partnerName)}</b>: orden ${escapeHtml(originFolio)} ahora está <b>${escapeHtml(toLabel)}</b>${terminal ? `. Puedes cerrarla como ${args.toStatus === "DELIVERED" ? "entregada" : "cancelada"} desde su detalle.` : ""}`,
+        { role: "ADMIN" },
+      )
+    } catch (error) {
+      console.error("[delegation] aviso Telegram al captador falló:", error)
+    }
+  } catch (error) {
+    // Best-effort total: ni la BD ni los canales de aviso pueden tumbar el
+    // updateRepair ya confirmado que disparó la sincronización.
+    console.error("[delegation] notifyOriginOfMirrorUpdate falló:", error)
+  }
 }
 
 const delegateSchema = z.object({

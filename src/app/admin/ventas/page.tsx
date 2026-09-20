@@ -92,6 +92,16 @@ export default function VentasPage() {
     // Cash register state
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
 
+    // sale_auto_ticket del negocio: abrir el ticket en pestaña nueva tras
+    // cobrar. Default activado (una falla de lectura no apaga la impresión).
+    const [autoTicket, setAutoTicket] = useState(true)
+
+    useEffect(() => {
+        fetch("/api/settings").then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) })
+            .catch(() => {})
+    }, [])
+
     // Sucursal activa del mostrador (stock, caja y venta se ligan a ella)
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
     const [branchId, setBranchId] = useState("")
@@ -275,7 +285,18 @@ export default function VentasPage() {
             const data = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudo registrar la venta. El carrito se conserva.")
             pendingOperation.current = null
-            const ticketUrl = data.sale?.id ? `/admin/tickets/venta/${data.sale.id}` : undefined
+            // Cobro con tarjeta (único o dividido): además del ticket del
+            // cliente se imprime la copia que queda en caja (?copias=2).
+            // Se detecta por los pagos confirmados que devuelve el servidor
+            // (method CARD) o por lo elegido en el checkout como respaldo.
+            const paidWithCard =
+                (Array.isArray(data?.payments) && data.payments.some((p: { method?: string }) => p.method === "CARD"))
+                || (splitMode
+                    ? splitPayments.some(p => p.method === "TARJETA" && parseFloat(p.amount) > 0)
+                    : paymentMethod === "TARJETA")
+            const ticketUrl = data.sale?.id
+                ? `/admin/tickets/venta/${data.sale.id}${paidWithCard ? "?copias=2" : ""}`
+                : undefined
             setLastSale({
                 product: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
                 quantity: data.quantity,
@@ -284,6 +305,12 @@ export default function VentasPage() {
                 kind: data.sale?.kind ?? data.kind,
             })
             toast.success(`${data.sale?.kind === "WORKSHOP" ? "Nota a taller" : "Venta"} ${data.sale?.kind === "WORKSHOP" ? "NT" : "V"}-${String(data.sale?.number ?? "").padStart(6, "0")} registrada: ${data.quantity} unidad(es) — ${formatPrice(data.total)}`)
+            // Auto-impresión (sale_auto_ticket): el ticket abre en pestaña
+            // nueva. Si el navegador bloquea el popup queda el botón
+            // "Abrir ticket" de la tarjeta de última venta.
+            if (autoTicket && ticketUrl && !window.open(ticketUrl, "_blank", "noopener,noreferrer")) {
+                toast.info("El navegador bloqueó la pestaña del ticket; usa el botón «Abrir ticket».")
+            }
             setCart([])
             setWorkshopSale(false)
             setCreditCustomer(null)

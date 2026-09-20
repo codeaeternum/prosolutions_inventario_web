@@ -6,8 +6,10 @@ import {
   Building2,
   CheckCircle,
   ChevronRight,
+  ClipboardPen,
   Clock,
   DollarSign,
+  FileText,
   LayoutGrid,
   Loader2,
   Percent,
@@ -18,8 +20,16 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { WorkshopConfigEditor } from "./taller-config"
 
@@ -41,11 +51,22 @@ export interface GeneralSettings {
   // tiene un taller reparador al que delega las suyas.
   partnerIntakeEnabled?: boolean
   repairPartnerBusinessId?: string
+  // Mostrador: abrir el ticket automáticamente al registrar la venta.
+  saleAutoTicket?: boolean
+  // Recepción de equipos: cómo acredita el cliente ("canvas" | "ticket" | "pin").
+  repairSignatureMode?: string
+  // Cotización pública: días de vigencia (1–90) y términos del pie.
+  quoteValidityDays?: number
+  quoteTerms?: string
+  // Etiqueta 50×40 del equipo: imprimir falla reportada y desbloqueo.
+  labelShowProblem?: boolean
+  labelShowAccess?: boolean
   updatedAt?: string
 }
 
-export type NumericField = "tempReservationMinutes" | "depositPercentage" | "depositReservationHours" | "pendingVerificationHours" | "exchangeRate" | "orderFolioDigits"
-export type TextField = "bankTransferInfo" | "bankCashInfo" | "ticketBusinessName" | "ticketSubtitle" | "ticketFooter" | "orderPrefix" | "repairPartnerBusinessId"
+export type NumericField = "tempReservationMinutes" | "depositPercentage" | "depositReservationHours" | "pendingVerificationHours" | "exchangeRate" | "orderFolioDigits" | "quoteValidityDays"
+export type TextField = "bankTransferInfo" | "bankCashInfo" | "ticketBusinessName" | "ticketSubtitle" | "ticketFooter" | "orderPrefix" | "repairPartnerBusinessId" | "quoteTerms" | "repairSignatureMode"
+export type BoolField = "saleAutoTicket" | "labelShowProblem" | "labelShowAccess"
 
 export function IdentityCard({ value, saving, onChange, onSave }: {
   value: string
@@ -351,10 +372,11 @@ export function FinanceCard({ settings, onNumber, onText }: {
   )
 }
 
-export function TicketCard({ settings, onText, onNumber }: {
+export function TicketCard({ settings, onText, onNumber, onBool }: {
   settings: GeneralSettings
   onText: (field: TextField, value: string) => void
   onNumber: (field: NumericField, value: string) => void
+  onBool: (field: BoolField, value: boolean) => void
 }) {
   return (
     <Card>
@@ -427,6 +449,166 @@ export function TicketCard({ settings, onText, onNumber }: {
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="border-t pt-4">
+          <h4 className="text-sm font-medium mb-3">Impresión</h4>
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="saleAutoTicket"
+              checked={settings.saleAutoTicket !== false}
+              onCheckedChange={(checked) => onBool("saleAutoTicket", checked === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-1">
+              <Label htmlFor="saleAutoTicket" className="font-medium cursor-pointer">
+                Abrir el ticket automáticamente al cobrar
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Al registrar una venta el ticket se abre en una pestaña nueva listo para imprimir. Si el pago incluye tarjeta se imprime también la copia para la caja.
+              </p>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+const SIGNATURE_MODE_OPTIONS: { value: string; label: string; hint: string }[] = [
+  { value: "canvas", label: "Firma digital (pantalla)", hint: "El cliente firma en el teléfono o pantalla al entregar el equipo (comportamiento actual)." },
+  { value: "ticket", label: "Firma en ticket impreso", hint: "La recepción no exige firma digital: el comprobante del cliente imprime una línea de firma y la leyenda de aceptación." },
+  { value: "pin", label: "Terminación telefónica", hint: "El cliente confirma con los últimos 4 dígitos de su teléfono; la recepción lo registra en el historial de la orden." },
+]
+
+export function ReceptionCard({ settings, onText, onBool }: {
+  settings: GeneralSettings
+  onText: (field: TextField, value: string) => void
+  onBool: (field: BoolField, value: boolean) => void
+}) {
+  const mode = settings.repairSignatureMode === "ticket" || settings.repairSignatureMode === "pin"
+    ? settings.repairSignatureMode
+    : "canvas"
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ClipboardPen className="h-5 w-5" />
+          Recepción y etiqueta de equipos
+        </CardTitle>
+        <CardDescription>
+          Cómo acredita el cliente la entrega del equipo y qué imprime la etiqueta de la orden.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-2">
+          <Label htmlFor="repairSignatureMode">Confirmación del cliente al recibir</Label>
+          <Select value={mode} onValueChange={(value) => onText("repairSignatureMode", value)}>
+            <SelectTrigger id="repairSignatureMode" className="max-w-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SIGNATURE_MODE_OPTIONS.map(option => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {SIGNATURE_MODE_OPTIONS.find(o => o.value === mode)?.hint}
+          </p>
+        </div>
+
+        <div className="border-t pt-4">
+          <h4 className="text-sm font-medium mb-3">Etiqueta de la orden (50 × 40 mm)</h4>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="labelShowProblem"
+                checked={settings.labelShowProblem !== false}
+                onCheckedChange={(checked) => onBool("labelShowProblem", checked === true)}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <Label htmlFor="labelShowProblem" className="font-medium cursor-pointer">
+                  Imprimir la falla reportada en la etiqueta
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Apágalo si la etiqueta pegada al equipo no debe describir el problema.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="labelShowAccess"
+                checked={settings.labelShowAccess !== false}
+                onCheckedChange={(checked) => onBool("labelShowAccess", checked === true)}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <Label htmlFor="labelShowAccess" className="font-medium cursor-pointer">
+                  Imprimir el código de desbloqueo en la etiqueta
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  PIN, contraseña o patrón del equipo. Apágalo si prefieres consultarlo solo en la hoja interna.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function QuoteCard({ settings, onNumber, onText }: {
+  settings: GeneralSettings
+  onNumber: (field: NumericField, value: string) => void
+  onText: (field: TextField, value: string) => void
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileText className="h-5 w-5" />
+          Cotizaciones
+        </CardTitle>
+        <CardDescription>
+          Vigencia del enlace público que recibe el cliente y términos impresos al pie del documento.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-2">
+          <Label htmlFor="quoteValidityDays">Vigencia de la cotización</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="quoteValidityDays"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={90}
+              value={settings.quoteValidityDays ?? 15}
+              onChange={(e) => onNumber("quoteValidityDays", e.target.value)}
+              className="w-24"
+            />
+            <span className="text-muted-foreground text-sm">días naturales</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Entre 1 y 90. El enlace público deja de mostrar el documento cuando vence («Válida por N días»).
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="quoteTerms">Términos de la cotización</Label>
+          <Textarea
+            id="quoteTerms"
+            value={settings.quoteTerms || ""}
+            onChange={(e) => onText("quoteTerms", e.target.value)}
+            placeholder="Esta cotización es un estimado basado en el diagnóstico inicial. Si se detectan daños adicionales se le contactará antes de proceder."
+            className="resize-none h-24"
+            maxLength={2000}
+          />
+          <p className="text-xs text-muted-foreground">
+            Garantías y condiciones al pie de la cotización pública y del ticket. Vacío = texto por defecto.
+          </p>
         </div>
       </CardContent>
     </Card>

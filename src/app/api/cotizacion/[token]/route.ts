@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { DEFAULT_QUOTE_TERMS, isQuoteExpiredAt, parseQuoteValidityDays, quoteExpiryDate } from "@/app/api/cotizacion/quote-config"
 
 // Consulta pública de la cotización por su quoteToken (el token es el secreto;
 // el cliente lo recibe por WhatsApp). Respuesta limitada a lo que el documento
@@ -90,20 +91,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         { status: 410, headers: NO_STORE },
       )
     }
-    // "Válida por 15 días" se cumple de verdad: quoteExpiresAt se fija al
-    // presentar la cotización (QUOTE) y al pedir re-autorización por una
-    // refacción nueva. Vencida, el documento ya no se muestra.
-    if (order.quoteExpiresAt && order.quoteExpiresAt.getTime() < Date.now()) {
+    // Membrete, largo del folio, vigencia y términos salen del negocio
+    // DUEÑO de la orden (quote_validity_days / quote_terms configurables).
+    const [businessName, folioDigitsRaw, validityDaysRaw, termsRaw] = await Promise.all([
+      getBusinessSetting(order.businessId, "ticket_business_name"),
+      getBusinessSetting(order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+      getBusinessSetting(order.businessId, "quote_validity_days").catch(() => null),
+      getBusinessSetting(order.businessId, "quote_terms").catch(() => null),
+    ])
+    const validityDays = parseQuoteValidityDays(validityDaysRaw)
+    const terms = termsRaw?.trim() || DEFAULT_QUOTE_TERMS
+    // Emisión = último QUOTE (o aprobación/creación como respaldo).
+    const issuedAt = order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt
+    // "Válida por N días" se cumple de verdad: la vigencia efectiva es la
+    // presentación + los días configurados (quoteExpiresAt guardado recuerda
+    // la fecha de presentación, incluidas las renovaciones por re-autorización).
+    const expiresAt = quoteExpiryDate(order.quoteExpiresAt, issuedAt, validityDays)
+    if (isQuoteExpiredAt(order.quoteExpiresAt, issuedAt, validityDays)) {
       return NextResponse.json(
         { error: "Esta cotización venció." },
         { status: 410, headers: NO_STORE },
       )
     }
-    // Membrete y largo del folio salen del negocio DUEÑO de la orden.
-    const [businessName, folioDigitsRaw] = await Promise.all([
-      getBusinessSetting(order.businessId, "ticket_business_name"),
-      getBusinessSetting(order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
-    ])
 
     const { service, issue } = parseIssue(order.reportedIssue)
     const laborCents = order.approvedQuoteCents ?? order.quoteCents
@@ -123,7 +132,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
         quote: {
           folio: repairFolio(order.number, parseFolioDigits(folioDigitsRaw)),
           businessName: businessName || "PROSOLUTIONS",
-          issuedAt: order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt,
+          issuedAt,
           customerName: order.customerName,
           equipment: {
             type: order.equipmentType,
@@ -141,7 +150,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           status: order.status,
           statusLabel: repairLabels[order.status as RepairStage] ?? order.status,
           quoteApprovedAt: order.quoteApprovedAt,
-          quoteExpiresAt: order.quoteExpiresAt,
+          // Vigencia efectiva ya calculada con quote_validity_days del
+          // negocio, más los términos que el documento imprime al pie.
+          quoteExpiresAt: expiresAt,
+          validityDays,
+          terms,
         },
       },
       { headers: NO_STORE },

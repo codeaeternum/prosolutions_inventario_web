@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
+import { parseQuoteValidityDays, DEFAULT_QUOTE_TERMS } from "@/app/api/cotizacion/quote-config"
 import prisma from "@/lib/prisma"
 import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
@@ -67,8 +68,13 @@ function loadRepairOrder(id: string, businessId: string) {
 
 export default async function TicketPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ tipo: string; id: string }>
+  // ?copias=N imprime el ticket N veces seguidas (1–4) con línea de corte:
+  // la copia extra lleva el encabezado "COPIA — CAJA" (p. ej. pago con
+  // tarjeta, donde el comprobante duplicado queda en el negocio).
+  searchParams?: Promise<{ copias?: string }>
 }) {
   // Staff (admin|empleado): el mostrador imprime tickets de recepción, venta,
   // reserva y abono. Todas las consultas resuelven por id + businessId.
@@ -77,14 +83,16 @@ export default async function TicketPage({
   const session = getSession(staffCheck)!
   const businessId = businessIdOf(session)
 
-  const { tipo, id } = await params
-  
+  const [{ tipo, id }, query] = await Promise.all([params, searchParams ?? Promise.resolve({ copias: undefined as string | undefined })])
+  const copies = Math.min(4, Math.max(1, Number.parseInt(query.copias ?? "1", 10) || 1))
+
   let ticketData: {
     title: string; folio: string; date: string; client?: string; clientLabel?: string;
     cashier?: string; badge?: string;
     items: { name: string; qty: number; price: number; total: number }[];
     total: number; paymentMethod?: string; notes?: string; newBalance?: number;
     qrCode?: string; businessName?: string; subtitle?: string; footer?: string;
+    copies?: number;
   } | null = null
   let repairData: RepairTicketData | null = null
   let workshopData: WorkshopSheetData | null = null
@@ -129,6 +137,9 @@ export default async function TicketPage({
         paymentMethod: saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
         notes: saleDoc.branch.name,
         cashier: saleDoc.seller.name,
+        // Doble copia (cliente + caja) cuando el mostrador lo pidió
+        // (?copias=2 — ventas con tarjeta abren el ticket así).
+        copies: copies > 1 ? copies : undefined,
       }
     } else {
       const sale = await prisma.inventoryMovement.findUnique({
@@ -241,10 +252,25 @@ export default async function TicketPage({
       const isTerminalNoRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
       // Prefijo y largo del folio configurables por negocio (order_prefix,
       // p. ej. "PS", y order_folio_digits, 4–8 dígitos de consecutivo).
-      const [orderPrefix, folioDigits] = await Promise.all([
+      const [orderPrefix, folioDigits, docSettings] = await Promise.all([
         getBusinessSetting(businessId, "order_prefix"),
         getOrderFolioDigits(businessId),
+        getBusinessSettingsMap(businessId, [
+          "repair_signature_mode",
+          "label_show_problem", "label_show_access",
+          "quote_validity_days", "quote_terms",
+        ]),
       ])
+      // Firma en recepción: canvas (digital), ticket (línea impresa) o pin
+      // (confirmación por terminación telefónica). Default canvas.
+      const signatureModeRaw = docSettings.get("repair_signature_mode")
+      const signatureMode = signatureModeRaw === "ticket" || signatureModeRaw === "pin" ? signatureModeRaw : "canvas"
+      // Etiqueta del equipo: los toggles apagan la falla y el desbloqueo.
+      const labelShowProblem = docSettings.get("label_show_problem") !== "false"
+      const labelShowAccess = docSettings.get("label_show_access") !== "false"
+      // Cotización impresa: vigencia y términos configurables del negocio.
+      const quoteValidityDays = parseQuoteValidityDays(docSettings.get("quote_validity_days"))
+      const quoteTerms = docSettings.get("quote_terms") || DEFAULT_QUOTE_TERMS
       const folio = formatFolio(orderPrefix, order.number, folioDigits)
       const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
       // URL pública /evidencia/<uploadToken>: la usa el TÉCNICO para subir
@@ -313,6 +339,9 @@ export default async function TicketPage({
           trackingHint: "Escanea para rastrear tu reparación",
           // Firma capturada en recepción (PNG base64).
           signatureData: order.signatureData ?? undefined,
+          // Modo de firma configurado: en "ticket" el comprobante imprime la
+          // línea "Firma del cliente" aunque no haya signatureData.
+          signatureMode,
           // Constancia de entrega: quién recogió el equipo (puede no ser el
           // titular), su identificación, su firma y quién del staff entregó.
           deliveredTo: order.deliveredTo ?? undefined,
@@ -353,6 +382,10 @@ export default async function TicketPage({
               subtotal: (part.qty * part.unitPriceCents) / 100,
             })),
           elaboratedBy: order.createdBy.name,
+          // Vigencia y términos configurables (quote_validity_days,
+          // quote_terms) — mismos valores que la cotización pública.
+          validityDays: quoteValidityDays,
+          terms: quoteTerms,
         }
       } else {
         // La hoja interna es el único documento que imprime el desbloqueo:
@@ -435,6 +468,10 @@ export default async function TicketPage({
           // QR de evidencias: va en la hoja interna y en la etiqueta del equipo.
           evidenceUrl,
           evidenceLinkDisabled,
+          // Etiqueta 50×40: toggles del negocio (label_show_problem /
+          // label_show_access) — default imprimen falla y desbloqueo.
+          labelShowProblem,
+          labelShowAccess,
         }
       }
     }

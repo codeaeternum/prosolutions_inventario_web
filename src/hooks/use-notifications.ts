@@ -12,6 +12,7 @@ export type NotificationType =
   | "low_stock"
   | "repair_ready"
   | "marketplace_request"
+  | "delegation_update"
   | "connected"
 
 export interface Notification {

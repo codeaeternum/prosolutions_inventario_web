@@ -1051,6 +1051,8 @@ model DeviceModel {
   @@unique([businessId, brand, model])
   @@index([businessId])
   @@index([brand])
+
+  servicePrices WorkshopServicePrice[]
 }
 
 // Catálogo de servicios del taller (cambio de pantalla, liberación, etc.) con
@@ -1068,8 +1070,31 @@ model WorkshopService {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // Precios específicos por modelo/tipo de equipo: ganan sobre priceCents.
+  prices        WorkshopServicePrice[]
+
   @@index([isActive, name])
   @@index([businessId])
+}
+
+// Precio de un servicio para un dispositivo concreto: "reemplazo de pantalla
+// iPhone 7 = $800" vs el precio base del servicio. Se resuelve al recibir:
+// precio del modelo exacto > precio del tipo de equipo > priceCents base.
+// Los dedup viven en índices únicos parciales de la migración (NULL != NULL).
+model WorkshopServicePrice {
+  id            String          @id @default(cuid())
+  serviceId     String
+  service       WorkshopService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  // Uno de los dos alcances, nunca ambos:
+  deviceModelId String? // modelo exacto del catálogo (marca+modelo)
+  deviceModel   DeviceModel?    @relation(fields: [deviceModelId], references: [id], onDelete: Cascade)
+  equipmentType String? // tipo de equipo genérico ("Laptop", "Consola")
+  priceCents    Int
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([deviceModelId])
+  @@index([serviceId])
 }
 
 model MarketplaceRequest {

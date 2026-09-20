@@ -4,6 +4,7 @@ import { repairFolio } from "@/lib/workshop-labels"
 import { formatDate, formatPrice } from "@/lib/utils"
 import type { PublicQuote } from "@/lib/public-quote"
 import { QuoteApproval } from "@/components/public/quote-approval"
+import { QUOTE_VALIDITY_DAYS_DEFAULT, isQuoteExpiredAt } from "@/app/api/cotizacion/quote-config"
 
 // Documento de cotización público, compartido por la página global
 // (/cotizacion/[token], fallback sin slug) y la brandeada por negocio
@@ -80,10 +81,15 @@ export function QuoteNotFound({ trackingHref }: { trackingHref: string }) {
   )
 }
 
-/** Vigencia real del documento: quoteExpiresAt la fija el taller al
- *  (re)presentar la cotización ("Válida por 15 días"). */
-export function isQuoteExpired(order: Pick<PublicQuote, "quoteExpiresAt">): boolean {
-  return order.quoteExpiresAt !== null && order.quoteExpiresAt.getTime() < Date.now()
+/** Vigencia real del documento: la presentación la marca quoteExpiresAt y
+ *  la duración la fija `quote_validity_days` del negocio ("Válida por N
+ *  días"). Con el default de 15 equivale a la fecha guardada por el dominio. */
+export function isQuoteExpired(
+  order: Pick<PublicQuote, "quoteExpiresAt" | "createdAt" | "quoteApprovedAt" | "events">,
+  validityDays = QUOTE_VALIDITY_DAYS_DEFAULT,
+): boolean {
+  const issuedAt = order.events?.[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt ?? null
+  return isQuoteExpiredAt(order.quoteExpiresAt, issuedAt, validityDays)
 }
 
 /**
@@ -114,12 +120,16 @@ export function QuoteExpired({ trackingHref }: { trackingHref: string }) {
  * `businessName` es el membrete: en la página global llega de
  * ticket_business_name (o "PROSOLUTIONS"); en la brandeada, el nombre del slug.
  */
-export function QuoteDocument({ order, businessName, token, folioDigits }: {
+export function QuoteDocument({ order, businessName, token, folioDigits, validityDays, terms }: {
   order: PublicQuote
   businessName: string
   token: string
   /** Largo del consecutivo impreso (order_folio_digits del negocio, 4–8). */
   folioDigits?: number
+  /** Vigencia impresa y aplicada (quote_validity_days del negocio, 1–90). */
+  validityDays?: number
+  /** Términos del pie (quote_terms del negocio); vacío = texto por defecto. */
+  terms?: string
 }) {
   const folio = repairFolio(order.number, folioDigits)
   const { service, issue } = parseIssue(order.reportedIssue)
@@ -256,8 +266,8 @@ export function QuoteDocument({ order, businessName, token, folioDigits }: {
 
           {/* Vigencia y términos */}
           <section className="space-y-1.5 rounded-xl bg-neutral-50 p-4 text-[11px] leading-snug text-neutral-600">
-            <p className="font-bold text-neutral-900">Válida por 15 días naturales a partir de la fecha de emisión.</p>
-            <p className="text-justify">{TERMS}</p>
+            <p className="font-bold text-neutral-900">Válida por {validityDays ?? QUOTE_VALIDITY_DAYS_DEFAULT} días naturales a partir de la fecha de emisión.</p>
+            <p className="text-justify whitespace-pre-line">{terms?.trim() || TERMS}</p>
             <p>Al aprobar desde este enlace queda registrada tu autorización electrónica{order.quoteApprovedAt ? "" : " (fecha, hora y nombre que indiques)"}.</p>
           </section>
 

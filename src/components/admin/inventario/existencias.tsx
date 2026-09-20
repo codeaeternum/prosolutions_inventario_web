@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { EmptyState } from "@/components/admin/empty-state"
 import { TraspasoDialog } from "@/components/admin/inventario/traspaso-dialog"
 import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
+import { StockQtyEditor } from "@/components/admin/productos/stock-editor"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Label } from "@/components/ui/label"
 import {
@@ -35,7 +36,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { AlertTriangle, ArrowLeftRight, ClipboardList, Loader2, Package, Search, Warehouse } from "lucide-react"
+import { AlertTriangle, ArrowLeftRight, ClipboardList, Loader2, Package, Search, Warehouse, Zap } from "lucide-react"
 import { toast } from "sonner"
 
 interface BranchColumn {
@@ -144,6 +145,24 @@ export function ExistenciasPanel() {
     const quantityByBranch = (p: StockProduct, branchId: string) =>
         p.branches.find((b) => b.branchId === branchId)?.quantity ?? 0
 
+    // Refleja un ajuste inline confirmado sin recargar toda la matriz.
+    const applyStockDelta = (productId: string, branchId: string, delta: number) => {
+        setData((prev) => prev && ({
+            ...prev,
+            products: prev.products.map((p) =>
+                p.id !== productId
+                    ? p
+                    : {
+                        ...p,
+                        total: p.total + delta,
+                        branches: p.branches.map((b) =>
+                            b.branchId === branchId ? { ...b, quantity: b.quantity + delta } : b
+                        ),
+                    }
+            ),
+        }))
+    }
+
     const openCountDialog = () => {
         setCountBranchId(branches[0]?.id ?? "")
         setCountNotes("")
@@ -211,6 +230,12 @@ export function ExistenciasPanel() {
                 >
                     <AlertTriangle className="mr-1 h-4 w-4" />
                     Solo stock bajo
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                    <Link href="/admin/productos?tab=captura">
+                        <Zap className="mr-1 h-4 w-4" />
+                        Captura rápida
+                    </Link>
                 </Button>
                 <Button
                     variant="outline"
@@ -318,11 +343,17 @@ export function ExistenciasPanel() {
                                                 {branches.map((b) => {
                                                     const qty = quantityByBranch(p, b.id)
                                                     return (
-                                                        <TableCell
-                                                            key={b.id}
-                                                            className={`text-center tabular-nums ${qty === 0 ? "text-muted-foreground/50" : ""}`}
-                                                        >
-                                                            {qty}
+                                                        <TableCell key={b.id} className="text-center tabular-nums">
+                                                            {/* Click en la celda edita esa sucursal directo. */}
+                                                            <StockQtyEditor
+                                                                variant="cell"
+                                                                productId={p.id}
+                                                                productName={p.name}
+                                                                quantity={qty}
+                                                                branchId={b.id}
+                                                                reason={`Ajuste rápido en ${b.name}`}
+                                                                onAdjusted={(delta) => applyStockDelta(p.id, b.id, delta)}
+                                                            />
                                                         </TableCell>
                                                     )
                                                 })}

@@ -2,7 +2,8 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Wrench } from "lucide-react"
 import { prisma } from "@/lib/prisma"
-import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
+import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
+import { parseQuoteValidityDays } from "@/app/api/cotizacion/quote-config"
 import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { isQuoteExpired, QuoteDocument, QuoteExpired, QuoteNotFound } from "@/components/public/quote-view"
@@ -72,22 +73,25 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
     )
   }
 
-  // "Válida por 15 días": vencida sin decisión se muestra el estado de
+  // El branding, largo del folio, vigencia y términos salen del negocio
+  // DUEÑO de la orden, no del negocio por defecto.
+  const [businessName, folioDigits, quoteSettings] = await Promise.all([
+    getBusinessSetting(order.businessId, "ticket_business_name"),
+    getOrderFolioDigits(order.businessId),
+    getBusinessSettingsMap(order.businessId, ["quote_validity_days", "quote_terms"]),
+  ])
+  const validityDays = parseQuoteValidityDays(quoteSettings.get("quote_validity_days"))
+  const terms = quoteSettings.get("quote_terms") || undefined
+
+  // "Válida por N días": vencida sin decisión se muestra el estado de
   // vigencia terminada en vez del desglose (mismo 410 que la API pública).
-  if (isQuoteExpired(order)) {
+  if (isQuoteExpired(order, validityDays)) {
     return (
       <PageShell>
         <QuoteExpired trackingHref="/seguimiento" />
       </PageShell>
     )
   }
-
-  // El branding y el largo del folio salen del negocio DUEÑO de la orden,
-  // no del negocio por defecto.
-  const [businessName, folioDigits] = await Promise.all([
-    getBusinessSetting(order.businessId, "ticket_business_name"),
-    getOrderFolioDigits(order.businessId),
-  ])
 
   return (
     <PageShell>
@@ -96,6 +100,8 @@ export default async function CotizacionPage({ params }: { params: Promise<{ tok
         businessName={businessName || "PROSOLUTIONS"}
         token={token}
         folioDigits={folioDigits}
+        validityDays={validityDays}
+        terms={terms}
       />
     </PageShell>
   )

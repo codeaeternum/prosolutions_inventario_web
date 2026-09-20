@@ -2,7 +2,8 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound, redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
-import { getOrderFolioDigits } from "@/lib/settings"
+import { getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
+import { parseQuoteValidityDays } from "@/app/api/cotizacion/quote-config"
 import { repairFolio } from "@/lib/workshop-labels"
 import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug"
 import { loadQuoteByToken } from "@/lib/public-quote"
@@ -59,8 +60,16 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
   }
 
   const order = await loadQuoteByToken(token, target.businessId)
-  // Largo del folio del negocio dueño de la orden (order_folio_digits).
-  const folioDigits = order ? await getOrderFolioDigits(order.businessId) : undefined
+  // Folio, vigencia y términos del negocio dueño de la orden
+  // (order_folio_digits, quote_validity_days, quote_terms).
+  const [folioDigits, quoteSettings] = order
+    ? await Promise.all([
+        getOrderFolioDigits(order.businessId),
+        getBusinessSettingsMap(order.businessId, ["quote_validity_days", "quote_terms"]),
+      ])
+    : [undefined, undefined]
+  const validityDays = parseQuoteValidityDays(quoteSettings?.get("quote_validity_days"))
+  const terms = quoteSettings?.get("quote_terms") || undefined
 
   return (
     <PublicShell
@@ -74,12 +83,12 @@ export default async function SlugCotizacionPage({ params }: PageProps) {
       }
     >
       {order && order.status !== "DELIVERED" && order.status !== "CANCELLED" ? (
-        isQuoteExpired(order) ? (
-          // Vigencia terminada ("Válida por 15 días"): se muestra el estado
+        isQuoteExpired(order, validityDays) ? (
+          // Vigencia terminada ("Válida por N días"): se muestra el estado
           // vencido en vez del desglose, igual que el 410 de la API pública.
           <QuoteExpired trackingHref={`/${target.slug}/order-status`} />
         ) : (
-          <QuoteDocument order={order} businessName={target.name} token={token} folioDigits={folioDigits} />
+          <QuoteDocument order={order} businessName={target.name} token={token} folioDigits={folioDigits} validityDays={validityDays} terms={terms} />
         )
       ) : (
         <QuoteNotFound trackingHref={`/${target.slug}/order-status`} />

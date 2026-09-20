@@ -16,6 +16,34 @@ const FOLIO_DIGITS_MIN = 4
 const FOLIO_DIGITS_MAX = 8
 const FOLIO_DIGITS_DEFAULT = 6
 
+// Vigencia de la cotización pública (quote_validity_days): 1–90, default 15.
+const QUOTE_DAYS_MIN = 1
+const QUOTE_DAYS_MAX = 90
+const QUOTE_DAYS_DEFAULT = 15
+// Términos impresos al pie de la cotización (quote_terms); vacío = default.
+const DEFAULT_QUOTE_TERMS =
+  "Esta cotización es un estimado basado en el diagnóstico inicial. Si se detectan daños adicionales se le contactará antes de proceder."
+const QUOTE_TERMS_MAX = 2000
+// Cómo acredita el cliente la recepción (repair_signature_mode).
+const SIGNATURE_MODES = ["canvas", "ticket", "pin"] as const
+type SignatureMode = (typeof SIGNATURE_MODES)[number]
+const SIGNATURE_MODE_DEFAULT: SignatureMode = "canvas"
+
+/** Parsea `repair_signature_mode`; ausente/inválido cae a "canvas". */
+function parseSignatureMode(raw: string | undefined): SignatureMode {
+  return (SIGNATURE_MODES as readonly string[]).includes(raw ?? "")
+    ? (raw as SignatureMode)
+    : SIGNATURE_MODE_DEFAULT
+}
+
+/** Parsea `quote_validity_days`; ausente/inválido cae al default 15. */
+function parseQuoteDays(raw: string | undefined): number {
+  const days = Number(raw)
+  return Number.isInteger(days) && days >= QUOTE_DAYS_MIN && days <= QUOTE_DAYS_MAX
+    ? days
+    : QUOTE_DAYS_DEFAULT
+}
+
 /** Parsea `order_folio_digits`; cualquier valor inválido cae al default 6. */
 function parseFolioDigits(raw: string | undefined): number {
   const digits = Number.parseInt(raw ?? "", 10)
@@ -53,6 +81,9 @@ export async function GET() {
       "ticket_business_name", "ticket_subtitle", "ticket_footer",
       "order_prefix", "order_folio_digits",
       "partner_intake_enabled", "repair_partner_business_id",
+      "sale_auto_ticket", "repair_signature_mode",
+      "quote_validity_days", "quote_terms",
+      "label_show_problem", "label_show_access",
     ])
 
     return NextResponse.json({
@@ -80,6 +111,18 @@ export async function GET() {
       partnerIntakeEnabled: systemSettings.get("partner_intake_enabled") === "true",
       // Taller reparador al que este negocio (captador) envía sus órdenes.
       repairPartnerBusinessId: systemSettings.get("repair_partner_business_id") || "",
+      // Mostrador: tras cobrar una venta se abre el ticket en pestaña nueva
+      // (con ?copias=2 cuando hay tarjeta). Default activado.
+      saleAutoTicket: systemSettings.get("sale_auto_ticket") !== "false",
+      // Recepción de equipos: "canvas" (firma digital), "ticket" (firma en el
+      // comprobante impreso) o "pin" (terminación telefónica).
+      repairSignatureMode: parseSignatureMode(systemSettings.get("repair_signature_mode")),
+      // Cotización pública: días de vigencia (1–90) y términos del pie.
+      quoteValidityDays: parseQuoteDays(systemSettings.get("quote_validity_days")),
+      quoteTerms: systemSettings.get("quote_terms") || DEFAULT_QUOTE_TERMS,
+      // Etiqueta 50×40 del equipo: imprimir la falla y el desbloqueo.
+      labelShowProblem: systemSettings.get("label_show_problem") !== "false",
+      labelShowAccess: systemSettings.get("label_show_access") !== "false",
     })
   } catch (error: unknown) {
     // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
@@ -119,6 +162,12 @@ export async function PATCH(req: Request) {
       orderFolioDigits,
       partnerIntakeEnabled,
       repairPartnerBusinessId,
+      saleAutoTicket,
+      repairSignatureMode,
+      quoteValidityDays,
+      quoteTerms,
+      labelShowProblem,
+      labelShowAccess,
     } = body
 
     // Validaciones previas a cualquier escritura: si fallan, el PATCH no deja
@@ -133,6 +182,43 @@ export async function PATCH(req: Request) {
         )
       }
       folioDigits = parsed
+    }
+
+    // Vigencia de la cotización pública: entero 1–90 días.
+    let quoteDays: number | undefined
+    if (quoteValidityDays !== undefined) {
+      const parsed = Number(quoteValidityDays)
+      if (!Number.isInteger(parsed) || parsed < QUOTE_DAYS_MIN || parsed > QUOTE_DAYS_MAX) {
+        return NextResponse.json(
+          { error: `La vigencia de la cotización debe ser un entero entre ${QUOTE_DAYS_MIN} y ${QUOTE_DAYS_MAX} días` },
+          { status: 400 }
+        )
+      }
+      quoteDays = parsed
+    }
+
+    // Modo de firma en recepción: solo los valores conocidos.
+    let signatureMode: SignatureMode | undefined
+    if (repairSignatureMode !== undefined) {
+      if (!(SIGNATURE_MODES as readonly string[]).includes(String(repairSignatureMode))) {
+        return NextResponse.json(
+          { error: `El modo de firma debe ser uno de: ${SIGNATURE_MODES.join(", ")}` },
+          { status: 400 }
+        )
+      }
+      signatureMode = repairSignatureMode as SignatureMode
+    }
+
+    // Términos de la cotización: texto libre acotado; vacío = texto default.
+    let cleanQuoteTerms: string | undefined
+    if (quoteTerms !== undefined) {
+      if (typeof quoteTerms !== "string") {
+        return NextResponse.json(
+          { error: "Los términos de la cotización deben ser texto" },
+          { status: 400 }
+        )
+      }
+      cleanQuoteTerms = quoteTerms.trim().slice(0, QUOTE_TERMS_MAX)
     }
 
     // Taller reparador asociado (modelo captador): debe ser OTRO negocio
@@ -239,6 +325,30 @@ export async function PATCH(req: Request) {
       }
     }
 
+    // Mostrador e impresión: toggles BOOLEAN guardados "true"/"false".
+    for (const [key, val] of [
+      ["sale_auto_ticket", saleAutoTicket],
+      ["label_show_problem", labelShowProblem],
+      ["label_show_access", labelShowAccess],
+    ] as const) {
+      if (val !== undefined) {
+        await setBusinessSetting(businessId, key, val ? "true" : "false", "BOOLEAN")
+      }
+    }
+
+    // Firma en recepción (ya validado arriba).
+    if (signatureMode !== undefined) {
+      await setBusinessSetting(businessId, "repair_signature_mode", signatureMode)
+    }
+
+    // Vigencia y términos de la cotización pública (ya validados arriba).
+    if (quoteDays !== undefined) {
+      await setBusinessSetting(businessId, "quote_validity_days", String(quoteDays), "NUMBER")
+    }
+    if (cleanQuoteTerms !== undefined) {
+      await setBusinessSetting(businessId, "quote_terms", cleanQuoteTerms)
+    }
+
     return NextResponse.json({
       ...settings,
       bankTransferInfo,
@@ -250,6 +360,12 @@ export async function PATCH(req: Request) {
       orderFolioDigits: folioDigits,
       partnerIntakeEnabled: savedPartnerIntake,
       repairPartnerBusinessId: repairPartnerId,
+      saleAutoTicket,
+      repairSignatureMode: signatureMode,
+      quoteValidityDays: quoteDays,
+      quoteTerms: cleanQuoteTerms,
+      labelShowProblem,
+      labelShowAccess,
     })
   } catch (error) {
     console.error("Error updating settings:", error)

@@ -16,10 +16,13 @@ import {
   AdminLinksCard,
   FinanceCard,
   IdentityCard,
+  QuoteCard,
+  ReceptionCard,
   SummaryCard,
   TicketCard,
   TimingCard,
   WorkshopCard,
+  type BoolField,
   type GeneralSettings,
   type NumericField,
   type TextField,
@@ -86,6 +89,12 @@ export default function ConfiguracionPage() {
           orderFolioDigits: data.orderFolioDigits ?? 6,
           partnerIntakeEnabled: Boolean(data.partnerIntakeEnabled),
           repairPartnerBusinessId: data.repairPartnerBusinessId ?? "",
+          saleAutoTicket: data.saleAutoTicket !== false,
+          repairSignatureMode: data.repairSignatureMode ?? "canvas",
+          quoteValidityDays: data.quoteValidityDays ?? 15,
+          quoteTerms: data.quoteTerms ?? "",
+          labelShowProblem: data.labelShowProblem !== false,
+          labelShowAccess: data.labelShowAccess !== false,
           updatedAt: data.updatedAt,
         }
         setSettings(next)
@@ -175,6 +184,10 @@ export default function ConfiguracionPage() {
     setSettings((prev) => ({ ...prev, [field]: value }))
   }
 
+  function handleBool(field: BoolField, value: boolean) {
+    setSettings((prev) => ({ ...prev, [field]: value }))
+  }
+
   function handleResetDefaults() {
     // El reset solo aplica a reservas/finanzas/ticket: el taller asociado y el
     // folio se conservan para no desvincular al captador por accidente.
@@ -184,6 +197,12 @@ export default function ConfiguracionPage() {
       orderFolioDigits: prev.orderFolioDigits,
       partnerIntakeEnabled: prev.partnerIntakeEnabled,
       repairPartnerBusinessId: prev.repairPartnerBusinessId,
+      saleAutoTicket: prev.saleAutoTicket,
+      repairSignatureMode: prev.repairSignatureMode,
+      quoteValidityDays: prev.quoteValidityDays,
+      quoteTerms: prev.quoteTerms,
+      labelShowProblem: prev.labelShowProblem,
+      labelShowAccess: prev.labelShowAccess,
     }))
     toast.info("Valores restablecidos. Pulsa «Guardar» para aplicarlos.")
   }
@@ -203,7 +222,13 @@ export default function ConfiguracionPage() {
       settings.orderPrefix !== initialSettings.orderPrefix ||
       settings.orderFolioDigits !== initialSettings.orderFolioDigits ||
       settings.partnerIntakeEnabled !== initialSettings.partnerIntakeEnabled ||
-      settings.repairPartnerBusinessId !== initialSettings.repairPartnerBusinessId)
+      settings.repairPartnerBusinessId !== initialSettings.repairPartnerBusinessId ||
+      settings.saleAutoTicket !== initialSettings.saleAutoTicket ||
+      settings.repairSignatureMode !== initialSettings.repairSignatureMode ||
+      settings.quoteValidityDays !== initialSettings.quoteValidityDays ||
+      settings.quoteTerms !== initialSettings.quoteTerms ||
+      settings.labelShowProblem !== initialSettings.labelShowProblem ||
+      settings.labelShowAccess !== initialSettings.labelShowAccess)
 
   const lastUpdated = formatDate(settings.updatedAt)
 
@@ -298,7 +323,11 @@ export default function ConfiguracionPage() {
 
       <FinanceCard settings={settings} onNumber={handleNumber} onText={handleText} />
 
-      <TicketCard settings={settings} onText={handleText} onNumber={handleNumber} />
+      <TicketCard settings={settings} onText={handleText} onNumber={handleNumber} onBool={handleBool} />
+
+      <ReceptionCard settings={settings} onText={handleText} onBool={handleBool} />
+
+      <QuoteCard settings={settings} onNumber={handleNumber} onText={handleText} />
 
       <SummaryCard settings={settings} />
     </div>

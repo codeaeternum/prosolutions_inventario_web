@@ -34,6 +34,10 @@ export interface RepairTicketData {
   trackingHint?: string
   // Firma del cliente capturada en recepción (PNG base64 data URL).
   signatureData?: string
+  // Modo de firma del negocio (repair_signature_mode): "canvas" exige la
+  // firma digital; "ticket" imprime línea de firma y leyenda de aceptación;
+  // "pin" confirma con la terminación telefónica (sin firma en el ticket).
+  signatureMode?: "canvas" | "ticket" | "pin"
   // Constancia de entrega: quién recogió el equipo (puede no ser el titular),
   // su identificación opcional, su firma (PNG base64) y quién entregó.
   deliveredTo?: string
@@ -196,23 +200,37 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
           </div>
         )}
 
-        {/* Firmas */}
-        <div className="grid grid-cols-2 gap-6 mt-14 mb-4 text-center text-[10px]">
-          <div className="border-t border-gray-400 pt-1">Recibió</div>
-          <div className="relative border-t border-gray-400 pt-1">
-            {data.signatureData && (
-              // El trazo del canvas es claro (#e4e4e7): brightness(0) lo imprime negro.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={data.signatureData}
-                alt="Firma del cliente"
-                style={{ filter: "brightness(0)" }}
-                className="pointer-events-none absolute bottom-full left-1/2 mb-0.5 h-14 w-auto max-w-[95%] -translate-x-1/2 object-contain"
-              />
-            )}
-            Cliente
-          </div>
-        </div>
+        {/* Firmas. En modo "ticket" —o siempre que falte la firma digital—
+            la línea invita a firmar en el comprobante impreso. */}
+        {(() => {
+          const signatureOnPaper = data.signatureMode === "ticket" || !data.signatureData
+          return (
+            <>
+              <div className="grid grid-cols-2 gap-6 mt-14 mb-1 text-center text-[10px]">
+                <div className="border-t border-gray-400 pt-1">Recibió</div>
+                <div className="relative border-t border-gray-400 pt-1">
+                  {data.signatureData && (
+                    // El trazo del canvas es claro (#e4e4e7): brightness(0) lo imprime negro.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={data.signatureData}
+                      alt="Firma del cliente"
+                      style={{ filter: "brightness(0)" }}
+                      className="pointer-events-none absolute bottom-full left-1/2 mb-0.5 h-14 w-auto max-w-[95%] -translate-x-1/2 object-contain"
+                    />
+                  )}
+                  {signatureOnPaper ? "Firma del cliente" : "Cliente"}
+                </div>
+              </div>
+              {signatureOnPaper && (
+                <p className="mb-4 text-center text-[9px] text-gray-500">
+                  Al firmar acepta las condiciones de servicio
+                </p>
+              )}
+              {!signatureOnPaper && <div className="mb-4" />}
+            </>
+          )
+        })()}
 
         {/* Condiciones */}
         <p className="text-[9px] text-gray-500 leading-snug text-justify mb-4">{CONDITIONS}</p>
