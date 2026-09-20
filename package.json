@@ -86,5 +86,9 @@
   },
   "engines": {
     "node": ">=22.18.0 <25"
+  },
+  "overrides": {
+    "mysql2": "3.24.4",
+    "deepmerge-ts": "^8.0.2"
   }
 }

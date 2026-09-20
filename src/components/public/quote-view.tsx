@@ -3,6 +3,7 @@ import { AlertCircle, BadgeCheck, TimerOff } from "lucide-react"
 import { repairFolio } from "@/lib/workshop-labels"
 import { formatDate, formatPrice } from "@/lib/utils"
 import type { PublicQuote } from "@/lib/public-quote"
+import { serviceLinesMatchLabor } from "@/lib/quote-services"
 import { QuoteApproval } from "@/components/public/quote-approval"
 import { QUOTE_VALIDITY_DAYS_DEFAULT, isQuoteExpiredAt } from "@/app/api/cotizacion/quote-config"
 
@@ -149,6 +150,22 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
   const hasQuote = laborCents !== null || parts.length > 0
   const issuedAt = order.events[0]?.createdAt ?? order.quoteApprovedAt ?? order.createdAt
 
+  // Desglose por servicio con el precio del EQUIPO de la orden (modelo
+  // exacto > tipo > base, resuelto en lib/public-quote). Reemplaza la fila
+  // única de mano de obra solo cuando explica EXACTAMENTE la cifra cotizada:
+  // si el staff ajustó el importe o algún servicio no tiene precio aplicable,
+  // el monto capturado gana y se conserva la fila agregada — el total es la
+  // cifra que el cliente autoriza (anti-TOCTOU del POST de decisión).
+  const serviceLines = order.serviceLines
+  const linesAreLabor = serviceLinesMatchLabor(serviceLines, laborCents)
+  // Sin presupuesto presentado aún (laborCents null): las líneas muestran el
+  // precio vigente del catálogo para este equipo; sin precio aplicable la
+  // línea avisa "Se cotiza al recibir" y no hay total que prometer.
+  const pendingServiceLines = laborCents === null ? serviceLines : []
+  // Cada línea lleva el equipo: el precio es específico de ESE dispositivo.
+  const deviceLabel = [order.brand, order.model].filter(Boolean).join(" ")
+  const lineLabel = (name: string) => (deviceLabel ? `${name} — ${deviceLabel}` : name)
+
   const statusChip = order.quoteApprovedAt
     ? { label: "Aprobada", className: "bg-emerald-100 text-emerald-800 border-emerald-300" }
     : order.status === "NOT_AUTHORIZED"
@@ -222,7 +239,7 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
           {/* Desglose */}
           <section>
             <SectionTitle>Desglose</SectionTitle>
-            {hasQuote ? (
+            {hasQuote || pendingServiceLines.length > 0 ? (
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-neutral-300 text-[10px] uppercase text-neutral-500">
@@ -233,14 +250,37 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
                   </tr>
                 </thead>
                 <tbody>
-                  {laborCents !== null && (
+                  {laborCents !== null && (linesAreLabor ? (
+                    serviceLines.map((line, idx) => (
+                      <tr key={`svc-${idx}`} className="align-top border-b border-neutral-100">
+                        <td className="py-1.5 pr-2 font-medium">{lineLabel(line.name)}</td>
+                        <td className="py-1.5 text-center">1</td>
+                        <td className="py-1.5 text-right whitespace-nowrap">{formatPrice((line.priceCents ?? 0) / 100)}</td>
+                        <td className="py-1.5 text-right whitespace-nowrap">{formatPrice((line.priceCents ?? 0) / 100)}</td>
+                      </tr>
+                    ))
+                  ) : (
                     <tr className="align-top border-b border-neutral-100">
-                      <td className="py-1.5 pr-2 font-medium">{service ?? "Servicio de reparación (mano de obra)"}</td>
+                      <td className="py-1.5 pr-2 font-medium">{service || order.serviceName || "Servicio de reparación (mano de obra)"}</td>
                       <td className="py-1.5 text-center">1</td>
                       <td className="py-1.5 text-right whitespace-nowrap">{formatPrice(laborCents / 100)}</td>
                       <td className="py-1.5 text-right whitespace-nowrap">{formatPrice(laborCents / 100)}</td>
                     </tr>
-                  )}
+                  ))}
+                  {pendingServiceLines.map((line, idx) => (
+                    <tr key={`pend-${idx}`} className="align-top border-b border-neutral-100">
+                      <td className="py-1.5 pr-2 font-medium">{lineLabel(line.name)}</td>
+                      <td className="py-1.5 text-center">1</td>
+                      {line.priceCents !== null ? (
+                        <>
+                          <td className="py-1.5 text-right whitespace-nowrap">{formatPrice(line.priceCents / 100)}</td>
+                          <td className="py-1.5 text-right whitespace-nowrap">{formatPrice(line.priceCents / 100)}</td>
+                        </>
+                      ) : (
+                        <td colSpan={2} className="py-1.5 text-right text-neutral-500 whitespace-nowrap">Se cotiza al recibir</td>
+                      )}
+                    </tr>
+                  ))}
                   {parts.map((part, idx) => (
                     <tr key={idx} className="align-top border-b border-neutral-100 last:border-0">
                       <td className="py-1.5 pr-2">Refacción: {part.description}</td>
@@ -250,14 +290,16 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-neutral-900">
-                    <td colSpan={3} className="pt-2 text-right text-base font-extrabold uppercase">Total</td>
-                    <td className="pt-2 text-right text-xl font-extrabold whitespace-nowrap text-violet-700">
-                      {formatPrice(totalCents / 100)}
-                    </td>
-                  </tr>
-                </tfoot>
+                {hasQuote && (
+                  <tfoot>
+                    <tr className="border-t-2 border-neutral-900">
+                      <td colSpan={3} className="pt-2 text-right text-base font-extrabold uppercase">Total</td>
+                      <td className="pt-2 text-right text-xl font-extrabold whitespace-nowrap text-violet-700">
+                        {formatPrice(totalCents / 100)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             ) : (
               <p className="text-neutral-600">El taller aún está preparando el desglose de esta cotización.</p>

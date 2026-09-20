@@ -1,18 +1,9 @@
 import type { Context, Telegraf } from "telegraf"
 import type { PrismaClient } from "@prisma/client"
+import type { WizardState } from "../lib/types"
 import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
 
-export interface WizardState {
-  step: "NAME" | "TYPE" | "BUSINESS" | "PHONE" | "GOAL"
-  data: {
-    name?: string
-    customerType?: "TECHNICIAN" | "STORE" | "NORMAL"
-    businessName?: string
-    phone?: string
-    monthlyPurchaseGoal?: number
-    telegramId?: string
-  }
-}
+export type { WizardState }
 
 /**
  * Deep-link de verificación: /start verify_<6 dígitos>. El código viaja en el

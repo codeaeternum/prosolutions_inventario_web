@@ -15,7 +15,10 @@ const MSG_UNAVAILABLE = "⚠️ No disponible temporalmente."
 export async function getBotAccount(prisma: PrismaClient, telegramId: string) {
   return prisma.user.findUnique({
     where: { telegramId },
-    select: { id: true, businessId: true, role: true, status: true },
+    // allowedModules/allowedBranchIds alimentan hasModule/hasBranchAccess
+    // (lib/access): el staff restringido por módulo o sucursal conserva la
+    // misma regla que en la web.
+    select: { id: true, businessId: true, role: true, status: true, name: true, allowedModules: true, allowedBranchIds: true },
   })
 }
 

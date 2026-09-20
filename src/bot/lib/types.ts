@@ -61,10 +61,40 @@ export interface WizardState {
     step: 'NAME' | 'TYPE' | 'BUSINESS' | 'PHONE' | 'GOAL'
     data: {
         name?: string
-        customerType?: string
+        customerType?: 'TECHNICIAN' | 'STORE' | 'NORMAL'
         businessName?: string
         phone?: string
+        monthlyPurchaseGoal?: number
+        telegramId?: string
     }
+}
+
+/**
+ * Wizard /orden — recepción de una orden de reparación por staff (captador).
+ * Espejo compacto de /admin/taller/recibir: nombre del cliente, teléfono,
+ * tipo de equipo, marca, modelo, falla y sucursal de recepción.
+ * BRANCH solo aparece cuando el negocio tiene más de una sucursal elegible.
+ */
+export interface OrdenSession {
+    step: 'NAME' | 'PHONE' | 'TYPE' | 'BRAND' | 'MODEL' | 'ISSUE' | 'BRANCH' | 'CONFIRM'
+    data: {
+        customerName?: string
+        customerPhone?: string
+        equipmentType?: string
+        brand?: string
+        model?: string
+        reportedIssue?: string
+        branchId?: string
+    }
+    /** Sucursales activas ∩ permisos del staff (índice → fila); con una sola
+     *  se preselecciona y el paso BRANCH se salta. */
+    branches?: { id: string; name: string }[]
+    /** Tipos de equipo servidos en el teclado del paso TYPE (índice → nombre). */
+    equipmentTypes?: string[]
+    /** Marcas sugeridas del catálogo DeviceModel como chips (índice → nombre). */
+    brandChips?: string[]
+    /** Llave de idempotencia fija del wizard: doble confirmación = misma orden. */
+    operationKey?: string
 }
 
 // ========== SESSION STORES ==========
@@ -78,6 +108,7 @@ export interface SessionStores {
     cart: Record<string, CartSession>
     qr: Record<string, QRSession>
     settings: Record<string, { key: string; businessId: string }>
+    orden: Record<string, OrdenSession>
 }
 
 // ========== SHARED CONTEXT ==========

@@ -24,7 +24,7 @@ export function registerHelp(bot: Telegraf) {
 ¿Necesitas algo más? Responde con tu búsqueda.`
 
     if (userIsAdmin) {
-      msg += `\n\n---\n👑 *Comandos de administración*\n/admin - Ver todos los comandos admin\n/vender <producto> - Venta rápida\n/carrito - Ver carrito · /agregarc · /confirmarc\n/qr <producto> - Código QR\n/pendientes - Reservas pendientes\n/agregar - Nuevo producto\n\n/cancelar - Sale de cualquier proceso`
+      msg += `\n\n---\n👑 *Comandos de administración*\n/admin - Ver todos los comandos admin\n/orden - Nueva orden de reparación\n/vender <producto> - Venta rápida\n/carrito - Ver carrito · /agregarc · /confirmarc\n/qr <producto> - Código QR\n/pendientes - Reservas pendientes\n/agregar - Nuevo producto\n\n/cancelar - Sale de cualquier proceso`
     }
 
     return ctx.reply(msg, { parse_mode: "Markdown" })
@@ -50,7 +50,7 @@ export function registerHelp(bot: Telegraf) {
 ¿Necesitas algo más? Responde con tu búsqueda.`
 
     if (userIsAdmin) {
-      msg += `\n\n---\n👑 *Comandos de administración*\n/admin - Ver todos los comandos admin\n/vender <producto> - Venta rápida\n/carrito - Ver carrito · /agregarc · /confirmarc\n/qr <producto> - Código QR\n/pendientes - Reservas pendientes\n/agregar - Nuevo producto\n\n/cancelar - Sale de cualquier proceso`
+      msg += `\n\n---\n👑 *Comandos de administración*\n/admin - Ver todos los comandos admin\n/orden - Nueva orden de reparación\n/vender <producto> - Venta rápida\n/carrito - Ver carrito · /agregarc · /confirmarc\n/qr <producto> - Código QR\n/pendientes - Reservas pendientes\n/agregar - Nuevo producto\n\n/cancelar - Sale de cualquier proceso`
     }
 
     return ctx.reply(msg, { parse_mode: "Markdown" })

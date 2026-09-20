@@ -17,6 +17,7 @@ import { registerReports } from './commands/reports'
 import { registerCatalog } from './commands/catalog'
 import { registerProducts } from './commands/products'
 import { registerAlerts } from './commands/alerts'
+import { registerOrden } from './commands/orden'
 import type { SessionStores, BotContext } from './lib/types'
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
@@ -64,6 +65,7 @@ const sessions: SessionStores = {
     cart: {},
     qr: {},
     settings: {},
+    orden: {},
 }
 
 // Shared context for all modules
@@ -72,22 +74,28 @@ const ctx: BotContext = { bot, prisma, sessions, isDev, BOT_TOKEN }
 // ======= REGISTER ALL MODULES =======
 // ORDER MATTERS: settings text handler must be before the main text handler
 
-registerStart(bot, prisma, sessions.registration as any)
+registerStart(bot, prisma, sessions.registration)
 registerHelp(bot)
 registerMiid(bot)
 registerCancelar(bot, {
-    registration: sessions.registration as any,
-    adminProduct: sessions.adminProduct as any,
-    reservation: sessions.reservation as any,
+    registration: sessions.registration,
+    adminProduct: sessions.adminProduct,
+    reservation: sessions.reservation,
     deleteProduct: sessions.deleteProduct,
     sale: sessions.sale,
     cart: sessions.cart,
     qr: sessions.qr,
     settings: sessions.settings,
+    orden: sessions.orden,
 })
 
 registerSettings(ctx)
 registerUsers(ctx)
+// /orden: su handler de texto debe registrarse ANTES de los hears de sales.ts
+// (el de "SI" no cede con next()) y del handler de texto principal de
+// products.ts, que es terminal — un listener registrado después jamás vería
+// las respuestas del wizard.
+registerOrden(ctx)
 registerSales(ctx)
 registerCart(ctx)
 registerReports(ctx)
@@ -122,6 +130,7 @@ bot.launch(async () => {
             { command: 'ofertas', description: '🔥 Destacados' },
             { command: 'misreservas', description: '📋 Mis reservas pendientes' },
             { command: 'historial', description: '📜 Historial compras' },
+            { command: 'orden', description: '🔧 Nueva orden de reparación' },
             { command: 'perfil', description: '👤 Mi perfil' },
             { command: 'cancelar', description: '❌ Cancelar' },
             { command: 'ayuda', description: '❓ Ayuda' }

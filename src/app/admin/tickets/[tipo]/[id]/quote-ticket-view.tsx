@@ -3,6 +3,7 @@
 import { ArrowLeft, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatDate, formatPrice } from "@/lib/utils"
+import { serviceLinesMatchLabor, type QuoteServiceLine } from "@/lib/quote-services"
 
 export interface QuoteTicketData {
   folio: string
@@ -16,6 +17,14 @@ export interface QuoteTicketData {
   diagnosis?: string
   // Mano de obra / servicio en pesos (approvedQuoteCents ?? quoteCents).
   serviceAmount?: number
+  // Desglose por servicio con el precio efectivo del equipo de la orden
+  // (resuelto al cargarla — ver loadQuoteServiceLines en lib/public-quote).
+  // Sustituye la fila única de mano de obra solo cuando su suma la explica
+  // exactamente; con serviceAmount ausente se imprimen como líneas pendientes
+  // (priceCents null = "se cotiza al recibir").
+  serviceLines?: QuoteServiceLine[]
+  // Etiqueta del equipo en cada línea de servicio ("Apple iPhone 12").
+  deviceLabel?: string
   // Solo refacciones AUTORIZADAS (status APPROVED), importes en pesos.
   parts: { description: string; qty: number; unitPrice: number; subtotal: number }[]
   elaboratedBy?: string
@@ -70,7 +79,17 @@ function Row({ label, value }: { label: string; value?: string }) {
 export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
   const { service, issue } = parseIssue(data.issue)
   const partsTotal = data.parts.reduce((sum, part) => sum + part.subtotal, 0)
-  const hasBreakdown = data.serviceAmount !== undefined || data.parts.length > 0
+  // Mano de obra en centavos para compararla con las líneas: serviceAmount
+  // llega en pesos (laborCents / 100 al armar data) — el round-trip es exacto.
+  const laborCents = data.serviceAmount !== undefined ? Math.round(data.serviceAmount * 100) : null
+  const serviceLines = data.serviceLines ?? []
+  // Las líneas por servicio reemplazan la fila agregada solo si explican
+  // EXACTAMENTE la cifra cotizada (mismo criterio que la cotización pública).
+  const linesAreLabor = serviceLinesMatchLabor(serviceLines, laborCents)
+  const pendingServiceLines = laborCents === null ? serviceLines : []
+  const lineLabel = (name: string) => (data.deviceLabel ? `${name} — ${data.deviceLabel}` : name)
+  const hasBreakdown = data.serviceAmount !== undefined || data.parts.length > 0 || pendingServiceLines.length > 0
+  const hasNumericTotal = data.serviceAmount !== undefined || data.parts.length > 0
   const total = (data.serviceAmount ?? 0) + partsTotal
 
   // Mismo patrón que el ticket/hoja: en pestaña abierta por script
@@ -160,14 +179,37 @@ export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
                 </tr>
               </thead>
               <tbody>
-                {data.serviceAmount !== undefined && (
+                {data.serviceAmount !== undefined && (linesAreLabor ? (
+                  serviceLines.map((line, idx) => (
+                    <tr key={`svc-${idx}`} className="align-top border-b border-gray-100">
+                      <td className="py-1 pr-1 font-medium">{lineLabel(line.name)}</td>
+                      <td className="py-1 text-center">1</td>
+                      <td className="py-1 text-right whitespace-nowrap">{formatPrice((line.priceCents ?? 0) / 100)}</td>
+                      <td className="py-1 text-right whitespace-nowrap">{formatPrice((line.priceCents ?? 0) / 100)}</td>
+                    </tr>
+                  ))
+                ) : (
                   <tr className="align-top border-b border-gray-100">
                     <td className="py-1 pr-1 font-medium">{service ?? "Servicio de reparación (mano de obra)"}</td>
                     <td className="py-1 text-center">1</td>
                     <td className="py-1 text-right whitespace-nowrap">{formatPrice(data.serviceAmount)}</td>
                     <td className="py-1 text-right whitespace-nowrap">{formatPrice(data.serviceAmount)}</td>
                   </tr>
-                )}
+                ))}
+                {pendingServiceLines.map((line, idx) => (
+                  <tr key={`pend-${idx}`} className="align-top border-b border-gray-100">
+                    <td className="py-1 pr-1 font-medium">{lineLabel(line.name)}</td>
+                    <td className="py-1 text-center">1</td>
+                    {line.priceCents !== null ? (
+                      <>
+                        <td className="py-1 text-right whitespace-nowrap">{formatPrice(line.priceCents / 100)}</td>
+                        <td className="py-1 text-right whitespace-nowrap">{formatPrice(line.priceCents / 100)}</td>
+                      </>
+                    ) : (
+                      <td colSpan={2} className="py-1 text-right text-gray-500 whitespace-nowrap">Se cotiza al recibir</td>
+                    )}
+                  </tr>
+                ))}
                 {data.parts.map((part, idx) => (
                   <tr key={idx} className="align-top border-b border-gray-100 last:border-0">
                     <td className="py-1 pr-1">Refacción: {part.description}</td>
@@ -177,12 +219,14 @@ export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-black text-sm">
-                  <td colSpan={3} className="pt-1.5 text-right font-bold uppercase">Total</td>
-                  <td className="pt-1.5 text-right font-bold whitespace-nowrap">{formatPrice(total)}</td>
-                </tr>
-              </tfoot>
+              {hasNumericTotal && (
+                <tfoot>
+                  <tr className="border-t-2 border-black text-sm">
+                    <td colSpan={3} className="pt-1.5 text-right font-bold uppercase">Total</td>
+                    <td className="pt-1.5 text-right font-bold whitespace-nowrap">{formatPrice(total)}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </section>
         )}

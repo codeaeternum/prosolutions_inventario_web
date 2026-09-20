@@ -70,6 +70,15 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
 
 Las ventas del bot crean **movimientos de inventario** en la misma tabla que usa la web; por eso en “Movimientos” de la web aparecen también las ventas hechas por Telegram.
 
+### 2.6b Orden de reparación desde el bot (staff: ADMIN/EMPLOYEE con módulo "taller")
+
+- **Comando**: `/orden`. Es el equivalente a `/admin/taller/recibir` de la web.
+- **Guard**: el usuario debe existir, estar `APPROVED`, tener rol `ADMIN`/`EMPLOYEE` y el módulo `taller` permitido (`hasModule`, misma regla que `requireModule("taller")` en la API).
+- **Pasos** (sesión `sessions.orden[telegramId]`): nombre del cliente → teléfono (7–15 dígitos; 10 dígitos se asumen MX con `normalizePhone`) → tipo de equipo (teclado con los tipos configurados en `workshop_equipment_types`, tope 8 + "Otro"; también acepta texto libre) → marca (texto o chips del catálogo `DeviceModel`; omisible) → modelo (omisible) → falla reportada → sucursal de recepción (solo si hay más de una elegible: activas ∩ `allowedBranchIds`) → confirmación con botones ✅/❌.
+- **Creación**: llama `createRepair` (dominio compartido con la web) con la misma forma de datos del intake (`customerName`, `customerPhone`, `equipmentType`, `brand`, `model`, `reportedIssue`, `intakeBranchId`). La llave de idempotencia `bot-orden-<telegramId>-<ts>` se fija al abrir el wizard: doble "Crear" devuelve la misma orden.
+- **Respuesta**: folio impreso (`order_prefix`/`order_folio_digits` del negocio) + link de rastreo `/<slug>/order-status?folio=…&t=…` (o `/seguimiento` sin slug).
+- **Delegación**: si `resolveRepairPartner` resuelve un taller asociado apto (SystemSettings `repair_partner_business_id` + negocio activo + sucursal + staff), la confirmación agrega el botón "🔧 Enviar a taller asociado" → `delegateRepairToPartner` crea la orden espejo en el tenant reparador y marca la local como `EXTERNAL_LAB` (idempotente: reintentos reportan la misma espejo).
+
 ### 2.7 Panel de administración (solo ADMIN)
 
 - **Comando**: `/admin`. Muestra lista de comandos: agregar producto, stock, eliminar, vender, carrito, makeadmin/removeadmin, pendientes, etc.
@@ -108,6 +117,7 @@ El bot guarda estado en objetos en memoria (no en BD):
 - **reservationSessions**: reserva en curso (producto, cantidad, paso: cantidad / método de pago / comprobante).
 - **cartSessions**: carrito de compras (ítems y opcionalmente `pendingAdd` para la cantidad).
 - **saleSessions**, **deleteProductSessions**, **qrSessions**, **settingsSessions**: flujos de venta rápida, eliminar producto, generar QR y ajustes.
+- **ordenSessions** (`sessions.orden`): wizard de /orden (recepción de reparación); lo limpia /cancelar como el resto.
 
 Si el proceso del bot se reinicia, estas sesiones se pierden; el usuario tendría que volver a empezar el flujo.
 

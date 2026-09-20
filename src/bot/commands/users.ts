@@ -16,7 +16,10 @@ export function registerUsers({ bot, prisma, sessions }: BotContext) {
 /stock - Actualizar stock (ej: /stock 123 50)
 /eliminar \<producto\> - Eliminar producto
 
-🛒 *Ventas en Local:*
+� *Taller:*
+/orden - Nueva orden de reparación (wizard)
+
+�🛒 *Ventas en Local:*
 /vender \<producto\> - Venta rápida (1 producto)
 /carrito - Ver carrito actual
 /agregarc \<producto\> - Agregar al carrito

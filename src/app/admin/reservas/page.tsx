@@ -41,12 +41,16 @@ export default async function AdminReservationsPage({
     prisma.reservation.count({ where: { businessId } }),
   ])
 
+  // Activas primero (lo que exige acción del staff), terminales al fondo.
   const statusPriority: Record<string, number> = {
     PENDING_PAYMENT: 1,
     PENDING: 2,
-    PAID: 3,
-    COMPLETED: 4,
-    CANCELLED: 5,
+    DEPOSIT_VERIFIED: 3,
+    APPROVED: 4,
+    COMPLETED: 5,
+    CANCELLED: 6,
+    REJECTED: 7,
+    EXPIRED: 8,
   }
 
   const reservations = [...reservationsRaw].sort((a, b) => {

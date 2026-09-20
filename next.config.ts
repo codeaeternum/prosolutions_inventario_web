@@ -2,6 +2,23 @@ import type { NextConfig } from "next"
 const nextConfig: NextConfig = {
   output: "standalone",
   turbopack: {},
+  // Los fs dinámicos (process.cwd() + realpath) hacen que nft arrastre el repo
+  // entero al standalone — incluidos .env con secretos, que terminarían
+  // horneados en la imagen Docker. Los datos viven en volúmenes de runtime;
+  // nada de esto es asset del bundle.
+  outputFileTracingExcludes: {
+    "*": [
+      "./.env*",
+      "./**/.env*",
+      "./data/**/*",
+      "./storage/**/*",
+      "./public/uploads/**/*",
+      "./**/*.md",
+      "./Dockerfile*",
+      "./docker-compose*",
+      "./deploy-*.ps1",
+    ],
+  },
   images: {
     remotePatterns: [
       {

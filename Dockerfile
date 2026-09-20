@@ -22,6 +22,11 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Seguro extra: Next copia .env/.env.production al standalone para `next start`
+# (build/index.js writeStandaloneDirectory). .dockerignore ya los saca del
+# contexto, pero si eso cambia jamás deben quedar en la imagen publicada —
+# los valores reales siempre llegan por el entorno del contenedor.
+RUN rm -f ./.env ./.env.production ./.env.*
 # Fail-fast schema check before starting the server (no Prisma CLI in this image).
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/docker-preflight.mjs ./scripts/docker-preflight.mjs
 RUN mkdir -p ./public/uploads ./storage/payment-proofs ./storage/repair-evidence ./.next/cache && chown -R nextjs:nodejs ./public/uploads ./storage ./.next/cache

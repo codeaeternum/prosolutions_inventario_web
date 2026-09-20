@@ -7,6 +7,7 @@ import prisma from "@/lib/prisma"
 import { isValidSlug } from "@/lib/public-slug"
 import { formatPrice } from "@/lib/utils"
 import { formatFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { loadQuoteServiceLines } from "@/lib/public-quote"
 import { approvedPartsTotal, orderBalanceCents, orderHeldCents, orderTotalCents } from "@/lib/workshop-money"
 import { decryptAccessValue } from "@/lib/device-secret"
 import { TicketPrintView } from "./ticket-print-view"
@@ -355,6 +356,10 @@ export default async function TicketPage({
           warrantyCount: order.warrantyCount,
         }
       } else if (tipo === "cotizacion") {
+        // Desglose por servicio con el precio del equipo de la orden — mismo
+        // criterio que la cotización pública (catálogo vigente del negocio;
+        // un fallo del lookup deja la fila agregada de siempre).
+        const serviceLines = await loadQuoteServiceLines(order).catch(() => [])
         quoteData = {
           folio,
           issuedAt: (order.quoteApprovedAt ?? order.createdAt).toISOString(),
@@ -371,6 +376,8 @@ export default async function TicketPage({
           issue: order.reportedIssue,
           diagnosis: order.diagnosis ?? undefined,
           serviceAmount: laborCents != null ? laborCents / 100 : undefined,
+          serviceLines,
+          deviceLabel: [order.brand, order.model].filter(Boolean).join(" ") || undefined,
           // Solo refacciones autorizadas: las solicitadas/rechazadas no se
           // cotizan al cliente.
           parts: order.parts

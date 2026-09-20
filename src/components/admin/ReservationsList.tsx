@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useState } from 'react'
-import Image from 'next/image'
 import QRCode from 'qrcode'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
@@ -17,13 +16,15 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { useCurrency } from '@/components/currency-provider'
 import { User, QrCode as QrCodeIcon, Phone, Send } from 'lucide-react'
+import type { Prisma } from '@prisma/client'
+
+type ReservationRow = Prisma.ReservationGetPayload<{ include: { user: true; product: true } }>
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
     PENDING: { label: 'Pendiente', variant: 'outline' },
     PENDING_PAYMENT: { label: 'Esperando pago', variant: 'warning' },
-    PAID: { label: 'Pagado', variant: 'default' },
     DEPOSIT_VERIFIED: { label: 'Verificado', variant: 'default' },
     APPROVED: { label: 'Lista', variant: 'default' },
     REJECTED: { label: 'Rechazada', variant: 'destructive' },
@@ -33,7 +34,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
     SHIPPED: { label: 'Enviado', variant: 'secondary' },
 }
 
-export default function ReservationsList({ reservations }: { reservations: any[] }) {
+export default function ReservationsList({ reservations }: { reservations: ReservationRow[] }) {
     const router = useRouter()
     const { formatPrice } = useCurrency()
 
@@ -57,8 +58,8 @@ export default function ReservationsList({ reservations }: { reservations: any[]
     const handleAction = async (id: string, action: 'pay' | 'deliver' | 'cancel') => {
         setIsUpdating(true)
         try {
-            const payload: any = { action }
-            if (action === 'deliver' && selectedRes && selectedRes.paymentMethod !== 'CREDIT' && selectedRes.status !== 'PAID') {
+            const payload: { action: string; finalPaymentMethod?: string } = { action }
+            if (action === 'deliver' && selectedRes && selectedRes.paymentMethod !== 'CREDIT' && selectedRes.status !== 'COMPLETED') {
                 payload.finalPaymentMethod = finalPaymentMethod;
             }
 
@@ -77,7 +78,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                 const errData = await res.json().catch(() => null)
                 toast.error('Error al actualizar: ' + (errData?.error || 'Respuesta no válida'))
             }
-        } catch (e) {
+        } catch {
             toast.error('Error de conexión. Revisa tu red e intenta de nuevo.')
         } finally {
             setIsUpdating(false)
@@ -116,7 +117,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                                 try {
                                                     const url = await QRCode.toDataURL(r.user.qrCode || r.user.telegramId || 'N/A')
                                                     setSelectedQR(url)
-                                                } catch (e) {
+                                                } catch {
                                                     toast.error('Error generando QR Cliente')
                                                 }
                                             }}
@@ -131,7 +132,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                                     const qrData = `${window.location.origin}/verificar/${r.qrCode || r.id}`
                                                     const url = await QRCode.toDataURL(qrData)
                                                     setSelectedQR(url)
-                                                } catch (e) {
+                                                } catch {
                                                     toast.error('Error generando QR Reserva')
                                                 }
                                             }}
@@ -191,7 +192,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                                     )}
 
                                     {/* PENDING (Reserva normal) o PAID */}
-                                    {(r.status === 'PENDING' || r.status === 'PAID') && (
+                                    {r.status === 'PENDING' && (
                                         <button
                                             onClick={() => setActionDialog({ id: r.id, action: 'deliver' })}
                                             disabled={isUpdating}
@@ -263,7 +264,7 @@ export default function ReservationsList({ reservations }: { reservations: any[]
                              'Esta acción cancelará la reserva y devolverá el stock al inventario.'}
                         </AlertDialogDescription>
 
-                        {actionDialog?.action === 'deliver' && selectedRes && selectedRes.paymentMethod !== 'CREDIT' && selectedRes.status !== 'PAID' && (
+                        {actionDialog?.action === 'deliver' && selectedRes && selectedRes.paymentMethod !== 'CREDIT' && selectedRes.status !== 'COMPLETED' && (
                             <div className="mt-4 space-y-2">
                                 <label className="text-sm font-medium text-foreground">Método de pago al entregar</label>
                                 <select 

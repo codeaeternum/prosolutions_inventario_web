@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -16,9 +17,12 @@ import {
     Check,
     User,
     AlertTriangle,
-    RefreshCw
+    RefreshCw,
+    Wrench,
+    Store,
+    Clock
 } from "lucide-react"
-import { useNotifications, Notification, NotificationType } from "@/hooks/use-notifications"
+import { useNotifications, notificationHref, Notification, NotificationType } from "@/hooks/use-notifications"
 import { cn } from "@/lib/utils"
 
 function getNotificationIcon(type: NotificationType) {
@@ -33,6 +37,15 @@ function getNotificationIcon(type: NotificationType) {
             return <User className="h-5 w-5 text-purple-500" />
         case "low_stock":
             return <AlertTriangle className="h-5 w-5 text-red-500" />
+        case "delegation_update":
+            return <Wrench className="h-5 w-5 text-indigo-500" />
+        case "repair_ready":
+            return <CheckCheck className="h-5 w-5 text-green-500" />
+        case "marketplace_request":
+            return <Store className="h-5 w-5 text-amber-500" />
+        case "reservation_expired":
+        case "reservation_expiring_soon":
+            return <Clock className="h-5 w-5 text-orange-500" />
         default:
             return <Bell className="h-5 w-5" />
     }
@@ -50,6 +63,16 @@ function getNotificationTypeLabel(type: NotificationType) {
             return "Nuevo Usuario"
         case "low_stock":
             return "Stock Bajo"
+        case "delegation_update":
+            return "Taller Asociado"
+        case "repair_ready":
+            return "Reparación Lista"
+        case "marketplace_request":
+            return "Mercado"
+        case "reservation_expired":
+            return "Reserva Expirada"
+        case "reservation_expiring_soon":
+            return "Reserva por Expirar"
         default:
             return "Notificación"
     }
@@ -131,13 +154,18 @@ function NotificationCard({
     notification: Notification
     onMarkAsRead: (id: string) => void
 }) {
+    const router = useRouter()
+    const href = notificationHref(notification)
     return (
         <Card
             className={cn(
                 "transition-all cursor-pointer hover:shadow-md",
                 !notification.read && "border-l-4 border-l-blue-500 bg-blue-50/50 dark:bg-blue-950/20"
             )}
-            onClick={() => onMarkAsRead(notification.id)}
+            onClick={() => {
+                onMarkAsRead(notification.id)
+                if (href) router.push(href)
+            }}
         >
             <CardContent className="p-4">
                 <div className="flex items-start gap-4">
@@ -197,6 +225,7 @@ export default function NotificacionesPage() {
         { value: "deposit_received", label: "Depósitos" },
         { value: "user_registered", label: "Usuarios" },
         { value: "low_stock", label: "Stock Bajo" },
+        { value: "delegation_update", label: "Taller Asociado" },
     ]
 
     return (

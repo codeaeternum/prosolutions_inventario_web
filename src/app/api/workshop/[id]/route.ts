@@ -6,6 +6,8 @@ import { updateRepair } from "@/lib/domain/workshop"
 import { REPAIR_PARTNER_KEY } from "@/lib/domain/delegation"
 import { decryptAccessValue } from "@/lib/device-secret"
 import { businessFailure } from "@/lib/domain/http"
+import { loadQuoteServiceLines } from "@/lib/public-quote"
+import { suggestedServiceLinesTotal } from "@/lib/quote-services"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
@@ -71,7 +73,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // (delegatedToBusinessId/delegatedOrderId/delegatedAt + delegatedToBusiness)
     // ya viajan en order.
     const partnerConfigured = Boolean((await getBusinessSetting(order.businessId, REPAIR_PARTNER_KEY).catch(() => null))?.trim())
-    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
+    // Precio sugerido por catálogo para el equipo de la orden (suma de los
+    // servicios elegidos con precio por modelo/tipo): la acción QUOTE lo
+    // prellena cuando aún no hay importe capturado. null si algún servicio
+    // no resuelve — "se cotiza al recibir" — o el lookup falla.
+    const suggestedQuoteCents = suggestedServiceLinesTotal(await loadQuoteServiceLines(order).catch(() => []))
+    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {

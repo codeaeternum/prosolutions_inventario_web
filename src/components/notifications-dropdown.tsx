@@ -1,8 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { Bell, Check, CheckCheck, Package, ShoppingCart, User, AlertTriangle, X } from "lucide-react"
-import { useNotifications, Notification, NotificationType } from "@/hooks/use-notifications"
+import { useRouter } from "next/navigation"
+import { Bell, Check, CheckCheck, Package, ShoppingCart, User, AlertTriangle, X, Wrench, Store, Clock } from "lucide-react"
+import { useNotifications, notificationHref, Notification, NotificationType } from "@/hooks/use-notifications"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -18,6 +19,15 @@ function getNotificationIcon(type: NotificationType) {
       return <User className="h-4 w-4 text-purple-500" />
     case "low_stock":
       return <AlertTriangle className="h-4 w-4 text-red-500" />
+    case "delegation_update":
+      return <Wrench className="h-4 w-4 text-indigo-500" />
+    case "repair_ready":
+      return <CheckCheck className="h-4 w-4 text-green-500" />
+    case "marketplace_request":
+      return <Store className="h-4 w-4 text-amber-500" />
+    case "reservation_expired":
+    case "reservation_expiring_soon":
+      return <Clock className="h-4 w-4 text-orange-500" />
     default:
       return <Bell className="h-4 w-4" />
   }
@@ -39,10 +49,10 @@ function formatTime(timestamp: string) {
 
 function NotificationItem({
   notification,
-  onMarkAsRead,
+  onOpen,
 }: {
   notification: Notification
-  onMarkAsRead: (id: string) => void
+  onOpen: (notification: Notification) => void
 }) {
   return (
     <div
@@ -50,7 +60,7 @@ function NotificationItem({
         "flex items-start gap-3 p-3 border-b last:border-0 hover:bg-muted/50 transition-colors cursor-pointer",
         !notification.read && "bg-blue-50 dark:bg-blue-950/20"
       )}
-      onClick={() => onMarkAsRead(notification.id)}
+      onClick={() => onOpen(notification)}
     >
       <div className="flex-shrink-0 mt-0.5">
         {getNotificationIcon(notification.type)}
@@ -75,6 +85,7 @@ function NotificationItem({
 
 export function NotificationsDropdown() {
   const [isOpen, setIsOpen] = useState(false)
+  const router = useRouter()
   const {
     notifications,
     isConnected,
@@ -88,6 +99,16 @@ export function NotificationsDropdown() {
       console.log("Nueva notificación:", notification)
     },
   })
+
+  // Click = marcar leída + navegar al módulo relacionado cuando aplica.
+  const openNotification = (notification: Notification) => {
+    markAsRead(notification.id)
+    const href = notificationHref(notification)
+    if (href) {
+      setIsOpen(false)
+      router.push(href)
+    }
+  }
 
   return (
     <div className="relative">
@@ -163,7 +184,7 @@ export function NotificationsDropdown() {
                   <NotificationItem
                     key={notification.id}
                     notification={notification}
-                    onMarkAsRead={markAsRead}
+                    onOpen={openNotification}
                   />
                 ))
               )}

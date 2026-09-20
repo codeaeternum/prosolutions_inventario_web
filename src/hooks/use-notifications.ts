@@ -35,6 +35,28 @@ interface UseNotificationsOptions {
 const STORAGE_KEY = "prosolutions_notifications"
 const NOTIFICATION_SOUND = "/sounds/notification.mp3"
 
+/** Destino al hacer clic en una notificación (null = solo marca leída). */
+export function notificationHref(notification: Notification): string | null {
+  const orderId = typeof notification.data?.orderId === "string" ? notification.data.orderId : null
+  switch (notification.type) {
+    case "delegation_update":
+    case "repair_ready":
+      return orderId ? `/admin/taller?orden=${orderId}` : "/admin/taller"
+    case "low_stock":
+      return "/admin/inventario"
+    case "new_reservation":
+    case "reservation_updated":
+    case "reservation_expired":
+    case "reservation_expiring_soon":
+    case "deposit_received":
+      return "/admin/reservas"
+    case "marketplace_request":
+      return "/admin/mercado"
+    default:
+      return null
+  }
+}
+
 function loadPersistedNotifications(): Notification[] {
   if (typeof window === "undefined") return []
   try {
@@ -72,23 +94,25 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   const { onNotification, enabled = true, playSound = true, persist = true } = options
   // Initialize empty to avoid hydration mismatch
   const [notifications, setNotifications] = useState<Notification[]>([])
-  const [isConnected, setIsConnected] = useState(false)
+  // rawConnected refleja el socket; isConnected expuesto también respeta `enabled`.
+  const [rawConnected, setRawConnected] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  // Bump de generación = reconectar desde cero (reconnect público).
+  const [generation, setGeneration] = useState(0)
 
-  // Load persisted data on mount
+  // Load persisted data on mount. Va en microtask: cargarlo síncrono en el
+  // effect dispararía renders en cascada (react-hooks/set-state-in-effect) y
+  // en useState() inicial rompería la hidratación.
   useEffect(() => {
-    if (persist) {
+    if (!persist) return
+    queueMicrotask(() => {
       const persisted = loadPersistedNotifications()
       setNotifications(persisted)
       setUnreadCount(persisted.filter(n => !n.read).length)
-    }
+    })
   }, [persist])
   const playSoundRef = useRef(playSound)
   const persistRef = useRef(persist)
-  const eventSourceRef = useRef<EventSource | null>(null)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const reconnectAttemptsRef = useRef(0)
-  const maxReconnectAttempts = 5
   const onNotificationRef = useRef(onNotification)
 
   // Actualizar ref cuando cambia onNotification
@@ -96,104 +120,106 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     onNotificationRef.current = onNotification
   }, [onNotification])
 
-  const connect = useCallback(() => {
-    // Evitar reconexiones excesivas
-    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-      console.log("SSE: Máximo de intentos de reconexión alcanzado")
-      return
-    }
+  // El ciclo de vida del EventSource vive completo dentro del effect: los
+  // setState solo ocurren en callbacks de eventos (onopen/onmessage/onerror),
+  // que es el patrón correcto para suscribirse a un sistema externo.
+  useEffect(() => {
+    if (!enabled) return
 
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close()
-    }
+    const maxReconnectAttempts = 5
+    let attempts = 0
+    let eventSource: EventSource | null = null
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
 
-    const eventSource = new EventSource("/api/notifications/stream")
-    eventSourceRef.current = eventSource
+    const connect = () => {
+      // Evitar reconexiones excesivas
+      if (attempts >= maxReconnectAttempts) {
+        console.log("SSE: Máximo de intentos de reconexión alcanzado")
+        return
+      }
 
-    eventSource.onopen = () => {
-      setIsConnected(true)
-      reconnectAttemptsRef.current = 0 // Reset intentos al conectar
-      console.log("SSE: Conectado a notificaciones")
-    }
+      eventSource?.close()
+      eventSource = new EventSource("/api/notifications/stream")
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
+      eventSource.onopen = () => {
+        attempts = 0 // Reset intentos al conectar
+        setRawConnected(true)
+        console.log("SSE: Conectado a notificaciones")
+      }
 
-        // Si recibimos error de autenticación, no reconectar
-        if (data.type === "error" && data.code === "UNAUTHORIZED") {
-          console.log("SSE: No autorizado, desconectando")
-          eventSource.close()
-          setIsConnected(false)
-          return
-        }
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
 
-        if (data.type === "connected") {
-          setIsConnected(true)
-          return
-        }
-
-        const notification: Notification = {
-          id: crypto.randomUUID(),
-          type: data.type,
-          title: data.title || "Notificación",
-          message: data.message,
-          data: data.data,
-          timestamp: data.timestamp,
-          read: false,
-        }
-
-        setNotifications((prev) => {
-          const updated = [notification, ...prev]
-          if (persistRef.current) {
-            persistNotifications(updated)
+          // Si recibimos error de autenticación, no reconectar
+          if (data.type === "error" && data.code === "UNAUTHORIZED") {
+            console.log("SSE: No autorizado, desconectando")
+            attempts = maxReconnectAttempts
+            eventSource?.close()
+            setRawConnected(false)
+            return
           }
-          return updated
-        })
-        setUnreadCount((prev) => prev + 1)
 
-        // Play sound for new notifications
-        if (playSoundRef.current) {
-          playNotificationSound()
+          if (data.type === "connected") {
+            setRawConnected(true)
+            return
+          }
+
+          const notification: Notification = {
+            id: crypto.randomUUID(),
+            type: data.type,
+            title: data.title || "Notificación",
+            message: data.message,
+            data: data.data,
+            timestamp: data.timestamp,
+            read: false,
+          }
+
+          setNotifications((prev) => {
+            const updated = [notification, ...prev]
+            if (persistRef.current) {
+              persistNotifications(updated)
+            }
+            return updated
+          })
+          setUnreadCount((prev) => prev + 1)
+
+          // Play sound for new notifications
+          if (playSoundRef.current) {
+            playNotificationSound()
+          }
+
+          onNotificationRef.current?.(notification)
+        } catch (error) {
+          console.error("SSE: Error parsing message", error)
         }
+      }
 
-        onNotificationRef.current?.(notification)
-      } catch (error) {
-        console.error("SSE: Error parsing message", error)
+      eventSource.onerror = () => {
+        setRawConnected(false)
+        eventSource?.close()
+        attempts += 1
+
+        // Reconectar con backoff exponencial
+        if (attempts < maxReconnectAttempts) {
+          const delay = Math.min(5000 * Math.pow(2, attempts - 1), 30000)
+          console.log(`SSE: Reconectando en ${delay / 1000}s (intento ${attempts}/${maxReconnectAttempts})`)
+
+          if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout)
+          }
+          reconnectTimeout = setTimeout(connect, delay)
+        }
       }
     }
 
-    eventSource.onerror = () => {
-      setIsConnected(false)
-      eventSource.close()
-      reconnectAttemptsRef.current += 1
+    connect()
 
-      // Reconectar con backoff exponencial
-      if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-        const delay = Math.min(5000 * Math.pow(2, reconnectAttemptsRef.current - 1), 30000)
-        console.log(`SSE: Reconectando en ${delay / 1000}s (intento ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`)
-
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current)
-        }
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect()
-        }, delay)
-      }
+    return () => {
+      eventSource?.close()
+      if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
-  }, [])
-
-  const disconnect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close()
-      eventSourceRef.current = null
-    }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current)
-    }
-    reconnectAttemptsRef.current = 0
-    setIsConnected(false)
-  }, [])
+  }, [enabled, generation])
 
   const markAsRead = useCallback((notificationId: string) => {
     setNotifications((prev) => {
@@ -227,31 +253,17 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     }
   }, [])
 
-  const resetAndReconnect = useCallback(() => {
-    reconnectAttemptsRef.current = 0
-    connect()
-  }, [connect])
-
-  useEffect(() => {
-    if (enabled) {
-      connect()
-    } else {
-      disconnect()
-    }
-
-    return () => {
-      disconnect()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled])
+  const reconnect = useCallback(() => {
+    setGeneration(g => g + 1)
+  }, [])
 
   return {
     notifications,
-    isConnected,
+    isConnected: enabled && rawConnected,
     unreadCount,
     markAsRead,
     markAllAsRead,
     clearNotifications,
-    reconnect: resetAndReconnect,
+    reconnect,
   }
 }

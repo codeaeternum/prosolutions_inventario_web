@@ -589,6 +589,7 @@ export default function ReceiveEquipmentPage() {
       if (form.equipmentType === "Otro" && !form.equipmentTypeOther.trim()) return "Describe qué tipo de equipo es."
       const budget = Number.parseFloat(form.budgetAmount)
       if (form.budgetAmount.trim() && (!Number.isFinite(budget) || budget < 0 || budget > 1000000)) return "Revisa el presupuesto estimado: debe ser un importe positivo."
+      if (form.serialLast4 && form.serialNumber.trim() && form.serialNumber.trim().length !== 4) return "Captura exactamente los últimos 4 caracteres de la serie/IMEI, o desactiva la captura parcial."
     }
     if (index === 2) {
       if (form.accessType === "PATTERN" && form.pattern.length < 4) return "Dibuja el patrón con al menos 4 puntos, o elige otro tipo de bloqueo."
@@ -1086,13 +1087,13 @@ export default function ReceiveEquipmentPage() {
                     </label>
                     <div className="space-y-2">
                       <label className="block space-y-2 text-sm">{profile.serialLabel}
-                        <Input value={form.serialNumber} onChange={event => update({ serialNumber: event.target.value })} maxLength={form.serialLast4 ? 6 : 100} placeholder={form.serialLast4 ? "Últimos 4–6 caracteres" : profile.serialPlaceholder} />
+                        <Input value={form.serialNumber} onChange={event => update({ serialNumber: form.serialLast4 ? event.target.value.slice(-4) : event.target.value })} maxLength={form.serialLast4 ? 4 : 100} placeholder={form.serialLast4 ? "Últimos 4" : profile.serialPlaceholder} />
                       </label>
                       <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                         <input
                           type="checkbox"
                           checked={form.serialLast4}
-                          onChange={event => update({ serialLast4: event.target.checked, ...(event.target.checked ? { serialNumber: form.serialNumber.trim().slice(-6) } : {}) })}
+                          onChange={event => update({ serialLast4: event.target.checked, ...(event.target.checked ? { serialNumber: form.serialNumber.trim().slice(-4) } : {}) })}
                           className="h-3.5 w-3.5 accent-primary"
                         />
                         Solo últimos 4 dígitos — se guarda como captura parcial (****XXXX)

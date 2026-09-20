@@ -23,7 +23,7 @@ export interface ReservationState {
   step?: "QUANTITY" | "PAYMENT_METHOD" | "PROOF_UPLOAD"
 }
 
-/** Sesiones opcionales que /cancelar también limpia (eliminar, venta, carrito, qr, ajustes). */
+/** Sesiones opcionales que /cancelar también limpia (eliminar, venta, carrito, qr, ajustes, orden). */
 export type ExtraSessions = Record<string, unknown>
 
 export function registerCancelar(
@@ -32,7 +32,7 @@ export function registerCancelar(
     registration: Record<string, WizardState>
     adminProduct: Record<string, AdminProductState>
     reservation: Record<string, ReservationState>
-  } & { deleteProduct?: ExtraSessions; sale?: ExtraSessions; cart?: ExtraSessions; qr?: ExtraSessions; settings?: ExtraSessions }
+  } & { deleteProduct?: ExtraSessions; sale?: ExtraSessions; cart?: ExtraSessions; qr?: ExtraSessions; settings?: ExtraSessions; orden?: ExtraSessions }
 ) {
   bot.command("cancelar", async (ctx) => {
     const telegramId = ctx.from.id.toString()
@@ -46,7 +46,8 @@ export function registerCancelar(
       sessions.sale,
       sessions.cart,
       sessions.qr,
-      sessions.settings
+      sessions.settings,
+      sessions.orden
     ].filter(Boolean) as Record<string, unknown>[]
 
     for (const map of maps) {

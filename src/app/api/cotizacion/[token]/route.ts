@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { loadQuoteServiceLines } from "@/lib/public-quote"
+import { serviceLinesMatchLabor } from "@/lib/quote-services"
 import { DEFAULT_QUOTE_TERMS, isQuoteExpiredAt, parseQuoteValidityDays, quoteExpiryDate } from "@/app/api/cotizacion/quote-config"
 
 // Consulta pública de la cotización por su quoteToken (el token es el secreto;
@@ -61,6 +63,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           model: true,
           equipmentColor: true,
           reportedIssue: true,
+          // Servicios del catálogo elegidos en recepción ("A + B"): base del
+          // desglose por servicio con el precio del equipo de la orden.
+          serviceName: true,
           diagnosis: true,
           quoteCents: true,
           approvedQuoteCents: true,
@@ -116,6 +121,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
 
     const { service, issue } = parseIssue(order.reportedIssue)
     const laborCents = order.approvedQuoteCents ?? order.quoteCents
+    // Desglose por servicio con el precio efectivo del equipo (mismo criterio
+    // que el documento público; el lookup de catálogo nunca tira la consulta).
+    const serviceLines = await loadQuoteServiceLines(order).catch(() => [])
     const parts = order.parts.map(part => ({
       description: part.description,
       qty: part.qty,
@@ -144,6 +152,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           issue,
           diagnosis: order.diagnosis,
           laborCents,
+          // Servicios de la orden con su precio para ESTE equipo
+          // (priceCents null = "se cotiza al recibir"). Solo explican la mano
+          // de obra cuando su suma es exactamente laborCents
+          // (laborMatchesServices); si el staff ajustó el importe, la cifra
+          // autorizable sigue siendo laborCents.
+          services: serviceLines.map(line => ({ name: line.name, priceCents: line.priceCents })),
+          laborMatchesServices: serviceLinesMatchLabor(serviceLines, laborCents),
           parts,
           partsCents,
           totalCents,
