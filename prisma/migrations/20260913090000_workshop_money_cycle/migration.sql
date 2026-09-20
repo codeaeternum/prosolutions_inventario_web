@@ -22,16 +22,19 @@ ALTER TABLE "Payment" ADD CONSTRAINT "Payment_repairOrderId_fkey"
 
 CREATE INDEX "Payment_repairOrderId_idx" ON "Payment"("repairOrderId");
 
-CREATE TABLE "WorkshopService" (
+CREATE TABLE IF NOT EXISTS "WorkshopService" (
   "id" TEXT NOT NULL,
   "name" TEXT NOT NULL,
   "description" TEXT,
   "priceCents" INTEGER NOT NULL DEFAULT 0,
   "equipmentType" TEXT,
   "isActive" BOOLEAN NOT NULL DEFAULT true,
+  "businessId" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "WorkshopService_pkey" PRIMARY KEY ("id")
+  CONSTRAINT "WorkshopService_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "WorkshopService_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
-CREATE INDEX "WorkshopService_isActive_name_idx" ON "WorkshopService"("isActive", "name");
+CREATE INDEX IF NOT EXISTS "WorkshopService_isActive_name_idx" ON "WorkshopService"("isActive", "name");
+CREATE INDEX IF NOT EXISTS "WorkshopService_businessId_idx" ON "WorkshopService"("businessId");

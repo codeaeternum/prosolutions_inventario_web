@@ -165,29 +165,57 @@ ALTER TABLE "RepairEvent" ALTER COLUMN "businessId" SET NOT NULL;
 ALTER TABLE "RepairEvent" ADD CONSTRAINT "RepairEvent_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE INDEX "RepairEvent_businessId_idx" ON "RepairEvent"("businessId");
 
-ALTER TABLE "CashRequest" ADD COLUMN "businessId" TEXT;
-UPDATE "CashRequest" SET "businessId" = 'biz-default';
-ALTER TABLE "CashRequest" ALTER COLUMN "businessId" SET NOT NULL;
-ALTER TABLE "CashRequest" ADD CONSTRAINT "CashRequest_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-CREATE INDEX "CashRequest_businessId_idx" ON "CashRequest"("businessId");
+-- CashRequest, RepairPhoto y MarketplaceRequest se crean en migraciones
+-- posteriores a esta. La guardia to_regclass conserva el backfill en
+-- instalaciones donde la tabla ya existía y la omite en instalaciones
+-- nuevas, donde la columna nace con el CREATE TABLE correspondiente.
+DO $$ BEGIN
+IF to_regclass('public."CashRequest"') IS NOT NULL THEN
+  ALTER TABLE "CashRequest" ADD COLUMN IF NOT EXISTS "businessId" TEXT;
+  UPDATE "CashRequest" SET "businessId" = 'biz-default' WHERE "businessId" IS NULL;
+  ALTER TABLE "CashRequest" ALTER COLUMN "businessId" SET NOT NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CashRequest_businessId_fkey') THEN
+    ALTER TABLE "CashRequest" ADD CONSTRAINT "CashRequest_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+  CREATE INDEX IF NOT EXISTS "CashRequest_businessId_idx" ON "CashRequest"("businessId");
+END IF;
+END $$;
 
-ALTER TABLE "RepairPhoto" ADD COLUMN "businessId" TEXT;
-UPDATE "RepairPhoto" SET "businessId" = 'biz-default';
-ALTER TABLE "RepairPhoto" ALTER COLUMN "businessId" SET NOT NULL;
-ALTER TABLE "RepairPhoto" ADD CONSTRAINT "RepairPhoto_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-CREATE INDEX "RepairPhoto_businessId_idx" ON "RepairPhoto"("businessId");
+DO $$ BEGIN
+IF to_regclass('public."RepairPhoto"') IS NOT NULL THEN
+  ALTER TABLE "RepairPhoto" ADD COLUMN IF NOT EXISTS "businessId" TEXT;
+  UPDATE "RepairPhoto" SET "businessId" = 'biz-default' WHERE "businessId" IS NULL;
+  ALTER TABLE "RepairPhoto" ALTER COLUMN "businessId" SET NOT NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RepairPhoto_businessId_fkey') THEN
+    ALTER TABLE "RepairPhoto" ADD CONSTRAINT "RepairPhoto_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+  CREATE INDEX IF NOT EXISTS "RepairPhoto_businessId_idx" ON "RepairPhoto"("businessId");
+END IF;
+END $$;
 
-ALTER TABLE "WorkshopService" ADD COLUMN "businessId" TEXT;
-UPDATE "WorkshopService" SET "businessId" = 'biz-default';
-ALTER TABLE "WorkshopService" ALTER COLUMN "businessId" SET NOT NULL;
-ALTER TABLE "WorkshopService" ADD CONSTRAINT "WorkshopService_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-CREATE INDEX "WorkshopService_businessId_idx" ON "WorkshopService"("businessId");
+DO $$ BEGIN
+IF to_regclass('public."WorkshopService"') IS NOT NULL THEN
+  ALTER TABLE "WorkshopService" ADD COLUMN IF NOT EXISTS "businessId" TEXT;
+  UPDATE "WorkshopService" SET "businessId" = 'biz-default' WHERE "businessId" IS NULL;
+  ALTER TABLE "WorkshopService" ALTER COLUMN "businessId" SET NOT NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'WorkshopService_businessId_fkey') THEN
+    ALTER TABLE "WorkshopService" ADD CONSTRAINT "WorkshopService_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+  CREATE INDEX IF NOT EXISTS "WorkshopService_businessId_idx" ON "WorkshopService"("businessId");
+END IF;
+END $$;
 
-ALTER TABLE "MarketplaceRequest" ADD COLUMN "businessId" TEXT;
-UPDATE "MarketplaceRequest" SET "businessId" = 'biz-default';
-ALTER TABLE "MarketplaceRequest" ALTER COLUMN "businessId" SET NOT NULL;
-ALTER TABLE "MarketplaceRequest" ADD CONSTRAINT "MarketplaceRequest_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-CREATE INDEX "MarketplaceRequest_businessId_idx" ON "MarketplaceRequest"("businessId");
+DO $$ BEGIN
+IF to_regclass('public."MarketplaceRequest"') IS NOT NULL THEN
+  ALTER TABLE "MarketplaceRequest" ADD COLUMN IF NOT EXISTS "businessId" TEXT;
+  UPDATE "MarketplaceRequest" SET "businessId" = 'biz-default' WHERE "businessId" IS NULL;
+  ALTER TABLE "MarketplaceRequest" ALTER COLUMN "businessId" SET NOT NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'MarketplaceRequest_businessId_fkey') THEN
+    ALTER TABLE "MarketplaceRequest" ADD CONSTRAINT "MarketplaceRequest_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+  CREATE INDEX IF NOT EXISTS "MarketplaceRequest_businessId_idx" ON "MarketplaceRequest"("businessId");
+END IF;
+END $$;
 
 ALTER TABLE "WorkshopBranch" ADD COLUMN "businessId" TEXT;
 UPDATE "WorkshopBranch" SET "businessId" = 'biz-default';
