@@ -6,6 +6,7 @@ const mocked = vi.hoisted(() => ({
     user: { aggregate: vi.fn(), count: vi.fn(), findMany: vi.fn() },
     creditMovement: { findUnique: vi.fn(), findMany: vi.fn(), aggregate: vi.fn() },
     systemSettings: { findUnique: vi.fn() },
+    business: { findUnique: vi.fn() },
   },
   notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND") }),
 }))
@@ -40,6 +41,7 @@ describe("credit reversal presentation", () => {
     mocked.prisma.user.findMany.mockResolvedValue([])
     mocked.prisma.creditMovement.findMany.mockResolvedValue(entries)
     mocked.prisma.creditMovement.aggregate.mockImplementation(async ({ where }) => ({ _sum: { amount: entries.filter(entry => entry.type === where.type).reduce((sum, entry) => sum + entry.amount, 0) } }))
+    mocked.prisma.business.findUnique.mockResolvedValue({ name: "Negocio Fixture" })
     const response = await GET(new NextRequest("http://localhost/api/credit/movements?summary=true"))
     expect(await response.json()).toMatchObject({ monthPayments: 50, movements: entries })
   })

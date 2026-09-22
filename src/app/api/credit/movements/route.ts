@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAuth, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
+import { creditAgingByUser } from "@/lib/credit-aging"
 import { prisma } from "@/lib/prisma"
 
 export async function GET(req: NextRequest) {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     firstDayOfMonth.setDate(1)
     firstDayOfMonth.setHours(0, 0, 0, 0)
 
-    const [totalDebtAgg, activeClients, monthPaymentsAgg, debtors, movements] =
+    const [totalDebtAgg, activeClients, monthPaymentsAgg, debtors, movements, business] =
       await Promise.all([
         prisma.user.aggregate({
           _sum: { creditBalance: true },
@@ -53,13 +54,32 @@ export async function GET(req: NextRequest) {
           orderBy: { createdAt: "desc" },
           take: 30,
         }),
+        prisma.business.findUnique({ where: { id: businessId }, select: { name: true } }),
       ])
+
+    // Aging FIFO por deudor: los abonos cubren primero los cargos más viejos.
+    const debtorMovements = debtors.length
+      ? await prisma.creditMovement.findMany({
+          where: { businessId, userId: { in: debtors.map((d) => d.id) } },
+          select: { userId: true, type: true, amount: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : []
+    const agingByUser = creditAgingByUser(debtorMovements)
+    const debtorsWithAging = debtors
+      .map((d) => ({ ...d, aging: agingByUser.get(d.id) ?? null }))
+      .sort(
+        (a, b) =>
+          (b.aging?.daysOverdue ?? -1) - (a.aging?.daysOverdue ?? -1) ||
+          (b.creditBalance ?? 0) - (a.creditBalance ?? 0)
+      )
 
     return NextResponse.json({
       totalDebt: totalDebtAgg._sum.creditBalance || 0,
       activeClients,
       monthPayments: monthPaymentsAgg._sum.amount || 0,
-      debtors,
+      businessName: business?.name ?? "",
+      debtors: debtorsWithAging,
       movements,
     })
   }

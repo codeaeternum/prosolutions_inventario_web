@@ -41,8 +41,14 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     // cada corrida usa sus propias sucursales y resolveBranch cae al fallback.
     branchA = (await db.branch.create({ data: { businessId: biz, name: `${prefix}-A` } })).id
     branchB = (await db.branch.create({ data: { businessId: biz, name: `${prefix}-B` } })).id
-    // Fixture database may retain open registers from a previous interrupted test run.
-    await db.cashRegister.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED", closedAt: new Date() } })
+    // Fixture database may retain open registers from a previous interrupted
+    // test run. Only close ones opened >5 min ago (dead runs) — a register
+    // opened moments ago can belong to another integration file running in
+    // parallel.
+    await db.cashRegister.updateMany({
+      where: { status: "OPEN", openedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
+      data: { status: "CLOSED", closedAt: new Date() },
+    })
     register = (await changeCash(db, admin, biz, { action: "OPEN", amount: 0, branchId: branchA, idempotencyKey: key() })).id
   })
   afterAll(async () => { await db.$disconnect() })

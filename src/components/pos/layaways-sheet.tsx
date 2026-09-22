@@ -32,6 +32,8 @@ interface LayawaysSheetProps {
     branchId: string
     /** Sube tras crear/liquidar un apartado para forzar recarga al abrir. */
     refreshKey: number
+    /** sale_auto_ticket: al liquidar, el ticket del apartado abre en pestaña nueva. */
+    autoOpenTicket?: boolean
 }
 
 // Respuesta de POST /api/pos/documents/<id>/pay (payDocument).
@@ -55,7 +57,7 @@ function docPaid(doc: PosDocumentSummary): number {
 }
 
 /** Apartados vigentes (documentos OPEN/LAYAWAY) y cobro de saldo «Liquidar». */
-export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey }: LayawaysSheetProps) {
+export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOpenTicket }: LayawaysSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
 
@@ -122,6 +124,8 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey }: Laya
             payments: [{ method: payMethod, amount, ...(payMethod === "TRANSFERENCIA" ? { reference: payRef.trim() } : {}) }],
         }
         pendingPay.current = getClientOperationKey(pendingPay.current, { saleId: doc.id, ...payload })
+        // La pestaña del ticket se abre dentro del click; esperar al await la bloquea.
+        const ticketPopup = autoOpenTicket ? window.open("", "_blank") : null
         setPaying(true)
         try {
             const res = await fetch(`/api/pos/documents/${doc.id}/pay`, {
@@ -135,6 +139,12 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey }: Laya
 
             const remaining = data?.balance ?? Math.max(0, balance - amount)
             const finished = data?.completed === true || remaining <= 0.009
+            const ticketId = data?.sale?.id
+            if (finished && ticketPopup && ticketId) {
+                ticketPopup.location.href = `/admin/tickets/venta/${ticketId}`
+            } else {
+                ticketPopup?.close()
+            }
             if (finished) {
                 toast.success(`Apartado #${doc.number} liquidado por completo`)
             } else {
@@ -147,6 +157,7 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey }: Laya
             setPayTarget(null)
             void load()
         } catch (error) {
+            ticketPopup?.close()
             toast.error(error instanceof TypeError
                 ? "No se pudo confirmar el abono. Reintenta sin cambiarlo para evitar duplicados."
                 : error instanceof Error ? error.message : "No se pudo registrar el abono")

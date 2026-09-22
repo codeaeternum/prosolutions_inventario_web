@@ -17,9 +17,12 @@ import {
   Search,
   RefreshCw,
   ChevronRight,
+  MessageCircle,
+  Clock,
 } from "lucide-react"
 import { toast } from "sonner"
-import { formatDate, formatPrice } from "@/lib/utils"
+import { formatDate, formatDay, formatPrice } from "@/lib/utils"
+import type { CreditAging, CreditAgingBucket } from "@/lib/credit-aging"
 import { AbonarDialog, type AbonarTarget } from "@/components/clientes/abonar-dialog"
 import { EstadoCuentaSheet } from "@/components/clientes/estado-cuenta"
 import { creditMovementLabels, type CreditMovementItem } from "@/components/clientes/credit-utils"
@@ -30,10 +33,30 @@ interface DebtorUser {
   phone: string | null
   creditLimit: number | null
   creditBalance: number | null
+  aging: CreditAging | null
 }
 
 interface CreditMovement extends CreditMovementItem {
   user: { name: string }
+}
+
+const AGING_ORDER: CreditAgingBucket[] = ["0-7", "8-15", "16-30", "30+"]
+const agingBucketMeta: Record<CreditAgingBucket, { label: string; className: string }> = {
+  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 border-green-500/30" },
+  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
+  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 border-orange-500/30" },
+  "30+": { label: "+30 días", className: "bg-destructive/10 text-destructive border-destructive/30" },
+}
+
+// wa.me exige formato internacional; los locales de 10 dígitos se asumen MX (+52).
+function whatsappReminderUrl(user: DebtorUser, businessName: string): string | null {
+  const digits = (user.phone ?? "").replace(/\D/g, "")
+  if (!digits) return null
+  const intl = digits.length === 10 ? `52${digits}` : digits
+  const text = `Hola ${user.name}, te recordamos tu saldo pendiente de ${formatPrice(
+    user.creditBalance ?? 0
+  )} en ${businessName}. ¿Te ayudamos a liquidarlo?`
+  return `https://wa.me/${intl}?text=${encodeURIComponent(text)}`
 }
 
 /**
@@ -48,6 +71,7 @@ export default function CreditoPage() {
   const [monthPayments, setMonthPayments] = useState(0)
   const [debtors, setDebtors] = useState<DebtorUser[]>([])
   const [movements, setMovements] = useState<CreditMovement[]>([])
+  const [businessName, setBusinessName] = useState("")
 
   const [search, setSearch] = useState("")
   const [abonarUser, setAbonarUser] = useState<AbonarTarget | null>(null)
@@ -63,6 +87,7 @@ export default function CreditoPage() {
       setMonthPayments(data.monthPayments ?? 0)
       setDebtors(data.debtors ?? [])
       setMovements(data.movements ?? [])
+      setBusinessName(data.businessName ?? "")
     } catch {
       toast.error("Error al cargar datos de crédito")
     } finally {
@@ -76,7 +101,8 @@ export default function CreditoPage() {
     return () => clearTimeout(timer)
   }, [fetchData])
 
-  // Filtro local de la cartera (la API ya limita a los 20 mayores saldos).
+  // Filtro local de la cartera (la API ya limita a los 20 mayores saldos y
+  // los devuelve ordenados por mayor antigüedad).
   const filteredDebtors = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return debtors
@@ -84,6 +110,19 @@ export default function CreditoPage() {
       (d) => d.name.toLowerCase().includes(q) || (d.phone ?? "").includes(q)
     )
   }, [debtors, search])
+
+  // Resumen por bucket: cuántos deudores y cuánto saldo cae en cada tramo.
+  const bucketSummary = useMemo(() => {
+    const acc = new Map<CreditAgingBucket, { count: number; total: number }>()
+    for (const d of filteredDebtors) {
+      if (!d.aging?.bucket) continue
+      const entry = acc.get(d.aging.bucket) ?? { count: 0, total: 0 }
+      entry.count += 1
+      entry.total += d.creditBalance ?? 0
+      acc.set(d.aging.bucket, entry)
+    }
+    return acc
+  }, [filteredDebtors])
 
   if (loading) {
     return (
@@ -159,6 +198,22 @@ export default function CreditoPage() {
                 className="pl-9"
               />
             </div>
+            {bucketSummary.size > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {AGING_ORDER.filter((b) => bucketSummary.has(b)).map((b) => {
+                  const meta = agingBucketMeta[b]
+                  const s = bucketSummary.get(b)!
+                  return (
+                    <span
+                      key={b}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${meta.className}`}
+                    >
+                      {meta.label}: {s.count} · {formatPrice(s.total)}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
             {filteredDebtors.length === 0 ? (
               <p className="text-sm text-muted-foreground py-6 text-center">
                 {debtors.length === 0
@@ -171,6 +226,7 @@ export default function CreditoPage() {
                   const percentage = user.creditLimit
                     ? ((user.creditBalance ?? 0) / user.creditLimit) * 100
                     : 0
+                  const waUrl = whatsappReminderUrl(user, businessName)
                   return (
                     <div
                       key={user.id}
@@ -188,6 +244,17 @@ export default function CreditoPage() {
                           <p className="text-xs text-muted-foreground mt-1">
                             Límite: {user.creditLimit ? formatPrice(user.creditLimit) : "Sin límite"}
                           </p>
+                          {user.aging?.bucket && (
+                            <span
+                              className={`inline-flex items-center gap-1 mt-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${agingBucketMeta[user.aging.bucket].className}`}
+                              title={`Deuda más antigua: ${formatDay(user.aging.oldestDebtAt!)}`}
+                            >
+                              <Clock className="h-3 w-3" />
+                              {user.aging.daysOverdue === 0
+                                ? "Desde hoy"
+                                : `Hace ${user.aging.daysOverdue} d`}
+                            </span>
+                          )}
                           {user.creditLimit && user.creditLimit > 0 && (
                             <div className="w-full bg-secondary h-1.5 mt-2 rounded-full overflow-hidden">
                               <div
@@ -229,6 +296,19 @@ export default function CreditoPage() {
                         <Button size="sm" variant="ghost" className="gap-1.5 h-8" asChild>
                           <Link href={`/admin/clientes/${user.id}`}>Ver ficha 360</Link>
                         </Button>
+                        {waUrl && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1.5 h-8 text-green-600 hover:text-green-700"
+                            title="Recordatorio por WhatsApp"
+                            asChild
+                          >
+                            <a href={waUrl} target="_blank" rel="noopener noreferrer">
+                              <MessageCircle className="h-3.5 w-3.5" />
+                            </a>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )

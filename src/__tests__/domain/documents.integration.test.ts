@@ -38,8 +38,13 @@ describe.skipIf(!enabled)("PostgreSQL sales documents (suspendida, cotización, 
     bizB = (await db.business.create({ data: { name: `${prefix}-B`, slug: `${prefix}-B` } })).id
     adminB = (await db.user.create({ data: { businessId: bizB, name: `${prefix}-B`, role: "ADMIN", status: "APPROVED" } })).id
     // La base de fixture persiste entre corridas: se cierran cajas huérfanas
-    // y cada corrida abre la suya en su propia sucursal.
-    await db.cashRegister.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED", closedAt: new Date() } })
+    // y cada corrida abre la suya en su propia sucursal. Solo se cierran las
+    // abiertas hace >5 min (corridas muertas) — las recién abiertas pueden ser
+    // de otro archivo de integración corriendo en paralelo.
+    await db.cashRegister.updateMany({
+      where: { status: "OPEN", openedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
+      data: { status: "CLOSED", closedAt: new Date() },
+    })
     await changeCash(db, admin, biz, { action: "OPEN", amount: 0, branchId: branchA, idempotencyKey: key() })
   })
   afterAll(async () => { await db.$disconnect() })

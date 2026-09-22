@@ -61,7 +61,9 @@ interface CheckoutDialogProps {
     cajaOpen: boolean | null
     resumedDoc: { id: string; number: number } | null
     onBusyChange: (busy: boolean) => void
-    onCompleted: (result: CheckoutResult) => void
+    /** Auto-impresión del ticket: abre la pestaña en el gesto del click, antes del await. */
+    autoOpenTicket?: boolean
+    onCompleted: (result: CheckoutResult, popup?: Window | null) => void
 }
 
 // POST /api/sales y /checkout responden {sale, quantity, total, payments};
@@ -123,7 +125,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
 function CheckoutForm({
     onOpenChange, cart, cartTotal, workshopActive, workshopCustomer, onWorkshopSaleChange,
-    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, onCompleted,
+    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, autoOpenTicket, onCompleted,
 }: CheckoutDialogProps) {
     const [docType, setDocType] = useState<DocType>(workshopActive || workshopCustomer ? "WORKSHOP" : "VENTA")
     const [paymentMethod, setPaymentMethod] = useState<PosPaymentMethod>("EFECTIVO")
@@ -274,6 +276,10 @@ function CheckoutForm({
         }
 
         pendingOperation.current = getClientOperationKey(pendingOperation.current, payload)
+        // La pestaña del ticket se abre dentro del gesto del click: si esperamos
+        // al await del cobro, el navegador la bloquea como popup. onCompleted la
+        // navega al ticket (o la cierra si el cobro falla).
+        const ticketPopup = autoOpenTicket && docType !== "QUOTE" ? window.open("", "_blank") : null
         setBusy(true)
         try {
             const res = await fetch(url, {
@@ -302,8 +308,9 @@ function CheckoutForm({
                 quantity: data?.quantity ?? data?.document?.quantity ?? cartUnitsOf(cart),
                 description: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
                 paidWithCard,
-            })
+            }, ticketPopup)
         } catch (error) {
+            ticketPopup?.close()
             toast.error(error instanceof TypeError
                 ? "No se pudo confirmar el resultado. Reintenta sin cambiar el ticket para evitar duplicados."
                 : error instanceof Error ? error.message : "No se pudo registrar. El ticket se conserva.")

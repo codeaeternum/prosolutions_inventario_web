@@ -909,6 +909,11 @@ model RepairOrder {
   // originó. Sirve para hacer la delegación idempotente (si la marca local
   // falló tras crear la espejo, el reintento la reconoce).
   delegatedFromOrderId  String?
+  // Cuenta interna del convenio B2B saldada. Semántica local simétrica: en
+  // la orden ORIGEN (delegatedOrderId) marca "ya le pagué al taller"; en la
+  // ESPEJO (originBusinessId/delegatedFromOrderId) marca "el captador ya me
+  // pagó". Es solo control entre negocios — el cobro al cliente va por POS.
+  convenioSettledAt     DateTime?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
   uploadTokenExpiresAt DateTime?

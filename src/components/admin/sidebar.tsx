@@ -44,6 +44,7 @@ const navigationGroups = [
     items: [
       { name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench },
       { name: "Catálogo de servicios", href: "/admin/taller/catalogo", icon: BookOpen },
+      { name: "Convenio", href: "/admin/convenio", icon: Handshake },
     ]
   },
   {

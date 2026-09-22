@@ -48,6 +48,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 // (/admin/taller/catalogo sigue siendo "taller").
 const MODULE_BY_PATH: readonly (readonly [string, ModuleKey])[] = [
   ["/admin/taller", "taller"],
+  ["/admin/convenio", "taller"],
   ["/admin/ventas", "ventas"],
   ["/admin/caja", "caja"],
   ["/admin/reservas", "reservas"],

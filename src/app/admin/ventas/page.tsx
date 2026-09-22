@@ -136,7 +136,7 @@ export default function VentasPage() {
         onDocumentsChanged: () => setDocsRefreshKey(k => k + 1),
     })
 
-    const handleCompleted = useCallback((result: CheckoutResult) => {
+    const handleCompleted = useCallback((result: CheckoutResult, popup?: Window | null) => {
         const ticketUrl = result.ticketId ? `/admin/tickets/venta/${result.ticketId}${result.paidWithCard ? "?copias=2" : ""}` : undefined
         setLastTicket({ kind: result.kind, description: result.description, quantity: result.quantity, total: result.total, ticketUrl })
         clearTicket()
@@ -153,9 +153,12 @@ export default function VentasPage() {
         } else {
             toast.success(`${result.kind === "WORKSHOP" ? "Nota a taller" : "Venta"}${folio} registrada: ${detail}`)
         }
-        // Auto-impresión (sale_auto_ticket): ventas y apartados imprimen recibo;
-        // la cotización se imprime solo desde la acción del toast.
-        if (result.kind !== "QUOTE" && autoTicket && ticketUrl && !window.open(ticketUrl, "_blank", "noopener,noreferrer")) {
+        // Auto-impresión (sale_auto_ticket): la pestaña ya venía abierta en
+        // blanco desde el click de cobrar; aquí solo se navega al ticket.
+        if (popup) {
+            if (ticketUrl) popup.location.href = ticketUrl
+            else popup.close()
+        } else if (result.kind !== "QUOTE" && autoTicket && ticketUrl) {
             toast.info("El navegador bloqueó la pestaña del ticket; usa «Abrir ticket».")
         }
     }, [autoTicket, clearTicket])
@@ -216,7 +219,7 @@ export default function VentasPage() {
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
-                <ProductCatalog branchId={branchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} />
+                <ProductCatalog branchId={branchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} refreshKey={docsRefreshKey} />
                 <div className="hidden lg:block"><CartPanel {...panelProps} /></div>
             </div>
 
@@ -262,10 +265,10 @@ export default function VentasPage() {
             <CheckoutDialog open={showCheckout} onOpenChange={setShowCheckout} cart={cart} cartTotal={cartTotal}
                 workshopActive={workshopActive} workshopCustomer={workshopCustomer} onWorkshopSaleChange={setWorkshopSale}
                 customer={customer} onCustomerChange={setCustomer} branchId={branchId} cajaOpen={cajaOpen}
-                resumedDoc={resumedDoc} onBusyChange={setBusy} onCompleted={handleCompleted} />
+                resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket} onCompleted={handleCompleted} />
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
             <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
-            <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={branchId} refreshKey={docsRefreshKey} />
+            <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={branchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
         </div>
     )
 }

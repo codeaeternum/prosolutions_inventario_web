@@ -2,14 +2,17 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { EmptyState } from "@/components/admin/empty-state"
 import { AbonarDialog } from "@/components/clientes/abonar-dialog"
+import { CargoManualDialog, EditarLimiteDialog } from "@/components/clientes/credito-acciones"
 import { EstadoCuentaSheet } from "@/components/clientes/estado-cuenta"
 import { creditMovementLabels, type CreditMovementItem } from "@/components/clientes/credit-utils"
+import { hasModule } from "@/lib/access"
 import {
   ArrowDownRight,
   ArrowLeft,
@@ -21,6 +24,7 @@ import {
   FileText,
   Loader2,
   Mail,
+  Pencil,
   Phone,
   Plus,
   Send,
@@ -196,11 +200,14 @@ function Empty({ text }: { text: string }) {
 
 export default function Cliente360Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const { data: session } = useSession()
   const [data, setData] = useState<Cliente360 | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [abonarOpen, setAbonarOpen] = useState(false)
   const [estadoCuentaOpen, setEstadoCuentaOpen] = useState(false)
+  const [limiteOpen, setLimiteOpen] = useState(false)
+  const [cargoOpen, setCargoOpen] = useState(false)
 
   const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -261,6 +268,10 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
 
   const { customer: cliente, stats, sales, creditMovements, reservations, repairOrders, documents } = data
   const hasCredit = cliente.creditLimit != null || cliente.creditBalance > 0
+  // PATCH de límite exige el módulo "credito"; el cargo manual (DEBT) además
+  // es solo para ADMIN (permiso "admin" dentro del dominio de crédito).
+  const canCredit = !!session?.user && hasModule(session.user, "credito")
+  const isAdmin = session?.user?.role === "ADMIN"
   const creditUsedPct =
     cliente.creditLimit != null && cliente.creditLimit > 0
       ? Math.min(100, (cliente.creditBalance / cliente.creditLimit) * 100)
@@ -342,13 +353,15 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
             <Button variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
               <FileText className="mr-2 h-4 w-4" />Estado de cuenta
             </Button>
-            <Button
-              variant="outline"
-              className="text-green-700 border-green-600/40 hover:bg-green-600/10"
-              onClick={() => setAbonarOpen(true)}
-            >
-              <Wallet className="mr-2 h-4 w-4" />Abonar
-            </Button>
+            {canCredit && (
+              <Button
+                variant="outline"
+                className="text-green-700 border-green-600/40 hover:bg-green-600/10"
+                onClick={() => setAbonarOpen(true)}
+              >
+                <Wallet className="mr-2 h-4 w-4" />Abonar
+              </Button>
+            )}
           </div>
           {hasCredit && (
             <Card>
@@ -471,9 +484,21 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
         {/* ---------- Crédito ---------- */}
         <TabsContent value="credito" className="mt-4 space-y-4">
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setAbonarOpen(true)}>
-              <Wallet className="mr-2 h-4 w-4" />Abonar
-            </Button>
+            {canCredit && (
+              <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setAbonarOpen(true)}>
+                <Wallet className="mr-2 h-4 w-4" />Abonar
+              </Button>
+            )}
+            {isAdmin && (
+              <Button size="sm" variant="outline" onClick={() => setCargoOpen(true)}>
+                <ArrowUpRight className="mr-2 h-4 w-4" />Cargo manual
+              </Button>
+            )}
+            {canCredit && (
+              <Button size="sm" variant="outline" onClick={() => setLimiteOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" />Editar límite
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
               <FileText className="mr-2 h-4 w-4" />Estado de cuenta
             </Button>
@@ -629,6 +654,28 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
         open={estadoCuentaOpen}
         onOpenChange={setEstadoCuentaOpen}
         userId={cliente.id}
+      />
+      <EditarLimiteDialog
+        open={limiteOpen}
+        onOpenChange={setLimiteOpen}
+        user={{
+          id: cliente.id,
+          name: cliente.name,
+          creditLimit: cliente.creditLimit,
+          creditBalance: cliente.creditBalance,
+        }}
+        onSuccess={() => void fetchData()}
+      />
+      <CargoManualDialog
+        open={cargoOpen}
+        onOpenChange={setCargoOpen}
+        user={{
+          id: cliente.id,
+          name: cliente.name,
+          creditLimit: cliente.creditLimit,
+          creditBalance: cliente.creditBalance,
+        }}
+        onSuccess={() => void fetchData()}
       />
     </div>
   )

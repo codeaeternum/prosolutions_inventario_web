@@ -24,6 +24,8 @@ interface ProductCatalogProps {
     query: string
     onQueryChange: (query: string) => void
     onAdd: (product: PosProduct) => void
+    /** Bump tras cada venta: el stock de las tarjetas vuelve a pedirse. */
+    refreshKey?: number
 }
 
 const PAGE_SIZE = 24
@@ -78,7 +80,7 @@ function ProductCard({ product, workshopActive, disabled, onAdd }: {
 }
 
 /** Catálogo del mostrador: búsqueda instantánea + parrilla navegable por categoría. */
-export function ProductCatalog({ branchId, workshopActive, disabled, query, onQueryChange, onAdd }: ProductCatalogProps) {
+export function ProductCatalog({ branchId, workshopActive, disabled, query, onQueryChange, onAdd, refreshKey }: ProductCatalogProps) {
     const [categories, setCategories] = useState<Category[]>([])
     const [categoryId, setCategoryId] = useState("")
 
@@ -121,7 +123,7 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
             }
         }, 300)
         return () => clearTimeout(timer)
-    }, [query, branchId])
+    }, [query, branchId, refreshKey])
 
     // Modo exploración: /api/pos/products da el stock de la sucursal activa
     // y pagina por cursor (orden alfabético), filtrado por la categoría.
@@ -152,7 +154,7 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
         // setTimeout evita setState síncrono dentro del effect (react-hooks/set-state-in-effect)
         const id = setTimeout(() => void loadBrowse(null, false), 0)
         return () => clearTimeout(id)
-    }, [loadBrowse])
+    }, [loadBrowse, refreshKey])
 
     const searchingMode = query.trim().length >= 2
     const shownProducts = searchingMode ? searchResults : browseProducts
