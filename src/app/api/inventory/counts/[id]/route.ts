@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { applyCount, cancelCount, countForClient, countFolio, getCount } from "@/lib/domain/counts"
@@ -8,13 +8,16 @@ import { businessFailure } from "@/lib/domain/http"
 /** Detalle de una sesión de conteo con sus items y producto. */
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
     const { id } = await params
 
     const count = await getCount(prisma, businessId, id)
     if (!count) return NextResponse.json({ error: "Conteo no encontrado." }, { status: 404 })
+    // Empleado restringido a otras sucursales: el conteo no es visible para él.
+    const denied = assertBranchAllowed(getSession(auth)!, count.branchId)
+    if (denied) return denied
     const blindOpen = count.blind && count.status === "OPEN"
     return NextResponse.json(
       {
@@ -41,6 +44,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const businessId = businessIdOf(session)
     const { id } = await params
     const body = await request.json()
+    // Aplicar/cancelar ajusta el stock de la sucursal del conteo: el empleado
+    // restringido a otra sucursal no puede tocarla (auditoría 2026-12).
+    const target = await prisma.inventoryCount.findFirst({
+      where: { id, businessId },
+      select: { branchId: true },
+    })
+    if (target) {
+      const denied = assertBranchAllowed(session, target.branchId)
+      if (denied) return denied
+    }
     // Las transiciones ya son idempotentes por estado; la llave solo protege reintentos de red.
     const idempotencyKey = body.idempotencyKey ?? request.headers.get("idempotency-key") ?? crypto.randomUUID()
 

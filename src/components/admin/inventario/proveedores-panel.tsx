@@ -394,6 +394,11 @@ export function ProveedoresPanel() {
                                                     <span className="font-semibold text-red-600 tabular-nums">
                                                         Debes {formatPrice(bal.saldoCents / 100)}
                                                     </span>
+                                                ) : bal.saldoCents < 0 ? (
+                                                    // Anticipos a OCs aún no recibidas: posición a favor.
+                                                    <span className="font-medium text-blue-600 tabular-nums">
+                                                        A favor {formatPrice(-bal.saldoCents / 100)}
+                                                    </span>
                                                 ) : (
                                                     <span className="font-medium text-green-600">Liquidado</span>
                                                 )}

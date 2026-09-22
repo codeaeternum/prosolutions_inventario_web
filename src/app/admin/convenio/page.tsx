@@ -7,23 +7,24 @@
 // aquí — se cobra por POS como venta aparte.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Handshake, Loader2, RefreshCw } from "lucide-react"
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Clock, Handshake, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useCurrency } from "@/components/currency-provider"
-import { formatDate } from "@/lib/utils"
+import { formatDate, formatDay } from "@/lib/utils"
 import { repairLabels } from "@/lib/workshop-labels"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 
 type ConvenioTotals = { pendingCents: number; settledCents: number; unpricedPending: number }
-type PagarRow = {
+type AgingFields = { chargeableAt: string | null; daysPending: number | null }
+type PagarRow = AgingFields & {
   orderId: string; folio: string; delegatedAt: string | null; convenioSettledAt: string | null
   mirrorOrderId: string | null; mirrorFolio: string | null; partnerName: string | null
   mirrorStatus: string | null; partnerPriceCents: number | null; chargeable: boolean
 }
-type CobrarRow = {
+type CobrarRow = AgingFields & {
   orderId: string; folio: string; createdAt: string; convenioSettledAt: string | null
   originFolio: string | null; captorName: string | null; status: string
   partnerPriceCents: number | null; chargeable: boolean
@@ -52,6 +53,19 @@ const statusBadgeClass: Record<string, string> = {
   WARRANTY: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
 }
 const fallbackBadgeClass = "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400"
+
+// Antigüedad de la cuenta pendiente: mismos tramos y paleta que la cartera
+// de /admin/credito (verde → ámbar → naranja → destructive).
+type AgingBucket = "0-7" | "8-15" | "16-30" | "30+"
+const AGING_ORDER: readonly AgingBucket[] = ["0-7", "8-15", "16-30", "30+"]
+const agingBucketOf = (days: number): AgingBucket =>
+  days <= 7 ? "0-7" : days <= 15 ? "8-15" : days <= 30 ? "16-30" : "30+"
+const agingBucketMeta: Record<AgingBucket, { label: string; className: string }> = {
+  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 border-green-500/30" },
+  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
+  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 border-orange-500/30" },
+  "30+": { label: "+30 días", className: "bg-destructive/10 text-destructive border-destructive/30" },
+}
 
 export default function ConvenioPage() {
   const { formatPrice } = useCurrency()
@@ -117,12 +131,55 @@ export default function ConvenioPage() {
       ? <Badge className={statusBadgeClass[status] ?? fallbackBadgeClass}>{repairLabels[status as keyof typeof repairLabels] ?? status}</Badge>
       : <Badge variant="outline">Sin espejo</Badge>
 
-  const cuentaBadge = (row: { convenioSettledAt: string | null; chargeable: boolean }) =>
-    row.convenioSettledAt
-      ? <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">Pagada · {formatDate(row.convenioSettledAt)}</Badge>
-      : row.chargeable
-        ? <Badge variant="secondary">Pendiente</Badge>
-        : <Badge variant="outline">En proceso</Badge>
+  // La antigüedad solo se muestra en cuentas pendientes exigibles: saldada
+  // ya no debe nada y "en proceso" todavía no es exigible.
+  const cuentaBadge = (row: { convenioSettledAt: string | null; chargeable: boolean } & AgingFields) => {
+    if (row.convenioSettledAt)
+      return <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">Pagada · {formatDate(row.convenioSettledAt)}</Badge>
+    if (!row.chargeable) return <Badge variant="outline">En proceso</Badge>
+    const bucket = row.daysPending != null ? agingBucketOf(row.daysPending) : null
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <Badge variant="secondary">Pendiente</Badge>
+        {bucket && (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${agingBucketMeta[bucket].className}`}
+            title={row.chargeableAt ? `Exigible desde ${formatDay(row.chargeableAt)}` : undefined}
+          >
+            <Clock className="h-3 w-3" />
+            {row.daysPending === 0 ? "Desde hoy" : `Hace ${row.daysPending} d`}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  // Chips-resumen por tramo de antigüedad (cuántas cuentas y cuánto dinero),
+  // mismo formato que el resumen de cartera en /admin/credito.
+  const agingChips = (rows: ({ convenioSettledAt: string | null; chargeable: boolean; partnerPriceCents: number | null } & AgingFields)[]) => {
+    const acc = new Map<AgingBucket, { count: number; total: number }>()
+    for (const row of rows) {
+      if (row.convenioSettledAt || !row.chargeable || row.daysPending == null) continue
+      const bucket = agingBucketOf(row.daysPending)
+      const entry = acc.get(bucket) ?? { count: 0, total: 0 }
+      entry.count += 1
+      entry.total += row.partnerPriceCents ?? 0
+      acc.set(bucket, entry)
+    }
+    if (acc.size === 0) return null
+    return (
+      <div className="flex flex-wrap gap-2">
+        {AGING_ORDER.filter(b => acc.has(b)).map(b => (
+          <span
+            key={b}
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${agingBucketMeta[b].className}`}
+          >
+            {agingBucketMeta[b].label}: {acc.get(b)!.count} · {money(acc.get(b)!.total)}
+          </span>
+        ))}
+      </div>
+    )
+  }
 
   const settleButton = (row: { orderId: string; convenioSettledAt: string | null }) => (
     <Button
@@ -244,6 +301,7 @@ export default function ConvenioPage() {
               </Table>
             </div>
           )}
+          {agingChips(porPagar.rows)}
           {totalsFooter(porPagar.totals, "Pendiente por pagar")}
         </CardContent>
       </Card>
@@ -294,6 +352,7 @@ export default function ConvenioPage() {
               </Table>
             </div>
           )}
+          {agingChips(porCobrar.rows)}
           {totalsFooter(porCobrar.totals, "Pendiente por cobrar")}
         </CardContent>
       </Card>

@@ -27,6 +27,21 @@ export const CONVENIO_CHARGEABLE_STATUSES: readonly RepairStatus[] = ["READY", "
 export const isConvenioChargeable = (status: RepairStatus | null | undefined): boolean =>
   status != null && CONVENIO_CHARGEABLE_STATUSES.includes(status)
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+type ConvenioAgingRow = { chargeable: boolean; convenioSettledAt: unknown; daysPending: number | null }
+
+/** Pendientes exigibles primero, de mayor a menor antigüedad; las cuentas
+ *  en proceso o saldadas conservan su orden cronológico al fondo (sort
+ *  estable: empate dentro del grupo deja la fila donde estaba). */
+const byPendingAge = <T extends ConvenioAgingRow>(rows: T[]): T[] =>
+  [...rows].sort((a, b) => {
+    const pendA = a.chargeable && !a.convenioSettledAt ? 0 : 1
+    const pendB = b.chargeable && !b.convenioSettledAt ? 0 : 1
+    if (pendA !== pendB) return pendA - pendB
+    return (b.daysPending ?? -1) - (a.daysPending ?? -1)
+  })
+
 export interface ConvenioTotalsRow {
   chargeable: boolean
   partnerPriceCents: number | null
@@ -101,10 +116,56 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
     : []
   const mirrorById = new Map(mirrors.map(m => [m.id, m]))
 
-  const folio = await folioFormatter(db, [...new Set([businessId, ...mirrors.map(m => m.businessId)])])
+  // Antigüedad de la cuenta: cuándo llegó la orden que se entrega a estado
+  // exigible (la ESPEJO en porPagar —sus eventos viven en el tenant
+  // reparador—, la propia en porCobrar). Toda entrada a un estado exigible
+  // escribe un evento STATUS: el STATUS directo o el "→ Entregado" que
+  // acompaña a SETTLE_DELIVER; las acciones que mueven estado sin STATUS
+  // (QUOTE, APPROVE, re-autorización por refacción, delegación) solo
+  // aterrizan en estados NO exigibles, así que para una orden exigible el
+  // último STATUS es su llegada al estado actual.
+  // UNA query batch para ambos lados: las mías con businessId propio; las
+  // espejos solo por id — mismo cross-tenant acotado que la consulta de
+  // arriba, no hay otra forma de leer la bitácora del taller asociado.
+  const pendingOwnIds = incoming
+    .filter(o => !o.convenioSettledAt && isConvenioChargeable(o.status))
+    .map(o => o.id)
+  const pendingMirrorIds = outgoing
+    .filter(o => !o.convenioSettledAt && o.delegatedOrderId && isConvenioChargeable(mirrorById.get(o.delegatedOrderId)?.status))
+    .map(o => o.delegatedOrderId as string)
+  const [folio, statusEvents] = await Promise.all([
+    folioFormatter(db, [...new Set([businessId, ...mirrors.map(m => m.businessId)])]),
+    pendingOwnIds.length + pendingMirrorIds.length > 0
+      ? db.repairEvent.findMany({
+          where: { type: "STATUS", OR: [{ businessId, orderId: { in: pendingOwnIds } }, { orderId: { in: pendingMirrorIds } }] },
+          select: { orderId: true, createdAt: true },
+        })
+      : Promise.resolve([]),
+  ])
+  const chargeableAtByOrder = new Map<string, Date>()
+  for (const event of statusEvents) {
+    const prev = chargeableAtByOrder.get(event.orderId)
+    if (!prev || event.createdAt > prev) chargeableAtByOrder.set(event.orderId, event.createdAt)
+  }
+  const now = Date.now()
+  const agingOf = (orderId: string | null | undefined): { chargeableAt: Date | null; daysPending: number | null } => {
+    const chargeableAt = (orderId ? chargeableAtByOrder.get(orderId) : undefined) ?? null
+    return {
+      chargeableAt,
+      // Sin STATUS registrado (órdenes históricas anteriores a la bitácora
+      // de eventos) la antigüedad queda en null — mejor "sin dato" que
+      // inventarla desde createdAt, que la inflaría.
+      daysPending: chargeableAt ? Math.max(0, Math.floor((now - chargeableAt.getTime()) / DAY_MS)) : null,
+    }
+  }
 
-  const porPagar = outgoing.map(order => {
+  const porPagar = byPendingAge(outgoing.map(order => {
     const mirror = order.delegatedOrderId ? mirrorById.get(order.delegatedOrderId) ?? null : null
+    const chargeable = isConvenioChargeable(mirror?.status)
+    // Solo envejecen las cuentas exigibles y sin saldar; el resto va en null.
+    const aging = chargeable && !order.convenioSettledAt
+      ? agingOf(order.delegatedOrderId)
+      : { chargeableAt: null, daysPending: null }
     return {
       orderId: order.id,
       folio: folio(businessId, order.number),
@@ -116,22 +177,32 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       mirrorStatus: mirror?.status ?? null,
       // El precio convenio vive en la espejo: null = "sin precio convenio".
       partnerPriceCents: mirror?.partnerPriceCents ?? null,
-      chargeable: isConvenioChargeable(mirror?.status),
+      chargeable,
+      chargeableAt: aging.chargeableAt,
+      daysPending: aging.daysPending,
     }
-  })
+  }))
 
-  const porCobrar = incoming.map(order => ({
-    orderId: order.id,
-    folio: folio(businessId, order.number),
-    createdAt: order.createdAt,
-    convenioSettledAt: order.convenioSettledAt,
-    // En la espejo de una delegación, originContact guarda el folio local del
-    // captador; en el intake aliado es el texto de "quién lo trajo".
-    originFolio: order.originContact,
-    captorName: order.originBusiness?.name ?? order.originBusinessName ?? null,
-    status: order.status,
-    partnerPriceCents: order.partnerPriceCents,
-    chargeable: isConvenioChargeable(order.status),
+  const porCobrar = byPendingAge(incoming.map(order => {
+    const chargeable = isConvenioChargeable(order.status)
+    const aging = chargeable && !order.convenioSettledAt
+      ? agingOf(order.id)
+      : { chargeableAt: null, daysPending: null }
+    return {
+      orderId: order.id,
+      folio: folio(businessId, order.number),
+      createdAt: order.createdAt,
+      convenioSettledAt: order.convenioSettledAt,
+      // En la espejo de una delegación, originContact guarda el folio local del
+      // captador; en el intake aliado es el texto de "quién lo trajo".
+      originFolio: order.originContact,
+      captorName: order.originBusiness?.name ?? order.originBusinessName ?? null,
+      status: order.status,
+      partnerPriceCents: order.partnerPriceCents,
+      chargeable,
+      chargeableAt: aging.chargeableAt,
+      daysPending: aging.daysPending,
+    }
   }))
 
   return {

@@ -28,6 +28,7 @@ import {
   Phone,
   Plus,
   Send,
+  Share2,
   ShoppingBag,
   Store,
   UserRound,
@@ -208,6 +209,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
   const [estadoCuentaOpen, setEstadoCuentaOpen] = useState(false)
   const [limiteOpen, setLimiteOpen] = useState(false)
   const [cargoOpen, setCargoOpen] = useState(false)
+  const [sharingStatement, setSharingStatement] = useState(false)
 
   const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -272,6 +274,39 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
   // es solo para ADMIN (permiso "admin" dentro del dominio de crédito).
   const canCredit = !!session?.user && hasModule(session.user, "credito")
   const isAdmin = session?.user?.role === "ADMIN"
+
+  // Link público del estado de cuenta: el POST rota el token (los enlaces
+  // enviados antes mueren) y devuelve el path /cuenta/<token>. Con teléfono
+  // se abre WhatsApp con el mensaje; sin teléfono queda en el portapapeles.
+  async function shareStatement() {
+    if (sharingStatement) return
+    setSharingStatement(true)
+    try {
+      const res = await fetch(`/api/clientes/${cliente.id}/statement-link`, { method: "POST" })
+      const json = (await res.json().catch(() => null)) as
+        | { url?: string; businessName?: string; error?: string }
+        | null
+      if (!res.ok || !json?.url) {
+        toast.error(json?.error ?? "No se pudo generar el enlace")
+        return
+      }
+      const url = `${window.location.origin}${json.url}`
+      const digits = (cliente.phone ?? "").replace(/\D/g, "")
+      if (digits) {
+        // wa.me exige formato internacional; los locales de 10 dígitos son MX (+52).
+        const intl = digits.length === 10 ? `52${digits}` : digits
+        const text = `Hola ${cliente.name}, aquí puedes consultar tu estado de cuenta${json.businessName ? ` en ${json.businessName}` : ""}: ${url}`
+        window.open(`https://wa.me/${intl}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer")
+      } else {
+        await navigator.clipboard.writeText(url)
+        toast.success("Enlace del estado de cuenta copiado")
+      }
+    } catch {
+      toast.error("Sin conexión. Intenta de nuevo.")
+    } finally {
+      setSharingStatement(false)
+    }
+  }
   const creditUsedPct =
     cliente.creditLimit != null && cliente.creditLimit > 0
       ? Math.min(100, (cliente.creditBalance / cliente.creditLimit) * 100)
@@ -350,9 +385,11 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                 <Plus className="mr-2 h-4 w-4" />Nueva venta
               </Link>
             </Button>
-            <Button variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
-              <FileText className="mr-2 h-4 w-4" />Estado de cuenta
-            </Button>
+            {canCredit && (
+              <Button variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
+                <FileText className="mr-2 h-4 w-4" />Estado de cuenta
+              </Button>
+            )}
             {canCredit && (
               <Button
                 variant="outline"
@@ -499,9 +536,27 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                 <Pencil className="mr-2 h-4 w-4" />Editar límite
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
-              <FileText className="mr-2 h-4 w-4" />Estado de cuenta
-            </Button>
+            {canCredit && (
+              <Button size="sm" variant="outline" onClick={() => setEstadoCuentaOpen(true)}>
+                <FileText className="mr-2 h-4 w-4" />Estado de cuenta
+              </Button>
+            )}
+            {canCredit && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void shareStatement()}
+                disabled={sharingStatement}
+                title="Genera un link público (vigente 30 días) para enviarlo por WhatsApp"
+              >
+                {sharingStatement ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Share2 className="mr-2 h-4 w-4" />
+                )}
+                Compartir estado de cuenta
+              </Button>
+            )}
           </div>
           {movementsWithBalance.length === 0 ? (
             <Empty text="Sin movimientos de crédito." />

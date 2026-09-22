@@ -119,7 +119,7 @@ export default async function AdminReservationsPage({
                       <Link href={`/admin/tickets/venta/${doc.id}`} target="_blank">Ticket</Link>
                     </Button>
                     <Button size="sm" className="flex-1" asChild>
-                      <Link href="/admin/ventas">Liquidar en POS</Link>
+                      <Link href="/admin/ventas?apartados=1">Liquidar en POS</Link>
                     </Button>
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createPurchaseFromNeeds } from "@/lib/domain/shopping"
@@ -15,6 +15,9 @@ export async function POST(request: NextRequest) {
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await request.json()
+    // La OC nace para una sucursal destino: mismo assert que POST /api/purchases.
+    const denied = assertBranchAllowed(session, body?.branchId)
+    if (denied) return denied
     const result = await createPurchaseFromNeeds(prisma, session.user.id, businessIdOf(session), {
       ...body,
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),

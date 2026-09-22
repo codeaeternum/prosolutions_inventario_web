@@ -83,11 +83,25 @@ interface AccessSubject {
   allowedBranchIds?: string[] | null
 }
 
+// Módulos reservados a ADMIN/encargados cuando el EMPLOYEE no tiene lista
+// explícita: el mismo conjunto que el middleware bloquea en /admin/*
+// (restrictedForEmployee). Sin esta réplica la API quedaba más laxa que la
+// página — un empleado sin módulos podía leer /api/reports (topClients con
+// correos) aunque la UI lo redirigía.
+const EMPLOYEE_RESTRICTED: ReadonlySet<ModuleKey> = new Set([
+  "usuarios",
+  "credito",
+  "reportes",
+  "notificaciones",
+  "configuracion",
+])
+
 /** ADMIN no se restringe por módulos: solo aplica a EMPLOYEE/WORKSHOP. */
 export function hasModule(user: AccessSubject, module: ModuleKey): boolean {
   if (user.role === "ADMIN") return true
   const list = user.allowedModules
-  if (!list || list.length === 0) return true
+  if (!list || list.length === 0)
+    return !(user.role === "EMPLOYEE" && EMPLOYEE_RESTRICTED.has(module))
   return list.includes(module)
 }
 

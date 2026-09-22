@@ -248,6 +248,12 @@ model User {
   creditLimit   Float? // Límite en pesos; null = sin línea de crédito
   creditBalance Float  @default(0) // Saldo deudor actual (lo que debe el cliente)
 
+  // Estado de cuenta público: el cliente consulta saldo/movimientos/apartados
+  // con /cuenta/<statementToken> (link por WhatsApp, sin login). El token es
+  // la frontera de seguridad — se rota al reenviar y caduca a los 30 días.
+  statementToken          String?   @unique
+  statementTokenExpiresAt DateTime?
+
   assignedRepairs       RepairOrder[]        @relation("RepairAssignedTo")
   createdRepairs        RepairOrder[]        @relation("RepairCreatedBy")
   customerRepairs       RepairOrder[]        @relation("RepairCustomer")

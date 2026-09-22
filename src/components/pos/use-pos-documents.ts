@@ -16,7 +16,7 @@ interface UsePosDocumentsArgs {
     setCart: Dispatch<SetStateAction<CartItem[]>>
     setCustomer: Dispatch<SetStateAction<PosCustomer | null>>
     setWorkshopSale: Dispatch<SetStateAction<boolean>>
-    setResumedDoc: Dispatch<SetStateAction<{ id: string; number: number } | null>>
+    setResumedDoc: Dispatch<SetStateAction<{ id: string; number: number; kind?: string } | null>>
     clearTicket: () => void
     /** Se invoca tras suspender/descartar/liquidar para recargar los drawers. */
     onDocumentsChanged: () => void
@@ -86,21 +86,31 @@ export function usePosDocuments({
             })
             if (items.length === 0) throw new Error("El documento no tiene líneas recuperables")
             setCart(items)
-            setResumedDoc({ id: doc.id, number: doc.number })
+            setResumedDoc({ id: doc.id, number: doc.number, kind: doc.kind })
             // El documento cobra sus precios snapshot: el ticket refleja el mismo modo.
             setWorkshopSale(doc.kind === "WORKSHOP")
             if (doc.customer?.id) {
-                // El detalle del documento no trae línea de crédito; se limpia.
+                // El detalle del documento no trae línea de crédito: se hidrata
+                // aparte para que la suspendida recuperada sí pueda cobrarse a
+                // crédito (sin esto creditLimit=null la bloqueaba siempre).
+                let credit: Pick<PosCustomer, "creditLimit" | "creditBalance"> = { creditLimit: null, creditBalance: 0 }
+                try {
+                    const res = await fetch(`/api/users/pos?id=${encodeURIComponent(doc.customer.id)}`)
+                    const data: { users?: { creditLimit: number | null; creditBalance: number | null }[] } | null =
+                        res.ok ? await res.json() : null
+                    const u = data?.users?.[0]
+                    if (u) credit = { creditLimit: u.creditLimit, creditBalance: u.creditBalance ?? 0 }
+                } catch { /* sin crédito hidratado: el checkout lo valida de nuevo */ }
                 setCustomer({
                     id: doc.customer.id,
                     name: doc.customer.name,
                     phone: doc.customer.phone ?? null,
                     customerType: doc.customer.customerType ?? null,
-                    creditLimit: null,
-                    creditBalance: 0,
+                    creditLimit: credit.creditLimit,
+                    creditBalance: credit.creditBalance,
                 })
             }
-            toast.success(`Suspendida #${doc.number} recuperada al ticket`)
+            toast.success(`${doc.kind === "QUOTE" ? "Cotización" : "Suspendida"} #${doc.number} recuperada al ticket`)
             return true
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "No se pudo cargar la venta suspendida")

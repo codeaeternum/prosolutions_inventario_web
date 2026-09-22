@@ -147,7 +147,7 @@ describe("convenioReport", () => {
     originBusiness: { name: "Captador SA" },
   }
 
-  function fakeDb(opts: { outgoing?: unknown[]; incoming?: unknown[]; mirrors?: unknown[] }) {
+  function fakeDb(opts: { outgoing?: unknown[]; incoming?: unknown[]; mirrors?: unknown[]; events?: unknown[] }) {
     return {
       repairOrder: {
         // La primera llamada filtra delegatedOrderId (salientes), la segunda
@@ -157,6 +157,21 @@ describe("convenioReport", () => {
           if (where.OR) return Promise.resolve(opts.incoming ?? [])
           return Promise.resolve(opts.mirrors ?? [])
         }),
+      },
+      repairEvent: {
+        // Fiel al filtro del dominio: type exacto y el OR de "mis órdenes con
+        // businessId" / "espejos solo por id" (cross-tenant acotado).
+        findMany: vi.fn(({ where }: { where: { type: string; OR: { businessId?: string; orderId: { in: string[] } }[] } }) =>
+          Promise.resolve(
+            (opts.events ?? [])
+              .filter((e): e is { orderId: string; type: string; createdAt: Date; businessId?: string } =>
+                typeof e === "object" && e !== null)
+              .filter(e =>
+                e.type === where.type &&
+                where.OR.some(branch =>
+                  branch.orderId.in.includes(e.orderId) &&
+                  (branch.businessId === undefined || e.businessId === branch.businessId))),
+          )),
       },
       systemSettings: { findMany: vi.fn(async () => []) },
     } as unknown as PrismaClient
@@ -216,5 +231,72 @@ describe("convenioReport", () => {
     const mirrorCall = calls.find(([args]) => (args as { where: { id?: { in?: string[] } } }).where.id)
     expect(mirrorCall).toBeDefined()
     expect((mirrorCall![0] as { where: { id: { in: string[] } } }).where.id.in).toEqual(["m1"])
+  })
+
+  // ── Aging: días desde que la orden llegó a estado exigible ──────────────
+
+  const DAYS = 24 * 60 * 60 * 1000
+  const daysAgo = (n: number) => new Date(Date.now() - n * DAYS - 1000)
+
+  it("calcula daysPending con el último STATUS (espejo en porPagar, propia en porCobrar)", async () => {
+    const mirrorDeliveredAt = daysAgo(12)
+    const db = fakeDb({
+      outgoing: [outgoingRow],
+      incoming: [incomingRow],
+      mirrors: [{ id: "m1", number: 12, businessId: "biz-rep", status: "DELIVERED", partnerPriceCents: 35000 }],
+      events: [
+        // La espejo pasó READY→DELIVERED: pesa el STATUS más reciente.
+        { orderId: "m1", businessId: "biz-rep", type: "STATUS", createdAt: daysAgo(40) },
+        { orderId: "m1", businessId: "biz-rep", type: "STATUS", createdAt: mirrorDeliveredAt },
+        // Mi orden entrante lleva 3 días en READY; eventos que no son STATUS
+        // (notas, abonos) no mueven la fecha de exigibilidad.
+        { orderId: "m9", businessId: BIZ, type: "STATUS", createdAt: daysAgo(3) },
+        { orderId: "m9", businessId: BIZ, type: "NOTE", createdAt: daysAgo(1) },
+      ],
+    })
+    const report = await convenioReport(db, BIZ)
+    expect(report.porPagar.rows[0].daysPending).toBe(12)
+    expect(report.porPagar.rows[0].chargeableAt).toEqual(mirrorDeliveredAt)
+    expect(report.porCobrar.rows[0].daysPending).toBe(3)
+  })
+
+  it("ordena por mayor antigüedad y manda saldadas/en proceso al fondo, sin aging", async () => {
+    const db = fakeDb({
+      incoming: [
+        { ...incomingRow, id: "a", number: 1, convenioSettledAt: new Date() },               // saldada
+        { ...incomingRow, id: "b", number: 2, status: "IN_REPAIR", partnerPriceCents: 5000 }, // en proceso
+        { ...incomingRow, id: "c", number: 3 },                                             // pendiente 2d
+        { ...incomingRow, id: "d", number: 4 },                                             // pendiente 30d
+      ],
+      events: [
+        // Aunque la saldada tenga STATUS viejísimo, no se consulta ni envejece.
+        { orderId: "a", businessId: BIZ, type: "STATUS", createdAt: daysAgo(90) },
+        { orderId: "c", businessId: BIZ, type: "STATUS", createdAt: daysAgo(2) },
+        { orderId: "d", businessId: BIZ, type: "STATUS", createdAt: daysAgo(30) },
+      ],
+    })
+    const report = await convenioReport(db, BIZ)
+    expect(report.porCobrar.rows.map(r => r.orderId)).toEqual(["d", "c", "a", "b"])
+    expect(report.porCobrar.rows[0].daysPending).toBe(30)
+    const settled = report.porCobrar.rows.find(r => r.orderId === "a")!
+    expect(settled.daysPending).toBeNull()
+    expect(settled.chargeableAt).toBeNull()
+    expect(report.porCobrar.rows.find(r => r.orderId === "b")!.daysPending).toBeNull()
+    // La saldada ni siquiera entra en la query de eventos.
+    const eventCall = (db.repairEvent.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      where: { OR: { businessId?: string; orderId: { in: string[] } }[] }
+    }
+    const ownIds = eventCall.where.OR.find(b => b.businessId === BIZ)!.orderId.in
+    expect(ownIds).toEqual(expect.arrayContaining(["c", "d"]))
+    expect(ownIds).not.toContain("a")
+    expect(ownIds).not.toContain("b")
+  })
+
+  it("exigible sin eventos STATUS queda sin antigüedad (histórica sin bitácora)", async () => {
+    const db = fakeDb({ incoming: [incomingRow], events: [] })
+    const report = await convenioReport(db, BIZ)
+    expect(report.porCobrar.rows[0].chargeable).toBe(true)
+    expect(report.porCobrar.rows[0].daysPending).toBeNull()
+    expect(report.porCobrar.rows[0].chargeableAt).toBeNull()
   })
 })

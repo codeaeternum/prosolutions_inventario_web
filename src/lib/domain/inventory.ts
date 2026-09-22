@@ -21,6 +21,10 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
       let value: number | undefined
       let method: string | undefined
       let customerId: string | undefined
+      // La devolución repone stock donde se vendió la pieza (sucursal de la
+      // venta/reserva original), no en la principal por defecto. Históricos
+      // sin branchId siguen cayendo a la principal, como antes.
+      let returnBranchId: string | undefined
       if (row.type === "TRANSFER") {
         if (!row.toBranchId) throw new BusinessError("Indica la sucursal de destino del traspaso.")
         const origin = await resolveBranch(tx, branchId, businessId)
@@ -49,6 +53,7 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
         if ("status" in source && (source.type === "DEPOSIT" || source.depositPaid || (source.depositAmount ?? 0) > 0)) {
           throw new BusinessError("La reserva incluye un anticipo. Administración debe conciliar los medios de pago y el reembolso antes de devolverla. No se modificó stock, deuda ni caja.", 409, "MIXED_PAYMENT_REFUND_REVIEW")
         }
+        returnBranchId = source.branchId ?? undefined
         const returned = await tx.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", ...(row.relatedId ? { relatedId: row.relatedId } : { reservationId: row.reservationId }) }, _sum: { quantity: true } })
         if ((returned._sum.quantity ?? 0) + row.quantity > source.quantity) throw new BusinessError("La cantidad supera las unidades pendientes de devolución.", 409)
         const unit = "status" in source ? cents(source.totalPrice) / source.quantity : cents(source.unitPrice ?? 0)
@@ -66,9 +71,10 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
         }
       }
       const positive = ["IN", "ADJUSTMENT_IN", "RETURN"].includes(row.type)
+      const effectiveBranchId = row.type === "RETURN" ? (branchId ?? returnBranchId) : branchId
       const branch = positive
-        ? await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId, businessId })
-        : (await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId, businessId })).branch
+        ? await releaseStock(tx, { productId: product.id, quantity: row.quantity, branchId: effectiveBranchId, businessId })
+        : (await takeStock(tx, { productId: product.id, quantity: row.quantity, branchId: effectiveBranchId, businessId })).branch
       const updated = await tx.product.findUniqueOrThrow({ where: { id: product.id } })
       const movement = await tx.inventoryMovement.create({ data: {
         businessId, productId: product.id, userId: actorId, type: row.type.startsWith("ADJUSTMENT") ? "ADJUSTMENT" : row.type === "RETURN" ? "RETURN" : positive ? "IN" : "OUT",

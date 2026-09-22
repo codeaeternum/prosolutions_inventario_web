@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { setCountItems } from "@/lib/domain/counts"
@@ -13,6 +13,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const session = getSession(auth)!
     const { id } = await params
     const body = await request.json()
+    // Capturar sobre la sucursal del conteo exige acceso a esa sucursal.
+    const target = await prisma.inventoryCount.findFirst({
+      where: { id, businessId: businessIdOf(session) },
+      select: { branchId: true },
+    })
+    if (target) {
+      const denied = assertBranchAllowed(session, target.branchId)
+      if (denied) return denied
+    }
     const result = await setCountItems(prisma, session.user.id, businessIdOf(session), id, {
       items: body.items,
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key") ?? crypto.randomUUID(),

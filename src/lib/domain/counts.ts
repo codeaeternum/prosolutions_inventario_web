@@ -172,7 +172,7 @@ export async function cancelCount(db: PrismaClient, actorId: string, businessId:
   })
 }
 
-export function listCounts(db: PrismaClient, businessId: string, filter: { status?: CountStatus; branchId?: string } = {}) {
+export function listCounts(db: PrismaClient, businessId: string, filter: { status?: CountStatus; branchId?: string | { in: string[] } } = {}) {
   return db.inventoryCount.findMany({
     where: {
       businessId,

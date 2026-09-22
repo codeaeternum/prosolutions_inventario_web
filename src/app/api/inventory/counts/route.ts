@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { countFolio, createCount, listCounts } from "@/lib/domain/counts"
@@ -11,7 +11,7 @@ const STATUSES: CountStatus[] = ["OPEN", "APPLIED", "CANCELLED"]
 /** Lista de sesiones de conteo con sucursal, estado, # items y # diferencias. */
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const businessId = businessIdOf(getSession(auth)!)
 
@@ -20,7 +20,18 @@ export async function GET(request: NextRequest) {
     const status = STATUSES.includes(statusParam as CountStatus) ? (statusParam as CountStatus) : undefined
     const branchId = params.get("branchId") || undefined
 
-    const counts = await listCounts(prisma, businessId, { status, branchId })
+    // Empleado con sucursales asignadas: solo ve los conteos de las suyas.
+    // Pedir una sucursal ajena devuelve lista vacía ({ in: [] } no matchea).
+    const session = getSession(auth)!
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const restricted = !!(allowed && allowed.length > 0)
+    const branchFilter = restricted
+      ? branchId
+        ? (allowed!.includes(branchId) ? branchId : { in: [] as string[] })
+        : { in: allowed! }
+      : branchId
+
+    const counts = await listCounts(prisma, businessId, { status, branchId: branchFilter })
     return NextResponse.json(
       {
         counts: counts.map(c => ({

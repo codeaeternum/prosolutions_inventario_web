@@ -1,7 +1,7 @@
 import { moveInventory } from "@/lib/domain/inventory"
 import { businessFailure } from "@/lib/domain/http"
 import { NextRequest, NextResponse } from "next/server"
-import { assertBranchAllowed, assertOperationBranch, getSession, requireAdmin, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, assertOperationBranch, getSession, requireAdmin, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { MovementType } from "@prisma/client"
@@ -30,7 +30,8 @@ function toPrismaMovementType(uiType: string | null): MovementType | null {
 
 export async function GET(request: NextRequest) {
     try {
-        const result = await requireAdminOrEmployee()
+        // El historial incluye product.costPrice: módulo inventario, no staff general.
+        const result = await requireModule("inventario")
         if (result.error) return result.error
         const businessId = businessIdOf(getSession(result)!)
 
@@ -151,15 +152,25 @@ export async function POST(request: NextRequest) {
         const session = getSession(auth)!
         const body = await request.json()
         // Cada partida toca su sucursal (item.branchId ?? body.branchId, o la
-        // principal si ninguna llega) y el traspaso además la de destino.
+        // principal si ninguna llega) y el traspaso además la de destino. La
+        // devolución sin sucursal explícita repone en la sucursal de la venta
+        // original: el assert debe evaluar esa misma sucursal efectiva.
+        const businessId = businessIdOf(session)
         const items = Array.isArray(body?.items) && body.items.length ? body.items : [body]
         for (const item of items) {
-            const denied = await assertOperationBranch(session, item?.branchId ?? body?.branchId, { homeFallback: false })
+            let effectiveBranch = item?.branchId ?? body?.branchId
+            if (!effectiveBranch && item?.type === "RETURN" && (item?.relatedId || item?.reservationId)) {
+                const src = item.relatedId
+                    ? await prisma.inventoryMovement.findFirst({ where: { id: item.relatedId, businessId }, select: { branchId: true } })
+                    : await prisma.reservation.findFirst({ where: { id: item.reservationId, businessId }, select: { branchId: true } })
+                effectiveBranch = src?.branchId ?? undefined
+            }
+            const denied = await assertOperationBranch(session, effectiveBranch, { homeFallback: false })
             if (denied) return denied
             const deniedDest = assertBranchAllowed(session, item?.toBranchId)
             if (deniedDest) return deniedDest
         }
-        const result = await moveInventory(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
+        const result = await moveInventory(prisma, session.user.id, businessId, { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"), items: body.items ?? [body] })
         return NextResponse.json(body.items ? result : { ...result.movements[0], operationId: result.operationId }, { status: 201 })
     } catch (error) { return businessFailure(error) }
 }

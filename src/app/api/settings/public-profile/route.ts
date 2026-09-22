@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { requireModule } from "@/lib/api-auth"
+import { requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSettingsMap } from "@/lib/settings"
 import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
@@ -77,10 +77,13 @@ async function readProfile(businessId: string) {
   }
 }
 
-// GET - Perfil público del negocio (módulo configuración)
+// GET - Perfil público del negocio. El dato es público por definición (es el
+// perfil del catálogo) y lo consumen páginas abiertas a staff sin módulos
+// (share-order en taller): basta con ser staff autenticado. La escritura sí
+// exige el módulo configuración.
 export async function GET() {
   try {
-    const auth = await requireModule("configuracion")
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     return NextResponse.json(await readProfile(auth.session.user.businessId), {
       headers: { "Cache-Control": "private, no-store" },

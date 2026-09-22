@@ -61,11 +61,13 @@ export async function DELETE(_req: Request, { params }: Params) {
 
     const supplier = await prisma.supplier.findFirst({
       where: { id, businessId },
-      include: { _count: { select: { purchases: true } } },
+      // Con historial (OCs o pagos generales) no se borra: se desactiva. Sin el
+      // conteo de payments el delete reventaba por onDelete: Restrict → 500.
+      include: { _count: { select: { purchases: true, payments: true } } },
     })
     if (!supplier) return NextResponse.json({ error: "Proveedor no encontrado" }, { status: 404 })
 
-    if (supplier._count.purchases > 0) {
+    if (supplier._count.purchases > 0 || supplier._count.payments > 0) {
       const updated = await prisma.supplier.update({ where: { id }, data: { isActive: false } })
       return NextResponse.json({ deactivated: true, supplier: updated })
     }

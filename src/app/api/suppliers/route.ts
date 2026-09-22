@@ -50,11 +50,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Ya existe un proveedor con ese nombre" }, { status: 400 })
     }
 
-    const supplier = await prisma.supplier.create({
-      data: { businessId, name, phone: phone || null, email: email || null, notes: notes || null },
-      include: { _count: { select: { purchases: true } } },
-    })
-    return NextResponse.json(supplier, { status: 201 })
+    try {
+      const supplier = await prisma.supplier.create({
+        data: { businessId, name, phone: phone || null, email: email || null, notes: notes || null },
+        include: { _count: { select: { purchases: true } } },
+      })
+      return NextResponse.json(supplier, { status: 201 })
+    } catch (error) {
+      // Doble submit concurrente: el findFirst de arriba no ve al otro request;
+      // el @@unique(businessId, name) corta con P2002 → conflicto legible.
+      if (typeof error === "object" && error !== null && (error as { code?: string }).code === "P2002") {
+        return NextResponse.json({ error: "Ya existe un proveedor con ese nombre" }, { status: 409 })
+      }
+      throw error
+    }
   } catch (error) {
     return businessFailure(error)
   }

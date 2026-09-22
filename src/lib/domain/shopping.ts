@@ -233,7 +233,7 @@ const fromNeedsSchema = z.object({
 export async function createPurchaseFromNeeds(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = fromNeedsSchema.parse(raw)
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "PURCHASE_FROM_NEEDS", permission: "staff", payload: input }, async tx => {
-    const branch = await resolveBranch(tx, input.branchId)
+    const branch = await resolveBranch(tx, input.branchId, businessId)
     if (branch.businessId !== businessId) throw new BusinessError("La sucursal no pertenece a este negocio.", 409)
     const supplier = input.supplierId
       ? await tx.supplier.findFirst({ where: { id: input.supplierId, businessId, isActive: true } })

@@ -59,7 +59,7 @@ interface CheckoutDialogProps {
     onCustomerChange: (customer: PosCustomer | null) => void
     branchId: string
     cajaOpen: boolean | null
-    resumedDoc: { id: string; number: number } | null
+    resumedDoc: { id: string; number: number; kind?: string } | null
     onBusyChange: (busy: boolean) => void
     /** Auto-impresión del ticket: abre la pestaña en el gesto del click, antes del await. */
     autoOpenTicket?: boolean
@@ -331,7 +331,7 @@ function CheckoutForm({
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         Finalizar
-                        {resumedDoc && <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">Suspendida #{resumedDoc.number}</Badge>}
+                        {resumedDoc && <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{resumedDoc.kind === "QUOTE" ? "Cotización" : "Suspendida"} #{resumedDoc.number}</Badge>}
                     </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-2">

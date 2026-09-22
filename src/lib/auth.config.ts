@@ -56,8 +56,9 @@ declare module "@auth/core/jwt" {
   }
 }
 
-// Rutas públicas (no requieren login)
-const PUBLIC_PATHS = ["/", "/login", "/register", "/registro", "/verificar", "/api/auth", "/api/signup", "/catalogo", "/mercado", "/seguimiento", "/evidencia", "/cotizacion"]
+// Rutas públicas (no requieren login). /evidencia, /cotizacion y /cuenta son
+// vistas por token: las abre el cliente desde WhatsApp sin sesión.
+const PUBLIC_PATHS = ["/", "/login", "/register", "/registro", "/verificar", "/api/auth", "/api/signup", "/catalogo", "/mercado", "/seguimiento", "/evidencia", "/cotizacion", "/cuenta"]
 // Rutas legacy que sin login redirigen a /?redirect=bot
 const LEGACY_PATHS = [ "/carrito", "/mis-reservas", "/perfil"]
 // Rutas protegidas (requieren login + approved, o admin)

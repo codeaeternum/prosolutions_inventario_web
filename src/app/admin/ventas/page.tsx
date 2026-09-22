@@ -17,6 +17,7 @@ import { CartPanel } from "@/components/pos/cart-panel"
 import { CheckoutDialog } from "@/components/pos/checkout-dialog"
 import { LayawaysSheet } from "@/components/pos/layaways-sheet"
 import { ParkedSalesSheet } from "@/components/pos/parked-sales-sheet"
+import { QuotesSheet } from "@/components/pos/quotes-sheet"
 import { ProductCatalog } from "@/components/pos/product-catalog"
 import { ShortcutHints } from "@/components/pos/shortcut-hints"
 import { SuspendDialog } from "@/components/pos/suspend-dialog"
@@ -36,7 +37,7 @@ export default function VentasPage() {
     const [customer, setCustomer] = useState<PosCustomer | null>(null)
     // Nota a taller: precio de mayoreo. Un cliente STORE/TECHNICIAN la fuerza.
     const [workshopSale, setWorkshopSale] = useState(false)
-    const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number } | null>(null)
+    const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number; kind?: string } | null>(null)
     const [lastTicket, setLastTicket] = useState<LastTicket | null>(null)
     const [processing, setProcessing] = useState(false)
     const submitting = useRef(false)
@@ -44,7 +45,11 @@ export default function VentasPage() {
     const [showCheckout, setShowCheckout] = useState(false)
     const [showSuspend, setShowSuspend] = useState(false)
     const [showParked, setShowParked] = useState(false)
-    const [showLayaways, setShowLayaways] = useState(false)
+    // ?apartados=1 — "Liquidar en POS" desde /admin/reservas abre el cajón.
+    // Estado inicial perezoso: abrir un drawer al montar es estado inicial, no efecto.
+    const [showLayaways, setShowLayaways] = useState(() =>
+        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("apartados") === "1")
+    const [showQuotes, setShowQuotes] = useState(false)
     const [showMobileCart, setShowMobileCart] = useState(false)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
@@ -60,7 +65,8 @@ export default function VentasPage() {
             if (list.length) setBranchId(prev => prev || list[0].id)
         }).catch(() => {})
         // ?cliente=<id> — atajo "Nueva venta" desde la ficha Cliente 360.
-        const preselectId = new URLSearchParams(window.location.search).get("cliente")
+        const params = new URLSearchParams(window.location.search)
+        const preselectId = params.get("cliente")
         if (preselectId) {
             fetch(`/api/users/pos?id=${preselectId}`).then(r => r.ok ? r.json() : null)
                 .then(d => { const u = d?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
@@ -164,7 +170,7 @@ export default function VentasPage() {
     }, [autoTicket, clearTicket])
 
     // Atajos de mostrador: F2/Ctrl+Enter cobran, Esc limpia. +/−/Supr van en cada línea del ticket.
-    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showScanner || showMobileCart
+    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showScanner || showMobileCart
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const t = e.target as HTMLElement | null
@@ -186,6 +192,7 @@ export default function VentasPage() {
         onUpdateQuantity: updateQuantity, onRemove: removeFromCart, onClear: clearTicket,
         onCheckout: () => setShowCheckout(true), onSuspend: () => setShowSuspend(true),
         onOpenParked: () => setShowParked(true), onOpenLayaways: () => setShowLayaways(true),
+        onOpenQuotes: () => setShowQuotes(true),
     }
 
     return (
@@ -269,6 +276,7 @@ export default function VentasPage() {
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
             <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
             <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={branchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
+            <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
         </div>
     )
 }

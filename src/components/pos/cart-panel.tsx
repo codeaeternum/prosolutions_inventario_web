@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { BookMarked, History, Loader2, Minus, Package, Pause, Plus, ReceiptText, Trash2, X } from "lucide-react"
+import { BookMarked, FileText, History, Loader2, Minus, Package, Pause, Plus, ReceiptText, Trash2, X } from "lucide-react"
 import { formatPrice } from "@/lib/utils"
 import { CustomerPicker } from "./customer-picker"
 import { cartTotalOf, cartUnitsOf, unitPriceOf, type CartItem, type PosCustomer } from "./types"
@@ -14,8 +14,8 @@ interface CartPanelProps {
     workshopActive: boolean
     customer: PosCustomer | null
     onCustomerChange: (customer: PosCustomer | null) => void
-    /** Documento suspendido que se está cobrando (badge "Suspendida #N"). */
-    resumedDoc: { id: string; number: number } | null
+    /** Documento suspendido que se está cobrando (badge "Suspendida #N" o "Cotización #N"). */
+    resumedDoc: { id: string; number: number; kind?: string } | null
     onDetachResumed: () => void
     processing: boolean
     cajaOpen: boolean | null
@@ -26,6 +26,7 @@ interface CartPanelProps {
     onSuspend: () => void
     onOpenParked: () => void
     onOpenLayaways: () => void
+    onOpenQuotes: () => void
     /** "plain" para renderizar dentro del Sheet móvil (sin Card propia). */
     variant?: "card" | "plain"
 }
@@ -94,7 +95,7 @@ export function CartPanel(props: CartPanelProps) {
     const {
         cart, workshopActive, customer, onCustomerChange, resumedDoc, onDetachResumed,
         processing, cajaOpen, onUpdateQuantity, onRemove, onClear,
-        onCheckout, onSuspend, onOpenParked, onOpenLayaways, variant = "card",
+        onCheckout, onSuspend, onOpenParked, onOpenLayaways, onOpenQuotes, variant = "card",
     } = props
 
     const total = cartTotalOf(cart, workshopActive)
@@ -111,7 +112,7 @@ export function CartPanel(props: CartPanelProps) {
                 </span>
                 {resumedDoc && (
                     <Badge variant="secondary" className="gap-1 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                        Suspendida #{resumedDoc.number}
+                        {resumedDoc.kind === "QUOTE" ? "Cotización" : "Suspendida"} #{resumedDoc.number}
                         <button type="button" onClick={onDetachResumed} aria-label="Desvincular venta suspendida" className="hover:text-foreground">
                             <X className="h-3 w-3" />
                         </button>
@@ -164,7 +165,7 @@ export function CartPanel(props: CartPanelProps) {
                     {processing ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
                     Cobrar <span className="text-xs opacity-70">(F2)</span>
                 </Button>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5">
                     <Button type="button" variant="outline" size="sm" onClick={onSuspend} disabled={processing || cart.length === 0}>
                         <Pause className="h-3.5 w-3.5" />
                         Suspender
@@ -176,6 +177,10 @@ export function CartPanel(props: CartPanelProps) {
                     <Button type="button" variant="outline" size="sm" onClick={onOpenLayaways} disabled={processing}>
                         <BookMarked className="h-3.5 w-3.5" />
                         Apartados
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={onOpenQuotes} disabled={processing}>
+                        <FileText className="h-3.5 w-3.5" />
+                        Cotizas
                     </Button>
                 </div>
                 {cart.length > 0 && (
