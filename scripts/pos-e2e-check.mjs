@@ -30,21 +30,26 @@ await req("/api/auth/callback/credentials", { method: "POST", redirect: "manual"
 const session = await (await req("/api/auth/session")).json()
 check("login admin piloto", session.user?.role === "ADMIN")
 
-// Fixture: categoría + producto + stock en sucursal
-const biz = (await db.query(`SELECT id FROM "Business" LIMIT 1`)).rows[0].id
-const branch = (await db.query(`SELECT id FROM "WorkshopBranch" LIMIT 1`)).rows[0].id
-const cat = (await db.query(`INSERT INTO "Category" (id, name, slug, "businessId", "updatedAt") VALUES ('cat-e2e', 'E2E', 'e2e', $1, now()) ON CONFLICT (id) DO NOTHING RETURNING id`, [biz])).rows[0]?.id ?? "cat-e2e"
-const prod = (await db.query(`INSERT INTO "Product" (id, name, barcode, stock, "retailPrice", "wholesalePrice", images, "isActive", "categoryId", "businessId", "updatedAt") VALUES ('prod-e2e', 'Pantalla E2E', '7500000001', 0, 500, 350, '{}', true, $1, $2, now()) ON CONFLICT (id) DO UPDATE SET "retailPrice"=500, stock=0 RETURNING id`, [cat, biz])).rows[0].id
-await db.query(`INSERT INTO "BranchStock" (id, "productId", "branchId", quantity, "businessId") VALUES ('bs-e2e', $1, $2, 10, $3) ON CONFLICT ("productId","branchId") DO UPDATE SET quantity=10`, [prod, branch, biz])
+// Fixture: categoría + producto + stock en sucursal — anclado al tenant del
+// admin (el piloto puede tener más de un negocio sembrado).
+const biz = (await db.query(`SELECT "businessId" AS id FROM "User" WHERE email='piloto@prosolutions.local'`)).rows[0].id
+const branch = (await db.query(`SELECT id FROM "WorkshopBranch" WHERE "businessId"=$1 LIMIT 1`, [biz])).rows[0].id
+// ON CONFLICT también corrige businessId: una corrida anterior pudo sembrar
+// el fixture bajo otro tenant cuando el piloto tiene varios negocios.
+const cat = (await db.query(`INSERT INTO "Category" (id, name, slug, "businessId", "updatedAt") VALUES ('cat-e2e', 'E2E', 'e2e', $1, now()) ON CONFLICT (id) DO UPDATE SET "businessId"=$1 RETURNING id`, [biz])).rows[0]?.id ?? "cat-e2e"
+const prod = (await db.query(`INSERT INTO "Product" (id, name, barcode, stock, "retailPrice", "wholesalePrice", images, "isActive", "categoryId", "businessId", "updatedAt") VALUES ('prod-e2e', 'Pantalla E2E', '7500000001', 0, 500, 350, '{}', true, $1, $2, now()) ON CONFLICT (id) DO UPDATE SET "retailPrice"=500, stock=0, "businessId"=$2, "categoryId"=$1 RETURNING id`, [cat, biz])).rows[0].id
+await db.query(`INSERT INTO "BranchStock" (id, "productId", "branchId", quantity, "businessId") VALUES ('bs-e2e', $1, $2, 10, $3) ON CONFLICT ("productId","branchId") DO UPDATE SET quantity=10, "businessId"=$3`, [prod, branch, biz])
 await db.query(`UPDATE "Product" SET stock=10 WHERE id=$1`, [prod])
-const client = (await db.query(`INSERT INTO "User" (id, name, phone, role, status, "businessId", "creditLimit", "creditBalance", "updatedAt") VALUES ('cust-e2e', 'Cliente E2E', '5550000000', 'CUSTOMER', 'APPROVED', $1, 5000, 0, now()) ON CONFLICT (id) DO NOTHING RETURNING id`, [biz])).rows[0]?.id ?? "cust-e2e"
+const client = (await db.query(`INSERT INTO "User" (id, name, phone, role, status, "businessId", "creditLimit", "creditBalance", "updatedAt") VALUES ('cust-e2e', 'Cliente E2E', '5550000000', 'CUSTOMER', 'APPROVED', $1, 5000, 0, now()) ON CONFLICT (id) DO UPDATE SET "businessId"=$1, status='APPROVED' RETURNING id`, [biz])).rows[0]?.id ?? "cust-e2e"
 
 // Abrir caja (el cobro en efectivo lo exige)
 const reg = await req("/api/caja", { method: "POST", body: JSON.stringify({ action: "OPEN", amount: 1000, idempotencyKey: run + "e2e-open-caja", branchId: branch }) })
 check("caja abierta", [200, 201, 409].includes(reg.status)) // 409 = ya había caja abierta en corridas previas
 
 // Grid de productos
-const grid = await (await req(`/api/pos/products?branchId=${branch}`)).json()
+// El grid pagina por nombre (24/página): se filtra por la categoría E2E
+// dedicada para que el fixture siempre quede en la primera página.
+const grid = await (await req(`/api/pos/products?branchId=${branch}&categoryId=${cat}`)).json()
 check("grid POS muestra producto con stock de sucursal", grid.products.some(p => p.id === prod && p.stock === 10))
 
 // 1. Suspender venta (DRAFT): sin stock ni dinero
