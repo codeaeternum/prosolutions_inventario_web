@@ -87,6 +87,7 @@ model Business {
   // Órdenes de OTROS tenants delegadas a este negocio como taller reparador.
   receivedDelegations RepairOrder[]       @relation("DelegatedToBusiness")
   verificationCodes   VerificationCode[]
+  auditEvents         AuditEvent[]
 
   @@index([isActive])
 }
@@ -283,6 +284,7 @@ model User {
   shoppingItemsCreated  ShoppingItem[]       @relation("ShoppingItemCreatedBy")
   shoppingItemsResolved ShoppingItem[]       @relation("ShoppingItemResolvedBy")
   verificationCodes     VerificationCode[]
+  auditEvents           AuditEvent[]
 
   // Verificación de contacto al registrarse (código por correo/Telegram).
   // No bloquea el acceso: es una señal de confianza sobre la cuenta.
@@ -647,6 +649,30 @@ model BusinessOperation {
 
   @@index([actorId, createdAt])
   @@index([businessId])
+}
+
+// Bitácora administrativa: quién cambió qué (precios, usuarios, ajustes,
+// catálogos). Las operaciones de dinero/stock ya quedan en BusinessOperation
+// y las de taller en RepairEvent; AuditEvent cubre las ediciones
+// administrativas que antes no dejaban rastro (p. ej. un empleado bajando el
+// precio que puso el dueño). `changes` guarda { campo: {before, after} } y
+// NUNCA debe contener passwords, PINs, hashes ni tokens.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action     String // "PRODUCT_UPDATE", "USER_UPDATE", "SETTINGS_UPDATE", ...
+  entity     String // "product" | "user" | "settings" | "supplier" | "category" | "brand" | "model" | "branch" | "customer" | "business"
+  entityId   String?
+  entityName String? // nombre legible capturado al escribir ("Pantalla iPhone 11")
+  summary    String // frase humana: "Precio $500.00 → $450.00"
+  changes    Json? // { price: { before: 500, after: 450 }, ... }
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([businessId, actorId, createdAt])
 }
 
 // Workshop pilot: reception and custody only. Cash/stock remain separate until branch accounting is implemented.

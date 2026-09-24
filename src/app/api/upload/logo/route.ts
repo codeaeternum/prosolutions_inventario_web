@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireModule } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
+import { businessIdOf } from "@/lib/tenant"
+import { prisma } from "@/lib/prisma"
+import { recordAudit } from "@/lib/audit"
 import * as fs from "fs"
 import * as path from "path"
 import { randomBytes } from "crypto"
@@ -20,6 +23,8 @@ export async function POST(request: NextRequest) {
   try {
     const result = await requireModule("configuracion")
     if (result.error) return result.error
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const formData = await request.formData()
     const file = formData.get("file") as File | null
@@ -61,6 +66,17 @@ export async function POST(request: NextRequest) {
     }
 
     fs.writeFileSync(path.join(uploadDir, filename), Buffer.from(bytes))
+
+    // Bitácora: el logo es la cara pública del negocio (vitrina y tickets).
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "BUSINESS_LOGO",
+      entity: "business",
+      entityId: businessId,
+      summary: `Subió un nuevo logo del negocio (${filename})`,
+      changes: { logo: { before: null, after: `/uploads/${filename}` } },
+    })
 
     return NextResponse.json({ path: `/uploads/${filename}` })
   } catch (error) {

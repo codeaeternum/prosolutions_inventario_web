@@ -4,6 +4,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, getDefaultBusinessId, setBusinessSetting } from "@/lib/settings"
+import { diffChanges, maskSensitiveChanges, recordAudit } from "@/lib/audit"
 
 const DEFAULT_SETTINGS = {
   id: "default",
@@ -139,12 +140,25 @@ export async function GET() {
   }
 }
 
+// Llaves de SystemSettings que este PATCH puede escribir (para el diff de
+// la bitácora se leen ANTES de cualquier setBusinessSetting).
+const AUDITED_SYSTEM_KEYS = [
+  "bank_transfer_info", "bank_cash_info",
+  "ticket_business_name", "ticket_subtitle", "ticket_footer",
+  "order_prefix", "order_folio_digits",
+  "partner_intake_enabled", "repair_partner_business_id",
+  "sale_auto_ticket", "repair_signature_mode",
+  "quote_validity_days", "quote_terms",
+  "label_show_problem", "label_show_access",
+]
+
 // PATCH - Actualizar configuración (módulo configuración)
 export async function PATCH(req: Request) {
   try {
     const result = await requireModule("configuracion")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const body = await req.json()
     const {
@@ -257,7 +271,20 @@ export async function PATCH(req: Request) {
       ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
       ...(exchangeRate !== undefined && { exchangeRate }),
     }
-    const existing = await prisma.settings.findFirst({ where: { businessId }, select: { id: true } })
+    // Estado previo para la bitácora: la fila Settings (columnas numéricas)
+    // y las llaves SystemSettings que este PATCH puede tocar.
+    const existing = await prisma.settings.findFirst({
+      where: { businessId },
+      select: {
+        id: true,
+        tempReservationMinutes: true,
+        depositPercentage: true,
+        depositReservationHours: true,
+        pendingVerificationHours: true,
+        exchangeRate: true,
+      },
+    })
+    const beforeSys = await getBusinessSettingsMap(businessId, AUDITED_SYSTEM_KEYS)
     const settings = existing
       ? await prisma.settings.update({ where: { id: existing.id }, data: updateData })
       : await prisma.settings.create({
@@ -347,6 +374,61 @@ export async function PATCH(req: Request) {
     }
     if (cleanQuoteTerms !== undefined) {
       await setBusinessSetting(businessId, "quote_terms", cleanQuoteTerms)
+    }
+
+    // Bitácora: solo las llaves que llegaron en el body, con su valor
+    // EFECTIVO guardado (normalizado: prefijo saneado, booleanos "true"/
+    // "false", números como texto tal como quedan en SystemSettings).
+    const sentValues: Record<string, unknown> = {
+      ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
+      ...(depositPercentage !== undefined && { depositPercentage }),
+      ...(depositReservationHours !== undefined && { depositReservationHours }),
+      ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
+      ...(exchangeRate !== undefined && { exchangeRate }),
+      ...(bankTransferInfo !== undefined && { bank_transfer_info: bankTransferInfo ?? DEFAULTS.bankTransferInfo }),
+      ...(bankCashInfo !== undefined && { bank_cash_info: bankCashInfo ?? DEFAULTS.bankCashInfo }),
+      ...(ticketBusinessName !== undefined && { ticket_business_name: ticketBusinessName }),
+      ...(ticketSubtitle !== undefined && { ticket_subtitle: ticketSubtitle }),
+      ...(ticketFooter !== undefined && { ticket_footer: ticketFooter }),
+      ...(savedOrderPrefix !== undefined && { order_prefix: savedOrderPrefix }),
+      ...(folioDigits !== undefined && { order_folio_digits: String(folioDigits) }),
+      ...(savedPartnerIntake !== undefined && { partner_intake_enabled: savedPartnerIntake ? "true" : "false" }),
+      ...(repairPartnerId !== undefined && { repair_partner_business_id: repairPartnerId }),
+      ...(saleAutoTicket !== undefined && { sale_auto_ticket: saleAutoTicket ? "true" : "false" }),
+      ...(signatureMode !== undefined && { repair_signature_mode: signatureMode }),
+      ...(quoteDays !== undefined && { quote_validity_days: String(quoteDays) }),
+      ...(cleanQuoteTerms !== undefined && { quote_terms: cleanQuoteTerms }),
+      ...(labelShowProblem !== undefined && { label_show_problem: labelShowProblem ? "true" : "false" }),
+      ...(labelShowAccess !== undefined && { label_show_access: labelShowAccess ? "true" : "false" }),
+    }
+    const sentKeys = Object.keys(sentValues)
+    if (sentKeys.length > 0) {
+      const beforeValues: Record<string, unknown> = {
+        tempReservationMinutes: existing?.tempReservationMinutes ?? null,
+        depositPercentage: existing?.depositPercentage ?? null,
+        depositReservationHours: existing?.depositReservationHours ?? null,
+        pendingVerificationHours: existing?.pendingVerificationHours ?? null,
+        exchangeRate: existing?.exchangeRate ?? null,
+      }
+      for (const key of sentKeys) {
+        if (!(key in beforeValues)) beforeValues[key] = beforeSys.get(key) ?? null
+      }
+      // Las llaves cuyo nombre delate secreto quedan censuradas (defensa en
+      // profundidad; las llaves actuales son datos públicos del negocio).
+      const changes = maskSensitiveChanges(diffChanges(beforeValues, sentValues, sentKeys))
+      if (changes) {
+        const changedKeys = Object.keys(changes)
+        await recordAudit(prisma, {
+          businessId,
+          actorId: session.user.id,
+          action: "SETTINGS_UPDATE",
+          entity: "settings",
+          entityId: settings.id,
+          entityName: "Configuración del negocio",
+          summary: `Cambió configuración: ${changedKeys.slice(0, 5).join(", ")}${changedKeys.length > 5 ? ` (+${changedKeys.length - 5} más)` : ""}`,
+          changes,
+        })
+      }
     }
 
     return NextResponse.json({

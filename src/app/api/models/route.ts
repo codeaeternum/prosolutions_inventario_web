@@ -5,6 +5,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
+import { recordAudit } from "@/lib/audit"
 import { generateSlug } from "@/lib/utils"
 
 const createModelSchema = z.object({
@@ -46,7 +47,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 })
     }
     const { name, brandId } = parseResult.data
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     // La marca debe pertenecer a esta empresa; una ajena responde como inexistente.
     const brand = await prisma.brand.findFirst({
@@ -70,6 +72,16 @@ export async function POST(req: Request) {
     const model = await prisma.model.create({
       data: { businessId, name, slug, brandId },
       include: { brand: { select: { name: true } } },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "MODEL_CREATE",
+      entity: "model",
+      entityId: model.id,
+      entityName: `${model.brand.name} ${model.name}`,
+      summary: `Creó el modelo "${model.brand.name} ${model.name}"`,
     })
 
     return NextResponse.json(model)

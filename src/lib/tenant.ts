@@ -23,6 +23,7 @@ const TENANT_MODELS = new Set([
   "InventoryMovement",
   "Supplier", "Purchase", "PurchaseItem", "SupplierPayment",
   "InventoryCount", "InventoryCountItem",
+  "AuditEvent",
 ])
 
 type Args = Record<string, unknown> & { where?: Record<string, unknown>; data?: unknown }

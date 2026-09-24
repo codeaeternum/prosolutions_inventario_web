@@ -5,6 +5,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
+import { recordAudit } from "@/lib/audit"
 import { generateSlug } from "@/lib/utils"
 
 const createBrandSchema = z.object({
@@ -41,7 +42,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 })
     }
     const { name, logo } = parseResult.data
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const slug = generateSlug(name)
 
@@ -55,6 +57,16 @@ export async function POST(req: Request) {
 
     const brand = await prisma.brand.create({
       data: { businessId, name, slug, logo: logo || null },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "BRAND_CREATE",
+      entity: "brand",
+      entityId: brand.id,
+      entityName: brand.name,
+      summary: `Creó la marca "${brand.name}"`,
     })
 
     return NextResponse.json(brand)

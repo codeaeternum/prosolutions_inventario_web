@@ -30,9 +30,25 @@ import {
   Shield,
   ClipboardList,
   Handshake,
+  History,
 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 
-const navigationGroups = [
+interface NavItem {
+  name: string
+  href: string
+  icon: LucideIcon
+  // Solo visible para ADMIN: páginas que no son módulo asignable
+  // (p. ej. el registro de actividad); el filtro por módulos no las cubre.
+  adminOnly?: boolean
+}
+
+interface NavGroup {
+  name: string
+  items: NavItem[]
+}
+
+const navigationGroups: NavGroup[] = [
   {
     name: "Inicio",
     items: [
@@ -72,6 +88,7 @@ const navigationGroups = [
       { name: "Sucursales", href: "/admin/sucursales", icon: Building2 },
       { name: "Usuarios", href: "/admin/usuarios", icon: Users },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
+      { name: "Actividad", href: "/admin/actividad", icon: History, adminOnly: true },
       { name: "Notificaciones", href: "/admin/notificaciones", icon: Bell },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
     ]
@@ -79,7 +96,7 @@ const navigationGroups = [
 ]
 
 // Bottom bar items for mobile quick access
-const bottomBarItems = [
+const bottomBarItems: NavItem[] = [
   { name: "Inicio", href: "/admin", icon: LayoutDashboard },
   { name: "Ventas", href: "/admin/ventas", icon: ShoppingCart },
   { name: "Inventario", href: "/admin/inventario", icon: Boxes },
@@ -95,7 +112,7 @@ const ALL_NAV_HREFS = [
 
 // Portal del taller aliado (captador): su pantalla principal es /aliado y
 // desde el sidebar también puede entrar al Mercado para comprar refacciones.
-const workshopGroups = [
+const workshopGroups: NavGroup[] = [
   {
     name: "Aliado",
     items: [
@@ -106,7 +123,7 @@ const workshopGroups = [
 ]
 
 // Consola de plataforma: solo la ve el superadmin (operador Reficio).
-const platformGroup = {
+const platformGroup: NavGroup = {
   name: "Plataforma",
   items: [
     { name: "Consola", href: "/platform", icon: Shield },
@@ -116,7 +133,7 @@ const platformGroup = {
 // Negocio captador con taller asociado configurado: portal para captar equipos
 // y dar seguimiento a las órdenes delegadas. Solo aparece cuando el tenant
 // tiene repair_partner_business_id en su configuración.
-const partnerGroup = {
+const partnerGroup: NavGroup = {
   name: "Aliados",
   items: [
     { name: "Portal aliado", href: "/aliado", icon: Handshake },
@@ -155,13 +172,14 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
     .map(group => ({
       ...group,
       // Restricción por módulo asignado (User.allowedModules; vacío = libre,
-      // ADMIN nunca se restringe). Los href sin módulo mapeado siempre pasan.
-      items: user.role === "ADMIN" || !user.allowedModules?.length
-        ? group.items
-        : group.items.filter(item => {
-            const required = moduleForAdminPath(item.href)
-            return !required || user.allowedModules!.includes(required)
-          }),
+      // ADMIN nunca se restringe). Los href sin módulo mapeado siempre pasan,
+      // salvo los marcados adminOnly (no son módulo asignable).
+      items: group.items.filter(item => {
+        if (item.adminOnly && user.role !== "ADMIN") return false
+        if (user.role === "ADMIN" || !user.allowedModules?.length) return true
+        const required = moduleForAdminPath(item.href)
+        return !required || user.allowedModules!.includes(required)
+      }),
     }))
     .filter(group => {
       // Grupos vacíos no muestran header

@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
 import { syncLowStockAlerts } from "@/lib/low-stock"
+import { money, recordAudit } from "@/lib/audit"
 
 const createProductSchema = z
   .object({
@@ -283,6 +284,19 @@ export async function POST(req: Request) {
           },
         })
       }
+
+      // Bitácora dentro del work de la operación: el evento comitea con el
+      // producto y un reintento con la misma llave NO duplica el registro
+      // (en replay la respuesta se sirve del recibo sin re-ejecutar work).
+      await recordAudit(tx, {
+        businessId,
+        actorId: session.user.id,
+        action: "PRODUCT_CREATE",
+        entity: "product",
+        entityId: created.id,
+        entityName: created.name,
+        summary: `Alta de producto · Precio ${money(created.retailPrice)}${stock > 0 ? ` · Stock inicial ${stock}` : ""}`,
+      })
       return { product: created }
     })
 

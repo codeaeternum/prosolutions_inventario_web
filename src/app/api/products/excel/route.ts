@@ -4,6 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock, transaction } from "@/lib/domain/operations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
+import { recordAudit } from "@/lib/audit"
 import * as XLSX from "xlsx"
 
 export async function GET() {
@@ -252,6 +253,17 @@ export async function POST(request: NextRequest) {
 
         // Una sola revisión al final: los avisos llegan agrupados, no por fila.
         await syncLowStockAlerts(prisma, businessId, [...touchedProductIds])
+        // Importación masiva: un solo evento resumen (no uno por producto).
+        if (created + updated > 0) {
+            await recordAudit(prisma, {
+                businessId,
+                actorId,
+                action: "PRODUCT_IMPORT",
+                entity: "product",
+                entityName: file.name || "Excel",
+                summary: `Importó ${created + updated} productos por Excel (${created} nuevos, ${updated} actualizados)`,
+            })
+        }
         return NextResponse.json({
             success: true,
             message: `Importación completada: ${created} creados, ${updated} actualizados`,

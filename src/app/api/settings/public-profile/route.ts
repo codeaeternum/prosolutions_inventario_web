@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSettingsMap } from "@/lib/settings"
+import { diffChanges, recordAudit } from "@/lib/audit"
 import { isValidSlug, normalizeSlug } from "@/lib/public-slug"
 import * as fs from "fs"
 import * as path from "path"
@@ -285,15 +286,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No hay cambios por guardar" }, { status: 400 })
     }
 
-    // Logo anterior para borrar el archivo huérfano tras el update.
-    let oldLogo = ""
-    if (logo !== undefined) {
-      const current = await prisma.business.findUnique({
+    // Estado previo para la bitácora: columnas de Business que van a
+    // actualizarse + llaves SystemSettings que se van a upsertear.
+    const [beforeBiz, beforeSys] = await Promise.all([
+      prisma.business.findUnique({
         where: { id: businessId },
-        select: { logoUrl: true },
-      })
-      oldLogo = current?.logoUrl ?? ""
-    }
+        select: { name: true, slug: true, phone: true, address: true, logoUrl: true, showInDirectory: true, lat: true, lng: true },
+      }),
+      getBusinessSettingsMap(businessId, settingUpserts.map((s) => s.key)),
+    ])
+
+    // Logo anterior para borrar el archivo huérfano tras el update.
+    const oldLogo = logo !== undefined ? (beforeBiz?.logoUrl ?? "") : ""
 
     try {
       await prisma.$transaction(async (tx) => {
@@ -320,6 +324,42 @@ export async function POST(req: Request) {
 
     if (logo !== undefined && oldLogo && oldLogo !== newLogo) {
       removeLogoFile(oldLogo)
+    }
+
+    // Bitácora: antes→después de las columnas Business y llaves enviadas.
+    const auditAfter: Record<string, unknown> = {
+      ...businessUpdate,
+      ...Object.fromEntries(settingUpserts.map((s) => [s.key, s.value])),
+    }
+    const auditKeys = Object.keys(auditAfter)
+    if (auditKeys.length > 0) {
+      const beforeValues: Record<string, unknown> = {}
+      for (const key of auditKeys) {
+        beforeValues[key] = key in (beforeBiz ?? {})
+          ? (beforeBiz as Record<string, unknown>)[key]
+          : (beforeSys.get(key) ?? null)
+      }
+      const changes = diffChanges(beforeValues, auditAfter, auditKeys)
+      if (changes) {
+        // Etiquetas legibles; lat+lng cuentan una sola vez ("Ubicación").
+        const labels: Record<string, string> = {
+          name: "Nombre", slug: "Link público", phone: "Teléfono", address: "Dirección",
+          logoUrl: "Logo", showInDirectory: "Visible en directorio",
+          lat: "Ubicación", lng: "Ubicación",
+          public_description: "Descripción", ticket_business_name: "Nombre en tickets",
+        }
+        const changedLabels = [...new Set(Object.keys(changes).map((k) => labels[k] ?? k))]
+        await recordAudit(prisma, {
+          businessId,
+          actorId: auth.session.user.id,
+          action: "BUSINESS_UPDATE",
+          entity: "business",
+          entityId: businessId,
+          entityName: beforeBiz?.name ?? null,
+          summary: `Actualizó el perfil público: ${changedLabels.slice(0, 5).join(", ")}${changedLabels.length > 5 ? ` (+${changedLabels.length - 5} más)` : ""}`,
+          changes,
+        })
+      }
     }
 
     return NextResponse.json(await readProfile(businessId))

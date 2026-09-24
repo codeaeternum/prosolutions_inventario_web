@@ -5,6 +5,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "../slug-utils"
 import { MODULES } from "@/lib/access"
+import { diffChanges, listText, recordAudit } from "@/lib/audit"
 import bcrypt from "bcryptjs"
 
 // Restricciones de acceso del staff: lista vacía = sin restricción.
@@ -29,7 +30,19 @@ export async function PATCH(
 
     const existingUser = await prisma.user.findUnique({
       where: { id, businessId },
-      select: { id: true, role: true },
+      // El select amplio alimenta el diff de la bitácora (antes→después).
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        customerType: true,
+        role: true,
+        homeBranchId: true,
+        jobTitle: true,
+        publicSlug: true,
+        allowedModules: true,
+        allowedBranchIds: true,
+      },
     })
     if (!existingUser) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
@@ -139,6 +152,53 @@ export async function PATCH(
       },
     })
 
+    // Bitácora: antes→después de los campos administrables. JAMÁS se
+    // registra password/quickPin (ni el campo): el PIN solo se anota como
+    // "actualizado"/"eliminado" en el resumen, sin valor.
+    const auditBefore = {
+      estatus: existingUser.status,
+      tipoCliente: existingUser.customerType,
+      rol: existingUser.role,
+      sucursalId: existingUser.homeBranchId,
+      puesto: existingUser.jobTitle,
+      slugPublico: existingUser.publicSlug,
+      modulos: existingUser.allowedModules,
+      sucursales: existingUser.allowedBranchIds,
+    }
+    const auditAfter = {
+      estatus: user.status,
+      tipoCliente: user.customerType,
+      rol: user.role,
+      sucursalId: user.homeBranchId,
+      puesto: user.jobTitle,
+      slugPublico: user.publicSlug,
+      modulos: user.allowedModules,
+      sucursales: user.allowedBranchIds,
+    }
+    const changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
+    if (changes || quickPinUpdate !== undefined) {
+      const parts: string[] = []
+      if (changes?.rol) parts.push(`Rol ${auditBefore.rol} → ${auditAfter.rol}`)
+      if (changes?.estatus) parts.push(`Estatus ${auditBefore.estatus} → ${auditAfter.estatus}`)
+      if (changes?.tipoCliente) parts.push(`Tipo de cliente ${auditBefore.tipoCliente} → ${auditAfter.tipoCliente}`)
+      if (changes?.puesto) parts.push(`Puesto "${auditBefore.puesto ?? "—"}" → "${auditAfter.puesto ?? "—"}"`)
+      if (changes?.sucursalId) parts.push("Cambió la sucursal base")
+      if (changes?.slugPublico) parts.push("Cambió el link público del taller")
+      if (changes?.modulos) parts.push(`Módulos: ${listText(auditBefore.modulos, "todos")} → ${listText(auditAfter.modulos, "todos")}`)
+      if (changes?.sucursales) parts.push(`Sucursales: ${listText(auditBefore.sucursales, "todas")} → ${listText(auditAfter.sucursales, "todas")}`)
+      if (quickPinUpdate !== undefined) parts.push(quickPinUpdate === null ? "PIN rápido eliminado" : "PIN rápido actualizado")
+      await recordAudit(prisma, {
+        businessId,
+        actorId: session.user.id,
+        action: "USER_UPDATE",
+        entity: "user",
+        entityId: id,
+        entityName: existingUser.name,
+        summary: parts.join(" · ") || "Editó al usuario",
+        changes,
+      })
+    }
+
     return NextResponse.json(user)
   } catch (error) {
     console.error("Error updating user:", error)
@@ -157,16 +217,26 @@ export async function DELETE(
 
     const { id } = await params
 
+    const businessId = businessIdOf(session)
+    const target = await prisma.user.findUnique({ where: { id, businessId }, select: { role: true, name: true } })
+
     // Un empleado con el módulo no puede eliminar a un administrador.
-    if (session.user.role !== "ADMIN") {
-      const target = await prisma.user.findUnique({ where: { id, businessId: businessIdOf(session) }, select: { role: true } })
-      if (target?.role === "ADMIN") {
-        return NextResponse.json({ error: "Solo un administrador puede eliminar administradores" }, { status: 403 })
-      }
+    if (session.user.role !== "ADMIN" && target?.role === "ADMIN") {
+      return NextResponse.json({ error: "Solo un administrador puede eliminar administradores" }, { status: 403 })
     }
 
     await prisma.user.delete({
-      where: { id, businessId: businessIdOf(session) },
+      where: { id, businessId },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "USER_DELETE",
+      entity: "user",
+      entityId: id,
+      entityName: target?.name ?? null,
+      summary: `Eliminó al usuario "${target?.name ?? id}"${target ? ` · Rol ${target.role}` : ""}`,
     })
 
     return NextResponse.json({ success: true })

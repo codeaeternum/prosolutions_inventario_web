@@ -5,6 +5,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
+import { recordAudit } from "@/lib/audit"
 import { generateSlug } from "@/lib/utils"
 
 const createCategorySchema = z.object({
@@ -41,7 +42,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 })
     }
     const { name, icon } = parseResult.data
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const slug = generateSlug(name)
 
@@ -55,6 +57,16 @@ export async function POST(req: Request) {
 
     const category = await prisma.category.create({
       data: { businessId, name, slug, icon: icon || null },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "CATEGORY_CREATE",
+      entity: "category",
+      entityId: category.id,
+      entityName: category.name,
+      summary: `Creó la categoría "${category.name}"`,
     })
 
     return NextResponse.json(category)

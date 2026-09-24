@@ -7,6 +7,7 @@ import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock } from "@/lib/domain/operations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
+import { diffChanges, money, recordAudit } from "@/lib/audit"
 import type { Prisma } from "@prisma/client"
 
 type TransactionClient = Prisma.TransactionClient
@@ -179,6 +180,7 @@ export async function PUT(
     // La existencia se ajusta en UNA sucursal (stockBranchId o la del usuario);
     // nunca como valor absoluto sobre el total.
     const stockDiff = parseInt(stock) - existingProduct.stock
+    const parsedCostPrice = (costPrice != null && costPrice !== "") ? parseFloat(costPrice) : null
     const editor = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
 
     // Actualizar producto y modelos en transacción
@@ -189,7 +191,6 @@ export async function PUT(
       })
 
       // Track price changes
-      const parsedCostPrice = (costPrice != null && costPrice !== "") ? parseFloat(costPrice) : null
       const priceFields = [
         { field: "retailPrice", oldVal: existingProduct.retailPrice, newVal: parseFloat(retailPrice) },
         { field: "wholesalePrice", oldVal: existingProduct.wholesalePrice, newVal: parseFloat(wholesalePrice) },
@@ -272,6 +273,61 @@ export async function PUT(
       return updatedProduct
     })
 
+    // Bitácora: antes→después de los campos editables. Las llaves del diff
+    // van en español porque el resumen se muestra tal cual al dueño.
+    const auditBefore = {
+      nombre: existingProduct.name,
+      codigoBarras: existingProduct.barcode,
+      precio: existingProduct.retailPrice,
+      mayoreo: existingProduct.wholesalePrice,
+      costo: existingProduct.costPrice,
+      stock: existingProduct.stock,
+      stockMinimo: existingProduct.minStock,
+      activo: existingProduct.isActive,
+      universal: existingProduct.isUniversal,
+      categoriaId: existingProduct.categoryId,
+      descripcion: existingProduct.description,
+    }
+    const auditAfter = {
+      nombre: name,
+      codigoBarras: barcode || null,
+      precio: parseFloat(retailPrice),
+      mayoreo: parseFloat(wholesalePrice),
+      costo: parsedCostPrice,
+      stock: Number.isFinite(stockDiff) ? existingProduct.stock + stockDiff : existingProduct.stock,
+      stockMinimo: parseInt(minStock),
+      activo: isActive ?? true,
+      universal: isUniversal ?? false,
+      categoriaId: categoryId,
+      descripcion: description || null,
+    }
+    const changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
+    if (changes) {
+      const parts: string[] = []
+      if (changes.precio) parts.push(`Precio ${money(existingProduct.retailPrice)} → ${money(auditAfter.precio)}`)
+      if (changes.costo) parts.push(`Costo ${money(existingProduct.costPrice)} → ${money(auditAfter.costo)}`)
+      if (changes.mayoreo) parts.push(`Mayoreo ${money(existingProduct.wholesalePrice)} → ${money(auditAfter.mayoreo)}`)
+      if (changes.nombre) parts.push(`Nombre "${existingProduct.name}" → "${name}"`)
+      if (changes.activo) parts.push(auditAfter.activo ? "Reactivado" : "Desactivado")
+      if (changes.stock) parts.push(`Stock ${existingProduct.stock} → ${auditAfter.stock}`)
+      if (changes.stockMinimo) parts.push(`Stock mínimo ${existingProduct.minStock} → ${auditAfter.stockMinimo}`)
+      if (changes.categoriaId) parts.push("Cambió de categoría")
+      if (changes.codigoBarras) parts.push("Cambió el código de barras")
+      if (changes.universal) parts.push(auditAfter.universal ? "Marcado como universal" : "Dejó de ser universal")
+      if (changes.descripcion) parts.push("Cambió la descripción")
+      if (parts.length === 0) parts.push("Editó el producto")
+      await recordAudit(prisma, {
+        businessId,
+        actorId: session.user.id,
+        action: "PRODUCT_UPDATE",
+        entity: "product",
+        entityId: id,
+        entityName: existingProduct.name,
+        summary: parts.join(" · "),
+        changes,
+      })
+    }
+
     // Post-commit: revisa stock bajo tanto por el ajuste de existencias como
     // por un cambio de minStock (subir el mínimo puede cruzar el umbral solo).
     await syncLowStockAlerts(prisma, businessId, [id])
@@ -346,6 +402,16 @@ export async function DELETE(
       await tx.product.delete({
         where: { id, businessId },
       })
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "PRODUCT_DELETE",
+      entity: "product",
+      entityId: id,
+      entityName: existingProduct.name,
+      summary: `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
     })
 
     return NextResponse.json({ success: true })

@@ -66,6 +66,10 @@ const PROTECTED_PATHS = ["/mis-reservas", "/perfil", "/carrito"]
 
 type AuthSession = { user?: { role: UserRole; status: UserStatus; isSuperAdmin?: boolean; allowedModules?: string[] } } | null
 
+// Páginas exclusivas de ADMIN: no son módulo asignable, así que el gate por
+// módulos (2.4) no las cubre cuando el EMPLOYEE sí tiene lista explícita.
+const ADMIN_ONLY_PATHS = ["/admin/actividad"]
+
 function isPublicPath(pathname: string): boolean {
   return (
     PUBLIC_PATHS.some((path) => pathname === path || (path !== "/" && pathname.startsWith(`${path}/`))) ||
@@ -133,10 +137,17 @@ export function getAuthRedirect(
     // 2.2) EMPLOYEE restrictions (regla general cuando NO hay módulos
     // asignados; con asignación explícita, 2.4 es la que manda).
     if (role === "EMPLOYEE" && !hasExplicitModules) {
-      const restrictedForEmployee = ["/admin/usuarios", "/admin/credito", "/admin/reportes", "/admin/notificaciones", "/admin/configuracion"]
+      const restrictedForEmployee = ["/admin/usuarios", "/admin/credito", "/admin/reportes", "/admin/notificaciones", "/admin/configuracion", "/admin/actividad"]
       if (restrictedForEmployee.some(path => pathname.startsWith(path))) {
         return Response.redirect(new URL("/admin", nextUrl))
       }
+    }
+
+    // 2.3) Solo ADMIN: a estas alturas el rol es ADMIN o EMPLOYEE (WORKSHOP
+    // y CUSTOMER ya salieron); cualquier EMPLOYEE — con o sin módulos —
+    // regresa al dashboard.
+    if (role !== "ADMIN" && ADMIN_ONLY_PATHS.some(path => pathname === path || pathname.startsWith(`${path}/`))) {
+      return Response.redirect(new URL("/admin", nextUrl))
     }
 
     // 2.4) Gate de módulo por ruta para cualquier rol no-ADMIN con lista.

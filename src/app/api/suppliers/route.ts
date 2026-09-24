@@ -5,6 +5,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { listSuppliers } from "@/lib/domain/purchasing"
 import { businessFailure } from "@/lib/domain/http"
+import { recordAudit } from "@/lib/audit"
 
 const createSchema = z.object({
   name: z.string().trim().min(1, "El nombre es requerido").max(200),
@@ -28,7 +29,8 @@ export async function POST(req: Request) {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
     const parsed = createSchema.safeParse(await req.json())
     if (!parsed.success) {
@@ -45,6 +47,16 @@ export async function POST(req: Request) {
           data: { isActive: true, phone: phone || existing.phone, email: email || existing.email, notes: notes || existing.notes },
           include: { _count: { select: { purchases: true } } },
         })
+        await recordAudit(prisma, {
+          businessId,
+          actorId: session.user.id,
+          action: "SUPPLIER_UPDATE",
+          entity: "supplier",
+          entityId: revived.id,
+          entityName: revived.name,
+          summary: `Reactivó al proveedor "${revived.name}"`,
+          changes: { activo: { before: false, after: true } },
+        })
         return NextResponse.json(revived, { status: 200 })
       }
       return NextResponse.json({ error: "Ya existe un proveedor con ese nombre" }, { status: 400 })
@@ -54,6 +66,15 @@ export async function POST(req: Request) {
       const supplier = await prisma.supplier.create({
         data: { businessId, name, phone: phone || null, email: email || null, notes: notes || null },
         include: { _count: { select: { purchases: true } } },
+      })
+      await recordAudit(prisma, {
+        businessId,
+        actorId: session.user.id,
+        action: "SUPPLIER_CREATE",
+        entity: "supplier",
+        entityId: supplier.id,
+        entityName: supplier.name,
+        summary: `Alta del proveedor "${supplier.name}"`,
       })
       return NextResponse.json(supplier, { status: 201 })
     } catch (error) {

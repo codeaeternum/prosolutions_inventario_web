@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
+import { money, recordAudit } from "@/lib/audit"
 import { z } from "zod"
 
 const patchSchema = z.object({
@@ -42,7 +43,8 @@ export async function PATCH(
 ) {
   const result = await requireModule("credito")
   if (result.error) return result.error
-  const businessId = businessIdOf(getSession(result)!)
+  const session = getSession(result)!
+  const businessId = businessIdOf(session)
 
   const { id } = await params
   const body = await req.json()
@@ -56,7 +58,7 @@ export async function PATCH(
 
   const existing = await prisma.user.findFirst({
     where: { id, businessId },
-    select: { id: true, creditLimit: true, creditBalance: true },
+    select: { id: true, name: true, creditLimit: true, creditBalance: true },
   })
   if (!existing) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
 
@@ -71,12 +73,24 @@ export async function PATCH(
     )
   }
 
-  // TODO(audit): cuando exista el modelo AuditEvent registrar aquí el cambio
-  // de límite (actorId, valor anterior -> nuevo) para rastrear quién lo movió.
   const user = await prisma.user.update({
     where: { id },
     data: { creditLimit: newLimit },
     select: { id: true, creditLimit: true, creditBalance: true },
   })
+
+  // Bitácora: el límite de crédito decide cuánto puede deber el cliente.
+  if (existing.creditLimit !== newLimit) {
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "CUSTOMER_UPDATE",
+      entity: "customer",
+      entityId: id,
+      entityName: existing.name,
+      summary: `Límite de crédito ${existing.creditLimit == null ? "sin límite" : money(existing.creditLimit)} → ${newLimit == null ? "sin límite" : money(newLimit)}`,
+      changes: { limiteCredito: { before: existing.creditLimit, after: newLimit } },
+    })
+  }
   return NextResponse.json(user)
 }

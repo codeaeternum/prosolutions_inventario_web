@@ -5,6 +5,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "./slug-utils"
 import { MODULES } from "@/lib/access"
+import { recordAudit } from "@/lib/audit"
 import bcrypt from "bcryptjs"
 import { UserRole } from "@prisma/client"
 
@@ -190,6 +191,23 @@ export async function POST(req: Request) {
         allowedModules: allowedModules ?? [],
         allowedBranchIds: allowedBranchIds ?? [],
         status: "APPROVED", // Admin created users are auto-approved
+      },
+    })
+
+    // Bitácora: alta de usuario. NUNCA se registran password ni quickPin
+    // (ni su hash): solo rol, puesto y restricciones de acceso.
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "USER_CREATE",
+      entity: "user",
+      entityId: user.id,
+      entityName: user.name,
+      summary: `Alta de usuario "${user.name}" · Rol ${user.role}${user.jobTitle ? ` · Puesto ${user.jobTitle}` : ""}`,
+      changes: {
+        rol: { before: null, after: user.role },
+        modulos: { before: null, after: user.allowedModules },
+        sucursales: { before: null, after: user.allowedBranchIds },
       },
     })
 
