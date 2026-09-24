@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { fillDays, fillMonths, lastDayKeys, lastMonthKeys } from "@/lib/chart-utils"
+import { parseBusinessDateParam } from "@/lib/business-time"
 
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
@@ -21,15 +22,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(await buildReportSeries(businessId))
     }
 
-    const fromDate = searchParams.get("from")
-    const toDate = searchParams.get("to")
+    // from/to en fecha corta "YYYY-MM-DD" = día completo del negocio
+    // (00:00:00.000 / 23:59:59.999 en BUSINESS_TIME_ZONE, no UTC); valores
+    // con hora/ISO completo pasan tal cual.
+    const from = parseBusinessDateParam(searchParams.get("from"), "start")
+    const to = parseBusinessDateParam(searchParams.get("to"), "end")
 
     // Filtros de fecha para reservas
     const dateFilter = {
-      ...(fromDate && { gte: new Date(fromDate) }),
-      ...(toDate && { lte: new Date(toDate + "T23:59:59.999Z") }),
+      ...(from && { gte: from }),
+      ...(to && { lte: to }),
     }
-    const hasDateFilter = fromDate || toDate
+    const hasDateFilter = from || to
 
     // Obtener estadísticas en paralelo
     const [

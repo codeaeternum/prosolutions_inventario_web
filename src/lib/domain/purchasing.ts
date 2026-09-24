@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { PrismaClient, PurchaseStatus } from "@prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, operation, operationKeySchema, releaseStock, resolveBranch } from "./operations"
@@ -66,6 +67,56 @@ export async function createPurchase(db: PrismaClient, actorId: string, business
       },
     })
     return { purchase, folio: purchaseFolio(purchase.number) }
+  })
+}
+
+const updateDraftSchema = createSchema.omit({ idempotencyKey: true })
+
+/**
+ * Edita una OC que sigue en DRAFT (items, proveedor, sucursal, notas, fecha
+ * promesa). Antes solo se podía cancelar y recapturar, lo que ensuciaba folios
+ * y dejaba OCs canceladas por errores de captura.
+ */
+export async function updatePurchaseDraft(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
+  const input = updateDraftSchema.parse(raw)
+  // La llave deriva del contenido: reenviar el mismo formulario (doble clic,
+  // reintento de red) repite la misma edición una sola vez.
+  const digest = createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 24)
+  return operation(db, {
+    key: `purchase-update:${id}:${digest}`,
+    actorId, businessId, kind: "PURCHASE_UPDATE", permission: "staff", payload: { id, ...input },
+  }, async tx => {
+    const purchase = await tx.purchase.findFirst({ where: { id, businessId }, select: { id: true, status: true, number: true } })
+    if (!purchase) throw new BusinessError("Orden de compra no encontrada.", 404)
+    if (purchase.status !== "DRAFT") throw new BusinessError("Solo se puede editar una orden en borrador.", 409)
+
+    const branch = await resolveBranch(tx, input.branchId, businessId)
+    if (branch.businessId !== businessId) throw new BusinessError("La sucursal no pertenece a este negocio.", 409)
+    const supplier = input.supplierId
+      ? await tx.supplier.findFirst({ where: { id: input.supplierId, businessId, isActive: true } })
+      : null
+    if (input.supplierId && !supplier) throw new BusinessError("Proveedor no encontrado o inactivo.", 404)
+
+    const dueAt = input.dueAt ? new Date(`${input.dueAt}T12:00:00.000Z`) : null
+    if (dueAt && Number.isNaN(dueAt.getTime())) throw new BusinessError("Fecha promesa inválida.", 400)
+
+    const lines = []
+    let totalCents = 0
+    for (const item of input.items) {
+      const product = await tx.product.findFirst({ where: { id: item.productId, businessId } })
+      if (!product || !product.isActive) throw new BusinessError("Un producto de la compra no está disponible.", 409)
+      lines.push({ businessId, productId: product.id, quantity: item.quantity, unitCostCents: item.unitCostCents })
+      totalCents += item.unitCostCents * item.quantity
+    }
+
+    const changed = await tx.purchase.updateMany({
+      where: { id: purchase.id, status: "DRAFT" },
+      data: { supplierId: supplier?.id ?? null, branchId: branch.id, notes: input.notes || null, dueAt, totalCents },
+    })
+    if (changed.count !== 1) throw new BusinessError("La compra cambió durante la operación; reintenta.", 409)
+    await tx.purchaseItem.deleteMany({ where: { purchaseId: purchase.id } })
+    await tx.purchaseItem.createMany({ data: lines.map(l => ({ ...l, purchaseId: purchase.id })) })
+    return { purchaseId: purchase.id, folio: purchaseFolio(purchase.number), totalCents }
   })
 }
 

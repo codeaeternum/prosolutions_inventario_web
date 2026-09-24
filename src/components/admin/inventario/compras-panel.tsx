@@ -40,7 +40,7 @@ import {
 import { EmptyState } from "@/components/admin/empty-state"
 import { CompraDialog } from "@/components/admin/inventario/compra-dialog"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
-import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
+import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Pencil, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -135,6 +135,7 @@ export function ComprasPanel() {
     const [branches, setBranches] = useState<BranchOption[]>([])
 
     const [createOpen, setCreateOpen] = useState(false)
+    const [editTarget, setEditTarget] = useState<PurchaseRow | null>(null)
     const [detail, setDetail] = useState<PurchaseRow | null>(null)
     const [payTarget, setPayTarget] = useState<PurchaseRow | null>(null)
     const [pending, setPending] = useState<{ purchase: PurchaseRow; action: PurchaseAction } | null>(null)
@@ -325,16 +326,28 @@ export function ComprasPanel() {
                                                             <Eye className="h-4 w-4" />
                                                         </Button>
                                                         {p.status === "DRAFT" && (
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                className="h-8 w-8 text-blue-600"
-                                                                onClick={() => requestAction(p, "ORDER")}
-                                                                title="Marcar como ordenada"
-                                                                aria-label="Marcar como ordenada"
-                                                            >
-                                                                <Send className="h-4 w-4" />
-                                                            </Button>
+                                                            <>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8"
+                                                                    onClick={() => setEditTarget(p)}
+                                                                    title={`Editar ${folio(p.number)}`}
+                                                                    aria-label={`Editar ${folio(p.number)}`}
+                                                                >
+                                                                    <Pencil className="h-4 w-4" />
+                                                                </Button>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8 text-blue-600"
+                                                                    onClick={() => requestAction(p, "ORDER")}
+                                                                    title="Marcar como ordenada"
+                                                                    aria-label="Marcar como ordenada"
+                                                                >
+                                                                    <Send className="h-4 w-4" />
+                                                                </Button>
+                                                            </>
                                                         )}
                                                         {p.status === "ORDERED" && (
                                                             <Button
@@ -390,6 +403,16 @@ export function ComprasPanel() {
                 open={createOpen}
                 onOpenChange={setCreateOpen}
                 onSaved={() => void fetchPurchases()}
+            />
+
+            {/* Edición de borrador (mismo diálogo, modo PATCH) */}
+            <CompraDialog
+                suppliers={suppliers}
+                branches={branches}
+                open={editTarget !== null}
+                onOpenChange={(open) => { if (!open) setEditTarget(null) }}
+                onSaved={() => void fetchPurchases()}
+                purchase={editTarget}
             />
 
             {/* Abono ligado a esta OC */}
@@ -495,9 +518,14 @@ export function ComprasPanel() {
                                     </Button>
                                 )}
                                 {detail.status === "DRAFT" && (
-                                    <Button variant="outline" onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
-                                        <Send className="mr-2 h-4 w-4" /> Ordenar
-                                    </Button>
+                                    <>
+                                        <Button variant="outline" onClick={() => { setEditTarget(detail); setDetail(null) }}>
+                                            <Pencil className="mr-2 h-4 w-4" /> Editar
+                                        </Button>
+                                        <Button variant="outline" onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
+                                            <Send className="mr-2 h-4 w-4" /> Ordenar
+                                        </Button>
+                                    </>
                                 )}
                                 {detail.status === "ORDERED" && (
                                     <Button onClick={() => { setDetail(null); requestAction(detail, "RECEIVE") }}>

@@ -10,6 +10,7 @@ import { toast } from "sonner"
 import {
   AlertTriangle,
   ArrowRight,
+  Download,
   History,
   Loader2,
   RefreshCw,
@@ -49,6 +50,8 @@ interface ActivityItem {
   label: string
   summary: string
   changes?: ActivityChange[]
+  /** Tipo de entidad afectada ("sale", "product", "repair"…), filtro `entity`. */
+  entity?: string
   entityLabel?: string
   createdAt: string // ISO
 }
@@ -63,6 +66,8 @@ interface ActivityResponse {
   items: ActivityItem[]
   nextCursor: string | null
   actors: ActivityActor[]
+  /** Tipos de entidad presentes en el resultado (para el selector Entidad). */
+  entities: string[]
 }
 
 const PAGE_SIZE = 50
@@ -96,6 +101,31 @@ const ACTOR_ROLE_LABELS: Record<string, string> = {
   EMPLOYEE: "Empleado",
   WORKSHOP: "Taller aliado",
   CUSTOMER: "Cliente",
+}
+
+// Nombre visible de cada tipo de entidad; las que lleguen sin etiqueta se
+// muestran con su clave cruda (p. ej. una entidad auditada nueva).
+const ENTITY_LABELS: Record<string, string> = {
+  sale: "Ventas",
+  cash: "Caja",
+  purchase: "Compras",
+  count: "Conteos",
+  credit: "Crédito",
+  reservation: "Reservas",
+  shopping: "Encargos",
+  inventory: "Inventario",
+  convenio: "Convenios",
+  repair: "Taller",
+  product: "Productos",
+  user: "Usuarios",
+  supplier: "Proveedores",
+  settings: "Configuración",
+  category: "Categorías",
+  brand: "Marcas",
+  model: "Modelos",
+  branch: "Sucursales",
+  customer: "Clientes",
+  business: "Negocio",
 }
 
 function actorInitials(name: string): string {
@@ -149,6 +179,7 @@ function buildDemoResponse(now: number): ActivityResponse {
       { id: "demo-admin", name: "Galindo (dueño)", role: "ADMIN" },
       { id: "demo-emp", name: "María Mostrador", role: "EMPLOYEE" },
     ],
+    entities: ["cash", "customer", "product", "repair", "sale"],
     items: [
       {
         id: "demo-1",
@@ -159,6 +190,7 @@ function buildDemoResponse(now: number): ActivityResponse {
         action: "product.update",
         label: "Edición",
         summary: "Actualizó el producto \"Pantalla iPhone 12\" en el catálogo",
+        entity: "product",
         entityLabel: "Pantalla iPhone 12",
         changes: [
           { field: "Precio", before: "$500.00", after: "$450.00" },
@@ -175,6 +207,7 @@ function buildDemoResponse(now: number): ActivityResponse {
         action: "sale.create",
         label: "Venta",
         summary: "Cobró una venta de 2 artículos por $1,250.00 en mostrador",
+        entity: "sale",
         entityLabel: "Ticket VT-000231",
         createdAt: iso(38),
       },
@@ -187,6 +220,7 @@ function buildDemoResponse(now: number): ActivityResponse {
         action: "repair.status",
         label: "Taller",
         summary: "La orden OT-000104 pasó de \"En reparación\" a \"Listo\"",
+        entity: "repair",
         entityLabel: "OT-000104 · Galaxy S21",
         createdAt: iso(160),
       },
@@ -199,6 +233,7 @@ function buildDemoResponse(now: number): ActivityResponse {
         action: "cash.movement",
         label: "Caja",
         summary: "Registró una salida de caja de $800.00 (pago a proveedor)",
+        entity: "cash",
         createdAt: iso(60 * 26),
       },
       {
@@ -210,6 +245,7 @@ function buildDemoResponse(now: number): ActivityResponse {
         action: "user.update",
         label: "Edición",
         summary: "Actualizó datos del cliente \"Juan Pérez\"",
+        entity: "customer",
         entityLabel: "Juan Pérez",
         changes: [{ field: "Teléfono", before: "—", after: "811 234 5678" }],
         createdAt: iso(60 * 30),
@@ -221,6 +257,7 @@ function buildDemoResponse(now: number): ActivityResponse {
 export default function ActividadPage() {
   const [items, setItems] = useState<ActivityItem[]>([])
   const [actors, setActors] = useState<ActivityActor[]>([])
+  const [entities, setEntities] = useState<string[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -233,6 +270,7 @@ export default function ActividadPage() {
 
   const [actorId, setActorId] = useState("")
   const [source, setSource] = useState<"" | ActivitySource>("")
+  const [entity, setEntity] = useState("")
   const [search, setSearch] = useState("")
   const [debouncedQ, setDebouncedQ] = useState("")
   const [from, setFrom] = useState("")
@@ -259,6 +297,7 @@ export default function ActividadPage() {
         const params = new URLSearchParams({ take: String(PAGE_SIZE) })
         if (actorId) params.set("actorId", actorId)
         if (source) params.set("source", source)
+        if (entity) params.set("entity", entity)
         if (from) params.set("from", from)
         if (to) params.set("to", to)
         if (debouncedQ) params.set("q", debouncedQ)
@@ -280,6 +319,7 @@ export default function ActividadPage() {
             setDemoMode(true)
             setItems(demo.items)
             setActors(demo.actors)
+            setEntities(demo.entities)
             setNextCursor(demo.nextCursor)
             setLoadedAt(Date.now())
             return
@@ -308,6 +348,13 @@ export default function ActividadPage() {
           for (const a of data?.actors ?? []) map.set(a.id, a)
           return [...map.values()]
         })
+        // Igual que actores: las entidades se acumulan para no perder la
+        // opción seleccionada cuando otros filtros acotan la lista.
+        setEntities(prev => {
+          const merged = new Set(prev)
+          for (const e of data?.entities ?? []) merged.add(e)
+          return [...merged].sort()
+        })
         setNextCursor(data?.nextCursor ?? null)
       } catch {
         if (version !== requestVersion.current) return
@@ -324,7 +371,7 @@ export default function ActividadPage() {
         }
       }
     },
-    [actorId, source, from, to, debouncedQ]
+    [actorId, source, entity, from, to, debouncedQ]
   )
 
   // Cada cambio de filtro regenera `load` → recarga desde el primer cursor.
@@ -333,16 +380,29 @@ export default function ActividadPage() {
     return () => clearTimeout(timer)
   }, [load])
 
-  const hasActiveFilters = actorId !== "" || source !== "" || debouncedQ !== "" || from !== "" || to !== ""
+  const hasActiveFilters =
+    actorId !== "" || source !== "" || entity !== "" || debouncedQ !== "" || from !== "" || to !== ""
 
   const clearFilters = () => {
     setActorId("")
     setSource("")
+    setEntity("")
     setSearch("")
     setDebouncedQ("")
     setFrom("")
     setTo("")
   }
+
+  // Mismos filtros activos que el feed, sin paginación: el servidor arma el
+  // archivo con el tope de filas del export (Content-Disposition: attachment).
+  const exportParams = new URLSearchParams()
+  if (actorId) exportParams.set("actorId", actorId)
+  if (source) exportParams.set("source", source)
+  if (entity) exportParams.set("entity", entity)
+  if (from) exportParams.set("from", from)
+  if (to) exportParams.set("to", to)
+  if (debouncedQ) exportParams.set("q", debouncedQ)
+  const exportUrl = `/api/activity/export?${exportParams}`
 
   if (forbidden) {
     return (
@@ -367,10 +427,23 @@ export default function ActividadPage() {
             Quién hizo qué en todo el sistema: ediciones, operaciones y taller
           </p>
         </div>
-        <Button onClick={() => void load(null, false)} variant="outline" size="sm" disabled={loading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-          Actualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            className={demoMode ? "pointer-events-none opacity-50" : undefined}
+          >
+            <a href={exportUrl} download aria-disabled={demoMode} tabIndex={demoMode ? -1 : undefined}>
+              <Download className="h-4 w-4 mr-2" />
+              Exportar CSV
+            </a>
+          </Button>
+          <Button onClick={() => void load(null, false)} variant="outline" size="sm" disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Actualizar
+          </Button>
+        </div>
       </div>
 
       {/* Barra de filtros */}
@@ -423,6 +496,24 @@ export default function ActividadPage() {
                   <SelectItem value="audit">{sourceMeta.audit.filterLabel}</SelectItem>
                   <SelectItem value="operation">{sourceMeta.operation.filterLabel}</SelectItem>
                   <SelectItem value="repair">{sourceMeta.repair.filterLabel}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="lg:w-44">
+              <Label className="text-xs">Entidad</Label>
+              <Select value={entity || "all"} onValueChange={v => setEntity(v === "all" ? "" : v)}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Todas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {/* Conserva la opción elegida si ya no viene en la lista. */}
+                  {entity && !entities.includes(entity) && (
+                    <SelectItem value={entity}>{ENTITY_LABELS[entity] ?? entity}</SelectItem>
+                  )}
+                  {entities.map(e => (
+                    <SelectItem key={e} value={e}>{ENTITY_LABELS[e] ?? e}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

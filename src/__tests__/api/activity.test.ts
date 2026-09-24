@@ -161,8 +161,9 @@ describe("filtros", () => {
     for (const spy of [mocks.operationFindMany, mocks.repairEventFindMany, mocks.auditFindMany]) {
       const where = spy.mock.calls[0][0].where
       expect(where.actorId).toBe("emp-1")
-      expect(where.createdAt.gte).toEqual(new Date("2025-06-01T00:00:00.000"))
-      expect(where.createdAt.lte).toEqual(new Date("2025-06-30T23:59:59.999"))
+      // Día completo en America/Mexico_City (UTC−6): 00:00 local = 06:00 UTC.
+      expect(where.createdAt.gte).toEqual(new Date("2025-06-01T06:00:00.000Z"))
+      expect(where.createdAt.lte).toEqual(new Date("2025-07-01T05:59:59.999Z"))
     }
   })
 
@@ -187,6 +188,76 @@ describe("filtros", () => {
     expect(body.items.map((i: { id: string }) => i.id)).toEqual(["op-a"])
     const byLabel = await (await get("?q=efectivo")).json()
     expect(byLabel.items.map((i: { id: string }) => i.id)).toEqual(["op-b"])
+  })
+})
+
+describe("filtro por entidad", () => {
+  it("deriva la entidad del kind de BusinessOperation y filtra", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    mocks.operationFindMany.mockResolvedValue([
+      op({ id: "op-sale", kind: "SALE", createdAt: new Date("2025-06-10T18:05:00Z") }),
+      op({ id: "op-doc", kind: "SALE_DOCUMENT_PAYMENT", createdAt: new Date("2025-06-10T18:04:00Z") }),
+      op({ id: "op-cash", kind: "CASH_OUT", createdAt: new Date("2025-06-10T18:03:00Z") }),
+      op({ id: "op-pur", kind: "PURCHASE_CREATE", createdAt: new Date("2025-06-10T18:02:00Z") }),
+      op({ id: "op-cnt", kind: "COUNT_APPLY", createdAt: new Date("2025-06-10T18:01:00Z") }),
+      op({ id: "op-cred", kind: "CREDIT_PAYMENT", createdAt: new Date("2025-06-10T18:00:00Z") }),
+      op({ id: "op-res", kind: "RESERVATION_CREATE", createdAt: new Date("2025-06-10T17:59:00Z") }),
+      op({ id: "op-shop", kind: "SHOPPING_ITEM_ADD", createdAt: new Date("2025-06-10T17:58:00Z") }),
+      op({ id: "op-inv", kind: "INVENTORY", createdAt: new Date("2025-06-10T17:57:00Z") }),
+      op({ id: "op-conv", kind: "CONVENIO_SETTLE", createdAt: new Date("2025-06-10T17:56:00Z") }),
+      op({ id: "op-rep", kind: "REPAIR_UPDATE", createdAt: new Date("2025-06-10T17:55:00Z") }),
+    ])
+    const expected: Record<string, string[]> = {
+      sale: ["op-doc", "op-sale"],
+      cash: ["op-cash"],
+      purchase: ["op-pur"],
+      count: ["op-cnt"],
+      credit: ["op-cred"],
+      reservation: ["op-res"],
+      shopping: ["op-shop"],
+      inventory: ["op-inv"],
+      convenio: ["op-conv"],
+      repair: ["op-rep"],
+    }
+    for (const [entity, ids] of Object.entries(expected)) {
+      const body = await (await get(`?entity=${entity}`)).json()
+      expect(body.items.map((i: { id: string }) => i.id).sort(), `entity=${entity}`).toEqual(ids)
+      expect(body.items.every((i: { entity: string }) => i.entity === entity)).toBe(true)
+    }
+    // Entidad inexistente en el feed: resultado vacío, sin error.
+    const none = await (await get("?entity=product")).json()
+    expect(none.items).toEqual([])
+  })
+
+  it("entity=repair junta RepairEvent con operaciones REPAIR_*", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    mocks.repairEventFindMany.mockResolvedValue([repair()])
+    mocks.operationFindMany.mockResolvedValue([
+      op({ id: "op-rep", kind: "REPAIR_CREATE", response: { order: { number: 9, customerName: "Ana" } } }),
+      op({ id: "op-sale", kind: "SALE" }),
+    ])
+    const body = await (await get("?entity=repair")).json()
+    expect(body.items.map((i: { source: string }) => i.source).sort()).toEqual(["operation", "repair"])
+    expect(body.items.every((i: { entity: string }) => i.entity === "repair")).toBe(true)
+  })
+
+  it("AuditEvent usa su propia columna entity y `entities` lista lo disponible sin auto-ocultarse", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    mocks.auditFindMany.mockResolvedValue([
+      audit({ id: "au-p", entity: "product" }),
+      audit({ id: "au-u", action: "USER_UPDATE", entity: "user", entityName: "Empleado", changes: [] }),
+    ])
+    mocks.operationFindMany.mockResolvedValue([op({ id: "op-s", kind: "SALE" })])
+
+    const filtered = await (await get("?entity=product")).json()
+    expect(filtered.items.map((i: { id: string }) => i.id)).toEqual(["au-p"])
+    expect(filtered.items[0].entity).toBe("product")
+    // `entities` se calcula ANTES de aplicar el filtro entity: la opción
+    // elegida no desaparece del selector y siguen visibles las demás.
+    expect(filtered.entities).toEqual(["product", "sale", "user"])
+
+    const all = await (await get()).json()
+    expect(all.entities).toEqual(["product", "sale", "user"])
   })
 })
 

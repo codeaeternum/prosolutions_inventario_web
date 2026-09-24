@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
+import { ALERTED_ACTIONS, alertSensitiveAudit } from "./audit-alerts"
 
 /**
  * Bitácora administrativa (AuditEvent): quién hizo qué sobre datos del
@@ -14,6 +15,9 @@ import type { Prisma, PrismaClient } from "@prisma/client"
  * - `changes` jamás incluye passwords, PINs, hashes ni tokens: las rutas
  *   arman el diff solo con campos visibles y maskSensitiveChanges cubre las
  *   llaves de settings cuyo nombre delate un secreto.
+ * - Las acciones sensibles (ALERTED_ACTIONS) hechas por un NO-admin además
+ *   gritan al dueño por Telegram (lib/audit-alerts), fire-and-forget después
+ *   de persistir: ni bloquean ni pueden revertir la operación.
  */
 
 /** Un campo que cambió: valor anterior y valor nuevo (serializables a JSON). */
@@ -56,7 +60,14 @@ export async function recordAudit(db: AuditWriter, entry: AuditEntry): Promise<v
     })
   } catch (error) {
     console.error("[audit] No se pudo registrar el evento:", error)
+    return
   }
+  // Aviso Telegram al dueño cuando un no-admin hace algo sensible. Va
+  // fire-and-forget (sin await): la alerta es accesoria — ni suma latencia a
+  // la respuesta ni puede romper la operación ya persistida. Además lee el
+  // rol del actor con el prisma global, no con `db` (puede ser un tx ya
+  // cerrado para cuando Telegram responda).
+  if (ALERTED_ACTIONS.has(entry.action)) void alertSensitiveAudit(entry)
 }
 
 /** null/undefined se normalizan a "sin valor"; objetos/arreglos por contenido. */

@@ -105,6 +105,16 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
     })
     if (!count) throw new BusinessError("Conteo no encontrado.", 404)
     if (count.status !== "OPEN") throw new BusinessError("El conteo ya no está abierto.", 409)
+
+    // Separación de funciones (auditoría): un EMPLOYEE no puede crear Y aplicar
+    // el mismo conteo — ajustaría el stock sin que un segundo usuario lo
+    // revisara. Un ADMIN sí puede auto-aplicar: los negocios chicos operan
+    // con un solo administrador.
+    const applier = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+    if (applier?.role === "EMPLOYEE" && count.createdById === actorId) {
+      throw new BusinessError("Otro usuario debe aplicar el conteo: quien lo creó no puede aplicarlo.", 403)
+    }
+
     if (count.items.length === 0) throw new BusinessError("El conteo no tiene productos capturados.", 409)
 
     const folio = countFolio(count.number)
@@ -150,7 +160,19 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
       data: { status: "APPLIED", appliedAt: new Date() },
     })
     if (changed.count !== 1) throw new BusinessError("El conteo cambió durante la operación; reintenta.", 409)
-    return { countId: count.id, folio, status: "APPLIED" as const, adjustments: movements.length, branchName: count.branch.name }
+    // El recibo (BusinessOperation.response) nombra a ambos actores para
+    // trazabilidad: quién creó el conteo vs quién lo aplicó. No hay columna
+    // appliedById en el schema ni se agrega: el actor ya queda en
+    // BusinessOperation.actorId y en InventoryMovement.userId.
+    return {
+      countId: count.id,
+      folio,
+      status: "APPLIED" as const,
+      adjustments: movements.length,
+      branchName: count.branch.name,
+      createdById: count.createdById,
+      appliedById: actorId,
+    }
   })
   await syncLowStockAlerts(db, businessId, adjustedProductIds)
   return result

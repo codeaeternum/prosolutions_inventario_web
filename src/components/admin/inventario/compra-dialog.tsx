@@ -50,6 +50,22 @@ interface PurchaseLine {
     cost: string // pesos, como lo escribe el usuario
 }
 
+/** OC en DRAFT para editar dentro del mismo diálogo. */
+export interface PurchaseToEdit {
+    id: string
+    number: number
+    notes: string | null
+    dueAt: string | null
+    supplier: { id: string; name: string } | null
+    branch: { id: string; name: string }
+    items: {
+        id: string
+        quantity: number
+        unitCostCents: number
+        product: { id: string; name: string; barcode: string | null }
+    }[]
+}
+
 interface CompraDialogProps {
     suppliers: SupplierOption[]
     branches: BranchOption[]
@@ -57,9 +73,11 @@ interface CompraDialogProps {
     onOpenChange: (open: boolean) => void
     /** Se llama tras crear la orden para refrescar la lista. */
     onSaved: () => void
+    /** Si viene, el diálogo edita esta OC en borrador (PATCH) en vez de crear. */
+    purchase?: PurchaseToEdit | null
 }
 
-export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved }: CompraDialogProps) {
+export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved, purchase }: CompraDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -70,6 +88,7 @@ export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved 
                         branches={branches}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        purchase={purchase ?? null}
                     />
                 )}
             </DialogContent>
@@ -82,16 +101,25 @@ interface CompraFormProps {
     branches: BranchOption[]
     onSaved: () => void
     close: () => void
+    purchase: PurchaseToEdit | null
 }
 
 const NO_SUPPLIER = "__none__"
 
-function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
-    const [supplierId, setSupplierId] = useState(NO_SUPPLIER)
-    const [branchId, setBranchId] = useState(branches[0]?.id ?? "")
-    const [notes, setNotes] = useState("")
-    const [dueAt, setDueAt] = useState("") // YYYY-MM-DD, fecha promesa de pago
-    const [lines, setLines] = useState<PurchaseLine[]>([])
+function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFormProps) {
+    const editing = purchase !== null
+    const [supplierId, setSupplierId] = useState(purchase?.supplier?.id ?? NO_SUPPLIER)
+    const [branchId, setBranchId] = useState(purchase?.branch.id ?? branches[0]?.id ?? "")
+    const [notes, setNotes] = useState(purchase?.notes ?? "")
+    const [dueAt, setDueAt] = useState(purchase?.dueAt ? purchase.dueAt.slice(0, 10) : "") // YYYY-MM-DD, fecha promesa de pago
+    const [lines, setLines] = useState<PurchaseLine[]>(() =>
+        (purchase?.items ?? []).map(item => ({
+            key: item.id,
+            product: { id: item.product.id, name: item.product.name, barcode: item.product.barcode, stock: 0, costPrice: item.unitCostCents / 100 },
+            quantity: String(item.quantity),
+            cost: String(item.unitCostCents / 100),
+        }))
+    )
 
     const [search, setSearch] = useState("")
     const [results, setResults] = useState<SearchProduct[]>([])
@@ -171,15 +199,24 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
         operation.current = getClientOperationKey(operation.current, payload)
         setSaving(true)
         try {
-            const res = await fetch("/api/purchases", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...payload, idempotencyKey: operation.current.key }),
-            })
+            const res = editing
+                ? await fetch(`/api/purchases/${purchase.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                })
+                : await fetch("/api/purchases", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...payload, idempotencyKey: operation.current.key }),
+                })
             const data = await res.json().catch(() => null)
-            if (!res.ok) throw new Error(data?.error || "No se pudo crear la orden de compra.")
+            if (!res.ok) throw new Error(data?.error || (editing ? "No se pudo actualizar la orden." : "No se pudo crear la orden de compra."))
             operation.current = null
-            toast.success(`Orden ${data?.folio ?? ""} creada en borrador`, { description: `${lines.length} producto(s) · ${formatPrice(totalCents / 100)}` })
+            toast.success(
+                editing ? `Orden ${data?.folio ?? ""} actualizada` : `Orden ${data?.folio ?? ""} creada en borrador`,
+                { description: `${lines.length} producto(s) · ${formatPrice(totalCents / 100)}` },
+            )
             close()
             onSaved()
         } catch (error) {
@@ -194,10 +231,12 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
             <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                     <ShoppingCart className="h-5 w-5 text-muted-foreground" />
-                    Nueva orden de compra
+                    {editing ? `Editar orden ${`OC-${String(purchase.number).padStart(6, "0")}`}` : "Nueva orden de compra"}
                 </DialogTitle>
                 <DialogDescription>
-                    Se crea en borrador; el stock entra a la sucursal al marcarla como recibida.
+                    {editing
+                        ? "Solo editable mientras siga en borrador; el stock aún no se mueve."
+                        : "Se crea en borrador; el stock entra a la sucursal al marcarla como recibida."}
                 </DialogDescription>
             </DialogHeader>
 
@@ -369,7 +408,7 @@ function CompraForm({ suppliers, branches, onSaved, close }: CompraFormProps) {
                     {saving
                         ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         : <ShoppingCart className="mr-2 h-4 w-4" />}
-                    Crear orden
+                    {editing ? "Guardar cambios" : "Crear orden"}
                 </Button>
             </DialogFooter>
         </>
