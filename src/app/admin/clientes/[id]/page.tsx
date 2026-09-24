@@ -70,6 +70,8 @@ interface SaleRow {
   status: "DRAFT" | "OPEN" | "COMPLETED" | "VOIDED"
   kind: "RETAIL" | "WORKSHOP" | "LAYAWAY" | "QUOTE"
   total: number
+  /** Descuento autorizado al cobrar (centavos); 0/ausente = precio de catálogo. */
+  discountCents?: number
   createdAt: string
   branch: string
   itemsCount: number
@@ -506,7 +508,12 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                     {sale.itemsCount} producto{sale.itemsCount === 1 ? "" : "s"} · {sale.branch}
                   </span>
                   <span className="text-xs text-muted-foreground ml-auto">{formatDate(sale.createdAt)}</span>
-                  <span className="text-sm font-bold w-full sm:w-auto sm:text-right">{formatPrice(sale.total)}</span>
+                  <span className="text-sm font-bold w-full sm:w-auto sm:text-right">
+                    {(sale.discountCents ?? 0) > 0 && (
+                      <span className="mr-1.5 font-normal text-xs text-muted-foreground line-through">{formatPrice(sale.total)}</span>
+                    )}
+                    {formatPrice(sale.total - (sale.discountCents ?? 0) / 100)}
+                  </span>
                   {sale.itemNames.length > 0 && (
                     <p className="w-full text-xs text-muted-foreground line-clamp-1">
                       {sale.itemNames.join(" · ")}

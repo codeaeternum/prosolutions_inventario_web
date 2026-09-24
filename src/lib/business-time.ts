@@ -71,6 +71,22 @@ export function zonedTimeToUtc(
   return new Date(utcMs)
 }
 
+/**
+ * Clave de día "YYYY-MM-DD" del instante en la zona del negocio. Es el
+ * bucket de las series de reportes: una venta de las 17:30 MX pertenece al
+ * día MX aunque en UTC ya sea el día siguiente.
+ */
+export function businessDayKey(instant: Date, timeZone: string = BUSINESS_TIME_ZONE): string {
+  const parts = wallClockFormatter(timeZone).formatToParts(instant)
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? "00"
+  return `${get("year")}-${get("month")}-${get("day")}`
+}
+
+/** Clave de mes "YYYY-MM" del instante en la zona del negocio. */
+export function businessMonthKey(instant: Date, timeZone: string = BUSINESS_TIME_ZONE): string {
+  return businessDayKey(instant, timeZone).slice(0, 7)
+}
+
 const SHORT_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**

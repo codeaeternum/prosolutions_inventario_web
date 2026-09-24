@@ -27,7 +27,12 @@ const checkoutSchema = z.object({
   idempotencyKey: operationKeySchema,
   payments: z.array(paymentInput).min(1).max(6).optional(),
   paymentMethod: METHODS.optional(),
+  // Descuento autorizado al cobrar, en centavos sobre el total de catálogo.
+  // El motivo es obligatorio cuando el descuento es > 0 (rastro forense).
+  discountCents: z.number().int().min(0).max(100000000).optional(),
+  discountReason: z.string().trim().min(3).max(200).optional(),
 }).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
+  .refine(v => !v.discountCents || Boolean(v.discountReason), "Captura el motivo del descuento.")
 
 // El abono de apartado nunca es CREDITO: fiar sobre un apartado sería deuda
 // sin entrega de mercancía ni saldo cobrado.
@@ -153,7 +158,23 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
     // El cliente del documento (si lo tiene) es quien autoriza el CREDITO.
     checkSalePayments(payments, sale.customerId)
     const totalCents = cents(sale.total)
-    const settled = settleSalePayments(payments, totalCents)
+    // Descuento autorizado al cobrar: sale.total conserva el precio de
+    // catálogo y los pagos cuadran contra total − descuento. El cobro nunca
+    // queda en $0 — eso sería cortesía/cancelación, otro flujo.
+    const discountCents = input.discountCents ?? 0
+    if (discountCents >= totalCents) throw new BusinessError("El descuento no puede cubrir el total del cobro.", 409)
+    if (discountCents > 0) {
+      // Regla por rol: el EMPLOYEE descuenta hasta 10% del total; un monto
+      // mayor necesita al ADMIN (sin tope). Otros roles no llegan — el
+      // permission "staff" de la operación ya los filtró.
+      const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+      if (me?.role === "EMPLOYEE" && discountCents * 10 > totalCents) {
+        throw new BusinessError("Los empleados pueden descontar hasta 10%; pide autorización al administrador.", 403)
+      }
+    }
+    const discountReason = discountCents > 0 ? input.discountReason ?? null : null
+    const payableCents = totalCents - discountCents
+    const settled = settleSalePayments(payments, payableCents)
     const saleItems = await tx.saleItem.findMany({ where: { saleId: sale.id } })
     // El precio prometido es el snapshot del renglón; aquí solo se compromete
     // el stock que el DRAFT nunca apartó.
@@ -165,10 +186,18 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       lines: saleItems.map(item => ({ saleItemId: item.id, productId: item.productId, quantity: item.quantity, unitCents: cents(item.unitPrice), lineCents: cents(item.totalPrice) })),
       payments: settled, reason: `Venta V-${sale.number}`,
     })
-    // Guardia de concurrencia: solo un checkout puede sellar el DRAFT.
-    const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "DRAFT" }, data: { status: "COMPLETED" } })
+    // Guardia de concurrencia: solo un checkout puede sellar el DRAFT — el
+    // descuento autorizado queda persistido en el mismo flip atómico.
+    const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "DRAFT" }, data: { status: "COMPLETED", discountCents, discountReason } })
     if (changed.count !== 1) throw new BusinessError("El documento cambió durante la operación; reintenta.", 409)
-    return { sale: { ...sale, status: "COMPLETED" as const }, items: committed.items, payments: committed.payments, movements: committed.movements, quantity: saleItems.reduce((sum, item) => sum + item.quantity, 0), total: sale.total, kind: sale.kind }
+    return {
+      sale: { ...sale, status: "COMPLETED" as const, discountCents, discountReason },
+      items: committed.items, payments: committed.payments, movements: committed.movements,
+      quantity: saleItems.reduce((sum, item) => sum + item.quantity, 0), total: sale.total, kind: sale.kind,
+      // Folio y desglose del descuento en el recibo: la bitácora y la alerta
+      // de operación sensible (operation-alerts) los leen de aquí.
+      number: sale.number, discountCents, discountReason, payableCents,
+    }
   })
   await syncLowStockAlerts(db, businessId, collectLowStockIds(result.items))
   return result

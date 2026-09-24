@@ -796,6 +796,12 @@ model Sale {
   // mostrador ("cliente dijo que vuelve por el resto").
   expiresAt          DateTime?
   note               String?
+  // Descuento autorizado al cobrar (checkout con descuento): centavos
+  // descontados sobre el total de catálogo y el motivo capturado. El rastro
+  // de quién vendió abajo del precio queda en la propia venta; total sigue
+  // siendo el importe de catálogo y lo cobrado es total − discountCents.
+  discountCents      Int                 @default(0)
+  discountReason     String?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -1205,7 +1211,9 @@ model Purchase {
   id               String            @id @default(cuid())
   businessId       String
   business         Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  number           Int               @default(autoincrement()) // folio visible: OC-000001
+  // Folio visible OC-000001, por negocio: el dominio asigna MAX(number) del
+  // tenant + 1 dentro de la tx serializable; el autoincrement queda inerte.
+  number           Int               @default(autoincrement())
   supplierId       String?
   supplier         Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   status           PurchaseStatus    @default(DRAFT)
@@ -1227,6 +1235,7 @@ model Purchase {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
+  @@unique([businessId, number])
   @@index([businessId, status])
   @@index([businessId, createdAt])
 }
@@ -1240,6 +1249,9 @@ model PurchaseItem {
   productId     String
   product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantity      Int
+  // Unidades ya recibidas de esta línea (recepción parcial). La OC queda
+  // ORDERED mientras receivedQty < quantity en alguna línea.
+  receivedQty   Int      @default(0)
   unitCostCents Int
 
   @@index([purchaseId])
@@ -1287,7 +1299,9 @@ model InventoryCount {
   id          String               @id @default(cuid())
   businessId  String
   business    Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  number      Int                  @unique @default(autoincrement()) // folio visible: CC-000001
+  // Folio visible CC-000001, por negocio: el dominio asigna MAX(number) del
+  // tenant + 1 dentro de la tx serializable; el autoincrement queda inerte.
+  number      Int                  @default(autoincrement())
   branchId    String
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
   status      CountStatus          @default(OPEN)
@@ -1300,6 +1314,7 @@ model InventoryCount {
   createdAt   DateTime             @default(now())
   items       InventoryCountItem[]
 
+  @@unique([businessId, number])
   @@index([businessId, status])
 }
 

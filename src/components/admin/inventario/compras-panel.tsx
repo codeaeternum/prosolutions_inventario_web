@@ -27,6 +27,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -73,6 +74,7 @@ interface PurchaseRow {
     items: {
         id: string
         quantity: number
+        receivedQty: number
         unitCostCents: number
         product: { id: string; name: string; barcode: string | null }
     }[]
@@ -140,9 +142,13 @@ export function ComprasPanel() {
     const [payTarget, setPayTarget] = useState<PurchaseRow | null>(null)
     const [pending, setPending] = useState<{ purchase: PurchaseRow; action: PurchaseAction } | null>(null)
     const [acting, setActing] = useState(false)
+    // Mini-form de recepción parcial por línea (purchaseItemId abierto + captura).
+    const [receivingItem, setReceivingItem] = useState<string | null>(null)
+    const [receiveQty, setReceiveQty] = useState("")
+    const [receiving, setReceiving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
 
-    const fetchPurchases = useCallback(async (signal?: AbortSignal) => {
+    const fetchPurchases = useCallback(async (signal?: AbortSignal): Promise<PurchaseRow[] | null> => {
         setLoading(true)
         setError(null)
         try {
@@ -151,9 +157,12 @@ export function ComprasPanel() {
             const res = await fetch(`/api/purchases?${params}`, { signal })
             const data = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "Error al cargar compras")
-            if (!signal?.aborted) setPurchases(data?.purchases ?? [])
+            const rows = (data?.purchases ?? []) as PurchaseRow[]
+            if (!signal?.aborted) setPurchases(rows)
+            return rows
         } catch (e) {
             if (!signal?.aborted) setError(e instanceof Error ? e.message : "Error al cargar compras")
+            return null
         } finally {
             if (!signal?.aborted) setLoading(false)
         }
@@ -209,6 +218,45 @@ export function ComprasPanel() {
     }
 
     const unitsOf = (p: PurchaseRow) => p.items.reduce((sum, i) => sum + i.quantity, 0)
+    const receivedOf = (p: PurchaseRow) => p.items.reduce((sum, i) => sum + i.receivedQty, 0)
+
+    /** Recepción parcial: POST { action: "RECEIVE_PARTIAL", items: […] } con la captura de UNA línea. */
+    const submitPartialReceive = async (purchase: PurchaseRow, purchaseItemId: string, pendingQty: number) => {
+        if (receiving) return
+        const qty = parseInt(receiveQty)
+        if (!Number.isInteger(qty) || qty < 1 || qty > pendingQty) {
+            toast.error(`Cantidad inválida: recibe entre 1 y ${pendingQty} unidades.`)
+            return
+        }
+        setReceiving(true)
+        const payload = { action: "RECEIVE_PARTIAL", items: [{ purchaseItemId, quantity: qty }] }
+        operation.current = getClientOperationKey(operation.current, payload)
+        try {
+            const res = await fetch(`/api/purchases/${purchase.id}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...payload, idempotencyKey: operation.current.key }),
+            })
+            const data = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(data?.error || "No se pudo registrar la recepción.")
+            operation.current = null
+            if (data?.status === "RECEIVED") {
+                toast.success(`Orden ${folio(purchase.number)} recibida completa`)
+            } else {
+                toast.success("Recepción parcial registrada", {
+                    description: `Quedan ${data?.remaining ?? "?"} unidades pendientes`,
+                })
+            }
+            setReceivingItem(null)
+            const rows = await fetchPurchases()
+            // El detalle sigue abierto: se refresca con la fila ya actualizada.
+            setDetail(prev => (prev?.id === purchase.id ? rows?.find(r => r.id === purchase.id) ?? null : prev))
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Error de conexión. Reintenta la misma acción.")
+        } finally {
+            setReceiving(false)
+        }
+    }
 
     return (
         <div className="space-y-4">
@@ -303,6 +351,11 @@ export function ComprasPanel() {
                                                         <Badge variant="outline" className={config.className}>
                                                             {config.label}
                                                         </Badge>
+                                                        {p.status === "ORDERED" && receivedOf(p) > 0 && (
+                                                            <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300">
+                                                                Parcial {receivedOf(p)}/{unitsOf(p)} ud
+                                                            </Badge>
+                                                        )}
                                                         {p.totalCents > 0 && p.paidCents >= p.totalCents && (
                                                             <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300">
                                                                 Pagada
@@ -426,7 +479,7 @@ export function ComprasPanel() {
             />
 
             {/* Detalle de la orden */}
-            <Dialog open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null) }}>
+            <Dialog open={detail !== null} onOpenChange={(open) => { if (!open) { setDetail(null); setReceivingItem(null) } }}>
                 <DialogContent className="sm:max-w-lg">
                     {detail && (
                         <>
@@ -444,18 +497,59 @@ export function ComprasPanel() {
                                 </DialogDescription>
                             </DialogHeader>
                             <div className="rounded-md border divide-y">
-                                {detail.items.map(item => (
-                                    <div key={item.id} className="p-3 flex justify-between items-center gap-3">
-                                        <div className="min-w-0">
-                                            <p className="font-medium text-sm truncate">{item.product.name}</p>
-                                            <p className="text-xs text-muted-foreground">{item.product.barcode || "Sin código"}</p>
+                                {detail.items.map(item => {
+                                    const pendingQty = item.quantity - item.receivedQty
+                                    return (
+                                        <div key={item.id} className="p-3 flex justify-between items-center gap-3">
+                                            <div className="min-w-0">
+                                                <p className="font-medium text-sm truncate">{item.product.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {item.product.barcode || "Sin código"}
+                                                    {detail.status === "ORDERED" && ` · Recibidas ${item.receivedQty}/${item.quantity} ud`}
+                                                </p>
+                                            </div>
+                                            <div className="text-right shrink-0 text-sm tabular-nums">
+                                                {item.quantity} × {formatPrice(item.unitCostCents / 100)} ={" "}
+                                                <span className="font-medium">{formatPrice(item.quantity * item.unitCostCents / 100)}</span>
+                                                {detail.status === "ORDERED" && pendingQty > 0 && (
+                                                    receivingItem === item.id ? (
+                                                        <form
+                                                            className="mt-1 flex items-center justify-end gap-1"
+                                                            onSubmit={e => { e.preventDefault(); void submitPartialReceive(detail, item.id, pendingQty) }}
+                                                        >
+                                                            <Input
+                                                                type="number"
+                                                                min={1}
+                                                                max={pendingQty}
+                                                                value={receiveQty}
+                                                                onChange={e => setReceiveQty(e.target.value)}
+                                                                className="h-7 w-20 text-right"
+                                                                autoFocus
+                                                                disabled={receiving}
+                                                                aria-label={`Cantidad a recibir de ${item.product.name}`}
+                                                            />
+                                                            <Button type="submit" size="sm" className="h-7 px-2" disabled={receiving}>
+                                                                {receiving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "OK"}
+                                                            </Button>
+                                                            <Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setReceivingItem(null)} disabled={receiving}>
+                                                                ✕
+                                                            </Button>
+                                                        </form>
+                                                    ) : (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="mt-1 h-7"
+                                                            onClick={() => { setReceivingItem(item.id); setReceiveQty(String(pendingQty)) }}
+                                                        >
+                                                            Recibir
+                                                        </Button>
+                                                    )
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="text-right shrink-0 text-sm tabular-nums">
-                                            {item.quantity} × {formatPrice(item.unitCostCents / 100)} ={" "}
-                                            <span className="font-medium">{formatPrice(item.quantity * item.unitCostCents / 100)}</span>
-                                        </div>
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                             <div className="flex justify-between items-center pt-1">
                                 <span className="text-sm text-muted-foreground">

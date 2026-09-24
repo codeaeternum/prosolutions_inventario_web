@@ -6,10 +6,13 @@ import {
   lastMonthKeys,
 } from "@/lib/chart-utils"
 
-describe("lastDayKeys", () => {
-  const end = new Date("2026-03-15T18:30:00Z")
+// Las claves por defecto son del horario del negocio (America/Mexico_City,
+// UTC−6 sin DST desde 2023): a las 00:00:01 UTC todavía es "ayer" en México.
 
-  it("returns n ascending YYYY-MM-DD keys ending today (UTC)", () => {
+describe("lastDayKeys", () => {
+  const end = new Date("2026-03-15T18:30:00Z") // 12:30 en México, mismo día
+
+  it("returns n ascending YYYY-MM-DD keys ending today (business tz)", () => {
     const keys = lastDayKeys(5, end)
     expect(keys).toEqual([
       "2026-03-11",
@@ -25,11 +28,31 @@ describe("lastDayKeys", () => {
     expect(keys).toEqual(["2026-02-27", "2026-02-28", "2026-03-01"])
   })
 
-  it("ignores the time of day", () => {
+  it("el día del negocio manda: la madrugada UTC sigue siendo el día MX anterior", () => {
+    // 2026-03-15 00:00:01 UTC = 2026-03-14 18:00:01 en México.
     expect(lastDayKeys(1, new Date("2026-03-15T00:00:01Z"))).toEqual([
+      "2026-03-14",
+    ])
+    // 2026-03-15 23:59:59 UTC = 2026-03-15 17:59:59 en México.
+    expect(lastDayKeys(1, new Date("2026-03-15T23:59:59Z"))).toEqual([
       "2026-03-15",
     ])
-    expect(lastDayKeys(1, new Date("2026-03-15T23:59:59Z"))).toEqual([
+    // Bordes exactos del día MX: 06:00 UTC ya es el día nuevo, 05:59:59 no.
+    expect(lastDayKeys(1, new Date("2026-03-15T06:00:00Z"))).toEqual([
+      "2026-03-15",
+    ])
+    expect(lastDayKeys(1, new Date("2026-03-16T05:59:59Z"))).toEqual([
+      "2026-03-15",
+    ])
+  })
+
+  it("acepta otra zona explícita (UTC recupera el comportamiento anterior)", () => {
+    expect(lastDayKeys(1, new Date("2026-03-15T00:00:01Z"), "UTC")).toEqual([
+      "2026-03-15",
+    ])
+    expect(lastDayKeys(3, new Date("2026-03-15T18:30:00Z"), "UTC")).toEqual([
+      "2026-03-13",
+      "2026-03-14",
       "2026-03-15",
     ])
   })
@@ -49,6 +72,20 @@ describe("lastMonthKeys", () => {
       "2025-11",
       "2025-12",
       "2026-01",
+    ])
+  })
+
+  it("el mes del negocio manda: la madrugada UTC del día 1 sigue en el mes MX anterior", () => {
+    // 2026-04-01 02:00 UTC = 2026-03-31 20:00 en México.
+    expect(lastMonthKeys(3, new Date("2026-04-01T02:00:00Z"))).toEqual([
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ])
+    expect(lastMonthKeys(3, new Date("2026-04-01T02:00:00Z"), "UTC")).toEqual([
+      "2026-02",
+      "2026-03",
+      "2026-04",
     ])
   })
 })

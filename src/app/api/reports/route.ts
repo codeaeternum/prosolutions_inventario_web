@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { fillDays, fillMonths, lastDayKeys, lastMonthKeys } from "@/lib/chart-utils"
-import { parseBusinessDateParam } from "@/lib/business-time"
+import { businessDayKey, businessMonthKey, parseBusinessDateParam } from "@/lib/business-time"
 
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
@@ -330,18 +330,22 @@ export async function GET(req: NextRequest) {
 // Series para las gráficas de /admin/reportes. Montos en CENTAVOS:
 // Sale.total, CashMovement.amount y Payment.amount son Float en pesos, así
 // que se convierten con toCents; los *Cents del taller ya vienen en centavos.
-// Los buckets de día/mes son UTC (createdAt.toISOString), igual que
-// lastDayKeys/lastMonthKeys; los días/meses sin datos se rellenan en cero.
+// Los buckets de día/mes son del HORARIO DEL NEGOCIO (BUSINESS_TIME_ZONE),
+// igual que los filtros from/to: un día del reporte cubre 00:00–23:59 en
+// México, así que las claves se derivan con businessDayKey/businessMonthKey
+// (no toISOString, que es UTC) y el rango empieza en el día MX actual.
+// Los días/meses sin datos se rellenan en cero.
 async function buildReportSeries(businessId: string) {
   const now = new Date()
   const days = lastDayKeys(30, now)
   const months = lastMonthKeys(6, now)
-  const since30 = new Date(`${days[0]}T00:00:00.000Z`)
-  const since6m = new Date(`${months[0]}-01T00:00:00.000Z`)
+  // Inicio real (UTC) del primer día/mes del rango en la zona del negocio.
+  const since30 = parseBusinessDateParam(days[0], "start")!
+  const since6m = parseBusinessDateParam(`${months[0]}-01`, "start")!
 
   const toCents = (v: number | null | undefined) => Math.round((v ?? 0) * 100)
-  const dayKey = (d: Date) => d.toISOString().slice(0, 10)
-  const monthKey = (d: Date) => d.toISOString().slice(0, 7)
+  const dayKey = (d: Date) => businessDayKey(d)
+  const monthKey = (d: Date) => businessMonthKey(d)
 
   const [
     sales,

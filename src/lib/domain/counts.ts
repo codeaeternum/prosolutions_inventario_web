@@ -32,8 +32,13 @@ export async function createCount(db: PrismaClient, actorId: string, businessId:
     if (open) {
       throw new BusinessError(`Ya hay un conteo abierto (${countFolio(open.number)}) en ${branch.name}. Aplícalo o cancélalo antes de iniciar otro.`, 409)
     }
+    // Folio por negocio (no global): MAX(number) del tenant + 1. Seguro porque
+    // operation() corre Serializable y reintenta ante conflicto; la restricción
+    // @@unique([businessId, number]) es la red de seguridad. El autoincrement
+    // del schema queda como fallback inerte para inserts que no fijen number.
+    const agg = await tx.inventoryCount.aggregate({ where: { businessId }, _max: { number: true } })
     const count = await tx.inventoryCount.create({
-      data: { businessId, branchId: branch.id, notes: input.notes || null, blind: input.blind ?? false, createdById: actorId },
+      data: { businessId, number: (agg._max.number ?? 0) + 1, branchId: branch.id, notes: input.notes || null, blind: input.blind ?? false, createdById: actorId },
       include: { branch: { select: { id: true, name: true } } },
     })
     return { count, folio: countFolio(count.number) }

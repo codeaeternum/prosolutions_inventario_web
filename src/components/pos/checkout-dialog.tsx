@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -83,6 +84,7 @@ interface SaleResponse {
     kind?: string
     total?: number
     quantity?: number
+    payableCents?: number
     payments?: { method?: string }[]
     error?: string
 }
@@ -136,9 +138,19 @@ function CheckoutForm({
     const [withDeposit, setWithDeposit] = useState(false)
     const [deposit, setDeposit] = useState<PaymentDraft>({ method: "EFECTIVO", amount: "" })
     const [validityDays, setValidityDays] = useState("15")
+    // Descuento autorizado al cobrar: monto en pesos + motivo obligatorio.
+    const [withDiscount, setWithDiscount] = useState(false)
+    const [discountAmount, setDiscountAmount] = useState("")
+    const [discountReason, setDiscountReason] = useState("")
     const [processing, setProcessing] = useState(false)
     const submitting = useRef(false)
     const pendingOperation = useRef<ClientOperationKey | null>(null)
+    // Llave del paso "suspender" cuando una venta nueva con descuento primero
+    // fotografía sus líneas como documento y luego lo cobra (mismo endpoint
+    // de checkout que una suspendida recuperada).
+    const pendingPark = useRef<ClientOperationKey | null>(null)
+    const { data: session } = useSession()
+    const isEmployee = session?.user?.role === "EMPLOYEE"
 
     const setBusy = (busy: boolean) => {
         submitting.current = busy
@@ -153,18 +165,25 @@ function CheckoutForm({
         else if (!workshopCustomer) onWorkshopSaleChange(false)
     }
 
+    const isSale = docType === "VENTA" || docType === "WORKSHOP"
+    const depositAmount = parseFloat(deposit.amount) || 0
+
+    // Lo que realmente se cobra: catálogo menos el descuento capturado. El
+    // servidor valida contra su propio snapshot — aquí solo se refleja.
+    const cartTotalCents = Math.round(cartTotal * 100)
+    const discountCents = withDiscount ? Math.round((parseFloat(discountAmount) || 0) * 100) : 0
+    const payable = Math.max(0, (cartTotalCents - discountCents) / 100)
+    const employeeCapCents = Math.floor(cartTotalCents / 10)
+
     const usesCredit = splitMode
         ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0)
         : paymentMethod === "CREDITO"
     const creditPortion = splitMode
         ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-        : (paymentMethod === "CREDITO" ? cartTotal : 0)
+        : (paymentMethod === "CREDITO" ? payable : 0)
     const creditAvailable = customer?.creditLimit != null
         ? Math.max(0, customer.creditLimit - customer.creditBalance)
         : null
-
-    const isSale = docType === "VENTA" || docType === "WORKSHOP"
-    const depositAmount = parseFloat(deposit.amount) || 0
 
     /** Pagos del modo venta → payments[] | paymentMethod (validaciones incluidas).
         Transferencia única va sin monto: el servidor cobra el total del ticket. */
@@ -187,8 +206,8 @@ function CheckoutForm({
         if (splitMode) {
             const drafts = splitPayments.filter(p => parseFloat(p.amount) > 0)
             const sum = drafts.reduce((s, p) => s + parseFloat(p.amount), 0)
-            if (drafts.length === 0 || Math.abs(sum - cartTotal) > 0.009) {
-                toast.error(`Los pagos deben sumar ${formatPrice(cartTotal)} (suman ${formatPrice(sum)})`)
+            if (drafts.length === 0 || Math.abs(sum - payable) > 0.009) {
+                toast.error(`Los pagos deben sumar ${formatPrice(payable)} (suman ${formatPrice(sum)})`)
                 return null
             }
             if (drafts.some(p => p.method === "TRANSFERENCIA" && !p.reference?.trim())) {
@@ -213,15 +232,41 @@ function CheckoutForm({
         const items = cart.map(item => ({ productId: item.product.id, quantity: item.quantity }))
         let url = "/api/sales"
         let payload: Record<string, unknown>
+        // Venta nueva con descuento: suspende y cobra por /checkout en dos pasos.
+        let parkThenCheckout = false
 
         if (isSale) {
             const paymentPart = buildSalePayments()
             if (!paymentPart) return
+            // Descuento autorizado al cobrar: motivo obligatorio, nunca cubre
+            // el total (eso sería cortesía, otro flujo) y el empleado topa en
+            // 10% — el servidor repite estas mismas reglas.
+            if (discountCents > 0) {
+                if (discountCents >= cartTotalCents) {
+                    toast.error("El descuento no puede cubrir el total de la venta")
+                    return
+                }
+                if (discountReason.trim().length < 3) {
+                    toast.error("Captura el motivo del descuento")
+                    return
+                }
+                if (isEmployee && discountCents > employeeCapCents) {
+                    toast.error(`Los empleados pueden descontar hasta 10% (${formatPrice(employeeCapCents / 100)}); pide autorización al administrador`)
+                    return
+                }
+            }
+            const discountPart = discountCents > 0 ? { discountCents, discountReason: discountReason.trim() } : {}
             if (resumedDoc) {
                 // Cobro de una suspendida: el documento cobra sus líneas snapshot;
                 // items queda como referencia por si el servidor reconcilia ediciones.
                 url = `/api/pos/documents/${resumedDoc.id}/checkout`
-                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart }
+                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart }
+            } else if (discountCents > 0) {
+                // Venta nueva con descuento: solo el checkout de documentos lo
+                // admite, así que el ticket se suspende (snapshot de precios)
+                // y se cobra en seguida — misma caja, mismo rastro.
+                parkThenCheckout = true
+                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart }
             } else {
                 payload = {
                     items,
@@ -275,13 +320,40 @@ function CheckoutForm({
             }
         }
 
-        pendingOperation.current = getClientOperationKey(pendingOperation.current, payload)
         // La pestaña del ticket se abre dentro del gesto del click: si esperamos
         // al await del cobro, el navegador la bloquea como popup. onCompleted la
         // navega al ticket (o la cierra si el cobro falla).
         const ticketPopup = autoOpenTicket && docType !== "QUOTE" ? window.open("", "_blank") : null
+        // Documento a cobrar por /checkout: el retomado o el que el paso 1
+        // suspende para una venta nueva con descuento.
+        let checkoutDocId = resumedDoc?.id ?? null
         setBusy(true)
         try {
+            if (parkThenCheckout) {
+                // Paso 1 de 2 — venta nueva con descuento: suspender fotografía
+                // los precios; el checkout del paso 2 cobra con el descuento.
+                const parkPayload = {
+                    kind: docType === "WORKSHOP" ? "WORKSHOP" : "RETAIL",
+                    items,
+                    customerId: customer?.id ?? undefined,
+                    branchId: branchId || undefined,
+                }
+                pendingPark.current = getClientOperationKey(pendingPark.current, parkPayload)
+                const parkRes = await fetch("/api/pos/documents", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...parkPayload, idempotencyKey: pendingPark.current.key }),
+                })
+                const parkData: SaleResponse | null = await parkRes.json().catch(() => null)
+                if (!parkRes.ok) throw new Error(parkData?.error || "No se pudo preparar la venta con descuento")
+                checkoutDocId = parkData?.document?.sale?.id ?? null
+                if (!checkoutDocId) throw new Error("No se pudo preparar la venta con descuento")
+                url = `/api/pos/documents/${checkoutDocId}/checkout`
+            }
+            // La llave del cobro va ligada al folio del documento cuando hay
+            // uno: el mismo payload sobre otro documento es otra operación.
+            pendingOperation.current = getClientOperationKey(pendingOperation.current,
+                checkoutDocId ? { ...payload, saleId: checkoutDocId } : payload)
             const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -289,7 +361,10 @@ function CheckoutForm({
             })
             const data: SaleResponse | null = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudo registrar. El ticket se conserva.")
+            // Recién aquí se sueltan las llaves: si el cobro falló tras
+            // suspender, el reintento reusa el MISMO documento (no duplica).
             pendingOperation.current = null
+            pendingPark.current = null
 
             const ticketId = data?.sale?.id ?? data?.document?.sale?.id ?? data?.id ?? null
             const number = data?.sale?.number ?? data?.document?.sale?.number ?? data?.number ?? null
@@ -304,24 +379,32 @@ function CheckoutForm({
                 kind: resultKind,
                 number,
                 ticketId,
-                total: data?.total ?? data?.document?.total ?? cartTotal,
+                // Cobro real con descuento cuando el recibo lo trae; si no,
+                // el total de catálogo del documento o del ticket.
+                total: data?.payableCents != null ? data.payableCents / 100 : (data?.total ?? data?.document?.total ?? cartTotal),
                 quantity: data?.quantity ?? data?.document?.quantity ?? cartUnitsOf(cart),
                 description: cart.length === 1 ? cart[0].product.name : `${cart.length} productos`,
                 paidWithCard,
             }, ticketPopup)
         } catch (error) {
             ticketPopup?.close()
-            toast.error(error instanceof TypeError
+            // Si el paso 1 ya suspendió el ticket y el cobro falló, el
+            // documento queda recuperable en «Suspendidas» — no se pierde.
+            const suspendedHint = parkThenCheckout && checkoutDocId
+                ? " El ticket quedó suspendido; recupéralo o descártalo desde «Recuperar»."
+                : ""
+            toast.error((error instanceof TypeError
                 ? "No se pudo confirmar el resultado. Reintenta sin cambiar el ticket para evitar duplicados."
-                : error instanceof Error ? error.message : "No se pudo registrar. El ticket se conserva.")
+                : error instanceof Error ? error.message : "No se pudo registrar. El ticket se conserva.") + suspendedHint)
         } finally {
             setBusy(false)
         }
     }
 
     const confirmDisabled = processing
-        || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < cartTotal))
+        || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < payable))
         || (isSale && usesCredit && (!customer || customer.creditLimit == null || creditPortion > (creditAvailable ?? 0)))
+        || (isSale && discountCents > 0 && (discountCents >= cartTotalCents || discountReason.trim().length < 3))
         || (docType === "LAYAWAY" && !customer)
 
     const docTypes: DocType[] = workshopCustomer ? ["WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"]
@@ -335,9 +418,16 @@ function CheckoutForm({
                     </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-2">
-                    <div className="bg-primary/10 p-4 rounded-lg flex justify-between items-center">
-                        <span className="font-medium text-lg">Total:</span>
-                        <span className="text-2xl font-bold text-primary">{formatPrice(cartTotal)}</span>
+                    <div className="bg-primary/10 p-4 rounded-lg space-y-1">
+                        <div className="flex justify-between items-center">
+                            <span className="font-medium text-lg">{discountCents > 0 ? "Total a cobrar:" : "Total:"}</span>
+                            <span className="text-2xl font-bold text-primary">{formatPrice(payable)}</span>
+                        </div>
+                        {discountCents > 0 && (
+                            <p className="text-xs text-muted-foreground text-right">
+                                Subtotal {formatPrice(cartTotal)} · Descuento −{formatPrice(discountCents / 100)}
+                            </p>
+                        )}
                     </div>
 
                     {cajaOpen === false && isSale && (
@@ -383,6 +473,54 @@ function CheckoutForm({
                         </div>
                     )}
 
+                    {/* Descuento autorizado al cobrar (solo ventas): el motivo
+                        queda en la venta y los pagos cuadran contra total − dto. */}
+                    {isSale && (
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <Checkbox
+                                    id="pos-discount"
+                                    checked={withDiscount}
+                                    disabled={processing}
+                                    onCheckedChange={checked => setWithDiscount(checked === true)}
+                                />
+                                <Label htmlFor="pos-discount" className="cursor-pointer font-normal">
+                                    Descuento <span className="text-xs text-muted-foreground">(autorizado al cobrar{isEmployee ? ` · máx. 10% = ${formatPrice(employeeCapCents / 100)}` : ""})</span>
+                                </Label>
+                            </div>
+                            {withDiscount && (
+                                <div className="space-y-2 rounded-lg border p-3">
+                                    <div className="flex gap-2 items-center">
+                                        <Input
+                                            type="number" min="0" step="0.01" placeholder="0.00"
+                                            aria-label="Monto del descuento"
+                                            disabled={processing}
+                                            value={discountAmount}
+                                            onChange={e => setDiscountAmount(e.target.value)}
+                                            className="w-28"
+                                        />
+                                        <span className="text-xs text-muted-foreground">de descuento</span>
+                                    </div>
+                                    <Input
+                                        placeholder="Motivo del descuento *"
+                                        aria-label="Motivo del descuento"
+                                        maxLength={200}
+                                        disabled={processing}
+                                        value={discountReason}
+                                        onChange={e => setDiscountReason(e.target.value)}
+                                    />
+                                    {discountCents > 0 && (
+                                        <p className={cn("text-xs", discountCents >= cartTotalCents ? "text-destructive font-medium" : "text-muted-foreground")}>
+                                            {discountCents >= cartTotalCents
+                                                ? "El descuento no puede cubrir el total"
+                                                : `Cobrarás ${formatPrice(payable)} de ${formatPrice(cartTotal)}`}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {isSale && !splitMode && (
                         <div className="space-y-2">
                             <Label>Método de pago</Label>
@@ -392,7 +530,7 @@ function CheckoutForm({
                                 </div>
                                 <Button type="button" variant="outline" disabled={processing} onClick={() => {
                                     setSplitMode(true)
-                                    setSplitPayments([{ method: paymentMethod === "CREDITO" ? "EFECTIVO" : paymentMethod, amount: cartTotal.toString() }])
+                                    setSplitPayments([{ method: paymentMethod === "CREDITO" ? "EFECTIVO" : paymentMethod, amount: payable.toFixed(2) }])
                                 }}>
                                     Dividir
                                 </Button>
@@ -422,14 +560,14 @@ function CheckoutForm({
                                         value={cashGiven}
                                         onChange={e => setCashGiven(e.target.value)}
                                     />
-                                    {cashGiven && parseFloat(cashGiven) >= cartTotal && (
+                                    {cashGiven && parseFloat(cashGiven) >= payable && (
                                         <p className="text-green-600 font-medium text-sm">
-                                            Cambio: {formatPrice(parseFloat(cashGiven) - cartTotal)}
+                                            Cambio: {formatPrice(parseFloat(cashGiven) - payable)}
                                         </p>
                                     )}
-                                    {cashGiven && parseFloat(cashGiven) < cartTotal && (
+                                    {cashGiven && parseFloat(cashGiven) < payable && (
                                         <p className="text-destructive font-medium text-sm">
-                                            Faltan: {formatPrice(cartTotal - parseFloat(cashGiven))}
+                                            Faltan: {formatPrice(payable - parseFloat(cashGiven))}
                                         </p>
                                     )}
                                 </div>
@@ -487,7 +625,7 @@ function CheckoutForm({
                                 <Button type="button" variant="outline" size="sm" disabled={processing} onClick={() => {
                                     const used = new Set(splitPayments.map(p => p.method))
                                     const next = PAYMENT_METHODS.find(m => !used.has(m.value))?.value ?? "EFECTIVO"
-                                    const remaining = cartTotal - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+                                    const remaining = payable - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
                                     setSplitPayments(prev => [...prev, { method: next, amount: remaining > 0 ? remaining.toFixed(2) : "" }])
                                 }}>
                                     <Plus className="h-4 w-4 mr-1" /> Agregar método
@@ -495,7 +633,7 @@ function CheckoutForm({
                             )}
                             {(() => {
                                 const sum = splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                const diff = cartTotal - sum
+                                const diff = payable - sum
                                 return Math.abs(diff) > 0.009 ? (
                                     <p className={cn("text-sm font-medium", diff > 0 ? "text-destructive" : "text-amber-600")}>
                                         {diff > 0 ? `Faltan ${formatPrice(diff)}` : `Sobran ${formatPrice(-diff)}`}

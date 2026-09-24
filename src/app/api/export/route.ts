@@ -105,7 +105,7 @@ async function exportSales(businessId: string, branchId?: string): Promise<strin
       payments: { select: { method: true, status: true } },
     },
   })
-  const headers = ["Folio", "Fecha", "Sucursal", "Cliente", "Vendedor", "Artículos", "Total", "Método de pago", "Estado"]
+  const headers = ["Folio", "Fecha", "Sucursal", "Cliente", "Vendedor", "Artículos", "Total", "Descuento", "Método de pago", "Estado"]
   const rows = sales.map((s) => [
     `V-${String(s.number).padStart(6, "0")}`,
     formatDateTime(s.createdAt),
@@ -113,7 +113,9 @@ async function exportSales(businessId: string, branchId?: string): Promise<strin
     s.customer?.name ?? "Mostrador",
     s.seller.name,
     s.items.reduce((sum, i) => sum + i.quantity, 0),
-    money(s.total),
+    // Lo cobrado: catálogo menos el descuento autorizado al cobrar.
+    money(s.total - s.discountCents / 100),
+    s.discountCents > 0 ? `${money(s.discountCents / 100)}${s.discountReason ? ` (${s.discountReason})` : ""}` : "",
     [...new Set(s.payments.filter((p) => p.status !== "VOIDED").map((p) => paymentMethodLabels[p.method] ?? p.method))].join(" + "),
     saleStatusLabels[s.status] ?? s.status,
   ])

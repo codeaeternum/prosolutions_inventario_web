@@ -99,36 +99,54 @@ export async function alertSensitiveAudit(entry: AuditAlertEntry): Promise<void>
     if (!ALERTED_ACTIONS.has(entry.action)) return
     if (entry.action === "PRODUCT_UPDATE" && !touchesPrice(entry)) return
 
-    const key = `${entry.businessId}:${entry.actorId}:${entry.action}`
-    const now = Date.now()
-    if (isThrottled(key, now)) return
-
-    // Import perezoso: lib/prisma exige DATABASE_URL al cargar y solo debe
-    // cargarse cuando de verdad hay candidato a alerta.
-    const { prisma } = await import("./prisma")
-    const actor = await prisma.user.findUnique({
-      where: { id: entry.actorId, businessId: entry.businessId },
-      select: { role: true, name: true },
-    })
-    // Solo alarman las manos ajenas: si el dueño (o algo sin usuario en el
-    // tenant) hizo el cambio ya lo sabe — alertarlo sería spam.
-    if (!actor || actor.role === "ADMIN") return
-
-    // La marca va antes del envío: si Telegram falla, los reintentos del
-    // mismo minuto tampoco martillean la API.
-    lastAlertAt.set(key, now)
     const lines = [
       "⚠️ <b>Actividad sensible</b>",
-      `<b>${escapeHtml(actor.name)}</b> ${escapeHtml(entry.summary)}`,
+      // El nombre del actor lo inserta notifyOwner tras verificar el rol.
+      `<b>{actor}</b> ${escapeHtml(entry.summary)}`,
     ]
     if (entry.entityName) lines.push(`📌 ${escapeHtml(entry.entityName)}`)
-    lines.push(`🕒 ${mxDateTime.format(new Date(now))}`)
-
-    // Igual que low-stock/delegation: import perezoso (tira de lib/prisma) +
-    // fallo en silencio cubierto por el try exterior.
-    const { sendTelegramToUsers } = await import("./telegram")
-    await sendTelegramToUsers(entry.businessId, lines.join("\n"), { role: "ADMIN" })
+    await notifyOwner(entry.businessId, entry.actorId, `audit:${entry.action}`, lines)
   } catch (error) {
     console.error("[audit-alerts] alertSensitiveAudit falló:", error)
   }
+}
+
+/**
+ * Núcleo compartido con las alertas de operaciones (lib/operation-alerts):
+ * verifica rol del actor, aplica el throttle y envía a los ADMIN del tenant.
+ * `lines` puede traer el marcador literal "{actor}" que se sustituye por el
+ * nombre ya escapado una vez conocido. Devuelve true si se envió.
+ */
+export async function notifyOwner(businessId: string, actorId: string, throttleKey: string, lines: string[]): Promise<boolean> {
+  const key = `${businessId}:${actorId}:${throttleKey}`
+  const now = Date.now()
+  if (isThrottled(key, now)) return false
+
+  // Import perezoso: lib/prisma exige DATABASE_URL al cargar y solo debe
+  // cargarse cuando de verdad hay candidato a alerta.
+  const { prisma } = await import("./prisma")
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId, businessId },
+    select: { role: true, name: true },
+  })
+  // Solo alarman las manos ajenas: si el dueño (o algo sin usuario en el
+  // tenant) hizo el cambio ya lo sabe — alertarlo sería spam.
+  if (!actor || actor.role === "ADMIN") return false
+
+  // La marca va antes del envío: si Telegram falla, los reintentos del
+  // mismo minuto tampoco martillean la API.
+  lastAlertAt.set(key, now)
+  const rendered = lines.map(line => line.replace("{actor}", escapeHtml(actor.name)))
+  rendered.push(`🕒 ${mxDateTime.format(new Date(now))}`)
+
+  // Igual que low-stock/delegation: import perezoso (tira de lib/prisma) +
+  // fallo en silencio cubierto por el try exterior.
+  const { sendTelegramToUsers } = await import("./telegram")
+  await sendTelegramToUsers(businessId, rendered.join("\n"), { role: "ADMIN" })
+  return true
+}
+
+/** Escape HTML reutilizable para armar líneas de alerta con datos de usuario. */
+export function escapeAlertHtml(value: string): string {
+  return escapeHtml(value)
 }

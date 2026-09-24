@@ -305,6 +305,9 @@ function summarizeOperation(
     case "SALE_DOCUMENT_CHECKOUT": {
       const total = asNum(r.total) ?? asNum(sale?.total)
       if (total != null) parts.push(money(total))
+      // Cobro con descuento autorizado: el recibo trae discountCents > 0.
+      const dto = asNum(r.discountCents)
+      if (dto != null && dto > 0) parts.push(`dto −${money(dto / 100)}`)
       break
     }
     case "SALE_DOCUMENT_PAYMENT": {

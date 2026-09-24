@@ -269,9 +269,13 @@ export async function createPurchaseFromNeeds(db: PrismaClient, actorId: string,
       throw new BusinessError("Un encargo de la lista ya fue resuelto. Recarga y genera la orden de nuevo.", 409)
     }
 
+    // Folio por negocio (no global), mismo patrón que createPurchase:
+    // MAX(number) del tenant + 1 dentro de esta tx serializable.
+    const agg = await tx.purchase.aggregate({ where: { businessId }, _max: { number: true } })
     const purchase = await tx.purchase.create({
       data: {
         businessId,
+        number: (agg._max.number ?? 0) + 1,
         branchId: branch.id,
         supplierId: supplier?.id ?? null,
         notes: input.notes || null,

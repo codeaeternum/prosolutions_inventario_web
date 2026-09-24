@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { applyCount } from "@/lib/domain/counts"
+import { applyCount, createCount } from "@/lib/domain/counts"
 
 /**
  * applyCount — separación de funciones (auditoría): un EMPLOYEE no puede
@@ -21,7 +21,8 @@ const key = () => `counts-test-${++seq}`
 const tx = {
   user: { findUnique: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-  inventoryCount: { findFirst: vi.fn(), updateMany: vi.fn() },
+  inventoryCount: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
+  branch: { findFirst: vi.fn() },
   inventoryCountItem: { update: vi.fn() },
   branchStock: { findUnique: vi.fn(), upsert: vi.fn() },
   product: { update: vi.fn(), findMany: vi.fn() },
@@ -56,6 +57,33 @@ beforeEach(() => {
   tx.product.update.mockResolvedValue({ stock: 8 })
   tx.product.findMany.mockResolvedValue([]) // syncLowStockAlerts post-commit
   tx.inventoryMovement.create.mockResolvedValue({ id: "mov-1" })
+  // Solo para createCount: sucursal válida y sin otro conteo OPEN.
+  tx.branch.findFirst.mockResolvedValue({ id: "b1", name: "Matriz", isActive: true, businessId: BIZ })
+})
+
+describe("createCount — folio por negocio", () => {
+  it("asigna MAX(number) del tenant + 1, no el autoincrement global", async () => {
+    tx.inventoryCount.findFirst.mockResolvedValue(null) // sin conteo abierto
+    tx.inventoryCount.aggregate.mockResolvedValue({ _max: { number: 4 } })
+    tx.inventoryCount.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "count-9", ...data }))
+    const result = await createCount(db, admin.id, BIZ, { idempotencyKey: key(), branchId: "b1" })
+    expect(tx.inventoryCount.aggregate).toHaveBeenCalledWith({ where: { businessId: BIZ }, _max: { number: true } })
+    expect(tx.inventoryCount.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ businessId: BIZ, number: 5 }),
+    }))
+    expect(result.folio).toBe("CC-000005")
+  })
+
+  it("el primer conteo de un negocio arranca en 1 aunque existan folios globales", async () => {
+    tx.inventoryCount.findFirst.mockResolvedValue(null)
+    tx.inventoryCount.aggregate.mockResolvedValue({ _max: { number: null } })
+    tx.inventoryCount.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "count-1", ...data }))
+    const result = await createCount(db, admin.id, BIZ, { idempotencyKey: key(), branchId: "b1" })
+    expect(tx.inventoryCount.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ number: 1 }),
+    }))
+    expect(result.folio).toBe("CC-000001")
+  })
 })
 
 const apply = (actorId: string) =>

@@ -125,6 +125,7 @@ export async function GET(
             status: true,
             kind: true,
             total: true,
+            discountCents: true,
             createdAt: true,
             branch: { select: { name: true } },
             items: { select: { quantity: true, product: { select: { name: true } } }, take: 4 },
@@ -133,10 +134,11 @@ export async function GET(
           orderBy: { createdAt: "desc" },
           take: 20,
         }),
-        // "Total comprado": solo ventas vigentes (las anuladas no son gasto real).
+        // "Total comprado": solo ventas vigentes (las anuladas no son gasto real)
+        // y lo efectivamente cobrado: total de catálogo menos descuento autorizado.
         prisma.sale.aggregate({
           where: { businessId, customerId: id, status: "COMPLETED" },
-          _sum: { total: true },
+          _sum: { total: true, discountCents: true },
           _count: { _all: true },
         }),
         prisma.sale.findFirst({
@@ -241,7 +243,7 @@ export async function GET(
     })
 
     const stats = {
-      totalPurchased: (salesAgg._sum.total ?? 0) + (repairPaidAgg._sum.amount ?? 0),
+      totalPurchased: (salesAgg._sum.total ?? 0) - (salesAgg._sum.discountCents ?? 0) / 100 + (repairPaidAgg._sum.amount ?? 0),
       salesCount: salesAgg._count._all,
       lastPurchaseAt: lastSale?.createdAt ?? null,
       pendingReservations,

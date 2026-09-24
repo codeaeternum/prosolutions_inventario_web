@@ -92,6 +92,7 @@ export default async function TicketPage({
     cashier?: string; badge?: string;
     items: { name: string; qty: number; price: number; total: number }[];
     total: number; paymentMethod?: string; notes?: string; newBalance?: number;
+    discount?: number; discountReason?: string;
     qrCode?: string; businessName?: string; subtitle?: string; footer?: string;
     copies?: number;
   } | null = null
@@ -122,6 +123,9 @@ export default async function TicketPage({
       const isLive = saleDoc.status === "DRAFT" || saleDoc.status === "OPEN"
       const paid = saleDoc.payments.filter(p => p.status === "CONFIRMED").reduce((sum, p) => sum + p.amount, 0)
       const balance = Math.max(0, saleDoc.total - paid)
+      // Descuento autorizado al cobrar: el ticket imprime el desglose y el
+      // TOTAL pasa a ser lo realmente cobrado (catálogo − descuento).
+      const discount = (saleDoc.discountCents ?? 0) / 100
       const title = saleDoc.status === "VOIDED"
         ? (isWorkshop ? "NOTA DE VENTA A TALLER ANULADA" : isLayaway ? "APARTADO CANCELADO" : isQuote ? "COTIZACIÓN ANULADA" : "VENTA ANULADA")
         : isQuote ? "COTIZACIÓN"
@@ -147,7 +151,9 @@ export default async function TicketPage({
           price: item.unitPrice,
           total: item.totalPrice,
         })),
-        total: saleDoc.total,
+        total: saleDoc.total - discount,
+        discount: discount > 0 ? discount : undefined,
+        discountReason: saleDoc.discountReason ?? undefined,
         paymentMethod: isLive
           ? (isLayaway && paid > 0 ? `Anticipos: ${formatPrice(paid)}` : "")
           : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),

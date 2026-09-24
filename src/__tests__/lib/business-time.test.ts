@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import {
   BUSINESS_TIME_ZONE,
+  businessDayKey,
+  businessMonthKey,
   parseBusinessDateParam,
   timeZoneOffsetMs,
   zonedTimeToUtc,
@@ -70,6 +72,36 @@ describe("parseBusinessDateParam — entradas vacías o inválidas", () => {
   it("cadenas no-fecha devuelven null en vez de un Date inválido", () => {
     expect(parseBusinessDateParam("ayer", "start")).toBeNull()
     expect(parseBusinessDateParam("15-06-2025", "end")).toBeNull()
+  })
+})
+
+describe("businessDayKey / businessMonthKey — buckets de reportes", () => {
+  it("una venta a las 23:30 UTC cae en el MISMO día MX (17:30 local)", () => {
+    // 2025-06-15 23:30 UTC = 2025-06-15 17:30 en México.
+    expect(businessDayKey(new Date("2025-06-15T23:30:00Z"))).toBe("2025-06-15")
+    expect(businessMonthKey(new Date("2025-06-15T23:30:00Z"))).toBe("2025-06")
+  })
+
+  it("una venta a las 05:30 UTC cae en el día MX ANTERIOR (23:30 local)", () => {
+    // 2025-06-16 05:30 UTC = 2025-06-15 23:30 en México.
+    expect(businessDayKey(new Date("2025-06-16T05:30:00Z"))).toBe("2025-06-15")
+    // Y si ese instante además cruza de mes MX, el bucket de mes también lo refleja.
+    // 2025-07-01 05:30 UTC = 2025-06-30 23:30 en México.
+    expect(businessDayKey(new Date("2025-07-01T05:30:00Z"))).toBe("2025-06-30")
+    expect(businessMonthKey(new Date("2025-07-01T05:30:00Z"))).toBe("2025-06")
+  })
+
+  it("los bordes del día MX son 06:00 UTC (inicio) y 05:59:59 UTC del día siguiente (fin)", () => {
+    expect(businessDayKey(new Date("2025-06-15T06:00:00Z"))).toBe("2025-06-15")
+    expect(businessDayKey(new Date("2025-06-15T05:59:59Z"))).toBe("2025-06-14")
+    expect(businessDayKey(new Date("2025-06-16T05:59:59Z"))).toBe("2025-06-15")
+    expect(businessDayKey(new Date("2025-06-16T06:00:00Z"))).toBe("2025-06-16")
+  })
+
+  it("acepta otra zona explícita (Tokyo recorre el día hacia adelante)", () => {
+    // 2025-06-15 16:00 UTC = 2025-06-16 01:00 en Tokyo (UTC+9).
+    expect(businessDayKey(new Date("2025-06-15T16:00:00Z"), "Asia/Tokyo")).toBe("2025-06-16")
+    expect(businessDayKey(new Date("2025-06-15T16:00:00Z"), "UTC")).toBe("2025-06-15")
   })
 })
 

@@ -65,7 +65,11 @@ export async function operation<T extends object>(
 ): Promise<T & { operationId: string }> {
   const key = operationKeySchema.parse(input.key)
   const requestHash = createHash("sha256").update(JSON.stringify(input.payload)).digest("hex")
-  return transaction(db, async tx => {
+  // `executed` distingue ejecución real de replay idempotente: una segunda
+  // llamada con la misma llave devuelve el recibo guardado sin re-ejecutar
+  // work() — y sin re-alertar al dueño.
+  let executed = false
+  const result = await transaction(db, async tx => {
     await actor(tx, input.actorId, input.permission, input.businessId)
     const existing = await tx.businessOperation.findUnique({ where: { key } })
     if (existing) {
@@ -78,8 +82,18 @@ export async function operation<T extends object>(
     const response = { ...await work(tx, receipt.id), operationId: receipt.id }
     const json = JSON.parse(JSON.stringify(response)) as Prisma.InputJsonValue
     await tx.businessOperation.update({ where: { id: receipt.id }, data: { response: json } })
+    executed = true
     return json as unknown as T & { operationId: string }
   })
+  // Aviso Telegram post-commit y fire-and-forget (lib/operation-alerts): si
+  // un empleado anuló una venta, aplicó un conteo o cobró con descuento, el
+  // dueño se entera al momento. Nunca bloquea ni revierte la operación.
+  if (executed) {
+    void import("../operation-alerts")
+      .then(m => m.alertSensitiveOperation({ businessId: input.businessId, actorId: input.actorId, kind: input.kind, response: result, executed: true }))
+      .catch(error => console.error("[operation-alerts] import falló:", error))
+  }
+  return result
 }
 
 export const PRINCIPAL_BRANCH_ID = "branch-principal"

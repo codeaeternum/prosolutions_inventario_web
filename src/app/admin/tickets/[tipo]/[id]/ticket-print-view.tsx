@@ -16,6 +16,9 @@ interface TicketData {
   cashier?: string
   items: { name: string; qty: number; price: number; total: number }[]
   total: number
+  /** Descuento autorizado al cobrar (pesos): el total ya viene neto. */
+  discount?: number
+  discountReason?: string
   paymentMethod?: string
   notes?: string
   newBalance?: number
@@ -84,6 +87,18 @@ function TicketBody({ data, qrDataUrl, copyLabel }: { data: TicketData; qrDataUr
 
       {/* Totales */}
       <div className="space-y-1 mb-4">
+        {data.discount != null && data.discount > 0 && (
+          <>
+            <div className="flex justify-between text-xs text-gray-600">
+              <span>SUBTOTAL:</span>
+              <span>{formatPrice(data.total + data.discount)}</span>
+            </div>
+            <div className="flex justify-between gap-2 text-xs text-gray-600">
+              <span className="truncate">DESCUENTO{data.discountReason ? ` (${data.discountReason})` : ""}:</span>
+              <span className="shrink-0">-{formatPrice(data.discount)}</span>
+            </div>
+          </>
+        )}
         <div className="flex justify-between font-bold text-sm">
           <span>TOTAL:</span>
           <span>{formatPrice(data.total)}</span>
@@ -154,6 +169,10 @@ export function TicketPrintView({ data }: { data: TicketData }) {
       text += `${i.qty}x ${i.name} - ${formatPrice(i.total)}\n`
     })
     text += `------------------------\n`
+    if (data.discount != null && data.discount > 0) {
+      text += `Subtotal: ${formatPrice(data.total + data.discount)}\n`
+      text += `Descuento${data.discountReason ? ` (${data.discountReason})` : ""}: -${formatPrice(data.discount)}\n`
+    }
     text += `*TOTAL: ${formatPrice(data.total)}*\n`
     if (data.newBalance !== undefined) {
       text += `Saldo actual: ${formatPrice(data.newBalance)}\n`

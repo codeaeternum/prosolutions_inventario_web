@@ -25,7 +25,7 @@ const tx = {
   shoppingItem: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   branch: { findFirst: vi.fn() },
   supplier: { findFirst: vi.fn() },
-  purchase: { create: vi.fn() },
+  purchase: { create: vi.fn(), aggregate: vi.fn() },
 }
 // listShoppingNeeds lee directo de db; las operaciones entran por $transaction.
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
@@ -41,6 +41,8 @@ beforeEach(() => {
   tx.product.findMany.mockResolvedValue([])
   tx.shoppingItem.findMany.mockResolvedValue([])
   tx.branch.findFirst.mockResolvedValue(branch)
+  // El folio es por tenant: MAX(number)=2 → la OC se crea con number 3.
+  tx.purchase.aggregate.mockResolvedValue({ _max: { number: 2 } })
 })
 
 describe("refacciones faltantes", () => {
@@ -206,9 +208,10 @@ describe("orden de compra desde la lista", () => {
     })
     expect(result.folio).toBe("OC-000003")
     expect(result.linkedManualItems).toBe(2)
+    expect(tx.purchase.aggregate).toHaveBeenCalledWith({ where: { businessId: BIZ }, _max: { number: true } })
     expect(tx.purchase.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        businessId: BIZ, branchId: "b1", totalCents: 60000, createdById: "admin-1",
+        businessId: BIZ, number: 3, branchId: "b1", totalCents: 60000, createdById: "admin-1",
         items: { create: [{ businessId: BIZ, productId: "p1", quantity: 4, unitCostCents: 15000 }] },
       }),
     }))

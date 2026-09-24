@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { setPurchaseStatus, updatePurchaseDraft } from "@/lib/domain/purchasing"
 import { businessFailure } from "@/lib/domain/http"
 
-/** Cambia el estado de la orden: { action: "ORDER" | "RECEIVE" | "CANCEL" }. */
+/** Cambia el estado de la orden: { action: "ORDER" | "RECEIVE" | "RECEIVE_PARTIAL" | "CANCEL", items? }. */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireModule("inventario")
@@ -25,6 +25,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     const result = await setPurchaseStatus(prisma, session.user.id, businessIdOf(session), id, {
       action: body.action,
+      // RECEIVE_PARTIAL trae items: [{ purchaseItemId, quantity }] con lo que
+      // llegó en esta entrega; el dominio valida que no exceda lo pendiente.
+      items: body.items,
       // Las transiciones ya son idempotentes por estado; la llave solo protege reintentos de red.
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key") ?? crypto.randomUUID(),
     })

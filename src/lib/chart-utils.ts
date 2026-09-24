@@ -1,22 +1,29 @@
 // Helpers puros para dar forma a las series de las gráficas de reportes.
-// Las claves de día/mes usan UTC ("YYYY-MM-DD" / "YYYY-MM") igual que el API,
-// que agrupa con `createdAt.toISOString().slice(...)`.
+// Las claves de día/mes ("YYYY-MM-DD" / "YYYY-MM") se derivan en la zona del
+// negocio (BUSINESS_TIME_ZONE): un día del reporte cubre 00:00–23:59 hora de
+// México, igual que los filtros from/to (parseBusinessDateParam). La API
+// agrupa cada fila con businessDayKey/businessMonthKey de business-time.ts.
+import { BUSINESS_TIME_ZONE, businessDayKey, businessMonthKey } from "./business-time"
 
-/** Claves de los últimos `n` días en UTC, ascendente, incluyendo hoy. */
-export function lastDayKeys(n: number, end: Date = new Date()): string[] {
+/** Claves de los últimos `n` días en la zona del negocio, ascendente, incluyendo hoy. */
+export function lastDayKeys(n: number, end: Date = new Date(), timeZone: string = BUSINESS_TIME_ZONE): string[] {
   const keys: string[] = []
-  const today = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate())
+  // "Hoy" es el día del negocio: a las 18:01 MX ya es el día siguiente en
+  // UTC y las ventas de la tarde no deben quedar fuera del rango.
+  const [year, month, day] = businessDayKey(end, timeZone).split("-").map(Number)
+  const today = Date.UTC(year, month - 1, day)
   for (let i = n - 1; i >= 0; i--) {
     keys.push(new Date(today - i * 86_400_000).toISOString().slice(0, 10))
   }
   return keys
 }
 
-/** Claves de los últimos `n` meses en UTC ("YYYY-MM"), ascendente, incluyendo el actual. */
-export function lastMonthKeys(n: number, end: Date = new Date()): string[] {
+/** Claves de los últimos `n` meses en la zona del negocio ("YYYY-MM"), ascendente, incluyendo el actual. */
+export function lastMonthKeys(n: number, end: Date = new Date(), timeZone: string = BUSINESS_TIME_ZONE): string[] {
   const keys: string[] = []
+  const [year, month] = businessMonthKey(end, timeZone).split("-").map(Number)
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1))
+    const d = new Date(Date.UTC(year, month - 1 - i, 1))
     keys.push(d.toISOString().slice(0, 7))
   }
   return keys
