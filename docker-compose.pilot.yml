@@ -15,7 +15,7 @@ services:
       retries: 10
     restart: unless-stopped
   app:
-    image: prosolutions-pilot-app:20260911
+    image: prosolutions-pilot-app:20261228
     build:
       context: .
       target: runner
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
   migrate:
     profiles: ["setup"]
-    image: prosolutions-pilot-tools:20260911
+    image: prosolutions-pilot-tools:20261228
     build:
       context: .
       target: migrate
