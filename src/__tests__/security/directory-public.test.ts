@@ -61,7 +61,7 @@ describe("public directory endpoints", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           isActive: true,
-          marketplaceVisible: true,
+          marketVisibility: "PUBLIC",
           business: { isActive: true, showInDirectory: true },
           category: { name: { equals: "Pantallas", mode: "insensitive" } },
         }),

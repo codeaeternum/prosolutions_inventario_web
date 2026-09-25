@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { MessageCircle, Package, Store } from "lucide-react"
+import { MapPin, MessageCircle, Package, Store } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatPrice } from "@/lib/utils"
@@ -13,6 +13,11 @@ export interface PublicProduct {
   stock: number
   images: string[]
   category: { name: string } | null
+  /**
+   * Sucursales donde la pieza está disponible — SOLO nombres (la
+   * disponibilidad pública es binaria, nunca cantidades exactas).
+   */
+  branchNames?: string[]
 }
 
 interface PublicProductCardProps {
@@ -67,6 +72,16 @@ export function PublicProductCard({ product, slug, phone }: PublicProductCardPro
         </div>
 
         <p className="mt-auto text-lg font-bold text-primary">{formatPrice(product.retailPrice)}</p>
+
+        {/* En qué sucursal hay: nombres únicamente, jamás existencias. */}
+        {product.branchNames && product.branchNames.length > 0 && (
+          <p className="inline-flex items-start gap-1 text-[11px] text-muted-foreground">
+            <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+            <span className="line-clamp-2">
+              En: {product.branchNames.join(" · ")}
+            </span>
+          </p>
+        )}
 
         {waUrl ? (
           <Button size="sm" className="w-full gap-1.5" asChild>

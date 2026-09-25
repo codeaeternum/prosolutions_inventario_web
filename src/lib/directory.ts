@@ -45,8 +45,22 @@ export interface DirectoryProduct {
   /** Disponible/Agotado — jamás el número exacto de piezas. */
   inStock: boolean
   category: string | null
+  /**
+   * Sucursales activas con la pieza disponible (solo nombres, nunca
+   * cantidades). Se omite la llave cuando no hay existencias.
+   */
+  branches?: string[]
   business: { name: string; slug: string }
 }
+
+/** Nombres de sucursales activas con stock — disponibilidad binaria pública. */
+export const publicBranchNames = (
+  stocks: { quantity: number; branch: { name: string; isActive: boolean } }[] | undefined,
+): string[] =>
+  (stocks ?? [])
+    .filter((s) => s.quantity > 0 && s.branch.isActive)
+    .map((s) => s.branch.name)
+    .sort((a, b) => a.localeCompare(b, "es"))
 
 /**
  * Negocios listados en el directorio: activos, con showInDirectory y slug
@@ -66,8 +80,9 @@ export async function listDirectoryBusinesses(): Promise<DirectoryBusiness[]> {
       lng: true,
       _count: {
         select: {
-          // Mismos filtros de visibilidad que la vitrina /<slug>/market.
-          products: { where: { isActive: true, marketplaceVisible: true } },
+          // Mismos filtros de visibilidad que la vitrina /<slug>/market:
+          // solo lo PUBLIC — lo exclusivo de aliados no cuenta aquí.
+          products: { where: { isActive: true, marketVisibility: "PUBLIC" } },
           workshopServices: { where: { isActive: true } },
         },
       },
@@ -100,7 +115,7 @@ export const DIRECTORY_SEARCH_LIMIT = 50
 /**
  * Búsqueda de productos a través de todas las empresas del directorio.
  * Respeta exactamente la visibilidad pública de la vitrina: producto activo
- * + marketplaceVisible (la misma flag que usa /<slug>/market).
+ * + marketVisibility "PUBLIC" (el mismo nivel que usa /<slug>/market).
  */
 export async function searchDirectoryProducts(rawQuery: string): Promise<DirectoryProduct[]> {
   const q = rawQuery.trim().slice(0, 60)
@@ -109,7 +124,7 @@ export async function searchDirectoryProducts(rawQuery: string): Promise<Directo
   const products = await prisma.product.findMany({
     where: {
       isActive: true,
-      marketplaceVisible: true,
+      marketVisibility: "PUBLIC",
       business: { isActive: true, showInDirectory: true },
       OR: [
         { name: { contains: q, mode: "insensitive" } },
@@ -127,21 +142,33 @@ export async function searchDirectoryProducts(rawQuery: string): Promise<Directo
       images: true,
       category: { select: { name: true } },
       business: { select: { name: true, slug: true } },
+      stocks: {
+        select: {
+          quantity: true,
+          branch: { select: { name: true, isActive: true } },
+        },
+      },
     },
   })
 
   return products
     .filter(p => isValidSlug(p.business.slug))
-    .map(p => ({
-      id: p.id,
-      name: p.name,
-      retailPrice: p.retailPrice,
-      image: p.images[0] ?? null,
-      inStock: p.stock > 0,
-      category: p.category?.name ?? null,
-      business: {
-        name: publicText(p.business.name) ?? "Negocio",
-        slug: p.business.slug,
-      },
-    }))
+    .map((p) => {
+      const branches = publicBranchNames(p.stocks)
+      return {
+        id: p.id,
+        name: p.name,
+        retailPrice: p.retailPrice,
+        image: p.images[0] ?? null,
+        inStock: p.stock > 0,
+        category: p.category?.name ?? null,
+        // Solo se expone la llave cuando hay algo que decir (compat con el
+        // contrato público ya fijado en los tests de seguridad).
+        ...(branches.length > 0 ? { branches } : {}),
+        business: {
+          name: publicText(p.business.name) ?? "Negocio",
+          slug: p.business.slug,
+        },
+      }
+    })
 }

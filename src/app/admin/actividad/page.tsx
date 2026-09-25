@@ -421,10 +421,10 @@ export default function ActividadPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <History className="h-7 w-7" />
-            Registro de actividad
+            Equipo: quién hizo qué
           </h1>
           <p className="text-muted-foreground">
-            Quién hizo qué en todo el sistema: ediciones, operaciones y taller
+            Cada movimiento del sistema con nombre, fecha y valores: ediciones, ventas, caja y taller
           </p>
         </div>
         <div className="flex items-center gap-2">

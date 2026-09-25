@@ -52,9 +52,11 @@ interface MermaDialogProps {
     onOpenChange: (open: boolean) => void
     /** Se llama tras registrar la merma para refrescar la lista. */
     onSaved: () => void
+    /** Empleado: la merma siempre descuenta de su sucursal (label, no selector). */
+    lockedBranchId?: string | null
 }
 
-export function MermaDialog({ branches, open, onOpenChange, onSaved }: MermaDialogProps) {
+export function MermaDialog({ branches, open, onOpenChange, onSaved, lockedBranchId }: MermaDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md">
@@ -62,6 +64,7 @@ export function MermaDialog({ branches, open, onOpenChange, onSaved }: MermaDial
                 {open && (
                     <MermaForm
                         branches={branches}
+                        lockedBranchId={lockedBranchId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
                     />
@@ -73,14 +76,15 @@ export function MermaDialog({ branches, open, onOpenChange, onSaved }: MermaDial
 
 interface MermaFormProps {
     branches: Branch[]
+    lockedBranchId: string | null
     onSaved: () => void
     close: () => void
 }
 
-function MermaForm({ branches, onSaved, close }: MermaFormProps) {
+function MermaForm({ branches, lockedBranchId, onSaved, close }: MermaFormProps) {
     const [product, setProduct] = useState<SearchProduct | null>(null)
     const [type, setType] = useState<MermaType>("DAMAGED")
-    const [branchId, setBranchId] = useState(branches[0]?.id ?? "")
+    const [branchId, setBranchId] = useState(lockedBranchId ?? branches[0]?.id ?? "")
     const [quantity, setQuantity] = useState("1")
     const [reason, setReason] = useState("")
 
@@ -264,16 +268,23 @@ function MermaForm({ branches, onSaved, close }: MermaFormProps) {
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="merma-branch">Sucursal</Label>
-                        <Select value={branchId} onValueChange={setBranchId}>
-                            <SelectTrigger id="merma-branch">
-                                <SelectValue placeholder="Sucursal" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {branches.map(b => (
-                                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        {/* Empleado: la sucursal queda fija en su homeBranch. */}
+                        {lockedBranchId ? (
+                            <p className="h-9 flex items-center rounded-md border bg-muted/40 px-3 text-sm">
+                                {branches.find(b => b.id === branchId)?.name ?? "Mi sucursal"}
+                            </p>
+                        ) : (
+                            <Select value={branchId} onValueChange={setBranchId}>
+                                <SelectTrigger id="merma-branch">
+                                    <SelectValue placeholder="Sucursal" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {branches.map(b => (
+                                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
                     </div>
                 </div>
 

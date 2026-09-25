@@ -65,7 +65,7 @@ const movementTypes = [
     { value: "TRANSFER", label: "Traspaso", icon: ArrowDownCircle, color: "text-blue-600", help: "Mueve existencias de esta sucursal a otra." },
 ]
 
-export default function MovimientosInventario() {
+export default function MovimientosInventario({ lockedBranchId }: { lockedBranchId?: string | null }) {
     const [showScanner, setShowScanner] = useState(false)
     const [saving, setSaving] = useState(false)
     const [products, setProducts] = useState<Product[]>([])
@@ -75,7 +75,9 @@ export default function MovimientosInventario() {
     const [globalReason, setGlobalReason] = useState("")
     const [globalNotes, setGlobalNotes] = useState("")
     const [branches, setBranches] = useState<Branch[]>([])
-    const [branchId, setBranchId] = useState("")
+    // Empleado: el lote siempre opera sobre su sucursal fija (label, no selector).
+    const [branchId, setBranchId] = useState(lockedBranchId ?? "")
+    const lockedBranchName = lockedBranchId ? branches.find(b => b.id === lockedBranchId)?.name : null
 
     useEffect(() => {
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
@@ -189,7 +191,11 @@ export default function MovimientosInventario() {
                             <CardDescription>Escanea o busca productos para agregarlos a la lista de trabajo y guárdalos todos a la vez.</CardDescription>
                         </div>
                         <div className="flex items-center gap-2">
-                            {branches.length > 1 && (
+                            {lockedBranchId ? (
+                                <span className="inline-flex items-center rounded-md border bg-muted/40 px-3 h-9 text-sm">
+                                    {lockedBranchName ?? "Mi sucursal"}
+                                </span>
+                            ) : branches.length > 1 && (
                                 <Select value={branchId} onValueChange={setBranchId}>
                                     <SelectTrigger className="w-[170px]">
                                         <SelectValue placeholder="Sucursal" />

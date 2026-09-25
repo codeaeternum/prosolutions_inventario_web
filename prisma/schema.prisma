@@ -84,6 +84,7 @@ model Business {
   directoryEvents     DirectoryEvent[]
   deviceModels        DeviceModel[]
   shoppingItems       ShoppingItem[]
+  encargos            Encargo[]
   // Órdenes de OTROS tenants delegadas a este negocio como taller reparador.
   receivedDelegations RepairOrder[]       @relation("DelegatedToBusiness")
   verificationCodes   VerificationCode[]
@@ -284,6 +285,9 @@ model User {
   inventoryCounts       InventoryCount[]
   shoppingItemsCreated  ShoppingItem[]       @relation("ShoppingItemCreatedBy")
   shoppingItemsResolved ShoppingItem[]       @relation("ShoppingItemResolvedBy")
+  encargosAsCustomer    Encargo[]            @relation("EncargoCustomer")
+  encargosCreated       Encargo[]            @relation("EncargoCreatedBy")
+  encargosResolved      Encargo[]            @relation("EncargoResolvedBy")
   verificationCodes     VerificationCode[]
   auditEvents           AuditEvent[]
   notificationReads     NotificationRead[]
@@ -362,9 +366,10 @@ model Product {
   description String?
   barcode     String?
 
-  retailPrice    Float // Precio menudeo
-  wholesalePrice Float // Precio mayoreo
-  costPrice      Float? // Precio de costo (cuánto costó adquirirlo)
+  retailPrice    Float // Precio público general
+  wholesalePrice Float // Precio taller aliado (mercado B2B)
+  internalPrice  Float? // Precio taller propio (pieza usada en orden de servicio propia; null = retailPrice)
+  costPrice      Float? // Precio de costo (cuánto costó adquirirlo) — solo ADMIN
 
   stock    Int @default(0)
   minStock Int @default(1)
@@ -375,9 +380,11 @@ model Product {
 
   images String[] // Array de URLs
 
-  isActive           Boolean @default(true)
-  isUniversal        Boolean @default(false) // Producto universal (aparece en todos los modelos)
-  marketplaceVisible Boolean @default(true) // Visible en el marketplace B2B para talleres aliados
+  isActive         Boolean @default(true)
+  isUniversal      Boolean @default(false) // Producto universal (aparece en todos los modelos)
+  // Quién puede ver el producto en el mercado: HIDDEN (nadie), ALLIES
+  // (solo talleres aliados con cuenta), PUBLIC (también público general).
+  marketVisibility String @default("HIDDEN")
 
   categoryId String
 
@@ -395,6 +402,7 @@ model Product {
   marketplaceRequests MarketplaceRequest[]
   inventoryCountItems InventoryCountItem[]
   shoppingItems       ShoppingItem[]
+  encargos            Encargo[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -403,7 +411,7 @@ model Product {
   @@index([categoryId])
   @@index([barcode])
   @@index([isUniversal])
-  @@index([marketplaceVisible])
+  @@index([marketVisibility])
   @@index([businessId])
 }
 
@@ -413,7 +421,7 @@ model PriceHistory {
   businessId  String
   business    Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
   productId   String
-  field       String // "retailPrice", "wholesalePrice", "costPrice"
+  field       String // "retailPrice", "wholesalePrice", "internalPrice", "costPrice"
   oldValue    Float
   newValue    Float
   changedById String?
@@ -715,6 +723,7 @@ model Branch {
   cashRequests      CashRequest[]
   purchases         Purchase[]
   inventoryCounts   InventoryCount[]
+  encargos          Encargo[]
   createdAt         DateTime            @default(now())
 
   @@unique([businessId, name])
@@ -1395,6 +1404,44 @@ model ShoppingItem {
   updatedAt   DateTime          @updatedAt
 
   @@index([businessId, status])
+}
+
+// ==================== ENCARGOS DE CLIENTES ====================
+
+// Pieza que un cliente pide y el negocio NO tiene en stock ("encargo de
+// mostrador"). Flujo: PENDING (registrado) → ORDERED (pedida a proveedor o a
+// un aliado del mercado) → READY (llegó; se avisa al staff para entregar) →
+// DELIVERED. CANCELLED se alcanza desde cualquier estado.
+// `marketplaceRequestId` liga con la solicitud al aliado cuando la pieza se
+// pidió por el mercado B2B; `supplierNote` deja constancia de a quién se pidió.
+model Encargo {
+  id                   String    @id @default(cuid())
+  businessId           String
+  business             Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  // Sucursal que registró el encargo y donde se entrega la pieza.
+  branchId             String?
+  branch               Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  // Cliente que encargó (User con role CUSTOMER); null = encargo sin cuenta.
+  customerId           String?
+  customer             User?     @relation("EncargoCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  // Pieza del catálogo propio cuando ya existe; null si es texto libre.
+  productId            String?
+  product              Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  description          String // Qué pieza busca el cliente (texto libre)
+  quantity             Int       @default(1)
+  deposit              Float     @default(0) // Anticipo en pesos que dejó el cliente
+  status               String    @default("PENDING") // PENDING, ORDERED, READY, DELIVERED, CANCELLED
+  supplierNote         String?
+  marketplaceRequestId String?
+  createdById          String?
+  createdBy            User?     @relation("EncargoCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedById         String?
+  resolvedBy           User?     @relation("EncargoResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
 }
 
 // Telemetría del directorio: búsquedas, clicks a vitrinas y solicitudes.

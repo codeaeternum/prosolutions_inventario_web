@@ -68,11 +68,12 @@ async function exportProducts(businessId: string): Promise<string> {
     "Nombre",
     "Categoría",
     "Costo",
-    "Precio menudeo",
-    "Precio mayoreo",
+    "Precio público",
+    "Precio aliado",
+    "Precio taller propio",
     "Stock total",
     ...branches.map((b) => `Stock: ${b.name}`),
-    "Visible en mercado",
+    "Visibilidad mercado",
   ]
   const rows = products.map((p) => {
     const stockByBranch = new Map(p.stocks.map((s) => [s.branchId, s.quantity]))
@@ -83,9 +84,10 @@ async function exportProducts(businessId: string): Promise<string> {
       p.costPrice != null ? money(p.costPrice) : "",
       money(p.retailPrice),
       money(p.wholesalePrice),
+      p.internalPrice != null ? money(p.internalPrice) : "",
       p.stock,
       ...branches.map((b) => stockByBranch.get(b.id) ?? 0),
-      p.marketplaceVisible ? "Sí" : "No",
+      { HIDDEN: "Oculto", ALLIES: "Aliados", PUBLIC: "Público" }[p.marketVisibility] ?? p.marketVisibility,
     ]
   })
   return toCsv(headers, rows)

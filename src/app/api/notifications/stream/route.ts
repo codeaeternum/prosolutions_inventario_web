@@ -30,6 +30,7 @@ export type NotificationType =
   | "low_stock"
   | "repair_ready"
   | "marketplace_request"
+  | "encargo_listo"
   | "delegation_update"
   | "sensitive_alert"
 

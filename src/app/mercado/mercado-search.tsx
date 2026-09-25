@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   CheckCircle2,
   Loader2,
+  MapPin,
   Megaphone,
   Package,
   PackageSearch,
@@ -35,6 +36,8 @@ interface DirectoryProduct {
   image: string | null
   inStock: boolean
   category: string | null
+  /** Sucursales con la pieza — solo nombres, disponibilidad binaria. */
+  branches?: string[]
   business: { name: string; slug: string }
 }
 
@@ -509,6 +512,13 @@ function DirectoryProductCard({ product }: { product: DirectoryProduct }) {
         <p className="mt-auto text-lg font-bold text-primary">
           {formatPrice(product.retailPrice)}
         </p>
+
+        {product.branches && product.branches.length > 0 && (
+          <p className="inline-flex items-start gap-1 text-[11px] text-muted-foreground">
+            <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+            <span className="line-clamp-2">En: {product.branches.join(" · ")}</span>
+          </p>
+        )}
 
         <Link
           href={`/${product.business.slug}`}

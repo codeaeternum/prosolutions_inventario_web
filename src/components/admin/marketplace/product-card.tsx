@@ -1,10 +1,11 @@
 "use client"
 
 import Image from "next/image"
-import { Eye, EyeOff, Handshake, Loader2, Package } from "lucide-react"
+import { Globe, Handshake, Package, Users } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { MARKET_VISIBILITY_LABELS, type MarketVisibility } from "@/lib/market-visibility"
 import { cn } from "@/lib/utils"
 
 export interface MarketplaceProduct {
@@ -16,7 +17,8 @@ export interface MarketplaceProduct {
   stock: number
   minStock: number
   image: string | null
-  marketplaceVisible: boolean
+  /** Nivel de mercado: HIDDEN (nadie) / ALLIES (solo aliados) / PUBLIC (todos). */
+  marketVisibility: MarketVisibility
   category: { id: string; name: string }
   branches: { branchId: string; branchName: string; quantity: number }[]
 }
@@ -35,8 +37,6 @@ function getStockStatus(product: MarketplaceProduct): StockStatus {
 interface MarketplaceProductCardProps {
   product: MarketplaceProduct
   isAdmin: boolean
-  toggling?: boolean
-  onToggleVisibility?: (product: MarketplaceProduct) => void
   onRequest?: (product: MarketplaceProduct) => void
   formatPrice: (price: number) => string
 }
@@ -44,13 +44,11 @@ interface MarketplaceProductCardProps {
 export function MarketplaceProductCard({
   product,
   isAdmin,
-  toggling = false,
-  onToggleVisibility,
   onRequest,
   formatPrice,
 }: MarketplaceProductCardProps) {
   const status = getStockStatus(product)
-  const hidden = !product.marketplaceVisible
+  const hidden = product.marketVisibility === "HIDDEN"
   const wholesaleHasDiscount = product.wholesalePrice < product.retailPrice
 
   return (
@@ -82,33 +80,23 @@ export function MarketplaceProductCard({
           {status.label}
         </Badge>
 
-        {hidden && (
-          <Badge variant="secondary" className="absolute bottom-2 left-2 shadow-sm">
-            Oculto a talleres
-          </Badge>
-        )}
-
-        {/* Toggle de visibilidad (solo ADMIN) */}
-        {isAdmin && onToggleVisibility && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon"
-            className="absolute top-2 right-2 h-8 w-8 min-h-0 min-w-0 shadow-sm bg-background/90 backdrop-blur-sm hover:bg-background"
-            title={product.marketplaceVisible ? "Ocultar a talleres" : "Mostrar a talleres"}
-            aria-label={product.marketplaceVisible ? "Ocultar a talleres" : "Mostrar a talleres"}
-            disabled={toggling}
-            onClick={() => onToggleVisibility(product)}
-          >
-            {toggling ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : product.marketplaceVisible ? (
-              <Eye className="h-4 w-4" />
-            ) : (
-              <EyeOff className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        {/* Nivel de visibilidad — el taller aliado solo ve ALLIES|PUBLIC,
+            pero el distintivo le dice si la pieza también es pública. */}
+        <Badge
+          variant="secondary"
+          className="absolute bottom-2 left-2 shadow-sm gap-1"
+        >
+          {product.marketVisibility === "PUBLIC" ? (
+            <Globe className="h-3 w-3" />
+          ) : (
+            <Users className="h-3 w-3" />
+          )}
+          {isAdmin || product.marketVisibility === "HIDDEN"
+            ? MARKET_VISIBILITY_LABELS[product.marketVisibility]
+            : product.marketVisibility === "PUBLIC"
+              ? "También público"
+              : MARKET_VISIBILITY_LABELS.ALLIES}
+        </Badge>
       </div>
 
       <CardContent className="p-4 space-y-2">
@@ -130,7 +118,7 @@ export function MarketplaceProductCard({
         <div className="flex items-end justify-between gap-2">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Precio taller
+              Precio aliado
             </p>
             <p className="text-lg font-bold text-primary leading-tight">
               {formatPrice(product.wholesalePrice)}

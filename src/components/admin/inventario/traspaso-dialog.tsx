@@ -43,9 +43,11 @@ interface TraspasoDialogProps {
     onOpenChange: (open: boolean) => void
     /** Se llama tras registrar el traspaso para refrescar la tabla de existencias. */
     onSaved: () => void
+    /** Empleado: el origen queda fijo en su sucursal (label, no selector). */
+    lockedFromId?: string | null
 }
 
-export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved }: TraspasoDialogProps) {
+export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved, lockedFromId }: TraspasoDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md">
@@ -54,6 +56,7 @@ export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved 
                     <TraspasoForm
                         product={product}
                         branches={branches}
+                        lockedFromId={lockedFromId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
                     />
@@ -66,20 +69,22 @@ export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved 
 interface TraspasoFormProps {
     product: TraspasoProduct
     branches: Branch[]
+    lockedFromId: string | null
     onSaved: () => void
     close: () => void
 }
 
-function TraspasoForm({ product, branches, onSaved, close }: TraspasoFormProps) {
+function TraspasoForm({ product, branches, lockedFromId, onSaved, close }: TraspasoFormProps) {
     const stockByBranch = new Map(product.branches.map((b) => [b.branchId, b.quantity]))
-    // Origen por defecto: la sucursal con más stock del producto.
-    const defaultOrigin = branches.reduce<Branch | null>((best, b) => {
+    // Origen por defecto: la sucursal fijada (empleado) o la que tenga más stock.
+    const lockedBranch = lockedFromId ? branches.find((b) => b.id === lockedFromId) ?? null : null
+    const defaultOrigin = lockedBranch ?? branches.reduce<Branch | null>((best, b) => {
         const qty = stockByBranch.get(b.id) ?? 0
         return qty > (best ? stockByBranch.get(best.id) ?? 0 : -1) ? b : best
     }, null)
 
-    const [fromId, setFromId] = useState(defaultOrigin?.id ?? "")
-    const [toId, setToId] = useState(() => branches.find((b) => b.id !== defaultOrigin?.id)?.id ?? "")
+    const [fromId, setFromId] = useState(lockedFromId ?? defaultOrigin?.id ?? "")
+    const [toId, setToId] = useState(() => branches.find((b) => b.id !== (lockedFromId ?? defaultOrigin?.id))?.id ?? "")
     const [quantity, setQuantity] = useState("1")
     const [reason, setReason] = useState("")
     const [saving, setSaving] = useState(false)
@@ -172,18 +177,25 @@ function TraspasoForm({ product, branches, onSaved, close }: TraspasoFormProps) 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                         <Label htmlFor="traspaso-from">De</Label>
-                        <Select value={fromId} onValueChange={handleFromChange}>
-                            <SelectTrigger id="traspaso-from">
-                                <SelectValue placeholder="Origen" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {originOptions.map((b) => (
-                                    <SelectItem key={b.id} value={b.id}>
-                                        {b.name} ({stockByBranch.get(b.id) ?? 0})
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        {/* Origen fijo cuando el empleado solo opera su sucursal. */}
+                        {lockedFromId ? (
+                            <p className="h-9 flex items-center rounded-md border bg-muted/40 px-3 text-sm">
+                                {branches.find((b) => b.id === fromId)?.name ?? "Mi sucursal"} ({fromStock})
+                            </p>
+                        ) : (
+                            <Select value={fromId} onValueChange={handleFromChange}>
+                                <SelectTrigger id="traspaso-from">
+                                    <SelectValue placeholder="Origen" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {originOptions.map((b) => (
+                                        <SelectItem key={b.id} value={b.id}>
+                                            {b.name} ({stockByBranch.get(b.id) ?? 0})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="traspaso-to">A</Label>

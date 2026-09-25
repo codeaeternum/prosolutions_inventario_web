@@ -4,6 +4,7 @@ import { isValidSlug } from "@/lib/slug-rules"
 import {
   DIRECTORY_SEARCH_LIMIT,
   DIRECTORY_SEARCH_MIN,
+  publicBranchNames,
   type DirectoryProduct,
 } from "@/lib/directory"
 
@@ -12,7 +13,7 @@ import {
  * catálogo visible y búsqueda combinada texto + categoría.
  *
  * Misma regla de oro que directory.ts — solo lo que la vitrina /<slug>/market
- * ya mostraría: producto isActive && marketplaceVisible, de un negocio
+ * ya mostraría: producto isActive && marketVisibility "PUBLIC", de un negocio
  * isActive && showInDirectory. Nunca costos, mayoreo ni stock exacto.
  */
 
@@ -37,7 +38,7 @@ const publicText = (value: string | null): string | null => {
  */
 const PUBLIC_PRODUCT_WHERE = {
   isActive: true,
-  marketplaceVisible: true,
+  marketVisibility: "PUBLIC",
   business: { isActive: true, showInDirectory: true },
 } satisfies Prisma.ProductWhereInput
 
@@ -112,21 +113,31 @@ export async function browseDirectoryProducts(
       images: true,
       category: { select: { name: true } },
       business: { select: { name: true, slug: true } },
+      stocks: {
+        select: {
+          quantity: true,
+          branch: { select: { name: true, isActive: true } },
+        },
+      },
     },
   })
 
   return products
     .filter(p => isValidSlug(p.business.slug))
-    .map(p => ({
-      id: p.id,
-      name: p.name,
-      retailPrice: p.retailPrice,
-      image: p.images[0] ?? null,
-      inStock: p.stock > 0,
-      category: p.category?.name ?? null,
-      business: {
-        name: publicText(p.business.name) ?? "Negocio",
-        slug: p.business.slug,
-      },
-    }))
+    .map((p) => {
+      const branches = publicBranchNames(p.stocks)
+      return {
+        id: p.id,
+        name: p.name,
+        retailPrice: p.retailPrice,
+        image: p.images[0] ?? null,
+        inStock: p.stock > 0,
+        category: p.category?.name ?? null,
+        ...(branches.length > 0 ? { branches } : {}),
+        business: {
+          name: publicText(p.business.name) ?? "Negocio",
+          slug: p.business.slug,
+        },
+      }
+    })
 }

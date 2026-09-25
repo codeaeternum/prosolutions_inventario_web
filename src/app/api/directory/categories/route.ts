@@ -5,7 +5,7 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 // GET /api/directory/categories — Categorías reales presentes en el catálogo
 // público del directorio: distinct de Product.category.name sobre los mismos
 // productos que /api/directory/products expone (isActive &&
-// marketplaceVisible, de negocios isActive && showInDirectory), con conteo
+// marketVisibility "PUBLIC", de negocios isActive && showInDirectory), con conteo
 // por categoría. Sin auth: solo nombres de categoría y conteos — datos que
 // la vitrina /<slug>/market ya muestra.
 //

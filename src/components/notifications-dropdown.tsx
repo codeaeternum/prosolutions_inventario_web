@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Bell, Check, CheckCheck, Package, ShoppingCart, User, AlertTriangle, X, Wrench, Store, Clock, ShieldAlert } from "lucide-react"
+import { Bell, Check, CheckCheck, Package, PackageCheck, ShoppingCart, User, AlertTriangle, X, Wrench, Store, Clock, ShieldAlert } from "lucide-react"
 import { useNotifications, notificationHref, Notification, NotificationType } from "@/hooks/use-notifications"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -25,6 +25,8 @@ function getNotificationIcon(type: NotificationType) {
       return <CheckCheck className="h-4 w-4 text-green-500" />
     case "marketplace_request":
       return <Store className="h-4 w-4 text-amber-500" />
+    case "encargo_listo":
+      return <PackageCheck className="h-4 w-4 text-green-500" />
     case "sensitive_alert":
       return <ShieldAlert className="h-4 w-4 text-red-500" />
     case "reservation_expired":

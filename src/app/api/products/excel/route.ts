@@ -9,7 +9,7 @@ import * as XLSX from "xlsx"
 
 export async function GET() {
     try {
-        const result = await requireModule("productos")
+        const result = await requireModule("inventario")
         if (result.error) return result.error
 
         // Get all products with related data
@@ -96,7 +96,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
-        const result = await requireModule("productos")
+        const result = await requireModule("inventario")
         if (result.error) return result.error
         const session = getSession(result)!
         const actorId = session.user.id

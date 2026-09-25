@@ -6,10 +6,11 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
 // GET /api/directory/products?q=&cat= — Búsqueda pública de productos a
 // través de TODAS las empresas del directorio (isActive && showInDirectory).
-// Solo productos que la vitrina ya mostraría: isActive && marketplaceVisible
-// (la misma flag de /<slug>/market). Se exponen nombre, precio de menudeo,
-// imagen, disponibilidad binaria y el negocio (nombre + slug) — nunca costos,
-// mayoreo ni stock exacto.
+// Solo productos que la vitrina ya mostraría: isActive && marketVisibility
+// "PUBLIC" (el mismo nivel de /<slug>/market — lo exclusivo de aliados no
+// sale aquí). Se exponen nombre, precio de menudeo, imagen, disponibilidad
+// binaria (con nombres de sucursal, nunca cantidades) y el negocio
+// (nombre + slug) — nunca costos, mayoreo ni stock exacto.
 //
 // `cat` (nombre de Category) es opcional: solo limita a esa categoría — con
 // q también presente filtra el texto dentro de ella, y sin q permite el

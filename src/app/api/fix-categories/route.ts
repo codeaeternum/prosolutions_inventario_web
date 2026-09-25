@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma"
 // POST /api/fix-categories — Rename all categories to singular form (one-time migration)
 export async function POST() {
   try {
-    const result = await requireModule("productos")
+    const result = await requireModule("inventario")
     if (result.error) return result.error
     const businessId = businessIdOf(getSession(result)!)
 

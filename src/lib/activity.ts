@@ -85,6 +85,8 @@ const KIND_LABELS: Record<string, string> = {
   COUNT_CANCEL: "Conteo cancelado",
   SHOPPING_ITEM_ADD: "Encargo",
   SHOPPING_ITEM_RESOLVE: "Encargo (resolución)",
+  ENCARGO_CREATE: "Encargo de cliente",
+  ENCARGO_STATUS: "Encargo de cliente (estado)",
   INVENTORY: "Movimiento de inventario",
   DEBT: "Cargo a crédito",
   CREDIT_DEBT: "Cargo a crédito",
@@ -110,6 +112,7 @@ const KIND_PREFIX_LABELS: [string, string][] = [
   ["PURCHASE_", "Orden de compra"],
   ["COUNT_", "Conteo"],
   ["SHOPPING_", "Encargo"],
+  ["ENCARGO_", "Encargo de cliente"],
   ["REPAIR_", "Taller"],
   ["RESERVATION_", "Reserva"],
   ["CREDIT_", "Crédito"],
@@ -214,6 +217,7 @@ const KIND_ENTITY_PREFIXES: [string, string][] = [
   ["CREDIT_", "credit"], // CREDIT_DEBT, CREDIT_PAYMENT
   ["RESERVATION_", "reservation"],
   ["SHOPPING_", "shopping"],
+  ["ENCARGO_", "encargo"],
   ["CONVENIO_", "convenio"],
   ["REPAIR_", "repair"], // REPAIR_CREATE, REPAIR_UPDATE
 ]

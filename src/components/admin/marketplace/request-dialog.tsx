@@ -19,6 +19,8 @@ import type { MarketplaceProduct } from "./product-card"
 
 interface MarketplaceRequestDialogProps {
   product: MarketplaceProduct | null
+  /** Negocio proveedor cuando el pedido va a OTRO negocio (pedidos que hago). */
+  sellerName?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onSuccess?: () => void
@@ -29,6 +31,7 @@ interface MarketplaceRequestDialogProps {
 
 export function MarketplaceRequestDialog({
   product,
+  sellerName = null,
   open,
   onOpenChange,
   onSuccess,
@@ -54,6 +57,7 @@ export function MarketplaceRequestDialog({
         {open && product && (
           <RequestForm
             product={product}
+            sellerName={sellerName}
             onClose={() => onOpenChange(false)}
             onSuccess={onSuccess}
             formatPrice={formatPrice}
@@ -67,13 +71,14 @@ export function MarketplaceRequestDialog({
 
 interface RequestFormProps {
   product: MarketplaceProduct
+  sellerName: string | null
   onClose: () => void
   onSuccess?: () => void
   formatPrice: (price: number) => string
   isWorkshop: boolean
 }
 
-function RequestForm({ product, onClose, onSuccess, formatPrice, isWorkshop }: RequestFormProps) {
+function RequestForm({ product, sellerName, onClose, onSuccess, formatPrice, isWorkshop }: RequestFormProps) {
   const [qty, setQty] = useState(1)
   const [tallerName, setTallerName] = useState("")
   const [contactName, setContactName] = useState("")
@@ -120,10 +125,16 @@ function RequestForm({ product, onClose, onSuccess, formatPrice, isWorkshop }: R
       <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
         <p className="font-medium leading-snug">{product.name}</p>
         <p className="text-sm text-muted-foreground">
-          Precio taller:{" "}
+          Precio aliado:{" "}
           <span className="font-semibold text-primary">
             {formatPrice(product.wholesalePrice)}
           </span>
+          {sellerName && (
+            <>
+              {" · "}Proveedor:{" "}
+              <span className="font-medium text-foreground">{sellerName}</span>
+            </>
+          )}
         </p>
       </div>
 

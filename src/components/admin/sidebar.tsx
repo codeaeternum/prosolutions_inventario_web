@@ -23,8 +23,6 @@ import {
   Wrench,
   Building2,
   MoreHorizontal,
-  Package,
-  Warehouse,
   BookOpen,
   Store,
   Shield,
@@ -51,11 +49,19 @@ const navigationGroups: NavGroup[] = [
   {
     name: "Inicio",
     items: [
-      { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
+      { name: "Inicio", href: "/admin", icon: LayoutDashboard },
     ]
   },
   {
-    name: "Taller",
+    name: "Día a día",
+    items: [
+      { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
+      { name: "Inventario", href: "/admin/inventario", icon: Boxes },
+      { name: "Mercado", href: "/admin/mercado", icon: Store },
+    ]
+  },
+  {
+    name: "Servicio",
     items: [
       { name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench },
       { name: "Catálogo de servicios", href: "/admin/taller/catalogo", icon: BookOpen },
@@ -63,31 +69,22 @@ const navigationGroups: NavGroup[] = [
     ]
   },
   {
-    name: "Ventas y Caja",
+    name: "Clientes y dinero",
     items: [
-      { name: "Punto de Venta", href: "/admin/ventas", icon: ShoppingCart },
-      { name: "Caja", href: "/admin/caja", icon: Wallet },
-      { name: "Reservas", href: "/admin/reservas", icon: CalendarCheck },
       { name: "Clientes", href: "/admin/clientes", icon: Users },
-      { name: "Crédito y Cartera", href: "/admin/credito", icon: CreditCard },
-    ]
-  },
-  {
-    name: "Catálogo y almacén",
-    items: [
-      { name: "Catálogo", href: "/admin/productos", icon: Package },
-      { name: "Almacén", href: "/admin/inventario", icon: Warehouse },
-      { name: "Mercado", href: "/admin/mercado", icon: Store },
+      { name: "Fiado", href: "/admin/credito", icon: CreditCard },
+      { name: "Apartados", href: "/admin/reservas", icon: CalendarCheck },
+      { name: "Caja", href: "/admin/caja", icon: Wallet },
     ]
   },
   {
     name: "Administración",
     items: [
+      { name: "Equipo", href: "/admin/actividad", icon: History, adminOnly: true },
+      { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
+      { name: "Notificaciones", href: "/admin/notificaciones", icon: Bell },
       { name: "Sucursales", href: "/admin/sucursales", icon: Building2 },
       { name: "Usuarios", href: "/admin/usuarios", icon: Users },
-      { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
-      { name: "Actividad", href: "/admin/actividad", icon: History, adminOnly: true },
-      { name: "Notificaciones", href: "/admin/notificaciones", icon: Bell },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
     ]
   }
@@ -96,8 +93,8 @@ const navigationGroups: NavGroup[] = [
 // Bottom bar items for mobile quick access
 const bottomBarItems: NavItem[] = [
   { name: "Inicio", href: "/admin", icon: LayoutDashboard },
-  { name: "Ventas", href: "/admin/ventas", icon: ShoppingCart },
-  { name: "Almacén", href: "/admin/inventario", icon: Boxes },
+  { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
+  { name: "Inventario", href: "/admin/inventario", icon: Boxes },
   { name: "Caja", href: "/admin/caja", icon: Wallet },
 ]
 

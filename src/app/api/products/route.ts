@@ -17,7 +17,8 @@ const createProductSchema = z
     description: z.string().max(2000).optional().nullable().default(""),
     barcode: z.string().max(100).optional().nullable().default(""),
     retailPrice: z.coerce.number().min(0, "Precio al público debe ser ≥ 0"),
-    wholesalePrice: z.coerce.number().min(0, "Precio al mayoreo debe ser ≥ 0"),
+    wholesalePrice: z.coerce.number().min(0, "Precio aliado debe ser ≥ 0"),
+    internalPrice: z.coerce.number().min(0, "Precio de taller propio debe ser ≥ 0").optional().nullable(),
     costPrice: z.coerce.number().min(0, "Precio de costo debe ser ≥ 0").optional().nullable(),
     stock: z.coerce.number().int().min(0).default(0),
     minStock: z.coerce.number().int().min(0).default(1),
@@ -44,12 +45,11 @@ export async function GET(req: Request) {
     const brandId = searchParams.get("brandId")
     const search = searchParams.get("search")
     const lowStock = searchParams.get("lowStock") === "true"
-    // marketplaceVisible es un flag interno de gestión: el filtro solo aplica
+    // marketVisibility es un flag interno de gestión: el filtro solo aplica
     // para staff (se ignora silenciosamente para público/clientes).
-    const mercadoParam = searchParams.get("mercado")
-    const mercado = isCatalogStaff(viewer) && (mercadoParam === "publicados" || mercadoParam === "ocultos")
-      ? mercadoParam
-      : null
+    const VISIBILIDAD: Record<string, string> = { publicos: "PUBLIC", aliados: "ALLIES", ocultos: "HIDDEN" }
+    const visibilidadParam = searchParams.get("visibilidad")
+    const visibilidad = isCatalogStaff(viewer) && visibilidadParam ? VISIBILIDAD[visibilidadParam] : undefined
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
@@ -58,7 +58,7 @@ export async function GET(req: Request) {
     const where = {
       businessId,
       isActive: true,
-      ...(mercado && { marketplaceVisible: mercado === "publicados" }),
+      ...(visibilidad && { marketVisibility: visibilidad }),
       ...(categoryId && { categoryId }),
       ...(modelId && {
         OR: [
@@ -140,7 +140,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const result = await requireModule("productos")
+    const result = await requireModule("inventario")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
@@ -165,6 +165,7 @@ export async function POST(req: Request) {
       barcode,
       retailPrice,
       wholesalePrice,
+      internalPrice,
       costPrice,
       stock,
       minStock,
@@ -212,6 +213,8 @@ export async function POST(req: Request) {
     }
 
     const creator = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
+    // El costo solo lo captura el dueño: un empleado que lo mande queda null.
+    const isAdminPost = session.user.role === "ADMIN"
     // Idempotente: la captura rápida manda idempotencyKey para que un
     // doble-submit/reintento no duplique el producto. El recibo se crea junto
     // al producto en la misma transacción; sin llave del cliente se genera una
@@ -246,7 +249,8 @@ export async function POST(req: Request) {
           barcode: barcode || null,
           retailPrice,
           wholesalePrice,
-          costPrice: costPrice ?? null,
+          internalPrice: internalPrice ?? null,
+          costPrice: isAdminPost ? (costPrice ?? null) : null,
           stock: 0,
           minStock,
           images,

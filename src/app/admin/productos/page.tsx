@@ -1,140 +1,47 @@
-"use client"
+import { redirect } from "next/navigation"
 
-import { Suspense } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FolderTree, Package, QrCode, Warehouse, Zap } from "lucide-react"
-import { ProductosPanel } from "./panel"
-import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
-import { ExistenciasPanel } from "@/components/admin/inventario/existencias"
-import { EtiquetasPanel } from "../etiquetas/panel"
-import { CategoriesPanel } from "../categorias/panel"
-import { BrandsPanel } from "../marcas/panel"
-import { ModelsPanel } from "../modelos/panel"
+/**
+ * /admin/productos ya no existe: todo el catálogo/stock vive en
+ * /admin/inventario. Se conserva la query para que bookmarks y links viejos
+ * caigan en la pestaña/acción equivalente.
+ *
+ * Mapeo:
+ *   ?tab=productos|existencias  → /admin/inventario (Stock)
+ *   ?tab=captura                → /admin/inventario?tab=stock&captura=1
+ *   ?tab=clasificacion&sub=X    → /admin/inventario?tab=stock&herramienta=clasificacion&sub=X
+ *   ?tab=etiquetas              → /admin/inventario?tab=stock&herramienta=etiquetas
+ *   ?mercado=publicados|ocultos → ?visibilidad=publicos|ocultos
+ *   ?filter=low-stock           → ?lowStock=true
+ */
+export default async function ProductosPage({
+    searchParams,
+}: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+    const sp = await searchParams
+    const tab = typeof sp.tab === "string" ? sp.tab : ""
+    const sub = typeof sp.sub === "string" ? sp.sub : ""
 
-const TABS = ["productos", "existencias", "captura", "clasificacion", "etiquetas"] as const
-type Tab = (typeof TABS)[number]
+    const params = new URLSearchParams()
+    params.set("tab", "stock")
 
-const SUBTABS = ["categorias", "marcas", "modelos"] as const
-type SubTab = (typeof SUBTABS)[number]
+    if (tab === "captura") {
+        params.set("captura", "1")
+    } else if (tab === "clasificacion") {
+        params.set("herramienta", "clasificacion")
+        if (sub) params.set("sub", sub)
+    } else if (tab === "etiquetas") {
+        params.set("herramienta", "etiquetas")
+    }
 
-const DESCRIPTIONS: Record<Tab, string> = {
-  productos: "Gestiona las refacciones del inventario",
-  existencias: "Existencias por sucursal, conteos físicos y traspasos",
-  captura: "Alta rápida de productos en serie: escanea el código y captura",
-  clasificacion: "Organiza tus productos por tipo de refacción, marca y modelo de equipo",
-  etiquetas: "Genera etiquetas con código QR para pegar en los productos",
-}
+    // Filtros que sí tienen equivalente en la lista de stock.
+    for (const key of ["search", "page", "categoryId", "lowStock"] as const) {
+        const value = sp[key]
+        if (typeof value === "string" && value) params.set(key, value)
+    }
+    if (sp.filter === "low-stock") params.set("lowStock", "true")
+    if (sp.mercado === "publicados") params.set("visibilidad", "publicos")
+    else if (sp.mercado === "ocultos") params.set("visibilidad", "ocultos")
 
-function ProductosTabs() {
-  const searchParams = useSearchParams()
-  const pathname = usePathname()
-  const router = useRouter()
-  const param = searchParams.get("tab")
-  const tab: Tab = (TABS as readonly string[]).includes(param ?? "") ? (param as Tab) : "productos"
-  const subParam = searchParams.get("sub")
-  const sub: SubTab = (SUBTABS as readonly string[]).includes(subParam ?? "") ? (subParam as SubTab) : "categorias"
-
-  const handleTabChange = (value: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("tab", value)
-    router.replace(`${pathname}?${params}`, { scroll: false })
-  }
-
-  const handleSubChange = (value: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("tab", "clasificacion")
-    params.set("sub", value)
-    router.replace(`${pathname}?${params}`, { scroll: false })
-  }
-
-  return (
-    <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Package className="h-6 w-6" />
-            Catálogo
-          </h1>
-          <p className="text-muted-foreground">
-            {DESCRIPTIONS[tab]}
-          </p>
-        </div>
-      </div>
-
-      <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
-        <div className="overflow-x-auto pb-2">
-          <TabsList className="mb-4 flex-nowrap min-w-max">
-            <TabsTrigger value="productos" className="flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Productos
-            </TabsTrigger>
-            <TabsTrigger value="existencias" className="flex items-center gap-2">
-              <Warehouse className="h-4 w-4" />
-              Existencias
-            </TabsTrigger>
-            <TabsTrigger value="captura" className="flex items-center gap-2">
-              <Zap className="h-4 w-4" />
-              Captura rápida
-            </TabsTrigger>
-            <TabsTrigger value="clasificacion" className="flex items-center gap-2">
-              <FolderTree className="h-4 w-4" />
-              Clasificación
-            </TabsTrigger>
-            <TabsTrigger value="etiquetas" className="flex items-center gap-2">
-              <QrCode className="h-4 w-4" />
-              Etiquetas
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="productos" className="mt-0">
-          <ProductosPanel />
-        </TabsContent>
-
-        <TabsContent value="existencias" className="mt-0">
-          <ExistenciasPanel />
-        </TabsContent>
-
-        <TabsContent value="captura" className="mt-0">
-          <CapturaRapidaPanel />
-        </TabsContent>
-
-        <TabsContent value="clasificacion" className="mt-0">
-          <Tabs value={sub} onValueChange={handleSubChange} className="w-full">
-            <div className="overflow-x-auto pb-2">
-              <TabsList className="mb-4 flex-nowrap min-w-max">
-                <TabsTrigger value="categorias">Categorías</TabsTrigger>
-                <TabsTrigger value="marcas">Marcas</TabsTrigger>
-                <TabsTrigger value="modelos">Modelos</TabsTrigger>
-              </TabsList>
-            </div>
-            <TabsContent value="categorias" className="mt-0">
-              <CategoriesPanel embedded />
-            </TabsContent>
-            <TabsContent value="marcas" className="mt-0">
-              <BrandsPanel embedded />
-            </TabsContent>
-            <TabsContent value="modelos" className="mt-0">
-              <ModelsPanel embedded />
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-
-        <TabsContent value="etiquetas" className="mt-0">
-          <EtiquetasPanel />
-        </TabsContent>
-      </Tabs>
-    </>
-  )
-}
-
-export default function ProductosPage() {
-  return (
-    <div className="space-y-6 pb-20 lg:pb-0">
-      <Suspense fallback={null}>
-        <ProductosTabs />
-      </Suspense>
-    </div>
-  )
+    redirect(`/admin/inventario?${params.toString()}`)
 }

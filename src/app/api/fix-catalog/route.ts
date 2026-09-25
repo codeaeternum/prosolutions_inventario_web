@@ -53,7 +53,7 @@ function fixProductName(name: string): string {
 
 export async function GET() {
     try {
-        const authResult = await requireModule("productos")
+        const authResult = await requireModule("inventario")
         if (authResult.error) return authResult.error
         const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({
@@ -109,7 +109,7 @@ export async function GET() {
 
 export async function POST() {
     try {
-        const authResult = await requireModule("productos")
+        const authResult = await requireModule("inventario")
         if (authResult.error) return authResult.error
         const businessId = businessIdOf(getSession(authResult)!)
         const products = await prisma.product.findMany({

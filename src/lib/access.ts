@@ -17,7 +17,6 @@ export const MODULES = [
   "clientes",
   "credito",
   "mercado",
-  "productos",
   "inventario",
   "sucursales",
   "usuarios",
@@ -28,15 +27,14 @@ export const MODULES = [
 export type ModuleKey = (typeof MODULES)[number]
 
 export const MODULE_LABELS: Record<ModuleKey, string> = {
-  taller: "Taller / Órdenes de servicio",
-  ventas: "Punto de venta",
+  taller: "Órdenes de servicio",
+  ventas: "Vender (punto de venta)",
   caja: "Caja",
-  reservas: "Reservas",
+  reservas: "Apartados",
   clientes: "Clientes",
-  credito: "Crédito y cartera",
-  mercado: "Mercado B2B",
-  productos: "Catálogo de productos",
-  inventario: "Almacén: movimientos, compras y encargos",
+  credito: "Fiado y cartera",
+  mercado: "Mercado con aliados",
+  inventario: "Inventario: productos, stock, entradas y encargos",
   sucursales: "Sucursales",
   usuarios: "Usuarios y permisos",
   reportes: "Reportes y gráficas",
@@ -55,11 +53,14 @@ const MODULE_BY_PATH: readonly (readonly [string, ModuleKey])[] = [
   ["/admin/clientes", "clientes"],
   ["/admin/credito", "credito"],
   ["/admin/mercado", "mercado"],
-  ["/admin/productos", "productos"],
-  ["/admin/marcas", "productos"],
-  ["/admin/modelos", "productos"],
-  ["/admin/categorias", "productos"],
-  ["/admin/etiquetas", "productos"],
+  // Todo lo de productos/stock vive en el módulo "inventario" (una sola
+  // pantalla). Las rutas legacy /admin/productos* redirigen ahí pero su
+  // mapeo queda por si alguna URL vieja llega directo al middleware.
+  ["/admin/productos", "inventario"],
+  ["/admin/marcas", "inventario"],
+  ["/admin/modelos", "inventario"],
+  ["/admin/categorias", "inventario"],
+  ["/admin/etiquetas", "inventario"],
   ["/admin/inventario", "inventario"],
   ["/admin/movimientos", "inventario"],
   ["/admin/encargos", "inventario"],
@@ -102,7 +103,10 @@ export function hasModule(user: AccessSubject, module: ModuleKey): boolean {
   const list = user.allowedModules
   if (!list || list.length === 0)
     return !(user.role === "EMPLOYEE" && EMPLOYEE_RESTRICTED.has(module))
-  return list.includes(module)
+  if (list.includes(module)) return true
+  // Alias legacy: usuarios guardados con el módulo viejo "productos"
+  // conservan acceso al módulo unificado "inventario".
+  return module === "inventario" && list.includes("productos")
 }
 
 /** Sin restricción cuando la lista está vacía; ADMIN tampoco se limita por sucursal. */

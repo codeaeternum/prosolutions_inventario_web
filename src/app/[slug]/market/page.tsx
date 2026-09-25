@@ -59,7 +59,9 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
   const where: Prisma.ProductWhereInput = {
     businessId: target.businessId,
     isActive: true,
-    marketplaceVisible: true,
+    // Público anónimo: SOLO el nivel PUBLIC — lo exclusivo de aliados
+    // (ALLIES) jamás sale en la vitrina.
+    marketVisibility: "PUBLIC",
     ...(q && {
       OR: [
         { name: { contains: q, mode: "insensitive" } },
@@ -84,11 +86,17 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
         stock: true,
         images: true,
         category: { select: { name: true } },
+        // Sucursales con la pieza: solo el nombre sale al público — la
+        // disponibilidad es binaria, nunca cantidades exactas.
+        stocks: {
+          where: { quantity: { gt: 0 }, branch: { isActive: true } },
+          select: { branch: { select: { name: true } } },
+        },
       },
     }),
     prisma.product.count({ where }),
     prisma.category.findMany({
-      where: { businessId: target.businessId, products: { some: { businessId: target.businessId, isActive: true, marketplaceVisible: true } } },
+      where: { businessId: target.businessId, products: { some: { businessId: target.businessId, isActive: true, marketVisibility: "PUBLIC" } } },
       orderBy: { name: "asc" },
       select: { slug: true, name: true },
     }),
@@ -123,7 +131,9 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Mercado de refacciones</h1>
-              <p className="text-sm text-muted-foreground">Precios de menudeo · pregunta por WhatsApp</p>
+              <p className="text-sm text-muted-foreground">
+                ¿Quieres repararlo tú? Esta pieza está disponible aquí · precios de menudeo
+              </p>
             </div>
           </div>
         </div>
@@ -191,7 +201,12 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
               {products.map(product => (
                 <PublicProductCard
                   key={product.id}
-                  product={product}
+                  product={{
+                    ...product,
+                    branchNames: product.stocks
+                      .map((s) => s.branch.name)
+                      .sort((a, b) => a.localeCompare(b, "es")),
+                  }}
                   slug={target.slug}
                   phone={target.phone}
                 />

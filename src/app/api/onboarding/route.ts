@@ -84,7 +84,7 @@ export async function GET() {
         key: "product",
         label: "Registra tu primer producto",
         done: products >= 1,
-        href: "/admin/productos",
+        href: "/admin/inventario",
       },
       {
         key: "service",

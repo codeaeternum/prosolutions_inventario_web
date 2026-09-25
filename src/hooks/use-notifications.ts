@@ -12,6 +12,7 @@ export type NotificationType =
   | "low_stock"
   | "repair_ready"
   | "marketplace_request"
+  | "encargo_listo"
   | "delegation_update"
   | "sensitive_alert"
   | "connected"
@@ -57,6 +58,8 @@ export function notificationHref(notification: Notification): string | null {
       return "/admin/reservas"
     case "marketplace_request":
       return "/admin/mercado"
+    case "encargo_listo":
+      return "/admin/inventario?tab=encargos"
     case "sensitive_alert":
       return "/admin/actividad"
     default:

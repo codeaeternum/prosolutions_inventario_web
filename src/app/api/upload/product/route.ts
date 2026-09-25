@@ -11,7 +11,7 @@ const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
 
 export async function POST(request: NextRequest) {
   try {
-    const result = await requireModule("productos")
+    const result = await requireModule("inventario")
     if (result.error) return result.error
 
     const formData = await request.formData()

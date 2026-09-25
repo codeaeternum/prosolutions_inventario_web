@@ -80,7 +80,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireModule("productos")
+    const result = await requireModule("inventario")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
@@ -93,7 +93,9 @@ export async function PUT(
       barcode,
       retailPrice,
       wholesalePrice,
+      internalPrice,
       costPrice,
+      marketVisibility,
       stock,
       minStock,
       images,
@@ -180,7 +182,23 @@ export async function PUT(
     // La existencia se ajusta en UNA sucursal (stockBranchId o la del usuario);
     // nunca como valor absoluto sobre el total.
     const stockDiff = parseInt(stock) - existingProduct.stock
-    const parsedCostPrice = (costPrice != null && costPrice !== "") ? parseFloat(costPrice) : null
+    // El costo solo lo define el dueño: un empleado que mande otro valor lo
+    // pisa el precio existente (su formulario ni siquiera lo muestra).
+    const isAdmin = session.user.role === "ADMIN"
+    const parsedCostPrice = !isAdmin
+      ? existingProduct.costPrice
+      : (costPrice != null && costPrice !== "") ? parseFloat(costPrice) : null
+    // internalPrice ausente conserva el valor actual; "" o null lo limpian
+    // (la pieza vuelve a cobrarse al público en órdenes propias).
+    const parsedInternalPrice = internalPrice === undefined
+      ? existingProduct.internalPrice
+      : (internalPrice != null && internalPrice !== "") ? parseFloat(internalPrice) : null
+    const parsedVisibility = marketVisibility === undefined
+      ? existingProduct.marketVisibility
+      : ["HIDDEN", "ALLIES", "PUBLIC"].includes(marketVisibility) ? marketVisibility : null
+    if (parsedVisibility === null) {
+      return NextResponse.json({ error: "Visibilidad inválida (HIDDEN, ALLIES o PUBLIC)" }, { status: 400 })
+    }
     const editor = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
 
     // Actualizar producto y modelos en transacción
@@ -194,6 +212,7 @@ export async function PUT(
       const priceFields = [
         { field: "retailPrice", oldVal: existingProduct.retailPrice, newVal: parseFloat(retailPrice) },
         { field: "wholesalePrice", oldVal: existingProduct.wholesalePrice, newVal: parseFloat(wholesalePrice) },
+        { field: "internalPrice", oldVal: existingProduct.internalPrice ?? 0, newVal: parsedInternalPrice ?? 0 },
         { field: "costPrice", oldVal: existingProduct.costPrice ?? 0, newVal: parsedCostPrice ?? 0 },
       ]
       for (const { field, oldVal, newVal } of priceFields) {
@@ -220,7 +239,9 @@ export async function PUT(
           barcode: barcode || null,
           retailPrice: parseFloat(retailPrice),
           wholesalePrice: parseFloat(wholesalePrice),
+          internalPrice: parsedInternalPrice,
           costPrice: parsedCostPrice,
+          marketVisibility: parsedVisibility,
           minStock: parseInt(minStock),
           images: images || [],
           isUniversal: isUniversal ?? false,
@@ -279,7 +300,8 @@ export async function PUT(
       nombre: existingProduct.name,
       codigoBarras: existingProduct.barcode,
       precio: existingProduct.retailPrice,
-      mayoreo: existingProduct.wholesalePrice,
+      aliado: existingProduct.wholesalePrice,
+      tallerPropio: existingProduct.internalPrice,
       costo: existingProduct.costPrice,
       stock: existingProduct.stock,
       stockMinimo: existingProduct.minStock,
@@ -292,7 +314,8 @@ export async function PUT(
       nombre: name,
       codigoBarras: barcode || null,
       precio: parseFloat(retailPrice),
-      mayoreo: parseFloat(wholesalePrice),
+      aliado: parseFloat(wholesalePrice),
+      tallerPropio: parsedInternalPrice,
       costo: parsedCostPrice,
       stock: Number.isFinite(stockDiff) ? existingProduct.stock + stockDiff : existingProduct.stock,
       stockMinimo: parseInt(minStock),
@@ -306,7 +329,8 @@ export async function PUT(
       const parts: string[] = []
       if (changes.precio) parts.push(`Precio ${money(existingProduct.retailPrice)} → ${money(auditAfter.precio)}`)
       if (changes.costo) parts.push(`Costo ${money(existingProduct.costPrice)} → ${money(auditAfter.costo)}`)
-      if (changes.mayoreo) parts.push(`Mayoreo ${money(existingProduct.wholesalePrice)} → ${money(auditAfter.mayoreo)}`)
+      if (changes.aliado) parts.push(`Aliado ${money(existingProduct.wholesalePrice)} → ${money(auditAfter.aliado)}`)
+      if (changes.tallerPropio) parts.push(`Taller propio ${money(existingProduct.internalPrice)} → ${money(auditAfter.tallerPropio)}`)
       if (changes.nombre) parts.push(`Nombre "${existingProduct.name}" → "${name}"`)
       if (changes.activo) parts.push(auditAfter.activo ? "Reactivado" : "Desactivado")
       if (changes.stock) parts.push(`Stock ${existingProduct.stock} → ${auditAfter.stock}`)
@@ -347,7 +371,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const result = await requireModule("productos")
+    const result = await requireModule("inventario")
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)

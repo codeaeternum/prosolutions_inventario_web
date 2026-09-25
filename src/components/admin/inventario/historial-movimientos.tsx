@@ -68,11 +68,19 @@ const movementTypes = [
     { value: "ADJUSTMENT_IN", label: "Ajuste (+)" },
     { value: "ADJUSTMENT_OUT", label: "Ajuste (-)" },
     { value: "RETURN", label: "Devoluciones" },
+    { value: "MERMAS", label: "Mermas" },
     { value: "DAMAGED", label: "Dañado" },
     { value: "LOST", label: "Perdido" },
 ]
 
-export function HistorialMovimientos() {
+interface HistorialMovimientosProps {
+    /** Al venir de la lista de stock: filtra el feed a un solo producto. */
+    productId?: string | null
+    productName?: string | null
+    onClearProduct?: () => void
+}
+
+export function HistorialMovimientos({ productId, productName, onClearProduct }: HistorialMovimientosProps = {}) {
     const [loading, setLoading] = useState(false)
     const [movements, setMovements] = useState<Movement[]>([])
     const [page, setPage] = useState(1)
@@ -107,6 +115,9 @@ export function HistorialMovimientos() {
             if (branchFilter !== "ALL") {
                 params.set("branchId", branchFilter)
             }
+            if (productId) {
+                params.set("productId", productId)
+            }
 
             const res = await fetch(`/api/inventory?${params.toString()}`)
             const data = await res.json()
@@ -119,12 +130,17 @@ export function HistorialMovimientos() {
         } finally {
             setLoading(false)
         }
-    }, [page, typeFilter, branchFilter, limit])
+    }, [page, typeFilter, branchFilter, productId, limit])
 
     useEffect(() => {
         // Diferido a un callback: setState sincrónico en el cuerpo del efecto está prohibido.
         void Promise.resolve().then(fetchMovements)
     }, [fetchMovements])
+
+    // Al entrar un filtro de producto la paginación anterior ya no aplica.
+    useEffect(() => {
+        void Promise.resolve().then(() => setPage(1))
+    }, [productId])
 
     useEffect(() => {
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
@@ -227,7 +243,25 @@ export function HistorialMovimientos() {
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div>
                             <CardTitle className="text-lg">Historial</CardTitle>
-                            <CardDescription>Entradas, salidas, ajustes y devoluciones</CardDescription>
+                            <CardDescription>
+                                Entradas, salidas, mermas, traspasos, conteos y devoluciones
+                            </CardDescription>
+                            {/* Filtro por producto (se llega desde el botón de historial en Stock) */}
+                            {productId && (
+                                <Badge variant="secondary" className="mt-2 gap-1.5">
+                                    Producto: {productName ?? productId}
+                                    {onClearProduct && (
+                                        <button
+                                            type="button"
+                                            onClick={onClearProduct}
+                                            className="ml-1 hover:text-destructive"
+                                            aria-label="Quitar filtro de producto"
+                                        >
+                                            ×
+                                        </button>
+                                    )}
+                                </Badge>
+                            )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                             <Select value={typeFilter} onValueChange={setTypeFilter}>

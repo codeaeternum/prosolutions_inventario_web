@@ -1,35 +1,61 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { addShoppingItem, listShoppingNeeds } from "@/lib/domain/shopping"
+import { createEncargo, isEncargoStatus, listEncargos } from "@/lib/domain/encargos"
 import { businessFailure } from "@/lib/domain/http"
-import { getOrderFolioDigits } from "@/lib/settings"
 
-/** Lista de encargos: refacciones faltantes, stock bajo e insumos manuales. */
+/**
+ * Encargos de clientes: piezas que el cliente pide y no hay en stock.
+ * (La lista de compras para el almacén — faltantes, stock bajo, insumos —
+ * vive en /api/encargos/compras.)
+ */
+
+// GET /api/encargos?status=&branchId= — lista del tenant, activos primero.
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
-    const branchId = new URL(request.url).searchParams.get("branchId") || undefined
-    // El folio de cada orden sale con los dígitos del negocio (order_folio_digits).
-    const needs = await listShoppingNeeds(prisma, businessId, branchId, await getOrderFolioDigits(businessId))
-    return NextResponse.json(needs, { headers: { "Cache-Control": "private, no-store" } })
+    const params = new URL(request.url).searchParams
+    const status = params.get("status") || undefined
+    const branchId = params.get("branchId") || undefined
+    if (status && !isEncargoStatus(status)) {
+      return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
+    }
+    const denied = assertBranchAllowed(session, branchId)
+    if (denied) return denied
+
+    // Sucursal base del empleado: la UI la fija en el formulario de alta.
+    const me = session.user.role === "EMPLOYEE"
+      ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
+      : null
+
+    const encargos = await listEncargos(prisma, businessId, { status, branchId })
+    return NextResponse.json(
+      { encargos, viewer: { role: session.user.role, homeBranchId: me?.homeBranchId ?? null } },
+      { headers: { "Cache-Control": "private, no-store" } },
+    )
   } catch (error) {
     return businessFailure(error)
   }
 }
 
-/** Alta de un insumo manual en la lista. */
+// POST /api/encargos — alta de encargo { description, quantity?, deposit?,
+// customerId?, productId?, branchId?, supplierNote?, idempotencyKey }.
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await request.json()
-    const result = await addShoppingItem(prisma, session.user.id, businessIdOf(session), {
+    // Mismo guard que caja/compras: un empleado restringido no puede registrar
+    // en una sucursal que no tiene asignada (dominio además fija homeBranchId).
+    const denied = await assertOperationBranch(session, body?.branchId)
+    if (denied) return denied
+    const result = await createEncargo(prisma, session.user.id, businessIdOf(session), {
       ...body,
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),
     })

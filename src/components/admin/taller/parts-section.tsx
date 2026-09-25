@@ -20,7 +20,7 @@ export type WorkshopPart = {
     createdById?: string
     createdAt?: string
     createdBy?: { name: string } | null
-    product?: { id: string; name: string; barcode: string | null; retailPrice?: number | null } | null
+    product?: { id: string; name: string; barcode: string | null; retailPrice?: number | null; internalPrice?: number | null } | null
     /** Sucursal que surte la pieza; null = la sucursal actual de la orden. */
     sourceBranchId?: string | null
     sourceBranch?: { id: string; name: string } | null
@@ -33,6 +33,7 @@ type ProductOption = {
     barcode: string | null
     /** Precios en MXN (Float); se convierten a centavos al enviar. */
     retailPrice?: number | null
+    internalPrice?: number | null
     costPrice?: number | null
 }
 
@@ -122,11 +123,14 @@ export function PartsSection(props: {
         // opciones solo muestran el nombre de la sucursal.
         setStockByBranch(null)
         // Prellena descripción y precios del catálogo; la descripción sigue editable.
+        // El precio de la pieza en una orden propia es "taller propio"
+        // (internalPrice) cuando existe — si no, cae al precio público.
+        const tallerPrice = product.internalPrice ?? product.retailPrice
         setForm(previous => ({
             ...previous,
             description: product.name,
             cost: product.costPrice != null ? String(product.costPrice) : previous.cost,
-            price: product.retailPrice != null ? String(product.retailPrice) : previous.price,
+            price: tallerPrice != null ? String(tallerPrice) : previous.price,
         }))
     }
 

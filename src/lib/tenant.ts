@@ -23,6 +23,7 @@ const TENANT_MODELS = new Set([
   "InventoryMovement",
   "Supplier", "Purchase", "PurchaseItem", "SupplierPayment",
   "InventoryCount", "InventoryCountItem",
+  "Encargo",
   "AuditEvent",
   "Notification",
 ])

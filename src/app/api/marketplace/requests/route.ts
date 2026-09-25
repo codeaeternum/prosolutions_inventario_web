@@ -4,6 +4,7 @@ import { z } from "zod"
 import { getSession, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
+import { ALLY_CATALOG_LEVELS } from "@/lib/market-visibility"
 import { prisma } from "@/lib/prisma"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
@@ -13,7 +14,9 @@ const createSchema = z.object({
   productId: z.string().min(1),
   qty: z.coerce.number().int().min(1, "La cantidad debe ser al menos 1").max(100000),
   // Opcional: para cuentas WORKSHOP el nombre del taller se deriva de su perfil
-  // (businessName ?? name) y se ignora lo que venga en el body.
+  // (businessName ?? name) y se ignora lo que venga en el body. En pedidos a
+  // OTRO negocio (cross-business) el staff puede omitirlo: se usa el nombre
+  // del propio negocio comprador.
   tallerName: z.string().trim().max(120).optional(),
   contactName: z.string().trim().max(120).optional(),
   contactPhone: z.string().trim().max(30).optional(),
@@ -24,14 +27,20 @@ const requestInclude = {
   product: {
     select: { name: true, barcode: true, wholesalePrice: true, retailPrice: true },
   },
+  // Negocio proveedor (dueño del producto): alimenta "Pedidos que hago".
+  business: { select: { id: true, name: true, slug: true } },
   requestedBy: { select: { id: true, name: true, role: true } },
   decidedBy: { select: { name: true } },
   sale: { select: { id: true, number: true } },
 } satisfies Prisma.MarketplaceRequestInclude
 
-// GET /api/marketplace/requests?status=
+// GET /api/marketplace/requests?status=&direction=
 // Solicitudes de piezas de talleres aliados. PENDING primero, luego recientes.
 // Una cuenta WORKSHOP solo ve las solicitudes que ella misma registró.
+//
+// `direction=out` → "Pedidos que hago": solicitudes que usuarios de ESTE
+// negocio hicieron a OTROS negocios (businessId de la solicitud = proveedor).
+// Lo pide el staff de /admin/mercado; un WORKSHOP ve solo las que él creó.
 export async function GET(req: Request) {
   try {
     const auth = await requireMarketplaceViewer()
@@ -43,17 +52,30 @@ export async function GET(req: Request) {
       if (denied) return denied
     }
 
-    const status = new URL(req.url).searchParams.get("status")
+    const params = new URL(req.url).searchParams
+    const status = params.get("status")
     if (status && !(statuses as readonly string[]).includes(status)) {
       return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     }
+    const outgoing = params.get("direction") === "out"
+
+    const businessId = businessIdOf(session)
+    const isWorkshop = session.user.role === "WORKSHOP"
 
     const requests = await prisma.marketplaceRequest.findMany({
-      where: {
-        businessId: businessIdOf(session),
-        ...(status ? { status } : {}),
-        ...(session.user.role === "WORKSHOP" ? { requestedById: session.user.id } : {}),
-      },
+      where: outgoing
+        ? {
+            // Salientes: las pidió alguien de este negocio a otro negocio.
+            businessId: { not: businessId },
+            requestedBy: { businessId },
+            ...(status ? { status } : {}),
+            ...(isWorkshop ? { requestedById: session.user.id } : {}),
+          }
+        : {
+            businessId,
+            ...(status ? { status } : {}),
+            ...(isWorkshop ? { requestedById: session.user.id } : {}),
+          },
       orderBy: { createdAt: "desc" },
       take: 200,
       include: requestInclude,
@@ -74,9 +96,13 @@ export async function GET(req: Request) {
 }
 
 // POST /api/marketplace/requests  { productId, qty, tallerName?, contactName?, contactPhone?, note? }
-// Staff: registra a mano la solicitud de un taller aliado (tallerName requerido).
+// Staff: registra a mano la solicitud de un taller aliado (tallerName
+//   requerido) o hace un PEDIDO A OTRO NEGOCIO — el producto puede ser de
+//   cualquier negocio activo que lo publique a aliados/público; la solicitud
+//   cae en la bandeja del negocio proveedor y en "Pedidos que hago" del
+//   comprador (se identifica por requestedBy.businessId).
 // WORKSHOP: el taller pide directamente; tallerName sale de su cuenta
-// (businessName ?? name) y requestedById queda ligado a su usuario.
+//   (businessName ?? name) y requestedById queda ligado a su usuario.
 export async function POST(req: Request) {
   try {
     const auth = await requireMarketplaceViewer()
@@ -85,9 +111,11 @@ export async function POST(req: Request) {
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const isWorkshop = session.user.role === "WORKSHOP"
-    // El taller se autorregistra su solicitud; staff interno requiere el módulo.
+    // El taller se autorregistra su solicitud; staff interno requiere el
+    // módulo "mercado" — o "inventario", porque pedir la pieza al aliado es
+    // parte del flujo de encargo que vive ahí.
     if (!isWorkshop) {
-      const denied = assertModuleAllowed(session, "mercado")
+      const denied = assertModuleAllowed(session, "mercado") && assertModuleAllowed(session, "inventario")
       if (denied) return denied
     }
 
@@ -101,6 +129,30 @@ export async function POST(req: Request) {
     }
     const input = parseResult.data
 
+    // Producto ordenable: activo y publicado para aliados (ALLIES o PUBLIC)
+    // en un negocio activo — propio o de otro negocio del directorio B2B.
+    const product = await prisma.product.findFirst({
+      where: {
+        id: input.productId,
+        isActive: true,
+        marketVisibility: { in: [...ALLY_CATALOG_LEVELS] },
+        business: { isActive: true },
+      },
+      select: {
+        id: true,
+        name: true,
+        businessId: true,
+      },
+    })
+    if (!product) {
+      return NextResponse.json(
+        { error: "Producto no disponible en el mercado" },
+        { status: 404 }
+      )
+    }
+    const sellerBusinessId = product.businessId
+    const crossBusiness = sellerBusinessId !== businessId
+
     let tallerName = input.tallerName?.trim() ?? ""
     if (isWorkshop) {
       const account = await prisma.user.findUnique({
@@ -108,6 +160,14 @@ export async function POST(req: Request) {
         select: { businessName: true, jobTitle: true, name: true },
       })
       tallerName = account?.businessName?.trim() || account?.jobTitle?.trim() || account?.name || session.user.name || ""
+    } else if (crossBusiness && tallerName.length < 2) {
+      // Pedido a otro negocio sin taller explícito: el "taller" que pide es
+      // el propio negocio comprador.
+      const mine = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { name: true },
+      })
+      tallerName = mine?.name?.trim() ?? ""
     }
     if (tallerName.length < 2) {
       return NextResponse.json(
@@ -116,20 +176,12 @@ export async function POST(req: Request) {
       )
     }
 
-    const product = await prisma.product.findFirst({
-      where: { id: input.productId, businessId, isActive: true, marketplaceVisible: true },
-      select: { id: true, name: true },
-    })
-    if (!product) {
-      return NextResponse.json(
-        { error: "Producto no disponible en el mercado" },
-        { status: 404 }
-      )
-    }
-
+    // La solicitud siempre vive en el tenant del PROVEEDOR (businessId de la
+    // solicitud = negocio dueño del producto): él la ve en Solicitudes y la
+    // decide. El lado comprador la recupera con direction=out.
     const request = await prisma.marketplaceRequest.create({
       data: {
-        businessId,
+        businessId: sellerBusinessId,
         productId: product.id,
         qty: input.qty,
         tallerName,
@@ -141,13 +193,14 @@ export async function POST(req: Request) {
       include: requestInclude,
     })
 
-    // Aviso en vivo al staff conectado; un fallo aquí no debe tumbar el registro.
+    // Aviso en vivo al staff del PROVEEDOR; un fallo aquí no debe tumbar el
+    // registro.
     void sendNotificationToStaff({
       type: "marketplace_request",
       title: "Nueva solicitud de refacción",
       message: `${request.tallerName} solicita ${request.qty}× ${product.name}`,
       data: { requestId: request.id },
-    }, businessId).catch(() => {})
+    }, sellerBusinessId).catch(() => {})
 
     return NextResponse.json({ request }, { status: 201 })
   } catch (error) {
