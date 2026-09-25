@@ -28,7 +28,6 @@ import {
   BookOpen,
   Store,
   Shield,
-  ClipboardList,
   Handshake,
   History,
 } from "lucide-react"
@@ -79,7 +78,6 @@ const navigationGroups: NavGroup[] = [
       { name: "Catálogo", href: "/admin/productos", icon: Package },
       { name: "Almacén", href: "/admin/inventario", icon: Warehouse },
       { name: "Mercado", href: "/admin/mercado", icon: Store },
-      { name: "Encargos", href: "/admin/encargos", icon: ClipboardList },
     ]
   },
   {

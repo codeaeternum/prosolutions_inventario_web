@@ -3,14 +3,15 @@
 import { Suspense, useEffect } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowRightLeft, History, PackageX, ShoppingCart, Truck, Warehouse } from "lucide-react"
+import { ArrowRightLeft, ClipboardList, History, PackageX, ShoppingCart, Truck, Warehouse } from "lucide-react"
 import MovimientosInventario from "./components/movimientos"
 import { HistorialMovimientos } from "@/components/admin/inventario/historial-movimientos"
 import { MermasPanel } from "@/components/admin/inventario/mermas-panel"
 import { ComprasPanel } from "@/components/admin/inventario/compras-panel"
+import { EncargosPanel } from "@/components/admin/inventario/encargos-panel"
 import { ProveedoresPanel } from "@/components/admin/inventario/proveedores-panel"
 
-const TABS = ["movimiento", "historial", "mermas", "compras", "proveedores"] as const
+const TABS = ["movimiento", "historial", "mermas", "compras", "encargos", "proveedores"] as const
 type Tab = (typeof TABS)[number]
 
 function InventarioTabs() {
@@ -67,6 +68,10 @@ function InventarioTabs() {
                             <ShoppingCart className="h-4 w-4" />
                             Compras
                         </TabsTrigger>
+                        <TabsTrigger value="encargos" className="flex items-center gap-2">
+                            <ClipboardList className="h-4 w-4" />
+                            Encargos
+                        </TabsTrigger>
                         <TabsTrigger value="proveedores" className="flex items-center gap-2">
                             <Truck className="h-4 w-4" />
                             Proveedores
@@ -88,6 +93,10 @@ function InventarioTabs() {
 
                 <TabsContent value="compras" className="mt-0">
                     <ComprasPanel />
+                </TabsContent>
+
+                <TabsContent value="encargos" className="mt-0">
+                    <EncargosPanel />
                 </TabsContent>
 
                 <TabsContent value="proveedores" className="mt-0">

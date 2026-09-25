@@ -143,6 +143,20 @@ export async function notifyOwner(businessId: string, actorId: string, throttleK
   // fallo en silencio cubierto por el try exterior.
   const { sendTelegramToUsers } = await import("./telegram")
   await sendTelegramToUsers(businessId, rendered.join("\n"), { role: "ADMIN" })
+
+  // Campanita in-app: el mismo aviso sin HTML y persistente — si el dueño no
+  // tiene Telegram ligado igual se entera, y queda en el historial.
+  try {
+    const plain = rendered.map(line =>
+      line.replace(/<\/?b>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+    )
+    const title = (plain[0] ?? "Actividad sensible").replace(/^⚠️\s*/, "").trim() || "Actividad sensible"
+    const message = plain.slice(1).join("\n") || title
+    const { sendNotificationToAdmins } = await import("@/app/api/notifications/stream/route")
+    await sendNotificationToAdmins({ type: "sensitive_alert", title, message }, businessId)
+  } catch (error) {
+    console.error("[audit-alerts] notificación in-app falló:", error)
+  }
   return true
 }
 

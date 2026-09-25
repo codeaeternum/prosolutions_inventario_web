@@ -4,11 +4,19 @@ import { getSession, requireModule, requireMarketplaceViewer, assertModuleAllowe
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { prisma } from "@/lib/prisma"
+import { recordAudit } from "@/lib/audit"
 
 const toggleVisibilitySchema = z.object({
   productId: z.string().min(1),
   marketplaceVisible: z.boolean(),
 })
+
+const bulkVisibilitySchema = z.object({
+  productIds: z.array(z.string().min(1)).min(1).max(500),
+  marketplaceVisible: z.boolean(),
+})
+
+const visibilitySchema = z.union([toggleVisibilitySchema, bulkVisibilitySchema])
 
 // GET /api/marketplace?search=&category=&hidden=1
 // Catálogo B2B: lo que los talleres aliados (WORKSHOP) ven del inventario.
@@ -109,19 +117,45 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/marketplace  { productId, marketplaceVisible }
-// Módulo mercado: muestra u oculta un producto del catálogo para talleres.
+// POST /api/marketplace — dos formas:
+//   { productId, marketplaceVisible }              → un producto (toggle del panel)
+//   { productIds: string[] (1..500), marketplaceVisible } → publicación masiva
+// Módulo mercado: muestra u oculta productos del catálogo para talleres.
 export async function POST(req: Request) {
   try {
     const result = await requireModule("mercado")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const body = await req.json()
-    const parseResult = toggleVisibilitySchema.safeParse(body)
+    const parseResult = visibilitySchema.safeParse(body)
     if (!parseResult.success) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 })
     }
+
+    // Bulk: updateMany acotado al negocio y a activos — ids ajenos o inactivos
+    // simplemente no cuentan en `count`.
+    if ("productIds" in parseResult.data) {
+      const { productIds, marketplaceVisible } = parseResult.data
+      const { count } = await prisma.product.updateMany({
+        where: { businessId, isActive: true, id: { in: productIds } },
+        data: { marketplaceVisible },
+      })
+
+      await recordAudit(prisma, {
+        businessId,
+        actorId: session.user.id,
+        action: "PRODUCT_UPDATE",
+        entity: "product",
+        entityId: null,
+        summary: `Publicación masiva al mercado: ${count} productos ${marketplaceVisible ? "publicados" : "ocultos"}`,
+        changes: { marketplaceVisible, productIds },
+      })
+
+      return NextResponse.json({ updated: count })
+    }
+
     const { productId, marketplaceVisible } = parseResult.data
 
     const existing = await prisma.product.findUnique({

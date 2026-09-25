@@ -88,6 +88,7 @@ model Business {
   receivedDelegations RepairOrder[]       @relation("DelegatedToBusiness")
   verificationCodes   VerificationCode[]
   auditEvents         AuditEvent[]
+  notifications       Notification[]
 
   @@index([isActive])
 }
@@ -285,6 +286,7 @@ model User {
   shoppingItemsResolved ShoppingItem[]       @relation("ShoppingItemResolvedBy")
   verificationCodes     VerificationCode[]
   auditEvents           AuditEvent[]
+  notificationReads     NotificationRead[]
 
   // Verificación de contacto al registrarse (código por correo/Telegram).
   // No bloquea el acceso: es una señal de confianza sobre la cuenta.
@@ -1407,4 +1409,43 @@ model DirectoryEvent {
 
   @@index([kind, createdAt])
   @@index([businessId])
+}
+
+// ==================== NOTIFICACIONES IN-APP ====================
+
+// Notificación persistente del staff (antes: SSE efímero + localStorage, se
+// perdía al cambiar de dispositivo). Una fila por evento y negocio; la
+// audiencia replica el Set de roles del broadcast SSE:
+//   "ADMIN" → solo admins (sendNotificationToAdmins, roles={ADMIN})
+//   "STAFF" → admin + empleados (sendNotificationToStaff, roles={ADMIN,EMPLOYEE})
+// `data` guarda solo lo necesario para enlazar (ids, folios): el broadcast
+// depura claves con PII/secretos (email, phone, token, firma…) antes de
+// persistir; el payload SSE en vivo se mantiene intacto.
+model Notification {
+  id         String             @id @default(cuid())
+  businessId String
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type       String // NotificationType del stream: new_reservation, low_stock, ...
+  audience   String // "ADMIN" | "STAFF"
+  title      String
+  message    String
+  data       Json?
+  createdAt  DateTime           @default(now())
+  reads      NotificationRead[]
+
+  @@index([businessId, createdAt])
+}
+
+// Lectura POR usuario: una notificación del negocio la lee cada miembro del
+// staff en su propio ritmo (el borrado es por cascada con la notificación o
+// el usuario).
+model NotificationRead {
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@id([notificationId, userId])
+  @@index([userId])
 }

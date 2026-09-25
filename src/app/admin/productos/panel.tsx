@@ -39,6 +39,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Pagination } from "@/components/ui/pagination"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -73,10 +81,18 @@ interface BranchOption {
   name: string
 }
 
+interface CategoryOption {
+  id: string
+  name: string
+  _count?: { products: number }
+}
+
 type ViewMode = "grid-large" | "grid-small" | "list"
 type MercadoFilter = "todos" | "publicados" | "ocultos"
 
 const DEFAULT_LIMIT = 20
+// Tope del endpoint bulk de /api/marketplace.
+const BULK_LIMIT = 500
 
 // Publica/oculta el producto en el catálogo B2B (POST /api/marketplace).
 // Vive dentro de tarjetas y filas que son Link, así que el click se detiene
@@ -151,6 +167,13 @@ export function ProductosPanel() {
   const [exporting, setExporting] = useState(false)
   const [importResult, setImportResult] = useState<{ message: string; errors: string[] } | null>(null)
   const [togglingMarketplaceId, setTogglingMarketplaceId] = useState<string | null>(null)
+  // Publicación masiva al mercado: por categoría completa.
+  const [showBulkDialog, setShowBulkDialog] = useState(false)
+  const [bulkCategories, setBulkCategories] = useState<CategoryOption[]>([])
+  const [bulkLoadingCategories, setBulkLoadingCategories] = useState(false)
+  const [bulkCategoryId, setBulkCategoryId] = useState("")
+  const [bulkVisible, setBulkVisible] = useState(true)
+  const [bulkApplying, setBulkApplying] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Publicar/ocultar en el mercado B2B: solo ADMIN o staff con módulo mercado.
@@ -179,6 +202,17 @@ export function ProductosPanel() {
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  // Abre el diálogo de publicación masiva cargando las categorías del negocio.
+  const openBulkDialog = () => {
+    setShowBulkDialog(true)
+    setBulkLoadingCategories(true)
+    fetch("/api/categories")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setBulkCategories(Array.isArray(data) ? data : []))
+      .catch(() => setBulkCategories([]))
+      .finally(() => setBulkLoadingCategories(false))
+  }
 
   const fetchProducts = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -366,6 +400,50 @@ export function ProductosPanel() {
     }
   }
 
+  // Publicación masiva por categoría: junta los ids paginando /api/products
+  // (tope 100 por página ahí) y los manda al endpoint bulk de /api/marketplace.
+  const applyBulkPublish = async () => {
+    if (!bulkCategoryId) return
+    setBulkApplying(true)
+    try {
+      const ids: string[] = []
+      let total = Infinity
+      for (let page = 1; ids.length < total && ids.length < BULK_LIMIT; page++) {
+        const res = await fetch(`/api/products?categoryId=${encodeURIComponent(bulkCategoryId)}&limit=100&page=${page}`)
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !Array.isArray(data?.products)) {
+          throw new Error("No se pudieron obtener los productos de la categoría")
+        }
+        for (const p of data.products as { id: string }[]) ids.push(p.id)
+        total = data.total ?? ids.length
+        if (data.products.length === 0) break
+      }
+      if (ids.length === 0) {
+        toast.info("La categoría no tiene productos activos")
+        return
+      }
+
+      const res = await fetch("/api/marketplace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productIds: ids.slice(0, BULK_LIMIT), marketplaceVisible: bulkVisible }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Error al actualizar")
+
+      const action = bulkVisible ? "publicados" : "ocultos"
+      const restantes = total > ids.length ? ` · ${total - ids.length} quedaron fuera (máx. ${BULK_LIMIT} por lote)` : ""
+      toast.success(`${data.updated ?? ids.length} productos ${action} en el mercado${restantes}`)
+      setShowBulkDialog(false)
+      setBulkCategoryId("")
+      void fetchProducts()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo aplicar la publicación masiva")
+    } finally {
+      setBulkApplying(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap justify-end gap-2">
@@ -378,6 +456,12 @@ export function ProductosPanel() {
           <Upload className="mr-2 h-4 w-4" />
           Importar
         </Button>
+        {canPublish && (
+          <Button variant="outline" onClick={openBulkDialog}>
+            <Store className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Publicar en lote</span>
+          </Button>
+        )}
         <Button variant="outline" asChild>
           <Link href="/admin/productos?tab=captura">
             <Zap className="mr-2 h-4 w-4" />
@@ -442,6 +526,75 @@ export function ProductosPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowImportDialog(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Publicación masiva al mercado B2B: por categoría completa.
+          El producto individual se controla con el ojo en cada tarjeta/fila. */}
+      <Dialog open={showBulkDialog} onOpenChange={setShowBulkDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Publicar en lote</DialogTitle>
+            <DialogDescription>
+              Muestra u oculta en el mercado B2B todos los productos de una categoría.
+              Para un producto individual usa el ojo de su tarjeta.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="bulk-category">Categoría</Label>
+              <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
+                <SelectTrigger id="bulk-category" disabled={bulkLoadingCategories || bulkApplying}>
+                  <SelectValue placeholder={bulkLoadingCategories ? "Cargando categorías..." : "Selecciona una categoría"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {bulkCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                      {typeof c._count?.products === "number" ? ` (${c._count.products})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Acción</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={bulkVisible ? "default" : "outline"}
+                  onClick={() => setBulkVisible(true)}
+                  disabled={bulkApplying}
+                >
+                  <Eye className="mr-1 h-4 w-4" />
+                  Publicar
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!bulkVisible ? "default" : "outline"}
+                  onClick={() => setBulkVisible(false)}
+                  disabled={bulkApplying}
+                >
+                  <EyeOff className="mr-1 h-4 w-4" />
+                  Ocultar
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkDialog(false)} disabled={bulkApplying}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void applyBulkPublish()} disabled={!bulkCategoryId || bulkApplying}>
+              {bulkApplying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Aplicar
             </Button>
           </DialogFooter>
         </DialogContent>

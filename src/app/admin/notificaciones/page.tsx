@@ -20,7 +20,8 @@ import {
     RefreshCw,
     Wrench,
     Store,
-    Clock
+    Clock,
+    ShieldAlert
 } from "lucide-react"
 import { useNotifications, notificationHref, Notification, NotificationType } from "@/hooks/use-notifications"
 import { cn } from "@/lib/utils"
@@ -43,6 +44,8 @@ function getNotificationIcon(type: NotificationType) {
             return <CheckCheck className="h-5 w-5 text-green-500" />
         case "marketplace_request":
             return <Store className="h-5 w-5 text-amber-500" />
+        case "sensitive_alert":
+            return <ShieldAlert className="h-5 w-5 text-red-500" />
         case "reservation_expired":
         case "reservation_expiring_soon":
             return <Clock className="h-5 w-5 text-orange-500" />
@@ -69,6 +72,8 @@ function getNotificationTypeLabel(type: NotificationType) {
             return "Reparación Lista"
         case "marketplace_request":
             return "Mercado"
+        case "sensitive_alert":
+            return "Alerta sensible"
         case "reservation_expired":
             return "Reserva Expirada"
         case "reservation_expiring_soon":

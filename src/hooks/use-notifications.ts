@@ -13,6 +13,7 @@ export type NotificationType =
   | "repair_ready"
   | "marketplace_request"
   | "delegation_update"
+  | "sensitive_alert"
   | "connected"
 
 export interface Notification {
@@ -33,7 +34,11 @@ interface UseNotificationsOptions {
 }
 
 const STORAGE_KEY = "prosolutions_notifications"
+// Marca de "limpiar historial": oculta del merge lo que el servidor devuelva
+// con timestamp <= a ella (el clear no borra filas en BD, solo la vista).
+const CLEARED_KEY = "prosolutions_notifications_cleared_at"
 const NOTIFICATION_SOUND = "/sounds/notification.mp3"
+const MAX_NOTIFICATIONS = 50
 
 /** Destino al hacer clic en una notificación (null = solo marca leída). */
 export function notificationHref(notification: Notification): string | null {
@@ -52,6 +57,8 @@ export function notificationHref(notification: Notification): string | null {
       return "/admin/reservas"
     case "marketplace_request":
       return "/admin/mercado"
+    case "sensitive_alert":
+      return "/admin/actividad"
     default:
       return null
   }
@@ -71,10 +78,50 @@ function persistNotifications(notifications: Notification[]) {
   if (typeof window === "undefined") return
   try {
     // Keep only last 50 notifications
-    const toStore = notifications.slice(0, 50)
+    const toStore = notifications.slice(0, MAX_NOTIFICATIONS)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
   } catch {
     // Ignore storage errors
+  }
+}
+
+function loadClearedAt(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return localStorage.getItem(CLEARED_KEY)
+  } catch {
+    return null
+  }
+}
+
+// Dedupe: id de la fila persistida cuando existe; type+timestamp cubre los
+// eventos que el servidor emitió sin persistir (BD caída) o el caché local.
+function rememberNotification(seen: Set<string>, n: Notification) {
+  seen.add(`id:${n.id}`)
+  seen.add(`sig:${n.type}|${n.timestamp}`)
+  if (seen.size > 1000) seen.clear() // memoria acotada: la lista visible es de 50
+}
+
+function wasSeen(seen: Set<string>, n: { id?: unknown; type?: unknown; timestamp?: unknown }): boolean {
+  const byId = typeof n.id === "string" && seen.has(`id:${n.id}`)
+  const bySig = typeof n.type === "string" && typeof n.timestamp === "string" && seen.has(`sig:${n.type}|${n.timestamp}`)
+  return byId || bySig
+}
+
+// POST /api/notifications/read — devuelve el unreadCount del servidor o null
+// si la llamada falló (offline/endpoint caído): el estado local ya quedó.
+async function postRead(body: { ids?: string[]; all?: boolean }): Promise<number | null> {
+  try {
+    const res = await fetch("/api/notifications/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    return typeof json?.unreadCount === "number" ? json.unreadCount : null
+  } catch {
+    return null
   }
 }
 
@@ -100,20 +147,69 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // Bump de generación = reconectar desde cero (reconnect público).
   const [generation, setGeneration] = useState(0)
 
-  // Load persisted data on mount. Va en microtask: cargarlo síncrono en el
-  // effect dispararía renders en cascada (react-hooks/set-state-in-effect) y
-  // en useState() inicial rompería la hidratación.
-  useEffect(() => {
-    if (!persist) return
-    queueMicrotask(() => {
-      const persisted = loadPersistedNotifications()
-      setNotifications(persisted)
-      setUnreadCount(persisted.filter(n => !n.read).length)
-    })
-  }, [persist])
   const playSoundRef = useRef(playSound)
   const persistRef = useRef(persist)
   const onNotificationRef = useRef(onNotification)
+  // Espejo de `notifications` para leer la lista vigente desde callbacks
+  // async (hidratación) sin depender del timing del updater de React.
+  const listRef = useRef<Notification[]>([])
+  // Ids/firmas ya vistos: dedupe entre historial del servidor y eventos SSE.
+  const seenRef = useRef<Set<string>>(new Set())
+
+  // Único punto de mutación de la lista: mantiene state + ref + caché local.
+  const applyList = useCallback((updater: (prev: Notification[]) => Notification[]) => {
+    const next = updater(listRef.current)
+    listRef.current = next
+    setNotifications(next)
+    if (persistRef.current) {
+      persistNotifications(next)
+    }
+    return next
+  }, [])
+
+  // Hidrata el historial: el SERVIDOR es la fuente de verdad; localStorage
+  // queda como caché offline. Corre al montar y en cada reconexión. Va en
+  // microtask: setState síncrono en el effect dispararía renders en cascada
+  // (react-hooks/set-state-in-effect) y en useState() rompería la hidratación.
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    queueMicrotask(async () => {
+      const local = persist ? loadPersistedNotifications() : []
+      let remote: Notification[] | null = null
+      let serverUnread: number | null = null
+      try {
+        const res = await fetch("/api/notifications", { cache: "no-store" })
+        if (res.ok) {
+          const body = await res.json()
+          if (Array.isArray(body?.notifications)) remote = body.notifications as Notification[]
+          if (typeof body?.unreadCount === "number") serverUnread = body.unreadCount
+        }
+      } catch {
+        // Sin red o endpoint caído: queda solo el caché local.
+      }
+      if (cancelled) return
+      const clearedAt = loadClearedAt()
+      const merged = applyList((prev) => {
+        const seen = new Set<string>()
+        const out: Notification[] = []
+        for (const n of [...(remote ?? []), ...prev, ...local]) {
+          if (typeof n?.id !== "string" || typeof n?.timestamp !== "string") continue
+          if (clearedAt && n.timestamp <= clearedAt) continue
+          if (wasSeen(seen, n)) continue
+          rememberNotification(seen, n)
+          out.push(n)
+        }
+        out.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
+        const trimmed = out.slice(0, MAX_NOTIFICATIONS)
+        // El dedupe de SSE se resincroniza con lo que quedó visible.
+        seenRef.current = seen
+        return trimmed
+      })
+      setUnreadCount(Math.max(serverUnread ?? 0, merged.filter((n) => !n.read).length))
+    })
+    return () => { cancelled = true }
+  }, [enabled, persist, generation, applyList])
 
   // Actualizar ref cuando cambia onNotification
   useEffect(() => {
@@ -165,8 +261,12 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
             return
           }
 
+          // Ya la tenemos (del historial o de un evento SSE repetido): el id
+          // del servidor es la clave; type+timestamp cubre eventos sin id.
+          if (wasSeen(seenRef.current, data)) return
+
           const notification: Notification = {
-            id: crypto.randomUUID(),
+            id: typeof data.id === "string" ? data.id : crypto.randomUUID(),
             type: data.type,
             title: data.title || "Notificación",
             message: data.message,
@@ -174,14 +274,9 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
             timestamp: data.timestamp,
             read: false,
           }
+          rememberNotification(seenRef.current, notification)
 
-          setNotifications((prev) => {
-            const updated = [notification, ...prev]
-            if (persistRef.current) {
-              persistNotifications(updated)
-            }
-            return updated
-          })
+          applyList((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS))
           setUnreadCount((prev) => prev + 1)
 
           // Play sound for new notifications
@@ -219,39 +314,44 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       eventSource?.close()
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
-  }, [enabled, generation])
+  }, [enabled, generation, applyList])
 
+  // Marca leída en servidor y corrige el contador con el unreadCount real
+  // (puede haber no leídas fuera de la ventana de 50 que el hook no lista).
   const markAsRead = useCallback((notificationId: string) => {
-    setNotifications((prev) => {
-      const updated = prev.map((n) =>
-        n.id === notificationId ? { ...n, read: true } : n
-      )
-      if (persistRef.current) {
-        persistNotifications(updated)
-      }
-      return updated
-    })
+    applyList((prev) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n))
+    )
     setUnreadCount((prev) => Math.max(0, prev - 1))
-  }, [])
+    void postRead({ ids: [notificationId] }).then((serverUnread) => {
+      if (typeof serverUnread === "number") setUnreadCount(serverUnread)
+    })
+  }, [applyList])
 
   const markAllAsRead = useCallback(() => {
-    setNotifications((prev) => {
-      const updated = prev.map((n) => ({ ...n, read: true }))
-      if (persistRef.current) {
-        persistNotifications(updated)
-      }
-      return updated
-    })
+    applyList((prev) => prev.map((n) => ({ ...n, read: true })))
     setUnreadCount(0)
-  }, [])
+    void postRead({ all: true }).then((serverUnread) => {
+      if (typeof serverUnread === "number") setUnreadCount(serverUnread)
+    })
+  }, [applyList])
 
+  // Limpieza local: oculta la lista y recuerda el corte para que el historial
+  // del servidor no las reviva en la próxima hidratación. Además marca todo
+  // como leído en servidor (best-effort) para apagar el contador.
   const clearNotifications = useCallback(() => {
-    setNotifications([])
+    applyList(() => [])
     setUnreadCount(0)
     if (persistRef.current) {
-      localStorage.removeItem(STORAGE_KEY)
+      try {
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.setItem(CLEARED_KEY, new Date().toISOString())
+      } catch {
+        // Ignore storage errors
+      }
     }
-  }, [])
+    void postRead({ all: true })
+  }, [applyList])
 
   const reconnect = useCallback(() => {
     setGeneration(g => g + 1)
