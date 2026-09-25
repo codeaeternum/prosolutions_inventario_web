@@ -44,6 +44,12 @@ export async function GET(req: Request) {
     const brandId = searchParams.get("brandId")
     const search = searchParams.get("search")
     const lowStock = searchParams.get("lowStock") === "true"
+    // marketplaceVisible es un flag interno de gestión: el filtro solo aplica
+    // para staff (se ignora silenciosamente para público/clientes).
+    const mercadoParam = searchParams.get("mercado")
+    const mercado = isCatalogStaff(viewer) && (mercadoParam === "publicados" || mercadoParam === "ocultos")
+      ? mercadoParam
+      : null
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
@@ -52,6 +58,7 @@ export async function GET(req: Request) {
     const where = {
       businessId,
       isActive: true,
+      ...(mercado && { marketplaceVisible: mercado === "publicados" }),
       ...(categoryId && { categoryId }),
       ...(modelId && {
         OR: [

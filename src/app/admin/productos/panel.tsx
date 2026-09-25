@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useSession } from "next-auth/react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
@@ -16,6 +17,7 @@ import {
   ScanBarcode,
   AlertTriangle,
   Eye,
+  EyeOff,
   LayoutGrid,
   Grid3X3,
   List,
@@ -23,6 +25,7 @@ import {
   Download,
   Upload,
   Zap,
+  Store,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
 import { EmptyState } from "@/components/admin/empty-state"
@@ -37,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Pagination } from "@/components/ui/pagination"
+import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
 interface ProductModel {
@@ -58,6 +62,7 @@ interface Product {
   images: string[]
   isActive: boolean
   isUniversal: boolean
+  marketplaceVisible: boolean
   models: ProductModel[]
   category: { name: string }
   stocks?: { branchId: string; quantity: number; branch: { id: string; name: string } }[]
@@ -69,17 +74,69 @@ interface BranchOption {
 }
 
 type ViewMode = "grid-large" | "grid-small" | "list"
+type MercadoFilter = "todos" | "publicados" | "ocultos"
 
 const DEFAULT_LIMIT = 20
 
+// Publica/oculta el producto en el catálogo B2B (POST /api/marketplace).
+// Vive dentro de tarjetas y filas que son Link, así que el click se detiene
+// aquí mismo para no navegar al detalle (mismo patrón que StockQtyEditor).
+function MarketplaceToggleButton({
+  visible,
+  loading = false,
+  onToggle,
+  variant = "secondary",
+  className,
+}: {
+  visible: boolean
+  loading?: boolean
+  onToggle: () => void
+  variant?: "secondary" | "ghost"
+  className?: string
+}) {
+  return (
+    <Button
+      type="button"
+      variant={variant}
+      size="icon"
+      className={cn(
+        "min-h-0 min-w-0",
+        variant === "secondary" && "shadow-sm bg-background/90 backdrop-blur-sm hover:bg-background",
+        className
+      )}
+      title={visible ? "Ocultar del mercado" : "Publicar en el mercado"}
+      aria-label={visible ? "Ocultar del mercado" : "Publicar en el mercado"}
+      aria-pressed={visible}
+      disabled={loading}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onToggle()
+      }}
+    >
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : visible ? (
+        <Eye className="h-4 w-4" />
+      ) : (
+        <EyeOff className="h-4 w-4" />
+      )}
+    </Button>
+  )
+}
+
 export function ProductosPanel() {
   const { formatPrice } = useCurrency()
+  const { data: session } = useSession()
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()
   const tabParam = searchParams.get("tab")
   const search = searchParams.get("search") ?? ""
   const filter = searchParams.get("lowStock") === "true" ? "low-stock" : "all"
+  const mercadoParam = searchParams.get("mercado")
+  const mercadoFilter: MercadoFilter =
+    mercadoParam === "publicados" || mercadoParam === "ocultos" ? mercadoParam : "todos"
   const pageFromUrl = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
   const limitFromUrl = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT))
 
@@ -93,7 +150,15 @@ export function ProductosPanel() {
   const [importing, setImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [importResult, setImportResult] = useState<{ message: string; errors: string[] } | null>(null)
+  const [togglingMarketplaceId, setTogglingMarketplaceId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Publicar/ocultar en el mercado B2B: solo ADMIN o staff con módulo mercado.
+  // (Un empleado sin lista de módulos no tiene restricción de navegación, pero
+  // esta acción sí exige la asignación explícita.)
+  const canPublish =
+    session?.user?.role === "ADMIN" ||
+    (session?.user?.allowedModules ?? []).includes("mercado")
 
   // Sucursal para la edición inline de stock: la elegida en el selector del
   // encabezado (cookie/localStorage) o la primera activa como respaldo.
@@ -122,6 +187,7 @@ export function ProductosPanel() {
       const params = new URLSearchParams()
       if (search) params.append("search", search)
       if (filter === "low-stock") params.append("lowStock", "true")
+      if (mercadoFilter !== "todos") params.append("mercado", mercadoFilter)
       params.set("page", String(pageFromUrl))
       params.set("limit", String(limitFromUrl))
       
@@ -143,7 +209,7 @@ export function ProductosPanel() {
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [search, filter, pageFromUrl, limitFromUrl])
+  }, [search, filter, mercadoFilter, pageFromUrl, limitFromUrl])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -151,7 +217,7 @@ export function ProductosPanel() {
     return () => controller.abort()
   }, [fetchProducts])
 
-  const updateFilters = (values: { search?: string; lowStock?: boolean }) => {
+  const updateFilters = (values: { search?: string; lowStock?: boolean; mercado?: MercadoFilter }) => {
     const params = new URLSearchParams(searchParams.toString())
     params.set("page", "1")
     if (values.search !== undefined) {
@@ -161,6 +227,10 @@ export function ProductosPanel() {
     if (values.lowStock !== undefined) {
       if (values.lowStock) params.set("lowStock", "true")
       else params.delete("lowStock")
+    }
+    if (values.mercado !== undefined) {
+      if (values.mercado !== "todos") params.set("mercado", values.mercado)
+      else params.delete("mercado")
     }
     router.replace(`${pathname}?${params}`, { scroll: false })
   }
@@ -267,6 +337,33 @@ export function ProductosPanel() {
         return { ...p, stock: p.stock + delta, stocks }
       })
     )
+  }
+
+  // Toggle de publicación B2B con actualización optimista y revert en error
+  // (mismo patrón que toggleVisibility en /admin/mercado).
+  const toggleMarketplace = async (product: Product) => {
+    const next = !product.marketplaceVisible
+    setTogglingMarketplaceId(product.id)
+    setProducts((prev) =>
+      prev.map((p) => (p.id === product.id ? { ...p, marketplaceVisible: next } : p))
+    )
+    try {
+      const res = await fetch("/api/marketplace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: product.id, marketplaceVisible: next }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Error al actualizar")
+      toast.success(next ? "Producto publicado en el mercado" : "Producto oculto del mercado")
+    } catch (error) {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === product.id ? { ...p, marketplaceVisible: !next } : p))
+      )
+      toast.error(error instanceof Error ? error.message : "No se pudo actualizar el producto")
+    } finally {
+      setTogglingMarketplaceId(null)
+    }
   }
 
   return (
@@ -389,6 +486,34 @@ export function ProductosPanel() {
               Stock bajo
             </Button>
 
+            {/* Filtro por publicación en el mercado B2B (param ?mercado=). */}
+            <div className="flex items-center gap-1 border-l pl-2">
+              <span className="flex items-center gap-1 text-xs text-muted-foreground mr-1">
+                <Store className="h-3.5 w-3.5" />
+                Mercado
+              </span>
+              <Button
+                variant={mercadoFilter === "todos" ? "default" : "outline"}
+                size="sm"
+                onClick={() => updateFilters({ mercado: "todos" })}
+              >
+                Todos
+              </Button>
+              <Button
+                variant={mercadoFilter === "publicados" ? "default" : "outline"}
+                size="sm"
+                onClick={() => updateFilters({ mercado: "publicados" })}
+              >
+                Publicados
+              </Button>
+              <Button
+                variant={mercadoFilter === "ocultos" ? "default" : "outline"}
+                size="sm"
+                onClick={() => updateFilters({ mercado: "ocultos" })}
+              >
+                Ocultos
+              </Button>
+            </div>
           </div>
 
           {/* View Mode Selector */}
@@ -485,6 +610,16 @@ export function ProductosPanel() {
                       >
                         {product.stock} UD
                       </Badge>
+
+                      {/* Toggle de publicación en el mercado B2B */}
+                      {canPublish && (
+                        <MarketplaceToggleButton
+                          visible={product.marketplaceVisible}
+                          loading={togglingMarketplaceId === product.id}
+                          onToggle={() => void toggleMarketplace(product)}
+                          className="absolute bottom-2 right-2 h-8 w-8"
+                        />
+                      )}
                     </div>
 
                     <CardContent className="p-4">
@@ -553,6 +688,15 @@ export function ProductosPanel() {
                           <Eye className="h-3 w-3 text-white drop-shadow-md" />
                         </div>
                       )}
+
+                      {canPublish && (
+                        <MarketplaceToggleButton
+                          visible={product.marketplaceVisible}
+                          loading={togglingMarketplaceId === product.id}
+                          onToggle={() => void toggleMarketplace(product)}
+                          className="absolute bottom-1 right-1 h-7 w-7"
+                        />
+                      )}
                     </div>
 
                     <CardContent className="p-2">
@@ -614,6 +758,15 @@ export function ProductosPanel() {
                               <Eye className="h-4 w-4 text-muted-foreground" />
                             )}
                           </div>
+                          {canPublish && (
+                            <MarketplaceToggleButton
+                              variant="ghost"
+                              visible={product.marketplaceVisible}
+                              loading={togglingMarketplaceId === product.id}
+                              onToggle={() => void toggleMarketplace(product)}
+                              className="h-8 w-8 shrink-0 text-muted-foreground"
+                            />
+                          )}
                         </div>
 
                         {/* Category */}
@@ -671,8 +824,8 @@ export function ProductosPanel() {
         <EmptyState 
           icon={Package} 
           title="No se encontraron productos" 
-          description={search || filter !== "all" ? "Prueba con otros filtros o vuelve a la primera página." : "Agrega tu primer producto al inventario."} 
-          action={search || filter !== "all" ? undefined : { label: "Agregar primer producto", href: "/admin/productos/nuevo", icon: Plus }} 
+          description={search || filter !== "all" || mercadoFilter !== "todos" ? "Prueba con otros filtros o vuelve a la primera página." : "Agrega tu primer producto al inventario."}
+          action={search || filter !== "all" || mercadoFilter !== "todos" ? undefined : { label: "Agregar primer producto", href: "/admin/productos/nuevo", icon: Plus }}
         />
       )}
       {!loading && !loadError && (
@@ -686,6 +839,7 @@ export function ProductosPanel() {
                 ...(tabParam && { tab: tabParam }),
                 ...(search && { search }),
                 ...(filter === "low-stock" && { lowStock: "true" }),
+                ...(mercadoFilter !== "todos" && { mercado: mercadoFilter }),
               }}
             />
           </div>

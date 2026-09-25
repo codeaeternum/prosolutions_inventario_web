@@ -74,11 +74,11 @@ const navigationGroups: NavGroup[] = [
     ]
   },
   {
-    name: "Catálogo e inventario",
+    name: "Catálogo y almacén",
     items: [
+      { name: "Catálogo", href: "/admin/productos", icon: Package },
+      { name: "Almacén", href: "/admin/inventario", icon: Warehouse },
       { name: "Mercado", href: "/admin/mercado", icon: Store },
-      { name: "Productos", href: "/admin/productos", icon: Package },
-      { name: "Inventario", href: "/admin/inventario", icon: Warehouse },
       { name: "Encargos", href: "/admin/encargos", icon: ClipboardList },
     ]
   },
@@ -99,7 +99,7 @@ const navigationGroups: NavGroup[] = [
 const bottomBarItems: NavItem[] = [
   { name: "Inicio", href: "/admin", icon: LayoutDashboard },
   { name: "Ventas", href: "/admin/ventas", icon: ShoppingCart },
-  { name: "Inventario", href: "/admin/inventario", icon: Boxes },
+  { name: "Almacén", href: "/admin/inventario", icon: Boxes },
   { name: "Caja", href: "/admin/caja", icon: Wallet },
 ]
 

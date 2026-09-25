@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,20 +21,20 @@ import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
 import {
   ClipboardList,
-  EyeOff,
+  ExternalLink,
   Globe,
   Handshake,
-  Info,
   Search,
   ShoppingBag,
   Store,
 } from "lucide-react"
-import { toast } from "sonner"
 
 interface Category {
   id: string
   name: string
 }
+
+type TabValue = "catalogo" | "solicitudes" | "compras" | "solicitudes-web"
 
 export default function MercadoPage() {
   const { data: session } = useSession()
@@ -51,14 +52,22 @@ export default function MercadoPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  // Búsqueda y filtro por categoría del catálogo navegable (solo WORKSHOP).
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [categoryId, setCategoryId] = useState<string>("all")
-  const [showHidden, setShowHidden] = useState(false)
-  const [togglingId, setTogglingId] = useState<string | null>(null)
+  // Link público de la vitrina (/{slug}/market) para la vista previa del staff.
+  const [marketUrl, setMarketUrl] = useState<string | null>(null)
 
   // Solicitudes de talleres aliados ("compras" solo existe para cuentas WORKSHOP)
-  const [tab, setTab] = useState<"catalogo" | "solicitudes" | "compras" | "solicitudes-web">("catalogo")
+  const [tab, setTab] = useState<TabValue>("catalogo")
+  // El staff ya no administra el catálogo desde aquí: su tab efectivo siempre
+  // es una bandeja de solicitudes (default "solicitudes").
+  const activeTab: TabValue = isWorkshop
+    ? tab
+    : tab === "solicitudes-web"
+      ? "solicitudes-web"
+      : "solicitudes"
   const [requestTarget, setRequestTarget] = useState<MarketplaceProduct | null>(null)
   const [requestDialogOpen, setRequestDialogOpen] = useState(false)
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0)
@@ -77,6 +86,8 @@ export default function MercadoPage() {
     return () => clearTimeout(timer)
   }, [search])
 
+  // WORKSHOP consume `products` para el catálogo; al staff solo le interesa
+  // `visibleCount` para la tarjeta de resumen (mismo endpoint, fetch ligero).
   const fetchProducts = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true)
@@ -85,7 +96,6 @@ export default function MercadoPage() {
         const params = new URLSearchParams()
         if (debouncedSearch) params.set("search", debouncedSearch)
         if (categoryId !== "all") params.set("category", categoryId)
-        if (showHidden && isAdmin) params.set("hidden", "1")
 
         const res = await fetch(`/api/marketplace?${params}`, { signal })
         if (!res.ok) throw new Error("No se pudo cargar el mercado")
@@ -101,7 +111,7 @@ export default function MercadoPage() {
         if (!signal?.aborted) setLoading(false)
       }
     },
-    [debouncedSearch, categoryId, showHidden, isAdmin]
+    [debouncedSearch, categoryId]
   )
 
   useEffect(() => {
@@ -111,47 +121,25 @@ export default function MercadoPage() {
     return () => controller.abort()
   }, [fetchProducts])
 
+  // Las categorías solo alimentan el filtro del catálogo del taller aliado.
   useEffect(() => {
+    if (!isWorkshop) return
     fetch("/api/categories")
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setCategories(Array.isArray(data) ? data : []))
       .catch(() => setCategories([]))
-  }, [])
+  }, [isWorkshop])
 
-  const toggleVisibility = async (product: MarketplaceProduct) => {
-    const next = !product.marketplaceVisible
-    setTogglingId(product.id)
-    // Actualización optimista
-    setProducts((prev) =>
-      prev.map((p) => (p.id === product.id ? { ...p, marketplaceVisible: next } : p))
-    )
-    setVisibleCount((prev) => Math.max(0, prev + (next ? 1 : -1)))
-
-    try {
-      const res = await fetch("/api/marketplace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId: product.id, marketplaceVisible: next }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Error al actualizar")
-      toast.success(next ? "Producto visible para talleres" : "Producto oculto a talleres")
-    } catch (error) {
-      // Revertir si falló
-      setProducts((prev) =>
-        prev.map((p) => (p.id === product.id ? { ...p, marketplaceVisible: !next } : p))
+  // URL pública del mercado del negocio (/{slug}/market) — solo para staff.
+  useEffect(() => {
+    if (!session || isWorkshop) return
+    fetch("/api/settings/public-profile")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setMarketUrl(typeof data?.urls?.market === "string" ? data.urls.market : null)
       )
-      setVisibleCount((prev) => Math.max(0, prev + (next ? -1 : 1)))
-      toast.error(error instanceof Error ? error.message : "No se pudo actualizar el producto")
-    } finally {
-      setTogglingId(null)
-    }
-  }
-
-  // Sin "Ver ocultos", los productos ocultos no se muestran (actualización optimista).
-  const displayedProducts = showHidden
-    ? products
-    : products.filter((p) => p.marketplaceVisible)
+      .catch(() => setMarketUrl(null))
+  }, [session, isWorkshop])
 
   const hasActiveFilters = debouncedSearch !== "" || categoryId !== "all"
 
@@ -167,31 +155,77 @@ export default function MercadoPage() {
           <p className="text-muted-foreground">
             {isWorkshop
               ? "Compra refacciones a precio de mayoreo y da seguimiento a tus pedidos"
-              : "Inventario disponible para talleres aliados"}
+              : "Solicitudes de talleres aliados y del público — tu publicación se gestiona en Catálogo"}
           </p>
         </div>
-        <Badge variant="secondary" className="self-start sm:self-auto text-sm px-3 py-1">
-          {visibleCount}{" "}
-          {isWorkshop
-            ? visibleCount === 1
-              ? "producto disponible"
-              : "productos disponibles"
-            : visibleCount === 1
-              ? "producto visible"
-              : "productos visibles"}
-        </Badge>
+        {isWorkshop && (
+          <Badge variant="secondary" className="self-start sm:self-auto text-sm px-3 py-1">
+            {visibleCount}{" "}
+            {visibleCount === 1 ? "producto disponible" : "productos disponibles"}
+          </Badge>
+        )}
       </div>
 
+      {/* Resumen de publicación para staff: mostrar/ocultar productos del
+          mercado se gestiona desde el hub de Catálogo (/admin/productos). */}
+      {!isWorkshop && (
+        <div className="flex flex-col gap-4 rounded-lg border bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+          <div className="space-y-1">
+            <p className="font-semibold">
+              {loadError
+                ? "No se pudo cargar el resumen de publicación"
+                : loading
+                  ? "Cargando publicación…"
+                  : `${visibleCount} ${
+                      visibleCount === 1
+                        ? "producto publicado"
+                        : "productos publicados"
+                    } en el mercado`}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Publica u oculta refacciones para talleres aliados desde el Catálogo.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {loadError && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchProducts()}
+              >
+                Reintentar
+              </Button>
+            )}
+            {marketUrl && (
+              <Button type="button" variant="outline" size="sm" asChild>
+                <a href={marketUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Vista previa del mercado
+                </a>
+              </Button>
+            )}
+            <Button size="sm" asChild>
+              <Link href="/admin/productos?mercado=publicados">Gestionar publicación</Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as "catalogo" | "solicitudes" | "compras" | "solicitudes-web")}
+        value={activeTab}
+        onValueChange={(v) => setTab(v as TabValue)}
         className="gap-6"
       >
         <TabsList>
-          <TabsTrigger value="catalogo" className="px-4">
-            <Store className="h-4 w-4" />
-            Catálogo
-          </TabsTrigger>
+          {/* El catálogo navegable solo lo usa el taller aliado (WORKSHOP);
+              la publicación del staff vive en Catálogo (/admin/productos). */}
+          {isWorkshop && (
+            <TabsTrigger value="catalogo" className="px-4">
+              <Store className="h-4 w-4" />
+              Catálogo
+            </TabsTrigger>
+          )}
           <TabsTrigger value="solicitudes" className="px-4">
             <ClipboardList className="h-4 w-4" />
             {isWorkshop ? "Mis solicitudes" : "Solicitudes"}
@@ -223,23 +257,11 @@ export default function MercadoPage() {
           )}
         </TabsList>
 
-        <TabsContent value="catalogo" className="space-y-6">
-          {/* Banner informativo para admin */}
-          {isAdmin && (
-            <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-              <Info className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-              <p className="text-sm text-muted-foreground">
-                Este catálogo es lo que verán los talleres aliados. Usa el{" "}
-                <span className="font-medium text-foreground">ojo</span> en cada tarjeta
-                para ocultar productos internos y la opción{" "}
-                <span className="font-medium text-foreground">Ver ocultos</span> para
-                volver a mostrarlos.
-              </p>
-            </div>
-          )}
-
-          {/* Banner del portal: nombre del taller + precios de mayoreo */}
-          {isWorkshop && (
+        {/* Catálogo del taller aliado: busca refacciones publicadas y las
+            solicita al negocio. No se renderiza para staff. */}
+        {isWorkshop && (
+          <TabsContent value="catalogo" className="space-y-6">
+            {/* Banner del portal: nombre del taller + precios de mayoreo */}
             <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
               <Handshake className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <p className="text-sm text-muted-foreground">
@@ -248,12 +270,10 @@ export default function MercadoPage() {
                 {" · "}precios de mayoreo
               </p>
             </div>
-          )}
 
-          {/* Barra de búsqueda y filtros */}
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-              <div className="relative flex-1">
+            {/* Barra de búsqueda y filtros */}
+            <div className="flex flex-col gap-3">
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   value={search}
@@ -263,100 +283,84 @@ export default function MercadoPage() {
                   className="pl-9"
                 />
               </div>
-              {isAdmin && (
-                <Button
-                  type="button"
-                  variant={showHidden ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setShowHidden((v) => !v)}
-                  className="shrink-0"
-                >
-                  <EyeOff className="mr-2 h-4 w-4" />
-                  Ver ocultos
-                </Button>
-              )}
-            </div>
 
-            {/* Filtro de categorías */}
-            {categories.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-                <button
-                  type="button"
-                  onClick={() => setCategoryId("all")}
-                  className={cn(
-                    "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    categoryId === "all"
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-background text-muted-foreground hover:bg-muted"
-                  )}
-                >
-                  Todas
-                </button>
-                {categories.map((cat) => (
+              {/* Filtro de categorías */}
+              {categories.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
                   <button
-                    key={cat.id}
                     type="button"
-                    onClick={() => setCategoryId(cat.id)}
+                    onClick={() => setCategoryId("all")}
                     className={cn(
                       "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      categoryId === cat.id
+                      categoryId === "all"
                         ? "bg-primary text-primary-foreground border-primary"
                         : "bg-background text-muted-foreground hover:bg-muted"
                     )}
                   >
-                    {cat.name}
+                    Todas
                   </button>
+                  {categories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setCategoryId(cat.id)}
+                      className={cn(
+                        "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        categoryId === cat.id
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Contenido */}
+            {loadError ? (
+              <div role="alert" className="rounded-lg border p-6 space-y-3">
+                <p>{loadError}</p>
+                <Button variant="outline" onClick={() => void fetchProducts()}>
+                  Reintentar
+                </Button>
+              </div>
+            ) : loading ? (
+              <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <MarketplaceCardSkeleton key={i} />
                 ))}
               </div>
-            )}
-          </div>
-
-          {/* Contenido */}
-          {loadError ? (
-            <div role="alert" className="rounded-lg border p-6 space-y-3">
-              <p>{loadError}</p>
-              <Button variant="outline" onClick={() => void fetchProducts()}>
-                Reintentar
-              </Button>
-            </div>
-          ) : loading ? (
-            <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <MarketplaceCardSkeleton key={i} />
-              ))}
-            </div>
-          ) : displayedProducts.length > 0 ? (
-            <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {displayedProducts.map((product) => (
-                <MarketplaceProductCard
-                  key={product.id}
-                  product={product}
-                  isAdmin={isAdmin}
-                  toggling={togglingId === product.id}
-                  onToggleVisibility={isAdmin ? toggleVisibility : undefined}
-                  onRequest={openRequestDialog}
-                  formatPrice={formatPrice}
-                />
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon={Store}
-              title={
-                hasActiveFilters
-                  ? "Sin resultados en el mercado"
-                  : "Sin productos visibles en el mercado"
-              }
-              description={
-                hasActiveFilters
-                  ? "Prueba con otra búsqueda o categoría."
-                  : isAdmin
-                    ? "Los productos activos aparecen aquí automáticamente. Revisa que no estén ocultos."
+            ) : products.length > 0 ? (
+              <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {products.map((product) => (
+                  <MarketplaceProductCard
+                    key={product.id}
+                    product={product}
+                    isAdmin={isAdmin}
+                    onRequest={openRequestDialog}
+                    formatPrice={formatPrice}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                icon={Store}
+                title={
+                  hasActiveFilters
+                    ? "Sin resultados en el mercado"
+                    : "Sin productos visibles en el mercado"
+                }
+                description={
+                  hasActiveFilters
+                    ? "Prueba con otra búsqueda o categoría."
                     : "Aún no hay refacciones publicadas para talleres aliados."
-              }
-            />
-          )}
-        </TabsContent>
+                }
+              />
+            )}
+          </TabsContent>
+        )}
 
         <TabsContent value="solicitudes">
           <MarketplaceRequestsPanel

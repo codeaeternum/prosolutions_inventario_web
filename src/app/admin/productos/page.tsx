@@ -3,15 +3,16 @@
 import { Suspense } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FolderTree, Package, QrCode, Zap } from "lucide-react"
+import { FolderTree, Package, QrCode, Warehouse, Zap } from "lucide-react"
 import { ProductosPanel } from "./panel"
 import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
+import { ExistenciasPanel } from "@/components/admin/inventario/existencias"
 import { EtiquetasPanel } from "../etiquetas/panel"
 import { CategoriesPanel } from "../categorias/panel"
 import { BrandsPanel } from "../marcas/panel"
 import { ModelsPanel } from "../modelos/panel"
 
-const TABS = ["productos", "captura", "clasificacion", "etiquetas"] as const
+const TABS = ["productos", "existencias", "captura", "clasificacion", "etiquetas"] as const
 type Tab = (typeof TABS)[number]
 
 const SUBTABS = ["categorias", "marcas", "modelos"] as const
@@ -19,6 +20,7 @@ type SubTab = (typeof SUBTABS)[number]
 
 const DESCRIPTIONS: Record<Tab, string> = {
   productos: "Gestiona las refacciones del inventario",
+  existencias: "Existencias por sucursal, conteos físicos y traspasos",
   captura: "Alta rápida de productos en serie: escanea el código y captura",
   clasificacion: "Organiza tus productos por tipo de refacción, marca y modelo de equipo",
   etiquetas: "Genera etiquetas con código QR para pegar en los productos",
@@ -52,7 +54,7 @@ function ProductosTabs() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <Package className="h-6 w-6" />
-            Productos
+            Catálogo
           </h1>
           <p className="text-muted-foreground">
             {DESCRIPTIONS[tab]}
@@ -66,6 +68,10 @@ function ProductosTabs() {
             <TabsTrigger value="productos" className="flex items-center gap-2">
               <Package className="h-4 w-4" />
               Productos
+            </TabsTrigger>
+            <TabsTrigger value="existencias" className="flex items-center gap-2">
+              <Warehouse className="h-4 w-4" />
+              Existencias
             </TabsTrigger>
             <TabsTrigger value="captura" className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
@@ -84,6 +90,10 @@ function ProductosTabs() {
 
         <TabsContent value="productos" className="mt-0">
           <ProductosPanel />
+        </TabsContent>
+
+        <TabsContent value="existencias" className="mt-0">
+          <ExistenciasPanel />
         </TabsContent>
 
         <TabsContent value="captura" className="mt-0">

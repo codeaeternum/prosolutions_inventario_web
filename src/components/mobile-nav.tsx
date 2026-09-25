@@ -46,7 +46,7 @@ const customerLinks = [
 const adminLinks = [
   { href: "/admin", icon: LayoutDashboard, label: "Panel" },
   { href: "/admin/taller", icon: Wrench, label: "Taller" },
-  { href: "/admin/inventario", icon: Package, label: "Inventario" },
+  { href: "/admin/inventario", icon: Package, label: "Almacén" },
   { href: "/admin/caja", icon: Wallet, label: "Caja" },
   { href: "/perfil", icon: User, label: "Perfil" },
 ]
