@@ -5,11 +5,34 @@ import { prisma } from "@/lib/prisma"
 import { transitionEncargo } from "@/lib/domain/encargos"
 import { businessFailure } from "@/lib/domain/http"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
+import { escapeTelegramHtml, sendTelegramToCustomer } from "@/lib/telegram"
+
+/**
+ * Aviso directo al cliente por Telegram cuando su pieza llega (encargo →
+ * READY). Solo si el encargo tiene cliente ligado con Telegram
+ * (User.telegramId); sendTelegramToCustomer valida tenant + role CUSTOMER
+ * por dentro, así que nunca se escribe a otro negocio ni a staff.
+ */
+async function notifyCustomerEncargoReady(
+  businessId: string,
+  result: { customerId: string | null; description: string; branchName: string | null },
+) {
+  if (!result.customerId) return
+  const business = await prisma.business.findUnique({ where: { id: businessId }, select: { name: true } })
+  const where = business?.name ? ` en <b>${escapeTelegramHtml(business.name)}</b>` : ""
+  const branch = result.branchName ? ` (${escapeTelegramHtml(result.branchName)})` : ""
+  await sendTelegramToCustomer(
+    businessId,
+    result.customerId,
+    `✅ <b>¡Tu pieza ya llegó!</b>\n\n"${escapeTelegramHtml(result.description)}" ya está lista para recoger${where}${branch}. Te esperamos.`,
+  )
+}
 
 /**
  * Transición de encargo: { action: "ORDERED" | "READY" | "DELIVERED" |
  * "CANCELLED", marketplaceRequestId?, supplierNote?, idempotencyKey }.
- * Al llegar a READY se avisa al staff del negocio (campanita/SSE).
+ * Al llegar a READY se avisa al staff del negocio (campanita/SSE) y al
+ * cliente por Telegram si tiene su cuenta ligada.
  */
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -25,7 +48,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key") ?? crypto.randomUUID(),
     })
 
-    // La pieza llegó: aviso en vivo a admins + empleados con enlace al panel.
+    // La pieza llegó: aviso en vivo a admins + empleados con enlace al panel,
+    // y aviso directo al cliente por Telegram si tiene la cuenta ligada.
     // Fire-and-forget — un fallo del broadcast no debe revertir el encargo.
     if (result.status === "READY") {
       void sendNotificationToStaff({
@@ -39,6 +63,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           href: "/admin/inventario?tab=encargos",
         },
       }, businessId).catch(() => {})
+      void notifyCustomerEncargoReady(businessId, result).catch(() => {})
     }
 
     return NextResponse.json(result)

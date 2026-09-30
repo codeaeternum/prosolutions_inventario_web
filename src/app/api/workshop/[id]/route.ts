@@ -11,19 +11,48 @@ import { suggestedServiceLinesTotal } from "@/lib/quote-services"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio } from "@/lib/workshop-labels"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
+import { escapeTelegramHtml, sendTelegramToCustomer } from "@/lib/telegram"
 
 const READY_PUBLIC_MESSAGE = "Tu equipo está listo para recoger."
 
+// Aviso directo al cliente por Telegram cuando su orden pasa a READY: lleva
+// el mismo folio y link público de seguimiento que ya se comparte por
+// WhatsApp. Solo si la orden tiene cliente ligado con Telegram —
+// sendTelegramToCustomer valida tenant + role CUSTOMER por dentro, así que
+// jamás se escribe a un chat de otro negocio ni a una cuenta de staff.
+async function notifyCustomerRepairReady(
+  order: { businessId: string; customerId: string | null; customerName: string; equipmentType: string; brand: string | null; model: string | null },
+  folio: string,
+  tracking: string,
+) {
+  if (!order.customerId) return
+  const business = await prisma.business.findUnique({ where: { id: order.businessId }, select: { name: true } })
+  const equipment = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
+  await sendTelegramToCustomer(
+    order.businessId,
+    order.customerId,
+    `✅ <b>¡Tu equipo está listo!</b>\n\n${escapeTelegramHtml(order.customerName)}, tu orden ${escapeTelegramHtml(folio)}${equipment ? ` (${escapeTelegramHtml(equipment)})` : ""} ya está lista para recoger${business?.name ? ` en <b>${escapeTelegramHtml(business.name)}</b>` : ""}.\nSigue tu orden aquí: ${tracking}`,
+  )
+}
+
 // Tras una transición exitosa a READY: deja un mensaje público para el
-// cliente (una sola vez), avisa al staff conectado (SSE de admins) y arma el
-// enlace de WhatsApp para que el front ofrezca notificar al cliente.
-async function readySideEffects(order: { id: string; number: number; status: string; customerName: string; customerPhone: string; businessId: string }, actorId: string) {
+// cliente (una sola vez), avisa al staff conectado (SSE de admins), envía el
+// Telegram del cliente si tiene cuenta ligada y arma el enlace de WhatsApp
+// para que el front ofrezca notificar al cliente.
+async function readySideEffects(order: { id: string; number: number; status: string; customerName: string; customerPhone: string; customerId: string | null; equipmentType: string; brand: string | null; model: string | null; businessId: string }, actorId: string) {
   if (order.status !== "READY") return {}
   const exists = await prisma.repairEvent.findFirst({
     where: { orderId: order.id, isPublic: true, detail: READY_PUBLIC_MESSAGE },
     select: { id: true },
   })
   const folio = repairFolio(order.number, await getOrderFolioDigits(order.businessId))
+  const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
+  const digits = order.customerPhone.replace(/\D/g, "")
+  // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
+  const phone = digits.length === 10 ? `52${digits}` : digits
+  // El link lleva folio + últimos 4 dígitos (?t=): el cliente no teclea nada.
+  const phone4 = digits.slice(-4)
+  const tracking = `${base}/seguimiento?folio=${folio}${phone4 ? `&t=${phone4}` : ""}`
   if (!exists) {
     await prisma.repairEvent.create({
       data: { businessId: order.businessId, actorId, orderId: order.id, type: "NOTE", detail: READY_PUBLIC_MESSAGE, isPublic: true },
@@ -34,14 +63,9 @@ async function readySideEffects(order: { id: string; number: number; status: str
       message: `${folio} está lista para que el cliente la recoja.`,
       data: { orderId: order.id, folio },
     }, order.businessId).catch(() => {})
+    // Fire-and-forget como el SSE: un fallo del aviso jamás revierte la orden.
+    void notifyCustomerRepairReady(order, folio, tracking).catch(() => {})
   }
-  const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
-  const digits = order.customerPhone.replace(/\D/g, "")
-  // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
-  const phone = digits.length === 10 ? `52${digits}` : digits
-  // El link lleva folio + últimos 4 dígitos (?t=): el cliente no teclea nada.
-  const phone4 = digits.slice(-4)
-  const tracking = `${base}/seguimiento?folio=${folio}${phone4 ? `&t=${phone4}` : ""}`
   const text = `Hola ${order.customerName}, tu equipo ${folio} ya está listo para recoger. Sigue tu orden aquí: ${tracking}`
   const notifyWhatsApp = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` : undefined
   return { notifyWhatsApp }

@@ -2,19 +2,20 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Clock, History, Users } from "lucide-react"
+import { Clock, History, TrendingUp, Users } from "lucide-react"
 import { ActividadPanel } from "@/components/admin/equipo/actividad-panel"
 import { UsuariosPanel } from "@/components/admin/equipo/usuarios-panel"
 import { TurnosPanel } from "@/components/admin/equipo/turnos-panel"
+import { DesempenoPanel } from "@/components/admin/equipo/desempeno-panel"
 
-const TABS = ["actividad", "usuarios", "turnos"] as const
+const TABS = ["actividad", "usuarios", "turnos", "desempeno"] as const
 type Tab = (typeof TABS)[number]
 
 /**
  * Hub "Equipo": junta en una pantalla el registro de actividad, la gestión
  * de usuarios/permisos y los turnos derivados de la actividad real (antes
  * /admin/actividad y /admin/usuarios, que hoy redirigen aquí).
- * ?tab=actividad|usuarios|turnos; ?actor=<id>&anombre=<nombre>
+ * ?tab=actividad|usuarios|turnos|desempeno; ?actor=<id>&anombre=<nombre>
  * pre-filtra el feed a una persona (enlace "Ver actividad" del tab Usuarios).
  */
 export function EquipoPanel() {
@@ -63,6 +64,10 @@ export function EquipoPanel() {
                             <Clock className="h-4 w-4" />
                             Turnos
                         </TabsTrigger>
+                        <TabsTrigger value="desempeno" className="flex items-center gap-2">
+                            <TrendingUp className="h-4 w-4" />
+                            Desempeño
+                        </TabsTrigger>
                     </TabsList>
                 </div>
 
@@ -82,6 +87,12 @@ export function EquipoPanel() {
 
                 <TabsContent value="turnos" className="mt-0">
                     <TurnosPanel />
+                </TabsContent>
+
+                {/* Solo ADMIN llega aquí: la página /admin/equipo ya redirige a
+                    cualquier otro rol, igual que con el tab de Actividad. */}
+                <TabsContent value="desempeno" className="mt-0">
+                    <DesempenoPanel />
                 </TabsContent>
             </Tabs>
         </>

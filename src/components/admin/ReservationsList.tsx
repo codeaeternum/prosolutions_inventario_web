@@ -227,6 +227,7 @@ export default function ReservationsList({ reservations }: { reservations: Reser
                         <button className="absolute -top-10 right-0 text-white text-xl" onClick={() => setSelectedProof(null)}>✕ Cerrar</button>
                         <div className="relative w-full h-[80vh]">
                             {/* Usamos img normal porque Next/Image requiere domain config */}
+                            {/* eslint-disable-next-line @next/next/no-img-element -- proof URL is a dynamic auth-gated upload; next/image cannot statically allowlist it */}
                             <img
                                 src={selectedProof}
                                 alt="Comprobante"
@@ -244,6 +245,7 @@ export default function ReservationsList({ reservations }: { reservations: Reser
                         <button className="absolute top-2 right-2 text-muted-foreground hover:text-foreground" onClick={() => setSelectedQR(null)}>✕</button>
                         <h3 className="text-lg font-bold mb-4">Código QR</h3>
                         <div className="bg-muted p-2 inline-block rounded border border-border">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- QR is a client-generated data URL (QRCode.toDataURL); next/image cannot optimize data: sources */}
                             <img src={selectedQR} alt="QR Cliente/Reserva" className="w-64 h-64" />
                         </div>
                     </div>

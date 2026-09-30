@@ -57,6 +57,7 @@ export function ReservationQR({
   return (
     <div className={cn("flex flex-col items-center gap-2", className)}>
       {qrDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- QR is a client-generated data URL (QRCode.toDataURL); next/image cannot optimize data: sources
         <img
           src={qrDataUrl}
           alt={`QR Reserva ${reservationId}`}

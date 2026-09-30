@@ -1345,6 +1345,7 @@ export default function ReceiveEquipmentPage() {
                       ["Locación", form.location.trim()],
                       ["Presupuesto estimado", budgetLabel],
                       ["Anticipo", advanceLabel],
+                      // eslint-disable-next-line @next/next/no-img-element -- signature is a canvas-generated data URL; next/image cannot optimize data: sources
                       ["Firma capturada", form.signatureData ? <img src={form.signatureData} alt="Firma capturada del cliente" className="h-16 rounded border bg-white object-contain" /> : ""],
                       // Modos alternos de confirmación (repair_signature_mode):
                       // el resumen asienta cómo acredita el cliente la entrega.

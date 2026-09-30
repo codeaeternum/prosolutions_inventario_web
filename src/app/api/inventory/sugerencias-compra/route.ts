@@ -7,10 +7,13 @@ import { findAllyOffers } from "@/lib/domain/ally-catalog"
 
 /**
  * "Sugerir compra": qué conviene pedir al proveedor según la demanda.
- * Une dos señales por producto:
+ * Une tres señales por producto:
  *  a) stock en o por debajo del mínimo → reabastecer hasta el doble,
  *  b) encargos de clientes PENDING ligados a la pieza (los de texto libre
- *     sin productId no se pueden sugerir solos).
+ *     sin productId no se pueden sugerir solos),
+ *  c) velocidad de venta `ventas30d` (piezas vendidas netas de devoluciones
+ *     en ventas COMPLETED de los últimos 30 días): a más rotación, más
+ *     cobertura — el qty sugerido cubre al menos media mensualidad de demanda.
  * `alreadyInList` marca los que YA tienen un insumo pendiente en la lista de
  * compras (ShoppingItem PENDING) para que la UI no duplique el pendiente.
  *
@@ -23,8 +26,10 @@ import { findAllyOffers } from "@/lib/domain/ally-catalog"
  * B2B (findAllyOffers): encargos ya ligados a un producto aliado → barcode
  * exacto → nombre normalizado.
  *
- * Orden: primero los que esperan clientes (encargosPendientes desc), luego por
- * severidad (qué tan abajo del mínimo están) y nombre.
+ * Orden: primero los que esperan clientes (encargosPendientes desc), luego los
+ * de mayor rotación (ventas30d desc), luego severidad (qué tan abajo del
+ * mínimo están) y nombre. La velocidad NO mete productos nuevos a la lista:
+ * solo sube la cantidad y el orden de los que ya entraron por stock/encargo.
  */
 export async function GET() {
     try {
@@ -32,7 +37,10 @@ export async function GET() {
         if (auth.error) return auth.error
         const businessId = businessIdOf(getSession(auth)!)
 
-        const [products, pendingEncargos, pendingItems] = await Promise.all([
+        // Ventana de rotación: piezas vendidas en los últimos 30 días.
+        const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
+        const [products, pendingEncargos, pendingItems, ventas30dAgg] = await Promise.all([
             prisma.product.findMany({
                 where: { businessId, isActive: true },
                 select: { id: true, name: true, stock: true, minStock: true, retailPrice: true, barcode: true },
@@ -47,6 +55,16 @@ export async function GET() {
                 where: { businessId, status: "PENDING", productId: { not: null } },
                 _count: { _all: true },
             }),
+            // Velocidad de venta: unidades netas (quantity − returnedQuantity)
+            // en ventas COMPLETED de la ventana, agrupadas por producto.
+            prisma.saleItem.groupBy({
+                by: ["productId"],
+                where: {
+                    businessId,
+                    sale: { status: "COMPLETED", createdAt: { gte: desde30d } },
+                },
+                _sum: { quantity: true, returnedQuantity: true },
+            }),
         ])
 
         const encargosByProduct = new Map<string, number>()
@@ -56,6 +74,15 @@ export async function GET() {
         const inList = new Set(
             pendingItems.map(row => row.productId).filter((id): id is string => Boolean(id)),
         )
+        // CHECK de SaleItem garantiza returnedQuantity <= quantity por renglón,
+        // así que el neto por producto nunca queda negativo (clamp por si acaso).
+        const ventas30dByProduct = new Map<string, number>()
+        for (const row of ventas30dAgg) {
+            ventas30dByProduct.set(
+                row.productId,
+                Math.max(0, (row._sum.quantity ?? 0) - (row._sum.returnedQuantity ?? 0)),
+            )
+        }
 
         // Prisma no compara dos columnas: stock <= minStock se filtra en JS
         // (mismo patrón que listShoppingNeeds en lib/domain/shopping.ts).
@@ -65,20 +92,31 @@ export async function GET() {
             .filter(p => p.stock <= p.minStock || (encargosByProduct.get(p.id) ?? 0) > 0)
             .map(p => {
                 const encargosPendientes = encargosByProduct.get(p.id) ?? 0
+                const ventas30d = ventas30dByProduct.get(p.id) ?? 0
                 return {
                     productId: p.id,
                     name: p.name,
                     stock: p.stock,
                     minStock: p.minStock,
                     encargosPendientes,
-                    // Reabastecer hasta el doble del mínimo y cubrir los encargos en espera.
-                    suggestedQty: Math.max(1, p.minStock * 2 - p.stock, encargosPendientes),
+                    ventas30d,
+                    // Reabastecer hasta el doble del mínimo, cubrir los encargos
+                    // en espera y al menos media mensualidad de la demanda
+                    // reciente (una pieza que vende 20/mes necesita más
+                    // cobertura que una que vende 1/mes al mismo mínimo).
+                    suggestedQty: Math.max(
+                        1,
+                        p.minStock * 2 - p.stock,
+                        encargosPendientes,
+                        Math.ceil(ventas30d * 0.5) - p.stock,
+                    ),
                     retailPrice: p.retailPrice,
                     alreadyInList: inList.has(p.id),
                 }
             })
             .sort((a, b) =>
                 b.encargosPendientes - a.encargosPendientes
+                || b.ventas30d - a.ventas30d
                 || (b.minStock - b.stock) - (a.minStock - a.stock)
                 || a.name.localeCompare(b.name))
             .slice(0, 200)

@@ -30,6 +30,8 @@ interface Suggestion {
     stock: number
     minStock: number
     encargosPendientes: number
+    /** Piezas vendidas (netas de devoluciones) en los últimos 30 días. */
+    ventas30d: number
     suggestedQty: number
     retailPrice: number
     alreadyInList: boolean
@@ -218,7 +220,7 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                     Sugerencias de compra
                 </CardTitle>
                 <CardDescription>
-                    Qué conviene pedir según el stock mínimo y los encargos que esperan pieza
+                    Qué conviene pedir según el stock mínimo, los encargos que esperan pieza y la rotación del mes
                 </CardDescription>
             </CardHeader>
             <CardContent>
@@ -250,6 +252,7 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                                         <p className="truncate text-sm font-medium">{s.name}</p>
                                         <p className="text-xs text-muted-foreground">
                                             tienes {s.stock} / mínimo {s.minStock} · {formatPrice(s.retailPrice)}
+                                            {s.ventas30d > 0 && <> · vende {s.ventas30d}/mes</>}
                                         </p>
                                         {/* Chips accionables: qué aliado la tiene y a qué precio —
                                             cada uno pide la pieza directo a ese negocio con la

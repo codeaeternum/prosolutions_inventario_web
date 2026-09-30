@@ -48,6 +48,49 @@ export async function buildTelegramVerifyUrl(code: string): Promise<string | nul
 }
 
 /**
+ * Escape mínimo para parse_mode HTML de Telegram: un "<" o "&" suelto en
+ * un nombre o descripción invalidaría el envío completo (HTTP 400).
+ */
+export function escapeTelegramHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/**
+ * Envía un mensaje HTML por Telegram a UN cliente del negocio: User con
+ * role CUSTOMER y telegramId ligado (alta por /start del bot o deep-link
+ * verify_<code>). El filtro businessId + role es el guard multi-tenant:
+ * jamás se escribe a un telegramId de otro tenant ni a una cuenta de staff.
+ * Devuelve false si el cliente no tiene Telegram ligado o el envío falla —
+ * silencioso con log: un aviso no debe romper la operación que lo dispara.
+ */
+export async function sendTelegramToCustomer(
+  businessId: string,
+  customerId: string,
+  message: string,
+): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN
+  if (!token) return false
+  const customer = await prisma.user.findFirst({
+    where: { id: customerId, businessId, role: "CUSTOMER", telegramId: { not: null } },
+    select: { telegramId: true },
+  })
+  if (!customer?.telegramId) return false
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: customer.telegramId, text: message, parse_mode: "HTML" }),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) console.error(`[telegram] sendMessage a cliente falló: HTTP ${res.status}`)
+    return res.ok
+  } catch (error) {
+    console.error("[telegram] sendMessage a cliente falló:", error)
+    return false
+  }
+}
+
+/**
  * Envía un mensaje HTML por Telegram a los usuarios del negocio indicado.
  * Replica lo que hace el bot (bot/lib/notify.ts) desde el proceso web:
  * la app ya tiene TELEGRAM_BOT_TOKEN en su entorno.

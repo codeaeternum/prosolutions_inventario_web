@@ -79,11 +79,15 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
     const [branchId, setBranchId] = useState(lockedBranchId ?? "")
     const lockedBranchName = lockedBranchId ? branches.find(b => b.id === lockedBranchId)?.name : null
 
+    // Carga inicial de sucursales (solo al montar): si no hay sucursal
+    // elegida todavía, se selecciona la primera activa como default. El
+    // update funcional evita leer branchId aquí — agregarlo a deps
+    // re-fetchería /api/branches en cada cambio de sucursal.
     useEffect(() => {
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
             const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
             setBranches(list)
-            if (list.length && !branchId) setBranchId(list[0].id)
+            if (list.length) setBranchId(prev => prev || list[0].id)
         }).catch(() => {})
     }, [])
 

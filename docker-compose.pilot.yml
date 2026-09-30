@@ -15,7 +15,7 @@ services:
       retries: 10
     restart: unless-stopped
   app:
-    image: prosolutions-app:40a426a
+    image: prosolutions-app:4cfb6c4
     build:
       context: .
       target: runner

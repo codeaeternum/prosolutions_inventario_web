@@ -233,6 +233,9 @@ export async function transitionEncargo(db: PrismaClient, actorId: string, busin
       branchId: encargo.branchId,
       branchName: encargo.branch?.name ?? null,
       customerName: encargo.customer?.name ?? null,
+      // El aviso al cliente (Telegram) lo dispara la ruta post-commit con
+      // este id; null = encargo sin cuenta, no hay a quién escribir.
+      customerId: encargo.customerId,
       marketplaceRequestId: input.action === "ORDERED" ? (input.marketplaceRequestId ?? encargo.marketplaceRequestId) : encargo.marketplaceRequestId,
     }
   })

@@ -20,8 +20,10 @@ const AvatarImage = React.forwardRef<
   HTMLImageElement,
   React.ImgHTMLAttributes<HTMLImageElement>
 >(({ className, ...props }, ref) => (
+  // eslint-disable-next-line @next/next/no-img-element -- shadcn/ui passthrough: raw <img> is intentional; Avatar renders arbitrary user-provided URLs that cannot be statically allowlisted for next/image
   <img
     ref={ref}
+    alt=""
     className={cn("aspect-square h-full w-full", className)}
     {...props}
   />
