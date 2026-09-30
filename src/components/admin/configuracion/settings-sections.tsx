@@ -135,19 +135,19 @@ export function WorkshopCard() {
 
 const ADMIN_LINKS = [
   {
-    href: "/admin/sucursales",
+    href: "/admin/configuracion?tab=sucursales",
     icon: Building2,
     title: "Sucursales",
     description: "Locales con inventario, caja y recepción de equipos independientes.",
   },
   {
-    href: "/admin/usuarios",
+    href: "/admin/equipo?tab=usuarios",
     icon: Users,
     title: "Usuarios y roles",
     description: "Cuentas del personal, roles y accesos al panel de administración.",
   },
   {
-    href: "/admin/taller/catalogo",
+    href: "/admin/taller?tab=precios",
     icon: BookOpen,
     title: "Catálogo de servicios",
     description: "Precios sugeridos por servicio, modelos de equipo y listas del taller.",

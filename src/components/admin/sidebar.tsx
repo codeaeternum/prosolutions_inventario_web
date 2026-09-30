@@ -4,26 +4,21 @@ import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { moduleForAdminPath } from "@/lib/access"
+import { adminPathAllowed, moduleForAdminPath } from "@/lib/access"
 import { Button } from "@/components/ui/button"
 import { BusinessName } from "@/components/admin/business-name"
 import {
   LayoutDashboard,
   Users,
-  CalendarCheck,
   BarChart3,
   Settings,
   X,
   Menu,
-  Bell,
   Boxes,
   ShoppingCart,
-  CreditCard,
   Wallet,
   Wrench,
-  Building2,
   MoreHorizontal,
-  BookOpen,
   Store,
   Shield,
   Handshake,
@@ -57,34 +52,22 @@ const navigationGroups: NavGroup[] = [
     items: [
       { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
       { name: "Inventario", href: "/admin/inventario", icon: Boxes },
+      { name: "Servicio", href: "/admin/taller", icon: Wrench },
       { name: "Mercado", href: "/admin/mercado", icon: Store },
     ]
   },
   {
-    name: "Servicio",
-    items: [
-      { name: "Órdenes de servicio", href: "/admin/taller", icon: Wrench },
-      { name: "Catálogo de servicios", href: "/admin/taller/catalogo", icon: BookOpen },
-      { name: "Convenio", href: "/admin/convenio", icon: Handshake },
-    ]
-  },
-  {
-    name: "Clientes y dinero",
+    name: "Tu gente",
     items: [
       { name: "Clientes", href: "/admin/clientes", icon: Users },
-      { name: "Fiado", href: "/admin/credito", icon: CreditCard },
-      { name: "Apartados", href: "/admin/reservas", icon: CalendarCheck },
       { name: "Caja", href: "/admin/caja", icon: Wallet },
     ]
   },
   {
-    name: "Administración",
+    name: "Negocio",
     items: [
-      { name: "Equipo", href: "/admin/actividad", icon: History, adminOnly: true },
+      { name: "Equipo", href: "/admin/equipo", icon: History, adminOnly: true },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
-      { name: "Notificaciones", href: "/admin/notificaciones", icon: Bell },
-      { name: "Sucursales", href: "/admin/sucursales", icon: Building2 },
-      { name: "Usuarios", href: "/admin/usuarios", icon: Users },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
     ]
   }
@@ -173,25 +156,25 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
         if (item.adminOnly && user.role !== "ADMIN") return false
         if (user.role === "ADMIN" || !user.allowedModules?.length) return true
         const required = moduleForAdminPath(item.href)
-        return !required || user.allowedModules!.includes(required)
+        return !required || adminPathAllowed(user.allowedModules!, required)
       }),
     }))
     .filter(group => {
       // Grupos vacíos no muestran header
       if (group.items.length === 0) return false
-      // EMPLOYEE sin módulos asignados no ve "Administración" (regla previa);
+      // EMPLOYEE sin módulos asignados no ve "Negocio" (regla previa);
       // con módulos explícitos el filtro por ítem ya decidió qué entra.
       if (user.role === "EMPLOYEE" && !user.allowedModules?.length) {
-        return group.name !== "Administración"
+        return group.name !== "Negocio"
       }
       return true
     })
 
   // Captadores con taller asociado (staff normal, no rol WORKSHOP — ese ya
-  // tiene su menú propio): el portal aliado aparece tras el grupo Taller.
+  // tiene su menú propio): el portal aliado aparece tras "Día a día".
   if (hasPartner && user.role !== "WORKSHOP") {
-    const tallerIndex = filteredNavigation.findIndex(g => g.name === "Taller")
-    filteredNavigation.splice(tallerIndex >= 0 ? tallerIndex + 1 : filteredNavigation.length, 0, partnerGroup)
+    const diaIndex = filteredNavigation.findIndex(g => g.name === "Día a día")
+    filteredNavigation.splice(diaIndex >= 0 ? diaIndex + 1 : filteredNavigation.length, 0, partnerGroup)
   }
 
   if (user.isSuperAdmin) {

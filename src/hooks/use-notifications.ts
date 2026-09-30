@@ -55,13 +55,13 @@ export function notificationHref(notification: Notification): string | null {
     case "reservation_expired":
     case "reservation_expiring_soon":
     case "deposit_received":
-      return "/admin/reservas"
+      return "/admin/clientes?tab=pedidos"
     case "marketplace_request":
       return "/admin/mercado"
     case "encargo_listo":
       return "/admin/inventario?tab=encargos"
     case "sensitive_alert":
-      return "/admin/actividad"
+      return "/admin/equipo"
     default:
       return null
   }

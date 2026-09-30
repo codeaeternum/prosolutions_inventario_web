@@ -179,15 +179,15 @@ export default function PerfilClient({ user }: { user: UserData }) {
                                         </CardContent>
                                     </Card>
                                 </Link>
-                                <Link href="/admin/reservas" className="block">
+                                <Link href="/admin/clientes?tab=pedidos" className="block">
                                     <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-orange-500">
                                         <CardContent className="p-4 flex flex-col items-start gap-3">
                                             <div className="p-2 rounded-md bg-orange-500/10">
                                                 <ShoppingCart className="h-5 w-5 text-orange-500" />
                                             </div>
                                             <div>
-                                                <div className="font-semibold">Reservas</div>
-                                                <div className="text-xs text-muted-foreground">Ver solicitudes</div>
+                                                <div className="font-semibold">Pedidos</div>
+                                                <div className="text-xs text-muted-foreground">Encargos y apartados</div>
                                             </div>
                                         </CardContent>
                                     </Card>

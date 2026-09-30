@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +13,7 @@ import {
   MarketplaceProductCard,
   type MarketplaceProduct,
 } from "@/components/admin/marketplace/product-card"
+import { CuentasPanel } from "@/components/admin/marketplace/cuentas-panel"
 import { MarketplaceOutgoingPanel } from "@/components/admin/marketplace/outgoing-panel"
 import { MarketplacePublicationPanel } from "@/components/admin/marketplace/publication-panel"
 import { MarketplacePurchasesPanel } from "@/components/admin/marketplace/purchases-panel"
@@ -24,6 +26,7 @@ import {
   MARKET_VISIBILITY_LABELS,
   type MarketVisibility,
 } from "@/lib/market-visibility"
+import { hasModule } from "@/lib/access"
 import { cn } from "@/lib/utils"
 import {
   ClipboardList,
@@ -49,6 +52,7 @@ type TabValue =
   | "compras"
   | "solicitudes-web"
   | "pedidos"
+  | "cuentas"
 
 interface VisibilityCounts {
   hidden: number
@@ -66,6 +70,9 @@ const EMPTY_COUNTS: VisibilityCounts = {
 
 export default function MercadoPage() {
   const { data: session } = useSession()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
   const { formatPrice } = useCurrency()
   const isAdmin = session?.user?.role === "ADMIN"
   // Taller aliado externo: ve el catálogo, solo sus propias solicitudes y sus compras.
@@ -89,7 +96,6 @@ export default function MercadoPage() {
   // Link público de la vitrina (/{slug}/market) para la vista previa del staff.
   const [marketUrl, setMarketUrl] = useState<string | null>(null)
 
-  const [tab, setTab] = useState<TabValue | null>(null)
   // Solicitudes de talleres aliados ("compras" solo existe para cuentas WORKSHOP)
   const [requestTarget, setRequestTarget] = useState<MarketplaceProduct | null>(null)
   const [requestDialogOpen, setRequestDialogOpen] = useState(false)
@@ -98,12 +104,34 @@ export default function MercadoPage() {
   // Solicitudes de refacción del público en /mercado (feed global de plataforma)
   const [openPartRequests, setOpenPartRequests] = useState(0)
 
-  // Tabs válidos por rol: el default es el primero de la lista.
+  // Cuentas (convenio B2B absorbido de /admin/convenio): lo veía el staff
+  // con módulo "taller" — ADMIN siempre pasa y /api/convenio conserva ese
+  // requireModule — así que el tab replica el mismo gate. El portal
+  // WORKSHOP nunca tuvo acceso al convenio.
+  const canSeeCuentas =
+    !isWorkshop &&
+    session?.user != null &&
+    hasModule(
+      { role: session.user.role, allowedModules: session.user.allowedModules },
+      "taller"
+    )
+
+  // Tabs válidos por rol: el default es el primero de la lista. La pestaña
+  // activa viaja en la URL (?tab=) para que los redirects viejos caigan bien.
   const allowedTabs: TabValue[] = isWorkshop
     ? ["catalogo", "solicitudes", "compras", "pedidos"]
-    : ["publicacion", "solicitudes", "solicitudes-web", "pedidos"]
-  const activeTab: TabValue =
-    tab && allowedTabs.includes(tab) ? tab : allowedTabs[0]
+    : canSeeCuentas
+      ? ["publicacion", "solicitudes", "solicitudes-web", "pedidos", "cuentas"]
+      : ["publicacion", "solicitudes", "solicitudes-web", "pedidos"]
+  const tabParam = searchParams.get("tab")
+  const activeTab: TabValue = allowedTabs.includes(tabParam as TabValue)
+    ? (tabParam as TabValue)
+    : allowedTabs[0]
+  const selectTab = (value: TabValue) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", value)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
 
   const openRequestDialog = (product: MarketplaceProduct) => {
     setRequestTarget(product)
@@ -379,7 +407,7 @@ export default function MercadoPage() {
               type="button"
               size="sm"
               variant={activeTab === "publicacion" ? "outline" : "default"}
-              onClick={() => setTab("publicacion")}
+              onClick={() => selectTab("publicacion")}
             >
               Gestionar publicación
             </Button>
@@ -389,7 +417,7 @@ export default function MercadoPage() {
 
       <Tabs
         value={activeTab}
-        onValueChange={(v) => setTab(v as TabValue)}
+        onValueChange={(v) => selectTab(v as TabValue)}
         className="gap-6"
       >
         <TabsList>
@@ -440,6 +468,14 @@ export default function MercadoPage() {
             <Send className="h-4 w-4" />
             Pedidos que hago
           </TabsTrigger>
+          {/* Convenio B2B entre talleres asociados (ex /admin/convenio) —
+              solo staff con módulo taller; el portal aliado no lo tiene. */}
+          {canSeeCuentas && (
+            <TabsTrigger value="cuentas" className="px-4">
+              <Handshake className="h-4 w-4" />
+              Cuentas
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Publicación del staff: control de 3 niveles por producto y
@@ -533,7 +569,7 @@ export default function MercadoPage() {
             isWorkshop={isWorkshop}
             refreshKey={requestsRefreshKey}
             onPendingCount={setPendingCount}
-            onGoToPurchases={() => setTab("compras")}
+            onGoToPurchases={() => selectTab("compras")}
             formatPrice={formatPrice}
           />
         </TabsContent>
@@ -560,6 +596,13 @@ export default function MercadoPage() {
             formatPrice={formatPrice}
           />
         </TabsContent>
+
+        {/* Cuentas del convenio B2B (contenido íntegro del ex /admin/convenio) */}
+        {canSeeCuentas && (
+          <TabsContent value="cuentas">
+            <CuentasPanel />
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Dialogo de solicitud de pieza para taller aliado */}

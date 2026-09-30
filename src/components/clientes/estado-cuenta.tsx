@@ -23,7 +23,7 @@ interface EstadoCuentaSheetProps {
 
 /**
  * Estado de cuenta del cliente (saldo, límite, disponible e historial de
- * movimientos de crédito). Lo comparten la cartera (/admin/credito) y la
+ * movimientos de crédito). Lo comparten la cartera (/admin/clientes?tab=cobranza) y la
  * ficha 360; el botón de impresión manda la hoja a window.print().
  */
 export function EstadoCuentaSheet({ open, onOpenChange, userId }: EstadoCuentaSheetProps) {

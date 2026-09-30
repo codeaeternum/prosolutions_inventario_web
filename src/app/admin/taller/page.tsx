@@ -1,9 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -16,6 +16,8 @@ import { OrderHistory, type WorkshopEvent } from "@/components/admin/taller/orde
 import { PaymentsPanel, emptyPaymentForm, emptyRefundForm, emptySettleForm, orderBalanceCents, type PaymentForm, type RefundForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
 import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller/work-plan"
 import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
+import { CatalogoPanel } from "@/components/admin/taller/catalogo-panel"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { toast } from "sonner"
@@ -155,6 +157,8 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
 
 export default function WorkshopPage() {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const { data: session } = useSession()
   const isAdmin = session?.user?.role === "ADMIN"
   const currentUserId = session?.user?.id ?? null
@@ -200,6 +204,16 @@ export default function WorkshopPage() {
   const detailVersion = useRef(0)
   const detailRequest = useRef<AbortController | null>(null)
   const draft = drafts[action] ?? {}
+  // Pestaña raíz del taller: "ordenes" (default) y "precios" (catálogo de
+  // servicios, absorbido de /admin/taller/catalogo). Viaja en ?tab=.
+  const tab: "ordenes" | "precios" =
+    searchParams.get("tab") === "precios" ? "precios" : "ordenes"
+  const selectTab = (next: "ordenes" | "precios") => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === "ordenes") params.delete("tab")
+    else params.set("tab", next)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
   // Avance de un clic: solo etapas de progreso — los cierres (cancelar, no
@@ -573,17 +587,25 @@ export default function WorkshopPage() {
 
   return <div className="mx-auto max-w-6xl space-y-6 pb-20">
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : "De la recepción a la entrega, con un historial por equipo."}</p></div>
+      <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : tab === "precios" ? "Precios sugeridos por servicio, modelos de equipo y listas del taller." : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
         {selected && <><ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button>{partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}><Send className="mr-2 h-4 w-4" />Enviar a taller</Button>}</>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
-        : <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div>}
+        : tab === "ordenes" ? <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div> : null}
     </div>
     {opening && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Abriendo orden…</p>}
     {error && <div role="alert" className="rounded-lg border p-4 text-destructive">{error}<Button variant="outline" className="ml-3" onClick={() => void load()}>Reintentar</Button></div>}
     {!selected && <>
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vistas del taller">{viewTabs.map(tab => <button key={tab.value} type="button" role="tab" aria-selected={view === tab.value} onClick={() => { setView(tab.value); setPage(1) }} className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${view === tab.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}>{tab.label}</button>)}</div>
+      {/* Pestañas raíz: Órdenes (tablero/lista) | Precios (catálogo) */}
+      <Tabs value={tab} onValueChange={value => selectTab(value as "ordenes" | "precios")}>
+        <TabsList>
+          <TabsTrigger value="ordenes" className="px-4"><ClipboardList className="h-4 w-4" />Órdenes</TabsTrigger>
+          <TabsTrigger value="precios" className="px-4"><BookOpen className="h-4 w-4" />Precios</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === "precios" ? <CatalogoPanel /> : <>
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vistas del taller">{viewTabs.map(vista => <button key={vista.value} type="button" role="tab" aria-selected={view === vista.value} onClick={() => { setView(vista.value); setPage(1) }} className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${view === vista.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}>{vista.label}</button>)}</div>
       <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3">
         <label className="text-sm">Buscar folio, cliente, teléfono, modelo o serie<div className="relative mt-2"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input value={search} className="pl-9" placeholder="OT-000001, teléfono o modelo…" onChange={e => { setSearch(e.target.value); setPage(1) }} /></div></label>
         <label className="text-sm">Ubicación actual<select className={`${inputClass} mt-2`} value={branch} onChange={e => { setBranch(e.target.value); setPage(1) }}><option value="">Todas las sucursales</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
@@ -599,6 +621,7 @@ export default function WorkshopPage() {
       </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
+      </>}
     </>}
     {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}{selected.delegatedOrderId && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Send size={12} />Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}</span>{mirrorLive && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Folio espejo {mirrorLive.folio}<span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>{mirrorLive.statusLabel}</span></span>}{selected.delegatedAt && <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>}<Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">Ver en portal aliado</Link></p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
       <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}

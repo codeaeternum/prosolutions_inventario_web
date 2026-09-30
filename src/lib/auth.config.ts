@@ -1,5 +1,5 @@
 import { safeRedirectPath } from "./safe-redirect"
-import { moduleForAdminPath } from "./access"
+import { adminPathAllowed, moduleForAdminPath } from "./access"
 import type { NextAuthConfig } from "next-auth"
 
 // Definimos los tipos localmente para evitar problemas con Edge runtime
@@ -68,7 +68,7 @@ type AuthSession = { user?: { role: UserRole; status: UserStatus; isSuperAdmin?:
 
 // Páginas exclusivas de ADMIN: no son módulo asignable, así que el gate por
 // módulos (2.4) no las cubre cuando el EMPLOYEE sí tiene lista explícita.
-const ADMIN_ONLY_PATHS = ["/admin/actividad"]
+const ADMIN_ONLY_PATHS = ["/admin/equipo", "/admin/actividad"]
 
 function isPublicPath(pathname: string): boolean {
   return (
@@ -137,7 +137,9 @@ export function getAuthRedirect(
     // 2.2) EMPLOYEE restrictions (regla general cuando NO hay módulos
     // asignados; con asignación explícita, 2.4 es la que manda).
     if (role === "EMPLOYEE" && !hasExplicitModules) {
-      const restrictedForEmployee = ["/admin/usuarios", "/admin/credito", "/admin/reportes", "/admin/notificaciones", "/admin/configuracion", "/admin/actividad"]
+      // Rutas canónicas tras la fusión (las viejas ya son redirects que el
+      // gate 2.4 cubre por el módulo destino).
+      const restrictedForEmployee = ["/admin/reportes", "/admin/configuracion"]
       if (restrictedForEmployee.some(path => pathname.startsWith(path))) {
         return Response.redirect(new URL("/admin", nextUrl))
       }
@@ -151,9 +153,11 @@ export function getAuthRedirect(
     }
 
     // 2.4) Gate de módulo por ruta para cualquier rol no-ADMIN con lista.
+    // adminPathAllowed expande alias (p. ej. "credito" sigue abriendo
+    // /admin/clientes?tab=cobranza tras la fusión de pantallas).
     if (role !== "ADMIN" && hasExplicitModules) {
       const required = moduleForAdminPath(pathname)
-      if (required && !allowed.includes(required)) {
+      if (required && !adminPathAllowed(allowed, required)) {
         return Response.redirect(new URL("/admin", nextUrl))
       }
     }

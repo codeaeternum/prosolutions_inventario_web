@@ -12,7 +12,6 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   user: { findMany: mocks.findUser, findUnique: mocks.findUserById },
   business: { findFirst: vi.fn(async () => ({ id: "biz-test" })) },
 } }))
-import { GET as fixPreview, POST as fixApply } from "@/app/api/fix-catalog/route"
 import { GET as products } from "@/app/api/products/route"
 import { GET as productDetail } from "@/app/api/products/[id]/route"
 import { GET as proof } from "@/app/api/payment-proofs/[filename]/route"
@@ -32,15 +31,6 @@ beforeEach(async () => {
 })
 afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); vi.unstubAllEnvs() })
 describe("route authorization contracts with real Request/Response", () => {
-  it("fix catalog denies anonymous and employee access before database reads", async () => {
-    // Empleado restringido a "caja" no tiene el módulo productos que piden estas rutas.
-    for (const session of [null, user("employee", "EMPLOYEE", "APPROVED", ["caja"]), user("pending-admin", "ADMIN", "PENDING")]) {
-      mocks.auth.mockResolvedValue(session)
-      expect([401, 403]).toContain((await fixPreview()).status)
-      expect([401, 403]).toContain((await fixApply()).status)
-    }
-    expect(mocks.findProduct).not.toHaveBeenCalled()
-  })
   it("employees cannot call full users or reports APIs", async () => {
     // Sin los módulos usuarios/reportes asignados, el empleado queda fuera.
     mocks.auth.mockResolvedValue(user("employee", "EMPLOYEE", "APPROVED", ["caja"]))

@@ -26,6 +26,7 @@ import {
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
 import { OnboardingCard } from "@/components/admin/onboarding-card"
+import { getPendientes, type PendienteSeverity } from "@/lib/pendientes"
 
 async function getDashboardStats() {
   try {
@@ -164,10 +165,17 @@ async function getLowStockProducts() {
   }
 }
 
+const SEVERITY_STYLE: Record<PendienteSeverity, { dot: string; label: string }> = {
+  alta: { dot: "bg-rose-500", label: "Urgente" },
+  media: { dot: "bg-amber-500", label: "Atención" },
+  baja: { dot: "bg-sky-500", label: "Cuando puedas" },
+}
+
 export default async function AdminDashboard() {
   const session = await auth()
   const stats = await getDashboardStats()
   const lowStockProducts = await getLowStockProducts()
+  const pendientes = session ? await getPendientes(session).catch(() => []) : []
 
   const statCards = [
     {
@@ -193,7 +201,7 @@ export default async function AdminDashboard() {
       value: stats.pendingReservations,
       description: "Pendientes de aprobar/entregar",
       icon: Clock,
-      href: "/admin/reservas",
+      href: "/admin/clientes?tab=pedidos",
       alert: stats.pendingReservations > 0 ? "Requiere atención" : null,
       alertClass: "text-amber-500",
     },
@@ -211,7 +219,7 @@ export default async function AdminDashboard() {
       value: stats.pendingUsers,
       description: "Clientes por verificar",
       icon: UserPlus,
-      href: "/admin/usuarios",
+      href: "/admin/equipo?tab=usuarios",
       alert: stats.pendingUsers > 0 ? `${stats.pendingUsers} esperando` : null,
       alertClass: "text-amber-500",
     },
@@ -220,7 +228,7 @@ export default async function AdminDashboard() {
       value: stats.lowStockProducts,
       description: "Productos por reabastecer",
       icon: AlertTriangle,
-      href: "/admin/productos",
+      href: "/admin/inventario",
       alert: stats.lowStockProducts > 0 ? "Revisar inventario" : null,
       alertClass: "text-destructive",
     },
@@ -229,7 +237,7 @@ export default async function AdminDashboard() {
       value: stats.totalProducts,
       description: "Activos en el catálogo",
       icon: Package,
-      href: "/admin/productos",
+      href: "/admin/inventario",
     },
   ]
 
@@ -244,6 +252,39 @@ export default async function AdminDashboard() {
 
       {/* Checklist de onboarding: solo ADMIN; se auto-oculta con dismissed */}
       {session?.user?.role === "ADMIN" && <OnboardingCard />}
+
+      {/* Bandeja del día: todo lo que exige acción, de urgente a suave */}
+      {pendientes.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5" />
+              Pendientes de hoy
+            </CardTitle>
+            <CardDescription>
+              Lo que necesita tu atención ahora mismo
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {pendientes.map(item => (
+              <Link
+                key={item.key}
+                href={item.href}
+                className="flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-muted transition-colors"
+              >
+                <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${SEVERITY_STYLE[item.severity].dot}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-tight">{item.title}</p>
+                  {item.detail && <p className="text-xs text-muted-foreground truncate">{item.detail}</p>}
+                </div>
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  {SEVERITY_STYLE[item.severity].label}
+                </Badge>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Accesos rápidos */}
       <Card>
@@ -268,19 +309,19 @@ export default async function AdminDashboard() {
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link href="/admin/productos/nuevo">
+              <Link href="/admin/inventario?tab=stock&captura=1">
                 <Plus className="h-4 w-4" />
                 Agregar producto
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link href="/admin/reservas">
+              <Link href="/admin/clientes?tab=pedidos">
                 <Clock className="h-4 w-4" />
                 Reservas
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link href="/admin/inventario?tab=movimiento">
+              <Link href="/admin/inventario?tab=entradas">
                 <ArrowRightLeft className="h-4 w-4" />
                 Entradas y traspasos
               </Link>
@@ -347,7 +388,7 @@ export default async function AdminDashboard() {
                   {stats.pendingUsers}
                 </span>
                 <Button asChild>
-                  <Link href="/admin/usuarios?filter=pending">
+                  <Link href="/admin/equipo?tab=usuarios&filter=pending">
                     Revisar
                   </Link>
                 </Button>
@@ -404,7 +445,7 @@ export default async function AdminDashboard() {
                 ))}
                 <div className="pt-2">
                   <Button asChild variant="outline" className="w-full">
-                    <Link href="/admin/reservas">Ver y gestionar reservas</Link>
+                    <Link href="/admin/clientes?tab=pedidos">Ver y gestionar reservas</Link>
                   </Button>
                 </div>
               </div>
@@ -454,7 +495,7 @@ export default async function AdminDashboard() {
               ))}
             </div>
             <Button variant="outline" size="sm" className="mt-4 gap-2" asChild>
-              <Link href="/admin/productos?filter=low-stock">
+              <Link href="/admin/inventario?tab=stock&lowStock=true">
                 <Boxes className="h-4 w-4" />
                 Ver productos con stock bajo
               </Link>
@@ -475,7 +516,7 @@ export default async function AdminDashboard() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.totalBrands}</div>
             <Button variant="link" className="p-0 h-auto" asChild>
-              <Link href="/admin/productos?tab=clasificacion&sub=marcas">Gestionar marcas</Link>
+              <Link href="/admin/inventario?tab=stock&herramienta=clasificacion&sub=marcas">Gestionar marcas</Link>
             </Button>
           </CardContent>
         </Card>

@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { Suspense, useState, useEffect, useRef, useCallback } from "react"
 import { useSession } from "next-auth/react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -27,14 +28,20 @@ import {
     Coins,
     Banknote,
     CalendarDays,
-    ExternalLink
+    ExternalLink,
+    Truck
 } from "lucide-react"
+import { LesDeboPanel } from "@/components/admin/caja/les-debo-panel"
 
 type PaymentMethod = "CASH" | "CARD" | "TRANSFER" | "CREDIT"
 
 const METHOD_LABELS: Record<string, string> = {
     CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito",
 }
+
+// Centro de dinero: pestañas controladas por ?tab= (deep-link). Sin param = Caja.
+const CAJA_TABS = ["caja", "solicitudes", "proveedores"] as const
+type CajaTab = (typeof CAJA_TABS)[number]
 
 // Misma whitelist que el servidor (domain/cash.ts): denominaciones MXN del
 // conteo físico. Se duplica aquí porque la página es cliente y el dominio
@@ -345,6 +352,15 @@ function WeekPanel(props: { branchId: string; refreshKey: number }) {
 }
 
 export default function CajaPage() {
+    // useSearchParams exige un boundary de Suspense (la página es 100% cliente).
+    return (
+        <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Cargando caja...</div>}>
+            <CajaPanel />
+        </Suspense>
+    )
+}
+
+function CajaPanel() {
     const { data: session } = useSession()
     const isAdmin = session?.user?.role === "ADMIN"
     const userId = session?.user?.id ?? ""
@@ -357,6 +373,16 @@ export default function CajaPage() {
     const [branchId, setBranchId] = useState("")
     const [lastClosure, setLastClosure] = useState<ClosureResult | null>(null)
     const [weekRefresh, setWeekRefresh] = useState(0)
+
+    // Pestaña activa desde la URL (?tab=caja|solicitudes|proveedores).
+    const searchParams = useSearchParams()
+    const pathname = usePathname()
+    const router = useRouter()
+    const rawTab = searchParams.get("tab")
+    const tab: CajaTab = (CAJA_TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as CajaTab) : "caja"
+    const handleTabChange = (value: string) => {
+        router.replace(`${pathname}?tab=${value}`, { scroll: false })
+    }
 
     const postCash = async (payload: Record<string, unknown>) => {
         const action = String(payload.action)
@@ -581,8 +607,7 @@ export default function CajaPage() {
                     </Button>
                 </CardContent>
             </Card>
-            {/* Los gastos pueden solicitarse aunque la caja esté cerrada; autorizarlos requiere caja abierta. */}
-            <CashRequestsPanel branchId={branchId} isAdmin={isAdmin} userId={userId} onChanged={fetchRegister} />
+            {/* Los gastos pueden solicitarse aunque la caja esté cerrada (pestaña «Solicitudes»); autorizarlos requiere caja abierta. */}
         </div>
     )
 
@@ -656,7 +681,7 @@ export default function CajaPage() {
                                 <ArrowDownCircle className="w-4 h-4 mr-2" /> Ingreso
                             </Button>
                             {/* La salida directa de efectivo es solo de admin; el empleado
-                                solicita el gasto y otro admin lo autoriza (panel de abajo). */}
+                                solicita el gasto y otro admin lo autoriza (pestaña «Solicitudes»). */}
                             <Button
                                 variant={movType === "OUT" ? "destructive" : "outline"}
                                 onClick={() => { if (isAdmin) setMovType("OUT") }}
@@ -668,7 +693,7 @@ export default function CajaPage() {
                         </div>
                         {!isAdmin && (
                             <p className="text-xs text-muted-foreground -mt-1">
-                                Los retiros de efectivo requieren autorización de un administrador — usa «Solicitar gasto» más abajo.
+                                Los retiros de efectivo requieren autorización de un administrador — usa la pestaña «Solicitudes».
                             </p>
                         )}
                         <div className="space-y-2">
@@ -708,9 +733,6 @@ export default function CajaPage() {
                 </Card>
             </div>
 
-            {/* Gastos con autorización */}
-            <CashRequestsPanel branchId={branchId} isAdmin={isAdmin} userId={userId} onChanged={fetchRegister} />
-
             {/* Historial */}
             <Card>
                 <CardHeader>
@@ -744,26 +766,55 @@ export default function CajaPage() {
         </div>
     )
 
-    if (loading) return <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
-
     return (
-        <Tabs defaultValue="turno" className="space-y-6">
-            <TabsList>
-                <TabsTrigger value="turno">Turno actual</TabsTrigger>
-                <TabsTrigger value="semana">Semana</TabsTrigger>
-            </TabsList>
-            <TabsContent value="turno">{shiftView}</TabsContent>
-            <TabsContent value="semana">
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> Cortes de los últimos 7 días</CardTitle>
-                        <CardDescription>Cada cierre con su efectivo contado, esperado y diferencia.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {branchSelector && <div className="w-full sm:w-56">{branchSelector}</div>}
-                        <WeekPanel branchId={branchId} refreshKey={weekRefresh} />
-                    </CardContent>
-                </Card>
+        <Tabs value={tab} onValueChange={handleTabChange} className="space-y-6">
+            <div className="overflow-x-auto pb-2">
+                <TabsList className="flex-nowrap min-w-max">
+                    <TabsTrigger value="caja" className="flex items-center gap-2">
+                        <Wallet className="h-4 w-4" /> Caja
+                    </TabsTrigger>
+                    <TabsTrigger value="solicitudes" className="flex items-center gap-2">
+                        <ReceiptText className="h-4 w-4" /> Solicitudes
+                    </TabsTrigger>
+                    <TabsTrigger value="proveedores" className="flex items-center gap-2">
+                        <Truck className="h-4 w-4" /> Les debo
+                    </TabsTrigger>
+                </TabsList>
+            </div>
+
+            <TabsContent value="caja">
+                {loading ? (
+                    <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
+                ) : (
+                    <Tabs defaultValue="turno" className="space-y-6">
+                        <TabsList>
+                            <TabsTrigger value="turno">Turno actual</TabsTrigger>
+                            <TabsTrigger value="semana">Semana</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="turno">{shiftView}</TabsContent>
+                        <TabsContent value="semana">
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> Cortes de los últimos 7 días</CardTitle>
+                                    <CardDescription>Cada cierre con su efectivo contado, esperado y diferencia.</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {branchSelector && <div className="w-full sm:w-56">{branchSelector}</div>}
+                                    <WeekPanel branchId={branchId} refreshKey={weekRefresh} />
+                                </CardContent>
+                            </Card>
+                        </TabsContent>
+                    </Tabs>
+                )}
+            </TabsContent>
+
+            <TabsContent value="solicitudes" className="space-y-4">
+                {branchSelector && <div className="w-full sm:w-56">{branchSelector}</div>}
+                <CashRequestsPanel branchId={branchId} isAdmin={isAdmin} userId={userId} onChanged={fetchRegister} />
+            </TabsContent>
+
+            <TabsContent value="proveedores">
+                <LesDeboPanel />
             </TabsContent>
 
             {/* Diálogo de cierre con conteo de billetes */}

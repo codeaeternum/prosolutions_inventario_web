@@ -43,7 +43,7 @@ interface AbonarDialogProps {
 }
 
 /**
- * Diálogo "Registrar Abono" compartido entre la cartera (/admin/credito) y la
+ * Diálogo "Registrar Abono" compartido entre la cartera (/admin/clientes?tab=cobranza) y la
  * ficha 360 del cliente. Cobra por POST /api/credit/payment con llave de
  * idempotencia: un reintento con los mismos datos no duplica el abono.
  */

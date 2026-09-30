@@ -116,9 +116,9 @@ export function VerifyActions({
       )}
 
       <Button variant="outline" className="w-full" asChild>
-        <Link href="/admin/reservas">
+        <Link href="/admin/clientes?tab=pedidos">
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Volver a Reservas
+          Volver a Pedidos
         </Link>
       </Button>
     </div>

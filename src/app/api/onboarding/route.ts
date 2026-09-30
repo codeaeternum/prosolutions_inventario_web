@@ -78,7 +78,7 @@ export async function GET() {
         key: "branch",
         label: "Crea tu primera sucursal",
         done: branches >= 1,
-        href: "/admin/sucursales",
+        href: "/admin/configuracion?tab=sucursales",
       },
       {
         key: "product",
@@ -90,7 +90,7 @@ export async function GET() {
         key: "service",
         label: "Publica un servicio de reparación",
         done: services >= 1,
-        href: "/admin/taller/catalogo",
+        href: "/admin/taller?tab=precios",
       },
       {
         key: "order",
@@ -102,7 +102,7 @@ export async function GET() {
         key: "team",
         label: "Invita a tu equipo",
         done: staffCount >= 2,
-        href: "/admin/usuarios",
+        href: "/admin/equipo?tab=usuarios",
       },
     ]
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -10,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
 import { BarcodeScanner } from "@/components/barcode-scanner"
-import { CheckCircle, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
+import { CheckCircle, QrCode, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
 import { CartPanel } from "@/components/pos/cart-panel"
@@ -31,8 +32,14 @@ interface LastTicket { kind: CheckoutResult["kind"]; description: string; quanti
 const KIND_BADGE: Record<CheckoutResult["kind"], string | null> = { SALE: null, WORKSHOP: "Nota a taller", LAYAWAY: "Apartado", QUOTE: "Cotización" }
 
 export default function VentasPage() {
+    const router = useRouter()
     const [searchQuery, setSearchQuery] = useState("")
-    const [showScanner, setShowScanner] = useState(false)
+    // ?escanear=1 (redirect de /admin/verificar) abre el escáner en modo QR
+    // al montar — estado inicial perezoso, no efecto.
+    const [showScanner, setShowScanner] = useState(() =>
+        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("escanear") === "1")
+    const [scanMode, setScanMode] = useState<"producto" | "qr">(() =>
+        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("escanear") === "1" ? "qr" : "producto")
     const [cart, setCart] = useState<CartItem[]>([])
     const [customer, setCustomer] = useState<PosCustomer | null>(null)
     // Nota a taller: precio de mayoreo. Un cliente STORE/TECHNICIAN la fuerza.
@@ -45,10 +52,12 @@ export default function VentasPage() {
     const [showCheckout, setShowCheckout] = useState(false)
     const [showSuspend, setShowSuspend] = useState(false)
     const [showParked, setShowParked] = useState(false)
-    // ?apartados=1 — "Liquidar en POS" desde /admin/reservas abre el cajón.
+    // ?apartados=1 — los apartados mostrador de Pedidos (/admin/clientes?tab=pedidos) abren el cajón.
     // Estado inicial perezoso: abrir un drawer al montar es estado inicial, no efecto.
     const [showLayaways, setShowLayaways] = useState(() =>
         typeof window !== "undefined" && new URLSearchParams(window.location.search).get("apartados") === "1")
+    // ?escanear=1 — llega del redirect de /admin/verificar (QR de apartado).
+
     const [showQuotes, setShowQuotes] = useState(false)
     const [showMobileCart, setShowMobileCart] = useState(false)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
@@ -120,10 +129,19 @@ export default function VentasPage() {
         setCart(prev => prev.filter(item => item.product.id !== productId))
     }
 
+    // El QR de un apartado del cliente apunta a /verificar/<codigo>; si lo
+    // escaneado trae esa forma, se abre la verificación en vez de buscar
+    // producto. Un solo escáner, dos destinos.
     const handleScan = async (code: string) => {
         const clean = code.trim()
         if (!clean) return
         setShowScanner(false)
+        const verifyMatch = clean.match(/\/verificar\/([^/?#\s]+)/)
+        if (scanMode === "qr" || verifyMatch) {
+            const reservationCode = verifyMatch ? verifyMatch[1] : clean
+            router.push(`/verificar/${encodeURIComponent(reservationCode)}`)
+            return
+        }
         try {
             const res = await fetch(`/api/search/pos?q=${encodeURIComponent(clean)}${branchId ? `&branchId=${branchId}` : ""}`)
             if (!res.ok) throw new Error()
@@ -219,7 +237,10 @@ export default function VentasPage() {
                         </Select>
                     )}
                     <ExportButton type="sales" branchId={branchId || undefined} />
-                    <Button onClick={() => setShowScanner(true)} disabled={processing} variant="outline">
+                    <Button onClick={() => { setScanMode("qr"); setShowScanner(true) }} disabled={processing} variant="outline" title="Escanea el QR que muestra el cliente para entregar su apartado">
+                        <QrCode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">QR apartado</span>
+                    </Button>
+                    <Button onClick={() => { setScanMode("producto"); setShowScanner(true) }} disabled={processing} variant="outline">
                         <ScanBarcode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Escanear</span>
                     </Button>
                 </div>
@@ -264,7 +285,7 @@ export default function VentasPage() {
 
             <Dialog open={showScanner} onOpenChange={setShowScanner}>
                 <DialogContent className="sm:max-w-md">
-                    <DialogHeader><DialogTitle>Escanear producto</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle>{scanMode === "qr" ? "Escanear QR del apartado" : "Escanear producto"}</DialogTitle></DialogHeader>
                     <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
                 </DialogContent>
             </Dialog>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   Save,
   RefreshCw,
@@ -8,6 +9,7 @@ import {
   RotateCcw,
   AlertCircle,
   Settings2,
+  Building2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { refreshBusinessName } from "@/components/admin/business-name"
@@ -29,6 +31,8 @@ import {
 } from "@/components/admin/configuracion/settings-sections"
 import { PublicProfileCard } from "@/components/admin/configuracion/public-profile"
 import { PartnerCard } from "@/components/admin/configuracion/partner-card"
+import { SucursalesPanel } from "@/components/admin/configuracion/sucursales-panel"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const DEFAULTS: GeneralSettings = {
   tempReservationMinutes: 30,
@@ -54,6 +58,12 @@ function formatDate(iso?: string) {
 }
 
 export default function ConfiguracionPage() {
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
+  // ?tab=general|sucursales — Sucursales absorbió la vieja /admin/sucursales.
+  const tab = searchParams.get("tab") === "sucursales" ? "sucursales" : "general"
+
   const [settings, setSettings] = useState<GeneralSettings>(DEFAULTS)
   const [initialSettings, setInitialSettings] = useState<GeneralSettings | null>(null)
   const [loading, setLoading] = useState(true)
@@ -232,15 +242,6 @@ export default function ConfiguracionPage() {
 
   const lastUpdated = formatDate(settings.updatedAt)
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Cargando configuración…</p>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       {/* Cabecera */}
@@ -259,6 +260,8 @@ export default function ConfiguracionPage() {
             </p>
           )}
         </div>
+        {/* Las acciones de guardado solo aplican a los parámetros de General. */}
+        {tab === "general" && (
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={fetchSettings} disabled={loading}>
             <RefreshCw className="h-4 w-4 mr-2" />
@@ -288,48 +291,83 @@ export default function ConfiguracionPage() {
             {saved ? "Guardado" : "Guardar"}
           </Button>
         </div>
+        )}
       </div>
 
-      {fetchError && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>No se pudo cargar la configuración. Revisa la conexión y pulsa «Recargar».</span>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => router.replace(`${pathname}?tab=${value}`, { scroll: false })}
+        className="w-full"
+      >
+        <div className="overflow-x-auto pb-2">
+          <TabsList className="mb-4 flex-nowrap min-w-max">
+            <TabsTrigger value="general" className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              General
+            </TabsTrigger>
+            <TabsTrigger value="sucursales" className="flex items-center gap-2">
+              <Building2 className="h-4 w-4" />
+              Sucursales
+            </TabsTrigger>
+          </TabsList>
         </div>
-      )}
 
-      <IdentityCard
-        value={settings.ticketBusinessName || ""}
-        saving={savingBusiness}
-        onChange={(value) => handleText("ticketBusinessName", value)}
-        onSave={handleSaveBusinessName}
-      />
+        <TabsContent value="general" className="mt-0 space-y-6">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+              <RefreshCw className="h-10 w-10 animate-spin text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Cargando configuración…</p>
+            </div>
+          ) : (
+            <>
+              {fetchError && (
+                <div className="flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  <AlertCircle className="h-5 w-5 shrink-0" />
+                  <span>No se pudo cargar la configuración. Revisa la conexión y pulsa «Recargar».</span>
+                </div>
+              )}
 
-      <PublicProfileCard />
+              <IdentityCard
+                value={settings.ticketBusinessName || ""}
+                saving={savingBusiness}
+                onChange={(value) => handleText("ticketBusinessName", value)}
+                onSave={handleSaveBusinessName}
+              />
 
-      <WorkshopCard />
+              <PublicProfileCard />
 
-      <PartnerCard
-        intakeEnabled={settings.partnerIntakeEnabled ?? false}
-        partnerId={settings.repairPartnerBusinessId ?? ""}
-        onIntakeChange={(value) =>
-          setSettings((prev) => ({ ...prev, partnerIntakeEnabled: value }))
-        }
-        onPartnerChange={(value) => handleText("repairPartnerBusinessId", value)}
-      />
+              <WorkshopCard />
 
-      <AdminLinksCard />
+              <PartnerCard
+                intakeEnabled={settings.partnerIntakeEnabled ?? false}
+                partnerId={settings.repairPartnerBusinessId ?? ""}
+                onIntakeChange={(value) =>
+                  setSettings((prev) => ({ ...prev, partnerIntakeEnabled: value }))
+                }
+                onPartnerChange={(value) => handleText("repairPartnerBusinessId", value)}
+              />
 
-      <TimingCard settings={settings} onNumber={handleNumber} />
+              <AdminLinksCard />
 
-      <FinanceCard settings={settings} onNumber={handleNumber} onText={handleText} />
+              <TimingCard settings={settings} onNumber={handleNumber} />
 
-      <TicketCard settings={settings} onText={handleText} onNumber={handleNumber} onBool={handleBool} />
+              <FinanceCard settings={settings} onNumber={handleNumber} onText={handleText} />
 
-      <ReceptionCard settings={settings} onText={handleText} onBool={handleBool} />
+              <TicketCard settings={settings} onText={handleText} onNumber={handleNumber} onBool={handleBool} />
 
-      <QuoteCard settings={settings} onNumber={handleNumber} onText={handleText} />
+              <ReceptionCard settings={settings} onText={handleText} onBool={handleBool} />
 
-      <SummaryCard settings={settings} />
+              <QuoteCard settings={settings} onNumber={handleNumber} onText={handleText} />
+
+              <SummaryCard settings={settings} />
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="sucursales" className="mt-0">
+          <SucursalesPanel />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

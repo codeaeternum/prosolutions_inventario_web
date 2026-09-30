@@ -27,31 +27,34 @@ export const MODULES = [
 export type ModuleKey = (typeof MODULES)[number]
 
 export const MODULE_LABELS: Record<ModuleKey, string> = {
-  taller: "Órdenes de servicio",
+  taller: "Servicio: órdenes y precios de reparación",
   ventas: "Vender (punto de venta)",
   caja: "Caja",
-  reservas: "Apartados",
+  reservas: "Pedidos del cliente (dentro de Clientes)",
   clientes: "Clientes",
-  credito: "Fiado y cartera",
+  credito: "Cobranza y fiado (dentro de Clientes)",
   mercado: "Mercado con aliados",
   inventario: "Inventario: productos, stock, entradas y encargos",
-  sucursales: "Sucursales",
-  usuarios: "Usuarios y permisos",
+  sucursales: "Sucursales (dentro de Configuración)",
+  usuarios: "Usuarios y permisos (dentro de Equipo)",
   reportes: "Reportes y gráficas",
   notificaciones: "Notificaciones",
   configuracion: "Configuración",
 }
 
-// Prefijo de página /admin/* → módulo. Orden importa: el primer match gana
-// (/admin/taller/catalogo sigue siendo "taller").
+// Prefijo de página /admin/* → módulo. Orden importa: el primer match gana.
+// Las páginas absorbidas (credito→clientes?tab=cobranza, usuarios→equipo,
+// sucursales→configuracion, etc.) mapean al módulo CANÓNICO destino; los
+// permisos guardados con la clave vieja siguen entrando vía MODULE_ALIASES.
 const MODULE_BY_PATH: readonly (readonly [string, ModuleKey])[] = [
   ["/admin/taller", "taller"],
-  ["/admin/convenio", "taller"],
+  ["/admin/convenio", "mercado"],
   ["/admin/ventas", "ventas"],
+  ["/admin/verificar", "ventas"],
   ["/admin/caja", "caja"],
-  ["/admin/reservas", "reservas"],
+  ["/admin/reservas", "clientes"],
   ["/admin/clientes", "clientes"],
-  ["/admin/credito", "credito"],
+  ["/admin/credito", "clientes"],
   ["/admin/mercado", "mercado"],
   // Todo lo de productos/stock vive en el módulo "inventario" (una sola
   // pantalla). Las rutas legacy /admin/productos* redirigen ahí pero su
@@ -61,13 +64,13 @@ const MODULE_BY_PATH: readonly (readonly [string, ModuleKey])[] = [
   ["/admin/modelos", "inventario"],
   ["/admin/categorias", "inventario"],
   ["/admin/etiquetas", "inventario"],
+  ["/admin/catalogo", "inventario"],
   ["/admin/inventario", "inventario"],
   ["/admin/movimientos", "inventario"],
   ["/admin/encargos", "inventario"],
-  ["/admin/sucursales", "sucursales"],
+  ["/admin/sucursales", "configuracion"],
   ["/admin/usuarios", "usuarios"],
   ["/admin/reportes", "reportes"],
-  ["/admin/notificaciones", "notificaciones"],
   ["/admin/configuracion", "configuracion"],
 ]
 
@@ -76,6 +79,22 @@ export function moduleForAdminPath(pathname: string): ModuleKey | null {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return module
   }
   return null // /admin (dashboard) y páginas no mapeadas: sin restricción
+}
+
+// Claves de módulo viejas que siguen autorizando la página canónica nueva.
+// Solo se expanden en gates de PÁGINA (middleware 2.4 y sidebar); las API
+// conservan su requireModule estricto.
+const MODULE_ALIASES: Partial<Record<ModuleKey, readonly string[]>> = {
+  clientes: ["credito", "reservas"],
+  configuracion: ["sucursales"],
+  inventario: ["productos"],
+}
+
+/** Gate de página: la lista del usuario autoriza el módulo canónico o alguno
+ * de sus alias legacy (empleados que tenían "credito" llegan a Cobranza). */
+export function adminPathAllowed(allowedModules: readonly string[], required: ModuleKey): boolean {
+  if (allowedModules.includes(required)) return true
+  return (MODULE_ALIASES[required] ?? []).some(alias => allowedModules.includes(alias))
 }
 
 interface AccessSubject {
@@ -104,9 +123,9 @@ export function hasModule(user: AccessSubject, module: ModuleKey): boolean {
   if (!list || list.length === 0)
     return !(user.role === "EMPLOYEE" && EMPLOYEE_RESTRICTED.has(module))
   if (list.includes(module)) return true
-  // Alias legacy: usuarios guardados con el módulo viejo "productos"
-  // conservan acceso al módulo unificado "inventario".
-  return module === "inventario" && list.includes("productos")
+  // Alias legacy: usuarios guardados con claves viejas (p. ej. "productos")
+  // conservan acceso al módulo canónico que las absorbió.
+  return (MODULE_ALIASES[module] ?? []).some(alias => list.includes(alias))
 }
 
 /** Sin restricción cuando la lista está vacía; ADMIN tampoco se limita por sucursal. */
