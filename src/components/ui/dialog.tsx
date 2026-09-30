@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -87,9 +88,12 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
             }
         }, [open, setOpen])
 
-        if (!open) return null
+        if (!open || typeof document === "undefined") return null
 
-        return (
+        // Portal a body: sin él, un ancestro con transform/filter convierte
+        // el `fixed` en relativo al documento y el diálogo se desplaza fuera
+        // de la ventana (aparecía "escondido" al fondo de la página).
+        return createPortal(
             <div className="fixed inset-0 z-50">
                 {/* Overlay */}
                 <div
@@ -118,7 +122,8 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
                         <span className="sr-only">Cerrar</span>
                     </button>
                 </div>
-            </div>
+            </div>,
+            document.body
         )
     }
 )
