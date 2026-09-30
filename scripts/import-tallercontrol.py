@@ -21,7 +21,9 @@ from collections import Counter
 import openpyxl
 
 BUSINESS_ID = "biz-default"
-BRANCH_MAIN = "branch-maneadero"
+# La sucursal principal histórica (id 'branch-principal') se consolidó como
+# "Maneadero": todas las órdenes importadas viven ahí junto con el inventario.
+BRANCH_MAIN = "branch-principal"
 BRANCH_CB = "branch-canbuenavista"
 # Receptor por defecto cuando "Usuario recibio" viene vacío o no mapea:
 # el script crea a Cristina en ambos entornos, así que es FK seguro.
