@@ -57,7 +57,7 @@ describe("cadena de match", () => {
         expect(findMany).toHaveBeenCalledTimes(1)
         expect(findMany.mock.calls[0][0].where).toMatchObject({ id: { in: ["ap-1"] } })
         expect(offers.get("p1")).toEqual([
-            { businessId: "biz-ally", businessName: "TallerX", stock: 3, price: 350 },
+            { businessId: "biz-ally", businessName: "TallerX", productId: "ap-1", stock: 3, price: 350 },
         ])
     })
 
@@ -84,7 +84,7 @@ describe("cadena de match", () => {
             OR: [{ name: { equals: "pantalla a55", mode: "insensitive" } }],
         })
         expect(offers.get("p1")).toEqual([
-            { businessId: "biz-ally", businessName: "TallerX", stock: 3, price: 350 },
+            { businessId: "biz-ally", businessName: "TallerX", productId: "ap-9", stock: 3, price: 350 },
         ])
     })
 
@@ -111,8 +111,8 @@ describe("oferta por negocio", () => {
         ])
         const offers = await findAllyOffers(db, BIZ, [{ productId: "p1", name: "Pantalla A55" }])
         expect(offers.get("p1")).toEqual([
-            { businessId: "biz-ally", businessName: "TallerX", stock: 3, price: 350 },
-            { businessId: "b2", businessName: "Otro", stock: 3, price: 500 },
+            { businessId: "biz-ally", businessName: "TallerX", productId: "a1", stock: 3, price: 350 },
+            { businessId: "b2", businessName: "Otro", productId: "a2", stock: 3, price: 500 },
         ])
     })
 
@@ -122,8 +122,10 @@ describe("oferta por negocio", () => {
             allyRow({ id: "a2", stock: 8, wholesalePrice: 300 }),
         ])
         const offers = await findAllyOffers(db, BIZ, [{ productId: "p1", name: "Pantalla A55" }])
+        // productId = la fila que fija el precio (la más barata): es la que
+        // se pediría al aliado por /api/marketplace/requests.
         expect(offers.get("p1")).toEqual([
-            { businessId: "biz-ally", businessName: "TallerX", stock: 8, price: 300 },
+            { businessId: "biz-ally", businessName: "TallerX", productId: "a2", stock: 8, price: 300 },
         ])
     })
 

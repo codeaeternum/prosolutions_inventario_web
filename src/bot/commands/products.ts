@@ -2,21 +2,26 @@ import { submitRegistration } from "../lib/registration"
 import { downloadTelegramImage } from "../lib/download"
 import { writePaymentProof } from "../../lib/payment-proofs"
 import { Markup } from 'telegraf'
+import type { Context } from 'telegraf'
 import { message } from 'telegraf/filters'
 import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as https from 'https'
+import type { Product } from '@prisma/client'
 import type { BotContext } from '../lib/types'
-import { customerTypeLabels } from '../lib/types'
 import { createProduct } from '../../lib/domain/products'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { getDefaultBusinessId } from '../../lib/settings'
-import { generateQRCode, normalizePhone } from '../lib/utils'
+import { normalizePhone } from '../lib/utils'
 
 type Intent = 'greeting' | 'help' | 'profile' | 'categories' | 'offers'
     | 'price_check' | 'stock_check' | 'reservation_status' | 'cancel'
     | 'thanks' | 'product_search'
+
+/** Subset de columnas de Product que usa la búsqueda (findMany y el
+ *  fallback fuzzy de $queryRaw comparten esta forma). */
+type ProductSearchResult = Pick<Product, 'id' | 'name' | 'retailPrice' | 'stock'>
 
 function classifyIntent(text: string): Intent {
     const lower = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -38,7 +43,7 @@ function classifyIntent(text: string): Intent {
 
 export function registerProducts(
     ctx: BotContext,
-    processReservation: (ctx: any, method: 'STORE' | 'TRANSFER' | 'CREDIT', proofUrl?: string) => Promise<void>
+    processReservation: (ctx: Context, method: 'STORE' | 'TRANSFER' | 'CREDIT', proofUrl?: string) => Promise<unknown>
 ) {
     const { bot, prisma, sessions, isDev, BOT_TOKEN } = ctx
 
@@ -100,7 +105,7 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
             }
 
             sessions.deleteProduct[telegramId] = { step: 'SELECT', products }
-            const productList = products.map((p: any, i: number) =>
+            const productList = products.map((p, i) =>
                 `${i + 1}. *${p.name}* (Stock: ${p.stock})`
             ).join('\n')
 
@@ -235,7 +240,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 const bytes = await downloadTelegramImage(fileUrl)
                 const localUrl = await writePaymentProof(bytes, user.id)
                 await processReservation(ctx, 'TRANSFER', localUrl)
-            } catch (e) {
+            } catch {
                 console.error('Error uploading proof')
                 await ctx.reply('❌ Error al procesar la foto. Intenta de nuevo.')
             }
@@ -296,7 +301,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     reserveSession.step = 'PAYMENT_METHOD'
 
                     const total = reserveSession.price * quantity
-                    const buttons: any[][] = [
+                    const buttons = [
                         [Markup.button.callback('🏢 Pago en Tienda (Pagar al recoger)', 'pay_store')],
                         [Markup.button.callback('🏦 Transferencia (Subir comprobante)', 'pay_transfer')]
                     ]
@@ -311,7 +316,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         if (available >= total) {
                             buttons.push([Markup.button.callback('💳 A crédito (cobro a tu cuenta)', 'pay_credit')])
                         }
-                    } catch (_) { }
+                    } catch { }
 
                     try {
                         return await ctx.reply(`💳 *¿Cómo deseas pagar?*\n\n*Total:* $${total.toLocaleString()}\n\nSelecciona una opción:`, {
@@ -320,7 +325,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         })
                     } catch (replyErr) {
                         console.error('[Reserve] Error:', replyErr)
-                        try { await ctx.reply('❌ Error. Intenta de nuevo o /cancelar.') } catch (_) { }
+                        try { await ctx.reply('❌ Error. Intenta de nuevo o /cancelar.') } catch { }
                         return
                     }
                 }
@@ -379,7 +384,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 } catch (e) {
                     console.error('[RegWizard] General Error:', e)
                     delete sessions.registration[telegramId]
-                    try { await ctx.reply('❌ Error en el proceso. Intenta de nuevo con /start') } catch (_) { }
+                    try { await ctx.reply('❌ Error en el proceso. Intenta de nuevo con /start') } catch { }
                 }
                 return
             }
@@ -395,7 +400,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     const actor = await getBotAccount(prisma, telegramId)
                     if (!actor) { delete sessions.adminProduct[telegramId]; return ctx.reply('Cuenta no disponible.') }
                     const categories = await prisma.category.findMany({ where: { businessId: actor.businessId }, take: 10 })
-                    const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `addcat_${c.id}`)])
+                    const buttons = categories.map((c) => [Markup.button.callback(c.name, `addcat_${c.id}`)])
                     await ctx.reply('2️⃣ *Selecciona la categoría:*', { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     return
                 }
@@ -492,7 +497,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     ]
                 }))
 
-                let products = await prisma.product.findMany({
+                let products: ProductSearchResult[] = await prisma.product.findMany({
                     where: { businessId: searchBusinessId, AND: andConditions, isActive: true, stock: { gt: 0 } },
                     take: 5,
                     include: { category: true },
@@ -502,7 +507,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 let usedFuzzy = false
                 if (products.length === 0) {
                     try {
-                        const results: any[] = await prisma.$queryRaw`
+                        const results = await prisma.$queryRaw<ProductSearchResult[]>`
                             SELECT p.id, p.name, p."retailPrice", p.stock
                             FROM "Product" p
                             WHERE p."isActive" = true AND p.stock > 0
@@ -512,7 +517,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                             LIMIT 3
                         `
                         if (results?.length > 0) { products = results; usedFuzzy = true }
-                    } catch (e) {
+                    } catch {
                         if (words.length > 1) {
                             const orConditions = words.map(word => ({
                                 OR: [
@@ -525,11 +530,11 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                                 where: { businessId: searchBusinessId, OR: orConditions, isActive: true, stock: { gt: 0 } },
                                 take: 10, include: { category: true }
                             })
-                            const scored = orProducts.map((p: any) => {
+                            const scored = orProducts.map((p) => {
                                 const name = p.name.toLowerCase()
-                                let score = words.filter(w => name.includes(w)).length
+                                const score = words.filter(w => name.includes(w)).length
                                 return { ...p, score }
-                            }).filter(p => p.score >= Math.max(1, Math.ceil(words.length / 2))).sort((a: any, b: any) => b.score - a.score)
+                            }).filter(p => p.score >= Math.max(1, Math.ceil(words.length / 2))).sort((a, b) => b.score - a.score)
                             products = scored.slice(0, 3)
                             if (products.length > 0) usedFuzzy = true
                         }
@@ -542,9 +547,9 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
 
                 if (usedFuzzy) await ctx.reply(`🤔 ${userName}, no encontré exactamente eso, pero quizás buscas alguno de estos:`)
 
-                const buttons = products.map((p: any) => [Markup.button.callback(`📦 ${p.name.substring(0, 35)}`, `prod_${p.id}`)])
+                const buttons = products.map((p) => [Markup.button.callback(`📦 ${p.name.substring(0, 35)}`, `prod_${p.id}`)])
                 let msg = `🔎 *${products.length} resultado(s) para "${query}"*\n\n`
-                products.forEach((p: any, i: number) => {
+                products.forEach((p, i) => {
                     msg += `${i + 1}. *${p.name}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n\n`
                 })
                 msg += '_Selecciona un producto:_'
@@ -556,7 +561,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             }
         } catch (e) {
             console.error('[Text Handler] CRITICAL ERROR:', e)
-            try { await ctx.reply('❌ Algo falló. Usa /cancelar e intenta de nuevo.') } catch (_) { }
+            try { await ctx.reply('❌ Algo falló. Usa /cancelar e intenta de nuevo.') } catch { }
         }
     })
 }

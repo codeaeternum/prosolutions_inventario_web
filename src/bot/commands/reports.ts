@@ -2,6 +2,7 @@ import { changeReservation } from "../../lib/domain/reservations"
 import { moveInventory } from "../../lib/domain/inventory"
 import { randomUUID } from "crypto"
 import { Markup } from 'telegraf'
+import type { InlineKeyboardButton } from 'telegraf/types'
 import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
@@ -86,7 +87,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             }
 
             let msg = `📋 *${reservations.length} reserva(s) pendiente(s):*\n\n`
-            reservations.forEach((r: any, i: number) => {
+            reservations.forEach((r, i) => {
                 const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
                 const statusLabel = r.status === 'PENDING_PAYMENT' ? '⏳ Pago' : '🛒 Tienda'
                 msg += `${i + 1}. *${r.product.name}*\n`
@@ -142,7 +143,7 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             if (register.movements.length > 0) {
                 msg += `\n📋 *Últimos movimientos:*\n`
-                register.movements.forEach((m: any) => {
+                register.movements.forEach((m) => {
                     const icon = m.type === 'IN' ? '🟢' : '🔴'
                     msg += `${icon} $${m.amount.toLocaleString()} — ${m.description?.substring(0, 30) || 'Sin desc.'}\n`
                 })
@@ -271,7 +272,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             }
 
             let msg = `📜 *Historial de Compras:*\n\n`
-            history.forEach((r: any, i: number) => {
+            history.forEach((r, i) => {
                 const statusIcon = r.status === 'COMPLETED' ? '✅' : r.status === 'CANCELLED' ? '❌' : '📦'
                 msg += `${i + 1}. ${statusIcon} *${r.product.name}*\n`
                 msg += `   📅 ${new Date(r.createdAt).toLocaleDateString()} | 💰 $${r.totalPrice}\n`
@@ -383,7 +384,7 @@ Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
 📅 ${new Date(r.createdAt).toLocaleDateString()}
 🔖 ${statusLabels[r.status] ?? r.status}`
 
-                const buttons: any[] = []
+                const buttons: InlineKeyboardButton[] = []
                 if (['PENDING', 'PENDING_PAYMENT'].includes(r.status)) {
                     buttons.push(Markup.button.callback('❌ Cancelar', `cancel_res_${r.id}`))
                 }

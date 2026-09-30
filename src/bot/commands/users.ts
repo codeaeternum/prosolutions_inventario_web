@@ -215,7 +215,7 @@ Ahora tienes acceso como cliente regular.`, { parse_mode: 'Markdown' }).catch(()
     })
 
     // Contact handler (phone sharing)
-    bot.on('contact' as any, async (ctx: any) => {
+    bot.on('contact', async (ctx) => {
         const telegramId = ctx.from.id.toString()
         const regSession = sessions.registration[telegramId]
         if (!regSession || regSession.step !== 'PHONE') return

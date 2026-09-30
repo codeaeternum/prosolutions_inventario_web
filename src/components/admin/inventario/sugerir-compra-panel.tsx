@@ -1,13 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import Link from "next/link"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Check, ClipboardList, Loader2, PackageCheck, PackageSearch, Plus, Store } from "lucide-react"
+import { Check, ClipboardList, Handshake, Loader2, PackageCheck, PackageSearch, Plus, Store } from "lucide-react"
 import { formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -15,6 +14,11 @@ import { toast } from "sonner"
 interface AllyInfo {
     businessId: string
     businessName: string
+    /**
+     * Id del producto EN EL CATÁLOGO DEL ALIADO (distinto del `productId`
+     * propio de la sugerencia): es el que va en el POST de la solicitud.
+     */
+    productId: string
     stock: number
     /** Precio aliado = wholesalePrice ?? retailPrice del producto del aliado. */
     price: number
@@ -45,9 +49,11 @@ interface SugerirCompraPanelProps {
  * Tarjeta "qué conviene pedir": lee /api/inventory/sugerencias-compra y manda
  * cada pieza a la lista de compras (POST /api/encargos/compras → alta manual
  * ligada al producto). La cantidad sugerida se puede editar antes de agregar.
- * Bajo el nombre, chips informativos muestran qué aliado del mercado B2B la
- * tiene en existencia y a qué precio aliado (abren /admin/mercado) — así el
- * dueño decide entre "pedir a proveedor" y "pedir al aliado".
+ * Bajo el nombre, chips de aliados muestran qué negocio del mercado B2B la
+ * tiene en existencia y a qué precio aliado — cada chip es un botón "Pedir"
+ * que manda la solicitud directo a ese aliado (POST /api/marketplace/requests,
+ * mismo contrato que el "Pedirla" de encargos) con la cantidad capturada en
+ * la fila — así el dueño decide entre "pedir a proveedor" y "pedir al aliado".
  */
 export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
     const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -59,6 +65,9 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
     const [added, setAdded] = useState<Record<string, boolean>>({})
     const [adding, setAdding] = useState<string | null>(null)
     const [addingAll, setAddingAll] = useState(false)
+    // "Pedir al aliado": chip `${productId}:${businessId}` en vuelo / ya pedido.
+    const [requesting, setRequesting] = useState<string | null>(null)
+    const [requested, setRequested] = useState<Record<string, boolean>>({})
     // Llave idempotente por producto: si el POST falla por red, reintentar la
     // misma fila reutiliza la llave y el servidor devuelve el recibo guardado.
     const addKeys = useRef<Record<string, ClientOperationKey | null>>({})
@@ -157,6 +166,47 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
         }
     }
 
+    /**
+     * "Pedir" a un aliado desde la sugerencia: POST /api/marketplace/requests
+     * con el productId DEL CATÁLOGO ALIADO (no el nuestro) y la cantidad
+     * capturada en la fila. Mismo contrato que el "Pedirla" de encargos:
+     * sin tallerName — en pedidos a OTRO negocio el servidor lo deriva del
+     * nombre de nuestro negocio — y nota con contexto de dónde sale el pedido.
+     * El endpoint no admite llave idempotente: el guardrail es el estado
+     * `requesting` (un envío a la vez) + `requested` (el chip queda apagado).
+     */
+    const requestFromAlly = async (s: Suggestion, a: AllyInfo) => {
+        const chipKey = `${s.productId}:${a.businessId}`
+        if (busy || requesting || requested[chipKey]) return
+        const quantity = parseInt(qty[s.productId] ?? "", 10)
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+            toast.error(`Cantidad inválida para pedir ${s.name}: captura un entero entre 1 y 9,999`)
+            return
+        }
+        setRequesting(chipKey)
+        try {
+            const res = await fetch("/api/marketplace/requests", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    productId: a.productId,
+                    qty: quantity,
+                    note: `Sugerencia de compra: ${s.name} (tienes ${s.stock} / mínimo ${s.minStock})`,
+                }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data?.error || `El aliado no recibió la solicitud`)
+            setRequested(prev => ({ ...prev, [chipKey]: true }))
+            toast.success(`Solicitud enviada a ${a.businessName}`, {
+                description: `${quantity} × ${s.name} — la verás en Mercado → Pedidos que hago.`,
+            })
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Error de conexión. Reintenta sin cambiar los datos.")
+        } finally {
+            setRequesting(null)
+        }
+    }
+
     const pendingCount = suggestions.filter(s => !isInList(s)).length
     const busy = adding !== null || addingAll
 
@@ -201,32 +251,47 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                                         <p className="text-xs text-muted-foreground">
                                             tienes {s.stock} / mínimo {s.minStock} · {formatPrice(s.retailPrice)}
                                         </p>
-                                        {/* Chips informativos: qué aliado la tiene y a qué precio.
-                                            Abren el Mercado — el flujo de "agregar a la lista"
-                                            (pedir a proveedor) no cambia. */}
+                                        {/* Chips accionables: qué aliado la tiene y a qué precio —
+                                            cada uno pide la pieza directo a ese negocio con la
+                                            cantidad de la fila (queda "Pedida" al confirmarse). */}
                                         {aliados.length > 0 && (
                                             <div className="mt-1 flex flex-wrap items-center gap-1">
                                                 <Store className="h-3 w-3 shrink-0 text-muted-foreground" />
                                                 <span className="mr-0.5 text-[11px] text-muted-foreground">
                                                     la tiene:
                                                 </span>
-                                                {aliados.map(a => (
-                                                    <Link
-                                                        key={a.businessId}
-                                                        href="/admin/mercado"
-                                                        title={`${a.businessName} tiene ${a.stock} en existencia · ${formatPrice(a.price)} precio aliado — abrir Mercado`}
-                                                        className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                                    >
-                                                        <Badge
-                                                            variant="secondary"
-                                                            className="max-w-56 gap-1 truncate font-normal hover:bg-secondary/60"
+                                                {aliados.map(a => {
+                                                    const chipKey = `${s.productId}:${a.businessId}`
+                                                    const done = Boolean(requested[chipKey])
+                                                    const sendingThis = requesting === chipKey
+                                                    return (
+                                                        <Button
+                                                            key={a.businessId}
+                                                            type="button"
+                                                            size="xs"
+                                                            variant={done ? "ghost" : "secondary"}
+                                                            disabled={busy || requesting !== null || done}
+                                                            onClick={() => void requestFromAlly(s, a)}
+                                                            title={done
+                                                                ? `Solicitud enviada a ${a.businessName}`
+                                                                : `Pedir a ${a.businessName} — ${a.stock} en existencia · ${formatPrice(a.price)} precio aliado`}
+                                                            className="max-w-64 font-normal"
                                                         >
+                                                            {sendingThis ? (
+                                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                            ) : done ? (
+                                                                <Check className="h-3 w-3" />
+                                                            ) : (
+                                                                <Handshake className="h-3 w-3" />
+                                                            )}
                                                             <span className="truncate">{a.businessName}</span>
                                                             <span aria-hidden>·</span>
                                                             {formatPrice(a.price)}
-                                                        </Badge>
-                                                    </Link>
-                                                ))}
+                                                            <span aria-hidden>·</span>
+                                                            {done ? "Pedida" : "Pedir"}
+                                                        </Button>
+                                                    )
+                                                })}
                                             </div>
                                         )}
                                     </div>

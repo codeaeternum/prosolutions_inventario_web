@@ -16,7 +16,9 @@ import { findAllyOffers } from "@/lib/domain/ally-catalog"
  *
  * Cada sugerencia lleva `aliados`: qué OTROS negocios activos tienen la
  * pieza en existencia y publicada para aliados (marketVisibility ALLIES |
- * PUBLIC — nunca HIDDEN), con su precio aliado. Así el dueño elige "pedir a
+ * PUBLIC — nunca HIDDEN), con su precio aliado y el `productId` DE SU
+ * catálogo — el que se manda a POST /api/marketplace/requests al elegir
+ * "pedir al aliado" desde la propia sugerencia. Así el dueño elige "pedir a
  * proveedor" vs "pedir al aliado". El match reusa la frontera del mercado
  * B2B (findAllyOffers): encargos ya ligados a un producto aliado → barcode
  * exacto → nombre normalizado.

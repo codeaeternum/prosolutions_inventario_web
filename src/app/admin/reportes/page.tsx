@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
+import { ComparadorSucursales } from "@/components/admin/reportes/comparador-sucursales"
 import { formatDate } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
 import {
@@ -432,6 +433,9 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Comparador de sucursales: ventas, mermas, stock y taller lado a lado */}
+      <ComparadorSucursales />
 
       {/* Usuarios y Reservas */}
       <div className="grid gap-4 md:grid-cols-2">

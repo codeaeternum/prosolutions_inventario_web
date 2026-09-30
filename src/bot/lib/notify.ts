@@ -1,4 +1,4 @@
-import type { Telegraf } from "telegraf"
+import type { Telegraf, Types } from "telegraf"
 import { getPrisma } from "./prisma"
 
 /**
@@ -17,7 +17,7 @@ export async function isAdmin(telegramId: string): Promise<boolean> {
  * así que jamás se notifica a admins de otros tenants.
  * Usado para notificaciones internas (nuevos registros, reservas, etc.).
  */
-export async function notifyAdmins(bot: Telegraf, businessId: string, message: string, extraOptions?: any): Promise<void> {
+export async function notifyAdmins(bot: Telegraf, businessId: string, message: string, extraOptions?: Types.ExtraReplyMessage): Promise<void> {
   const prisma = getPrisma()
   if (!prisma) return
   const isDev = process.env.NODE_ENV !== "production"

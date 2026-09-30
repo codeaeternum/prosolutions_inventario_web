@@ -2,7 +2,6 @@ import { sell } from "../../lib/domain/sales"
 import { Markup } from 'telegraf'
 import type { BotContext, CartItem } from '../lib/types'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
-import { notifyAdmins } from '../lib/notify'
 
 export function registerCart({ bot, prisma, sessions }: BotContext) {
     // /carrito

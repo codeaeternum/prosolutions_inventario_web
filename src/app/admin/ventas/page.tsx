@@ -62,7 +62,7 @@ export default function VentasPage() {
     const [showMobileCart, setShowMobileCart] = useState(false)
     // ?encargo=<id> — "Cobrar" desde Pedidos: prellena cliente + pieza y
     // muestra la cotización/anticipo del encargo como referencia de cobro.
-    const [encargoCtx, setEncargoCtx] = useState<{ description: string; priceQuoted: number | null; deposit: number } | null>(null)
+    const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number } | null>(null)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
@@ -91,7 +91,7 @@ export default function VentasPage() {
             fetch("/api/encargos").then(r => r.ok ? r.json() : null).then(d => {
                 const e = (d?.encargos ?? []).find((x: { id: string }) => x.id === encargoId)
                 if (!e) return
-                setEncargoCtx({ description: e.description, priceQuoted: e.priceQuoted ?? null, deposit: e.deposit ?? 0 })
+                setEncargoCtx({ id: e.id, description: e.description, priceQuoted: e.priceQuoted ?? null, deposit: e.deposit ?? 0 })
                 if (e.customerId) {
                     fetch(`/api/users/pos?id=${e.customerId}`).then(r => r.ok ? r.json() : null)
                         .then(dd => { const u = dd?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
@@ -186,6 +186,16 @@ export default function VentasPage() {
     })
 
     const handleCompleted = useCallback((result: CheckoutResult, popup?: Window | null) => {
+        // Cobro de encargo: el documento se vendió/entregó → el encargo queda
+        // DELIVERED (el cobro ya quedó registrado por la venta; el PATCH es
+        // solo el cierre del ciclo del encargo).
+        if (encargoCtx && (result.kind === "SALE" || result.kind === "WORKSHOP" || result.kind === "LAYAWAY")) {
+            fetch(`/api/encargos/${encargoCtx.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "DELIVERED" }),
+            }).catch(() => {})
+        }
         const ticketUrl = result.ticketId ? `/admin/tickets/venta/${result.ticketId}${result.paidWithCard ? "?copias=2" : ""}` : undefined
         setLastTicket({ kind: result.kind, description: result.description, quantity: result.quantity, total: result.total, ticketUrl })
         clearTicket()
@@ -210,7 +220,7 @@ export default function VentasPage() {
         } else if (result.kind !== "QUOTE" && autoTicket && ticketUrl) {
             toast.info("El navegador bloqueó la pestaña del ticket; usa «Abrir ticket».")
         }
-    }, [autoTicket, clearTicket])
+    }, [autoTicket, clearTicket, encargoCtx])
 
     // Atajos de mostrador: F2/Ctrl+Enter cobran, Esc limpia. +/−/Supr van en cada línea del ticket.
     const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showScanner || showMobileCart

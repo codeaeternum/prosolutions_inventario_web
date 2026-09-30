@@ -38,6 +38,7 @@ export async function getPendientes(session: {
   const [
     cashRequests,
     encargos,
+    encargosListos,
     solicitudesAliados,
     apartadosVenciendo,
     ordenesListas,
@@ -50,6 +51,10 @@ export async function getPendientes(session: {
     }),
     prisma.encargo.count({
       where: { businessId, status: "PENDING", ...(branchScope ? { branchId: branchScope } : {}) },
+    }),
+    // Encargos cuya pieza ya llegó pero no se han entregado al cliente.
+    prisma.encargo.count({
+      where: { businessId, status: "READY", updatedAt: { lt: stale }, ...(branchScope ? { branchId: branchScope } : {}) },
     }),
     // Pedidos que aliados/visitantes nos hacen a nosotros (somos el vendedor).
     prisma.marketplaceRequest.count({
@@ -103,6 +108,14 @@ export async function getPendientes(session: {
       module: "inventario",
     },
     {
+      key: "encargos-listos",
+      severity: "media",
+      title: `${encargosListos} encargo${encargosListos === 1 ? "" : "s"} con pieza llegada sin entregar`,
+      detail: "La pieza ya llegó — avisa y cobra al cliente",
+      href: "/admin/clientes?tab=pedidos&tipo=ENCARGO",
+      module: "inventario",
+    },
+    {
       key: "solicitudes-aliados",
       severity: "media",
       title: `${solicitudesAliados} solicitud${solicitudesAliados === 1 ? "" : "es"} de aliados sin responder`,
@@ -144,6 +157,7 @@ export async function getPendientes(session: {
     "cash-requests": cashRequests,
     "caja-olvidada": cajasOlvidadas,
     encargos,
+    "encargos-listos": encargosListos,
     "solicitudes-aliados": solicitudesAliados,
     "ordenes-listas": ordenesListas,
     "apartados-vencen": apartadosVenciendo,

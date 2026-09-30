@@ -1,10 +1,7 @@
 import type { Telegraf } from "telegraf"
 import { isAdmin } from "../lib/notify"
-import { getPrisma } from "../lib/prisma"
 
 export function registerHelp(bot: Telegraf) {
-  const prisma = getPrisma()
-
   bot.help(async (ctx) => {
     const telegramId = ctx.from.id.toString()
     const userIsAdmin = await isAdmin(telegramId)

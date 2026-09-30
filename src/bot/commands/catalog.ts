@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { createReservations } from "../../lib/domain/reservations"
 import { Markup } from 'telegraf'
+import type { Context } from 'telegraf'
+import type { InputMediaPhoto } from 'telegraf/types'
 import * as QRCode from 'qrcode'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -9,7 +11,7 @@ import { isAdmin } from '../lib/notify'
 import { requirePrisma } from '../lib/guards'
 import { getBusinessSetting, getDefaultBusinessId } from '../../lib/settings'
 
-export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: BotContext) {
+export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // Helper: getSetting (duplicated here for independence; in production use a shared module)
     async function getSetting(businessId: string, key: string, defaultValue: string): Promise<string> {
         const setting = await getBusinessSetting(businessId, key)
@@ -34,7 +36,7 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
             const businessId = await businessIdOf(ctx.from?.id?.toString())
             const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
             if (categories.length === 0) return ctx.reply('No hay categorías registradas.')
-            const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `cat_${c.id}`)])
+            const buttons = categories.map((c) => [Markup.button.callback(c.name, `cat_${c.id}`)])
             await ctx.reply('📂 *Selecciona una categoría:*', {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard(buttons)
@@ -78,7 +80,7 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
                 return name.length >= 5 ? name.trim() : fullName
             }
 
-            const buttons = products.map((p: any) => {
+            const buttons = products.map((p) => {
                 const shortName = getShortName(p.name)
                 const displayName = shortName.length > 28 ? shortName.substring(0, 28) + '...' : shortName
                 return [Markup.button.callback(`📱 ${displayName}`, `prod_${p.id}`)]
@@ -113,8 +115,8 @@ export function registerCatalog({ bot, prisma, sessions, isDev, BOT_TOKEN }: Bot
 
             const isAdminUser = await isAdmin(ctx.from.id.toString())
 
-            const costInfo = isAdminUser && (product as any).costPrice
-                ? `\n🏷️ *Costo:* $${(product as any).costPrice.toLocaleString()}\n📊 *Ganancia:* $${(product.retailPrice - (product as any).costPrice).toLocaleString()} (${Math.round(((product.retailPrice - (product as any).costPrice) / (product as any).costPrice) * 100)}%)`
+            const costInfo = isAdminUser && product.costPrice
+                ? `\n🏷️ *Costo:* $${product.costPrice.toLocaleString()}\n📊 *Ganancia:* $${(product.retailPrice - product.costPrice).toLocaleString()} (${Math.round(((product.retailPrice - product.costPrice) / product.costPrice) * 100)}%)`
                 : ''
 
             const msg = `📦 *${product.name}*
@@ -143,7 +145,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
                 if (isDev) console.log(`[Prod] Sending ${product.images.length} images for ${product.id}`)
                 await ctx.deleteMessage().catch(() => { })
 
-                const validMediaGroup: any[] = []
+                const validMediaGroup: InputMediaPhoto[] = []
                 for (let i = 0; i < product.images.length; i++) {
                     const url = product.images[i]
                     if (url.startsWith('/uploads')) {
@@ -168,14 +170,14 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
                     try {
                         await ctx.replyWithMediaGroup(validMediaGroup.slice(0, 10))
                         await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
-                    } catch (e: any) {
+                    } catch {
                         await ctx.reply(`⚠️ No pude cargar las imágenes.`)
                         await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     }
                 } else if (validMediaGroup.length === 1) {
                     try {
                         await ctx.replyWithPhoto(validMediaGroup[0].media, { caption: msg, parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
-                    } catch (e: any) {
+                    } catch {
                         await ctx.reply(`⚠️ No pude cargar la imagen.`)
                         await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     }
@@ -345,7 +347,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
     })
 
     // Process reservation
-    async function processReservation(ctx: any, method: 'STORE' | 'TRANSFER' | 'CREDIT', proofUrl?: string) {
+    async function processReservation(ctx: Context, method: 'STORE' | 'TRANSFER' | 'CREDIT', proofUrl?: string) {
         const telegramId = ctx.from!.id.toString()
         const session = sessions.reservation[telegramId]
         if (!session || !session.quantity) return
@@ -417,7 +419,7 @@ ${adminFooter}`
         await ctx.answerCbQuery()
         const businessId = await businessIdOf(ctx.from?.id?.toString())
         const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
-        const buttons = categories.map((c: any) => [Markup.button.callback(c.name, `cat_${c.id}`)])
+        const buttons = categories.map((c) => [Markup.button.callback(c.name, `cat_${c.id}`)])
         await ctx.editMessageText('📂 *Selecciona una categoría:*', {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(buttons)
@@ -437,7 +439,7 @@ ${adminFooter}`
             })
             if (products.length === 0) return ctx.reply('📦 No hay ofertas disponibles.')
             let msg = `🔥 *Productos Destacados:*\n\n`
-            products.forEach((p: any, i: number) => {
+            products.forEach((p, i) => {
                 msg += `${i + 1}. *${p.name}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n`
                 if (p.category) msg += `   📂 ${p.category.name}\n`
                 msg += '\n'
@@ -481,7 +483,7 @@ ${adminFooter}`
                     ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Volver', 'back_brands')]])
                 })
             }
-            const buttons = products.map((p: any) => {
+            const buttons = products.map((p) => {
                 const shortName = p.name.replace(new RegExp(brand, 'gi'), '').trim()
                 const display = shortName.length > 25 ? shortName.substring(0, 25) + '...' : shortName
                 return [Markup.button.callback(`📦 ${display}`, `prod_${p.id}`)]

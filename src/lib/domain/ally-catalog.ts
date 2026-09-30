@@ -18,6 +18,12 @@ import { ALLY_CATALOG_LEVELS } from "../market-visibility"
 export interface AllyOffer {
     businessId: string
     businessName: string
+    /**
+     * Id del producto EN EL CATÁLOGO DEL ALIADO (no el propio): la fila que
+     * fija el precio de la oferta y la que se mandaría como `productId` a
+     * POST /api/marketplace/requests para pedirle la pieza.
+     */
+    productId: string
     /** Piezas en existencia en el tenant aliado (total del producto). */
     stock: number
     /** Precio aliado: wholesalePrice del producto; retailPrice si no hay mayoreo. */
@@ -89,20 +95,29 @@ const allyPriceOf = (row: AllyProductRow): number => row.wholesalePrice || row.r
  * Junta los productos de un mismo negocio aliado en UNA oferta: precio = el
  * más barato publicado y stock = el mayor visto (un tenant puede tener el
  * mismo nombre/barcode repetido en su catálogo; sumar inflaría la cifra).
+ * `productId` = la fila que fija ese precio — a igual precio gana la de
+ * mayor existencia: es la pieza concreta que se pediría al aliado.
  * Devuelve las ofertas por precio ascendente, tope MAX_ALLY_OFFERS.
  */
 function offersOf(rows: AllyProductRow[]): AllyOffer[] {
-    const byBusiness = new Map<string, AllyOffer>()
+    const byBusiness = new Map<string, { stock: number; best: AllyProductRow }>()
     for (const row of rows) {
-        const prev = byBusiness.get(row.business.id)
+        const entry = byBusiness.get(row.business.id) ?? { stock: 0, best: row }
+        const better = allyPriceOf(row) < allyPriceOf(entry.best)
+            || (allyPriceOf(row) === allyPriceOf(entry.best) && row.stock > entry.best.stock)
         byBusiness.set(row.business.id, {
-            businessId: row.business.id,
-            businessName: row.business.name,
-            stock: Math.max(prev?.stock ?? 0, row.stock),
-            price: Math.min(prev?.price ?? Number.POSITIVE_INFINITY, allyPriceOf(row)),
+            stock: Math.max(entry.stock, row.stock),
+            best: better ? row : entry.best,
         })
     }
     return [...byBusiness.values()]
+        .map(({ stock, best }) => ({
+            businessId: best.business.id,
+            businessName: best.business.name,
+            productId: best.id,
+            stock,
+            price: allyPriceOf(best),
+        }))
         .sort((a, b) => a.price - b.price || a.businessName.localeCompare(b.businessName, "es"))
         .slice(0, MAX_ALLY_OFFERS)
 }
