@@ -97,9 +97,17 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
                     onClick={() => setOpen(false)}
                 />
 
-                {/* Content: en móvil ocupa altura útil y hace scroll interno */}
-                <div className="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg max-h-[90dvh] translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] sm:rounded-lg overflow-hidden flex flex-col">
-                    <div ref={ref} className={cn("overflow-y-auto min-h-0 flex-1 pr-8", className)} {...props}>
+                {/* Content: en móvil ocupa altura útil y hace scroll interno.
+                    El className del caller va al CONTENEDOR posicionado para
+                    que los overrides de ancho (sm:max-w-4xl, etc.) apliquen;
+                    el scroll vive en el div interior fijo. */}
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    className={cn("fixed left-[50%] top-[50%] z-50 flex w-full max-w-lg max-h-[90dvh] translate-x-[-50%] translate-y-[-50%] flex-col gap-4 border bg-background p-6 shadow-lg duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%] sm:rounded-lg overflow-hidden", className)}
+                    {...props}
+                >
+                    <div ref={ref} className="overflow-y-auto min-h-0 flex-1 pr-8">
                         {children}
                     </div>
                     <button

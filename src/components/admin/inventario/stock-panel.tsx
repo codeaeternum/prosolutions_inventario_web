@@ -1088,7 +1088,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
             {/* Diálogo: captura rápida en serie (alta masiva) */}
             <Dialog open={capturaOpen} onOpenChange={(o) => { if (!o) { setParams({ captura: null }); void fetchProducts() } }}>
-                <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="sm:max-w-5xl">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Zap className="h-5 w-5 text-muted-foreground" />
@@ -1104,7 +1104,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
             {/* Diálogo: clasificación del catálogo (categorías/marcas/modelos) */}
             <Dialog open={herramienta === "clasificacion"} onOpenChange={(o) => { if (!o) setParams({ herramienta: null, sub: null }) }}>
-                <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="sm:max-w-4xl">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <FolderTree className="h-5 w-5 text-muted-foreground" />

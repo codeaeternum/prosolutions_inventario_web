@@ -83,7 +83,7 @@ const escapeHtml = (str: string) =>
 export function EtiquetasDialog({ open, onOpenChange, products }: EtiquetasDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-3xl">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <QrCode className="h-5 w-5 text-muted-foreground" />

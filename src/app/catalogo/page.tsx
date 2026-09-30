@@ -420,7 +420,7 @@ export default function CatalogoPage() {
 
       {/* Product Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Detalles del Producto</DialogTitle>
           </DialogHeader>

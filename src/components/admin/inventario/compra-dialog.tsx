@@ -80,7 +80,7 @@ interface CompraDialogProps {
 export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved, purchase }: CompraDialogProps) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-2xl">
                 {/* DialogContent desmonta al cerrar: el form reinicia su estado en cada apertura. */}
                 {open && (
                     <CompraForm
