@@ -2,17 +2,19 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { History, Users } from "lucide-react"
+import { Clock, History, Users } from "lucide-react"
 import { ActividadPanel } from "@/components/admin/equipo/actividad-panel"
 import { UsuariosPanel } from "@/components/admin/equipo/usuarios-panel"
+import { TurnosPanel } from "@/components/admin/equipo/turnos-panel"
 
-const TABS = ["actividad", "usuarios"] as const
+const TABS = ["actividad", "usuarios", "turnos"] as const
 type Tab = (typeof TABS)[number]
 
 /**
- * Hub "Equipo": junta en una pantalla el registro de actividad y la gestión
- * de usuarios/permisos (antes /admin/actividad y /admin/usuarios, que hoy
- * redirigen aquí). ?tab=actividad|usuarios; ?actor=<id>&anombre=<nombre>
+ * Hub "Equipo": junta en una pantalla el registro de actividad, la gestión
+ * de usuarios/permisos y los turnos derivados de la actividad real (antes
+ * /admin/actividad y /admin/usuarios, que hoy redirigen aquí).
+ * ?tab=actividad|usuarios|turnos; ?actor=<id>&anombre=<nombre>
  * pre-filtra el feed a una persona (enlace "Ver actividad" del tab Usuarios).
  */
 export function EquipoPanel() {
@@ -57,6 +59,10 @@ export function EquipoPanel() {
                             <Users className="h-4 w-4" />
                             Usuarios
                         </TabsTrigger>
+                        <TabsTrigger value="turnos" className="flex items-center gap-2">
+                            <Clock className="h-4 w-4" />
+                            Turnos
+                        </TabsTrigger>
                     </TabsList>
                 </div>
 
@@ -72,6 +78,10 @@ export function EquipoPanel() {
 
                 <TabsContent value="usuarios" className="mt-0">
                     <UsuariosPanel />
+                </TabsContent>
+
+                <TabsContent value="turnos" className="mt-0">
+                    <TurnosPanel />
                 </TabsContent>
             </Tabs>
         </>

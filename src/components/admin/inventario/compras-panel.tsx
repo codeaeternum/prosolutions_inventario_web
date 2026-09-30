@@ -39,6 +39,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/admin/empty-state"
+import { SugerirCompraPanel } from "@/components/admin/inventario/sugerir-compra-panel"
 import { CompraDialog } from "@/components/admin/inventario/compra-dialog"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
 import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Pencil, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
@@ -127,7 +128,16 @@ function toPendingPurchase(p: PurchaseRow): PendingPurchase {
     }
 }
 
-export function ComprasPanel() {
+interface ComprasPanelProps {
+    /**
+     * Se dispara cuando la tarjeta de sugerencias agrega insumos a la lista de
+     * compras del almacén (vive en la pestaña Encargos): el padre la remonta
+     * con un refreshKey para que muestre los pendientes nuevos.
+     */
+    onNeedsChanged?: () => void
+}
+
+export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
     const [purchases, setPurchases] = useState<PurchaseRow[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -260,6 +270,9 @@ export function ComprasPanel() {
 
     return (
         <div className="space-y-4">
+            {/* Qué conviene pedir: stock bajo + encargos pendientes → lista de compras */}
+            <SugerirCompraPanel onChanged={onNeedsChanged} />
+
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:items-center">
                 <Select value={statusFilter} onValueChange={setStatusFilter}>

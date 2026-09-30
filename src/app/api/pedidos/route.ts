@@ -41,7 +41,7 @@ interface PedidoRow {
   folio: string | null
   cliente: string | null
   detalle: string
-  /** Total del documento; null en encargos (la pieza aún no tiene precio). */
+  /** Total del documento; en encargos es el precio cotizado (null si aún no se cotiza). */
   monto: number | null
   /** Anticipo/depósito confirmado en pesos. */
   anticipo: number
@@ -86,6 +86,7 @@ export async function GET(request: NextRequest) {
               description: true,
               quantity: true,
               deposit: true,
+              priceQuoted: true,
               status: true,
               branchId: true,
               createdAt: true,
@@ -148,7 +149,7 @@ export async function GET(request: NextRequest) {
       folio: null,
       cliente: e.customer?.name ?? null,
       detalle: `${e.quantity}× ${e.description}`,
-      monto: null,
+      monto: e.priceQuoted ?? null,
       anticipo: e.deposit,
       status: e.status,
       createdAt: e.createdAt,

@@ -35,12 +35,13 @@ import {
 import { ProductoFormDialog, type MarketVisibility } from "@/components/admin/inventario/producto-form"
 import { TraspasoBuscarDialog } from "@/components/admin/inventario/traspaso-buscar-dialog"
 import { MermaDialog } from "@/components/admin/inventario/merma-dialog"
+import { EtiquetasDialog } from "@/components/admin/inventario/etiquetas-dialog"
 import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
 import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
 import { CategoriesPanel } from "@/app/admin/categorias/panel"
 import { BrandsPanel } from "@/app/admin/marcas/panel"
 import { ModelsPanel } from "@/app/admin/modelos/panel"
-import { EtiquetasPanel } from "@/app/admin/etiquetas/panel"
+
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
@@ -60,12 +61,14 @@ import {
     PackagePlus,
     PackageX,
     Plus,
+    Printer,
     QrCode,
     ScanBarcode,
     Search,
     Store,
     Upload,
     Users,
+    X,
     Zap,
 } from "lucide-react"
 
@@ -167,6 +170,12 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [mermaOpen, setMermaOpen] = useState(false)
     const [traspasoOpen, setTraspasoOpen] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
+
+    // --- Etiquetas imprimibles ------------------------------------------------
+    const [etiquetasOpen, setEtiquetasOpen] = useState(false)
+    const [etiquetasProducts, setEtiquetasProducts] = useState<StockProductItem[]>([])
+    // Multi-selección por id → producto completo: sobrevive a cambios de página/filtro.
+    const [labelSelected, setLabelSelected] = useState<Map<string, StockProductItem>>(new Map())
 
     // --- Conteo físico -------------------------------------------------------
     const [countDialogOpen, setCountDialogOpen] = useState(false)
@@ -293,6 +302,21 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     }
 
     // --- Acciones ------------------------------------------------------------
+    const openEtiquetas = (items: StockProductItem[]) => {
+        if (items.length === 0) return
+        setEtiquetasProducts(items)
+        setEtiquetasOpen(true)
+    }
+
+    const toggleLabelSelected = (product: StockProductItem) => {
+        setLabelSelected((prev) => {
+            const next = new Map(prev)
+            if (next.has(product.id)) next.delete(product.id)
+            else next.set(product.id, product)
+            return next
+        })
+    }
+
     const openCountDialog = () => {
         setCountBranchId(actionBranchId ?? branches[0]?.id ?? "")
         setCountNotes("")
@@ -408,6 +432,27 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     <span className="hidden sm:inline">Conteo físico</span>
                     <span className="sm:hidden">Conteo</span>
                 </Button>
+                {labelSelected.size > 0 && (
+                    <>
+                        <Button
+                            variant="outline"
+                            onClick={() => openEtiquetas(Array.from(labelSelected.values()))}
+                        >
+                            <Printer className="mr-2 h-4 w-4" />
+                            Imprimir etiquetas ({labelSelected.size})
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9"
+                            title="Limpiar selección de etiquetas"
+                            aria-label="Limpiar selección de etiquetas"
+                            onClick={() => setLabelSelected(new Map())}
+                        >
+                            <X className="h-4 w-4" />
+                        </Button>
+                    </>
+                )}
 
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => setParams({ captura: "1" })}>
@@ -553,6 +598,13 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                     <div className="grid grid-cols-12 gap-4 items-center p-4">
                                         {/* Foto + nombre + visibilidad */}
                                         <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
+                                            <Checkbox
+                                                checked={labelSelected.has(product.id)}
+                                                onCheckedChange={() => toggleLabelSelected(product)}
+                                                aria-label={`Seleccionar ${product.name} para imprimir etiquetas`}
+                                                title="Seleccionar para etiquetas"
+                                                className="flex-shrink-0"
+                                            />
                                             <div className="w-12 h-12 relative bg-muted rounded-lg flex-shrink-0 overflow-hidden">
                                                 {product.images[0] ? (
                                                     <Image
@@ -635,6 +687,16 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
                                         {/* Acciones por producto */}
                                         <div className="col-span-8 md:col-span-1 flex justify-end gap-1">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                title={`Imprimir etiquetas de ${product.name}`}
+                                                aria-label={`Imprimir etiquetas de ${product.name}`}
+                                                onClick={() => openEtiquetas([product])}
+                                            >
+                                                <QrCode className="h-4 w-4" />
+                                            </Button>
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
@@ -775,21 +837,19 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 </DialogContent>
             </Dialog>
 
-            {/* Diálogo: etiquetas QR */}
-            <Dialog open={herramienta === "etiquetas"} onOpenChange={(o) => { if (!o) setParams({ herramienta: null }) }}>
-                <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <QrCode className="h-5 w-5 text-muted-foreground" />
-                            Etiquetas
-                        </DialogTitle>
-                        <DialogDescription>
-                            Genera etiquetas con código QR para pegar en los productos.
-                        </DialogDescription>
-                    </DialogHeader>
-                    {herramienta === "etiquetas" && <EtiquetasPanel />}
-                </DialogContent>
-            </Dialog>
+            {/* Diálogo único de etiquetas imprimibles (QR + nombre + precio):
+                desde la fila del producto, la selección múltiple del stock, o
+                la herramienta "Etiquetas" (abre vacío para buscar y agregar). */}
+            <EtiquetasDialog
+                open={etiquetasOpen || herramienta === "etiquetas"}
+                onOpenChange={(o) => {
+                    if (!o) {
+                        setEtiquetasOpen(false)
+                        if (herramienta === "etiquetas") setParams({ herramienta: null })
+                    }
+                }}
+                products={etiquetasOpen ? etiquetasProducts : []}
+            />
 
             {/* Diálogo: importar desde Excel */}
             <Dialog open={importOpen} onOpenChange={setImportOpen}>

@@ -84,6 +84,9 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
     const historialProductName = searchParams.get("pnombre")
 
     const [refreshKey, setRefreshKey] = useState(0)
+    // Remonta EncargosPanel (lista de compras del almacén) cuando la tarjeta
+    // "Sugerencias de compra" agrega pendientes desde Entradas → Compras.
+    const [needsKey, setNeedsKey] = useState(0)
     const isEmployee = viewer.role !== "ADMIN"
     const lockedBranchId = isEmployee ? viewer.homeBranchId : null
 
@@ -173,7 +176,7 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
                                 </TabsList>
                             </div>
                             <TabsContent value="compras" className="mt-0">
-                                <ComprasPanel />
+                                <ComprasPanel onNeedsChanged={() => setNeedsKey(k => k + 1)} />
                             </TabsContent>
                             <TabsContent value="lote" className="mt-0">
                                 <MovimientosInventario lockedBranchId={lockedBranchId} />
@@ -186,7 +189,7 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
                 </TabsContent>
 
                 <TabsContent value="encargos" className="mt-0">
-                    <EncargosPanel />
+                    <EncargosPanel key={needsKey} />
                 </TabsContent>
 
                 <TabsContent value="historial" className="mt-0">

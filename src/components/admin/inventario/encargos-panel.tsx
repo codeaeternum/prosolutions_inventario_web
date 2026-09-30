@@ -22,6 +22,7 @@ interface EncargoRow {
     description: string
     quantity: number
     deposit: number
+    priceQuoted: number | null
     status: string
     supplierNote: string | null
     marketplaceRequestId: string | null
@@ -198,6 +199,7 @@ export function EncargosPanel() {
     const [encDescription, setEncDescription] = useState("")
     const [encQuantity, setEncQuantity] = useState("1")
     const [encDeposit, setEncDeposit] = useState("")
+    const [encPrice, setEncPrice] = useState("")
     const [encSupplierNote, setEncSupplierNote] = useState("")
     const [encBranchId, setEncBranchId] = useState("")
     const [customer, setCustomer] = useState<CustomerHit | null>(null)
@@ -333,10 +335,12 @@ export function EncargosPanel() {
     const encargoPayload = () => {
         const qty = parseInt(encQuantity, 10)
         const deposit = encDeposit.trim() === "" ? 0 : parseFloat(encDeposit)
+        const priceQuoted = encPrice.trim() === "" ? undefined : parseFloat(encPrice)
         return {
             description: encDescription.trim(),
             quantity: Number.isInteger(qty) ? qty : NaN,
             deposit,
+            priceQuoted,
             customerId: customer?.id,
             productId: productPick?.id,
             branchId: isEmployee ? (viewer.homeBranchId ?? undefined) : (encBranchId || undefined),
@@ -354,6 +358,12 @@ export function EncargosPanel() {
         if (Math.abs(payload.deposit * 100 - Math.round(payload.deposit * 100)) > 0.000001) {
             toast.error("El anticipo admite hasta dos decimales"); return null
         }
+        if (payload.priceQuoted !== undefined) {
+            if (!Number.isFinite(payload.priceQuoted) || payload.priceQuoted < 0) { toast.error("El precio cotizado no es válido"); return null }
+            if (Math.abs(payload.priceQuoted * 100 - Math.round(payload.priceQuoted * 100)) > 0.000001) {
+                toast.error("El precio cotizado admite hasta dos decimales"); return null
+            }
+        }
         encargoKey.current = getClientOperationKey(encargoKey.current, payload)
         const res = await fetch("/api/encargos", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -366,7 +376,7 @@ export function EncargosPanel() {
     }
 
     const resetEncargoForm = () => {
-        setEncDescription(""); setEncQuantity("1"); setEncDeposit(""); setEncSupplierNote("")
+        setEncDescription(""); setEncQuantity("1"); setEncDeposit(""); setEncPrice(""); setEncSupplierNote("")
         setCustomer(null); setCustomerTerm(""); setProductPick(null); setProductTerm("")
     }
 
@@ -600,7 +610,7 @@ export function EncargosPanel() {
                 <CardContent className="space-y-5">
                     {/* Alta de encargo */}
                     <form onSubmit={e => void submitEncargo(e)} className="space-y-3 rounded-lg border p-3">
-                        <div className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem]">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem_9rem]">
                             <div className="space-y-2">
                                 <Label>Qué pieza busca *</Label>
                                 <Input
@@ -613,6 +623,10 @@ export function EncargosPanel() {
                             <div className="space-y-2">
                                 <Label>Cantidad</Label>
                                 <Input type="number" min="1" max="9999" step="1" value={encQuantity} onChange={e => setEncQuantity(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Precio cotizado $</Label>
+                                <Input type="number" min="0" step="0.01" placeholder="Opcional" value={encPrice} onChange={e => setEncPrice(e.target.value)} />
                             </div>
                             <div className="space-y-2">
                                 <Label>Anticipo $</Label>
@@ -776,6 +790,7 @@ export function EncargosPanel() {
                                                     {" · "}{formatDate(item.createdAt)}
                                                 </p>
                                                 <p className="text-xs text-muted-foreground">
+                                                    {item.priceQuoted != null && <>Precio: <span className="font-medium text-foreground">{formatPrice(item.priceQuoted)}</span> · </>}
                                                     {item.deposit > 0 && <>Anticipo: <span className="font-medium text-foreground">{formatPrice(item.deposit)}</span> · </>}
                                                     {item.product && <>Catálogo: {item.product.name} · </>}
                                                     {item.supplierNote && <>{item.supplierNote} · </>}

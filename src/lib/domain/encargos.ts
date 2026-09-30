@@ -114,6 +114,8 @@ const createSchema = z.object({
   quantity: z.number().int().min(1).max(9999).default(1),
   // Anticipo en pesos (Float histórico del esquema), máximo 2 decimales.
   deposit: z.number().min(0).max(100000000).default(0),
+  // Precio cotizado al cliente en pesos; opcional — se puede registrar sin precio.
+  priceQuoted: z.number().min(0).max(100000000).optional(),
   customerId: z.string().min(1).nullish(),
   productId: z.string().min(1).nullish(),
   branchId: z.string().min(1).nullish(),
@@ -125,6 +127,9 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
   const input = createSchema.parse(raw)
   if (Math.abs(input.deposit * 100 - Math.round(input.deposit * 100)) > 0.000001) {
     throw new BusinessError("El anticipo admite como máximo dos decimales.", 400)
+  }
+  if (input.priceQuoted !== undefined && Math.abs(input.priceQuoted * 100 - Math.round(input.priceQuoted * 100)) > 0.000001) {
+    throw new BusinessError("El precio cotizado admite como máximo dos decimales.", 400)
   }
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_CREATE", permission: "staff", payload: input }, async tx => {
     const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true, homeBranchId: true } })
@@ -155,6 +160,7 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
         description,
         quantity: input.quantity,
         deposit: input.deposit,
+        priceQuoted: input.priceQuoted ?? null,
         supplierNote: input.supplierNote || null,
         createdById: actorId,
       },
@@ -168,7 +174,9 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
       entity: "encargo",
       entityId: encargo.id,
       entityName: description,
-      summary: `Encargo registrado: ${description}${input.quantity > 1 ? ` ×${input.quantity}` : ""}${input.deposit > 0 ? ` (anticipo $${input.deposit.toFixed(2)})` : ""}`,
+      summary: `Encargo registrado: ${description}${input.quantity > 1 ? ` ×${input.quantity}` : ""}${input.deposit > 0 ? ` (anticipo $${input.deposit.toFixed(2)})` : ""}${input.priceQuoted != null ? ` (cotizado $${input.priceQuoted.toFixed(2)})` : ""}`,
+      // Solo se audita cuando viene cotización: un null → null ensucia el diff.
+      ...(input.priceQuoted != null ? { changes: { priceQuoted: { before: null, after: input.priceQuoted } } } : {}),
     })
 
     return { encargo }

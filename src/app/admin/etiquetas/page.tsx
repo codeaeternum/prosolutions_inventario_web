@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 
-// La impresión de etiquetas QR ahora vive como pestaña dentro del hub de Productos.
+// La impresión de etiquetas QR vive como herramienta dentro de Inventario → Stock.
 export default function EtiquetasPage() {
-  redirect("/admin/productos?tab=etiquetas")
+  redirect("/admin/inventario?tab=stock&herramienta=etiquetas")
 }

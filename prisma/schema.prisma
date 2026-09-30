@@ -1430,6 +1430,8 @@ model Encargo {
   description          String // Qué pieza busca el cliente (texto libre)
   quantity             Int       @default(1)
   deposit              Float     @default(0) // Anticipo en pesos que dejó el cliente
+  // Precio en pesos cotizado al cliente al tomar el encargo; null = aún sin cotizar.
+  priceQuoted          Float?
   status               String    @default("PENDING") // PENDING, ORDERED, READY, DELIVERED, CANCELLED
   supplierNote         String?
   marketplaceRequestId String?

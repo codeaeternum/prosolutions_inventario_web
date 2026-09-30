@@ -20,6 +20,7 @@ import { CatalogoPanel } from "@/components/admin/taller/catalogo-panel"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
+import { semaforo, SemaforoBadge } from "@/components/admin/taller/semaforo"
 import { toast } from "sonner"
 
 type Branch = { id: string; name: string }
@@ -35,7 +36,7 @@ type Order = {
   // Precio sugerido por catálogo para el equipo (suma de los servicios con
   // precio por modelo/tipo); null cuando algún servicio no resuelve precio.
   suggestedQuoteCents?: number | null;
-  approvedQuoteCents: number | null; diagnosticFeeCents: number | null; closedWithoutRepair?: boolean; currentBranch: Branch; intakeBranch: Branch; assignedTo: Branch | null; createdAt: string; promisedAt: string | null;
+  approvedQuoteCents: number | null; diagnosticFeeCents: number | null; closedWithoutRepair?: boolean; currentBranch: Branch; intakeBranch: Branch; assignedTo: Branch | null; createdAt: string; updatedAt: string; promisedAt: string | null;
   scheduledAt: string | null; location: string | null; aesthetics: string | null; functionalConditions: string | null;
   payments?: WorkshopPayment[];
   events?: WorkshopEvent[];
@@ -143,6 +144,7 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
             <span className="flex items-center gap-1"><MapPin size={12} />{order.currentBranch.name}</span>
             <span className="flex items-center gap-1"><Wrench size={12} />{order.assignedTo?.name ?? "Sin asignar"}</span>
             <PromisedAt order={order} />
+            <SemaforoBadge order={order} />
           </div>
           {(orderBalanceCents(order) > 0 || isScheduledToday(order) || order.location) && <div className="flex flex-wrap gap-1.5 pt-0.5">
             {orderBalanceCents(order) > 0 && <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-300">Adeudo {money(orderBalanceCents(order))}</span>}
@@ -585,6 +587,11 @@ export default function WorkshopPage() {
 
   const emptyList = <div className="rounded-xl border border-dashed p-12 text-center"><ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">{total === 0 && !search && !stage && !branch && view === "board" ? "Todo listo para la primera recepción" : "No hay órdenes con estos filtros"}</h2><p className="mt-2 text-muted-foreground">{branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}</p></div>
 
+  // Chip del tablero: rojos del semáforo entre las órdenes cargadas (hasta 20
+  // por columna); el conteo exacto de todas las atrasadas vive en la vista
+  // "Atrasadas".
+  const boardOverdueCount = board ? boardStages.reduce((sum, stageKey) => sum + (board.orders[stageKey] ?? []).filter(order => semaforo(order) === "rojo").length, 0) : 0
+
   return <div className="mx-auto max-w-6xl space-y-6 pb-20">
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : tab === "precios" ? "Precios sugeridos por servicio, modelos de equipo y listas del taller." : "De la recepción a la entrega, con un historial por equipo."}</p></div>
@@ -612,13 +619,14 @@ export default function WorkshopPage() {
         <label className="text-sm">Etapa<select className={`${inputClass} mt-2`} value={stage} onChange={e => { setStage(e.target.value); setPage(1) }}><option value="">Todas las etapas</option>{Object.entries(repairLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       </div>
       {loading ? <p role="status">Cargando órdenes…</p> : kanbanMode ? (total === 0 ? emptyList : <div className="space-y-3">
+        {boardOverdueCount > 0 && <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-rose-600 dark:text-rose-400"><span aria-hidden className="h-2 w-2 rounded-full bg-rose-500" />{boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}</p>}
         <div className="flex items-start gap-3 overflow-x-auto pb-2">{activeBoardStages.map(value => <BoardColumn key={value} title={repairLabels[value]} style={stageStyles[value]} orders={board?.orders[value] ?? []} total={board?.totals[value] ?? 0} onOpen={id => void openOrder(id)} />)}
           <BoardColumn title="Cerradas" style={closedColumnStyle} dimmed showStage onOpen={id => void openOrder(id)}
             orders={board ? closedColumnStages.flatMap(value => board.orders[value] ?? []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20) : []}
             total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0} />
         </div>
         <p className="text-xs text-muted-foreground">{total} órdenes{board && boardStages.some(value => board.totals[value] > board.orders[value].length) ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto." : ""}</p>
-      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
+      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} /><SemaforoBadge order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
       </>}
