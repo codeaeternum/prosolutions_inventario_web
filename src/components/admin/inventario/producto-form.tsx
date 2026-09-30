@@ -204,6 +204,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     const [newModelBrandId, setNewModelBrandId] = useState("")
     const [adding, setAdding] = useState(false)
 
+    // Bloquea el submit mientras una foto sigue subiendo (evita guardar sin ella).
+    const [uploadingImages, setUploadingImages] = useState(false)
+
     const [formData, setFormData] = useState({
         name: "",
         description: "",
@@ -419,7 +422,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
 
         const basePayload = {
             name: formData.name.trim(),
-            description: formData.description,
+            description: formData.description.trim(),
             barcode: formData.barcode.trim(),
             retailPrice: formData.retailPrice,
             wholesalePrice: formData.wholesalePrice,
@@ -434,7 +437,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
             categoryId: formData.categoryId,
             modelIds: selectedModels.map((m) => m.id),
             stockBranchId: stockBranch || undefined,
-            marketVisibility: formData.marketVisibility,
+            // Publicar al mercado es decisión del dueño: el empleado no manda
+            // el campo y el PUT conserva el valor existente.
+            ...(isAdmin ? { marketVisibility: formData.marketVisibility } : {}),
         }
 
         setSaving(true)
@@ -464,7 +469,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 // (el alta ya registró el stock inicial en su sucursal). Debe
                 // ir ANTES de cargar las demás sucursales para que el diff no
                 // genere un ajuste fantasma.
-                if (data?.id && formData.marketVisibility !== "HIDDEN") {
+                if (isAdmin && data?.id && formData.marketVisibility !== "HIDDEN") {
                     const putRes = await fetch(`/api/products/${data.id}`, {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
@@ -547,7 +552,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
             {/* Fotografías */}
             <div className="space-y-2">
                 <Label>Fotografías</Label>
-                <ImageUpload images={images} onChange={setImages} maxImages={5} />
+                <ImageUpload images={images} onChange={setImages} maxImages={5} onUploadingChange={setUploadingImages} />
                 <p className="text-xs text-muted-foreground">Hasta 5 imágenes; la primera es la principal.</p>
             </div>
 
@@ -671,7 +676,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="pf-wholesale">Precio aliado *</Label>
+                            <Label htmlFor="pf-wholesale">Precio aliado</Label>
                             <Input
                                 id="pf-wholesale"
                                 type="number"
@@ -679,8 +684,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 min="0"
                                 value={formData.wholesalePrice}
                                 onChange={(e) => setFormData({ ...formData, wholesalePrice: e.target.value })}
-                                placeholder="0.00"
-                                required
+                                placeholder="Vacío = igual al público"
                             />
                         </div>
                     </div>
@@ -734,26 +738,29 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                         </div>
                     )}
 
-                    {/* Visibilidad en el mercado */}
-                    <div className="space-y-2">
-                        <Label htmlFor="pf-visibility" className="flex items-center gap-1.5">
-                            <Store className="h-4 w-4 text-muted-foreground" />
-                            Visibilidad en el mercado
-                        </Label>
-                        <Select
-                            value={formData.marketVisibility}
-                            onValueChange={(v) => setFormData({ ...formData, marketVisibility: v as MarketVisibility })}
-                        >
-                            <SelectTrigger id="pf-visibility">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="HIDDEN">Oculto — nadie lo ve fuera del taller</SelectItem>
-                                <SelectItem value="ALLIES">Aliados — solo talleres con cuenta</SelectItem>
-                                <SelectItem value="PUBLIC">Público — también el público general</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
+                    {/* Visibilidad en el mercado: publicar fuera del taller es
+                        decisión del dueño (como el costo), no del empleado. */}
+                    {isAdmin && (
+                        <div className="space-y-2">
+                            <Label htmlFor="pf-visibility" className="flex items-center gap-1.5">
+                                <Store className="h-4 w-4 text-muted-foreground" />
+                                Visibilidad en el mercado
+                            </Label>
+                            <Select
+                                value={formData.marketVisibility}
+                                onValueChange={(v) => setFormData({ ...formData, marketVisibility: v as MarketVisibility })}
+                            >
+                                <SelectTrigger id="pf-visibility">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="HIDDEN">Oculto — nadie lo ve fuera del taller</SelectItem>
+                                    <SelectItem value="ALLIES">Aliados — solo talleres con cuenta</SelectItem>
+                                    <SelectItem value="PUBLIC">Público — también el público general</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
 
                     <div className={`grid gap-4 ${editing ? "grid-cols-2" : "grid-cols-1"}`}>
                         {editing && (
@@ -763,8 +770,11 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                     id="pf-stock"
                                     type="number"
                                     min="0"
+                                    step="1"
+                                    inputMode="numeric"
                                     value={formData.stock}
                                     onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                                    required
                                 />
                                 <p className="text-xs text-muted-foreground">
                                     El ajuste se aplica en {stockBranchName || "la sucursal elegida"}.
@@ -777,6 +787,8 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 id="pf-minstock"
                                 type="number"
                                 min="0"
+                                step="1"
+                                inputMode="numeric"
                                 value={formData.minStock}
                                 onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
                             />
@@ -814,6 +826,8 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                         <Input
                                             type="number"
                                             min="0"
+                                            step="1"
+                                            inputMode="numeric"
                                             className="w-24 shrink-0"
                                             placeholder="0"
                                             value={stockByBranch[b.id] ?? ""}
@@ -926,30 +940,21 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 <select
                                     id="pf-model-select"
                                     className={selectClassName}
-                                    defaultValue=""
-                                >
-                                    <option value="" disabled>Selecciona modelo</option>
-                                    {(selectedBrand ? filteredModels : models).map((model) => (
-                                        <option key={model.id} value={model.id}>
-                                            {model.brand.name} {model.name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <Button
-                                    type="button"
-                                    variant="secondary"
-                                    onClick={() => {
-                                        const select = document.getElementById("pf-model-select") as HTMLSelectElement
-                                        const model = models.find((m) => m.id === select.value)
-                                        if (model) {
-                                            handleAddModel(model)
-                                            select.value = ""
-                                        }
+                                    value=""
+                                    onChange={(e) => {
+                                        const model = models.find((m) => m.id === e.target.value)
+                                        if (model) handleAddModel(model)
                                     }}
-                                    title="Añadir a compatibles"
                                 >
-                                    <Plus className="h-4 w-4" />
-                                </Button>
+                                    <option value="" disabled>Selecciona modelo para agregar</option>
+                                    {(selectedBrand ? filteredModels : models)
+                                        .filter((m) => !selectedModels.some((s) => s.id === m.id))
+                                        .map((model) => (
+                                            <option key={model.id} value={model.id}>
+                                                {model.brand.name} {model.name}
+                                            </option>
+                                        ))}
+                                </select>
                                 <Dialog open={dialogModel} onOpenChange={setDialogModel}>
                                     <DialogTrigger asChild>
                                         <Button type="button" variant="outline" size="sm" title="Crear nuevo modelo">
@@ -1004,9 +1009,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 <Button type="button" variant="outline" onClick={close} disabled={saving}>
                     Cancelar
                 </Button>
-                <Button type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving || uploadingImages} title={uploadingImages ? "Espera a que termine de subir la foto" : undefined}>
                     {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {editing ? "Guardar cambios" : "Dar de alta"}
+                    {uploadingImages ? "Subiendo foto…" : editing ? "Guardar cambios" : "Dar de alta"}
                 </Button>
             </DialogFooter>
         </form>

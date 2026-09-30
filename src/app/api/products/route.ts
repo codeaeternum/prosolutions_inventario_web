@@ -17,7 +17,12 @@ const createProductSchema = z
     description: z.string().max(2000).optional().nullable().default(""),
     barcode: z.string().max(100).optional().nullable().default(""),
     retailPrice: z.coerce.number().min(0, "Precio al público debe ser ≥ 0"),
-    wholesalePrice: z.coerce.number().min(0, "Precio aliado debe ser ≥ 0"),
+    // Vacío/ausente = mismo que el público (evita que "" coercionee a 0 y la
+    // pieza se ofrezca gratis a aliados).
+    wholesalePrice: z.preprocess(
+      (v) => (v === "" || v === null || v === undefined ? undefined : v),
+      z.coerce.number().min(0, "Precio aliado debe ser ≥ 0").optional()
+    ),
     internalPrice: z.coerce.number().min(0, "Precio de taller propio debe ser ≥ 0").optional().nullable(),
     costPrice: z.coerce.number().min(0, "Precio de costo debe ser ≥ 0").optional().nullable(),
     stock: z.coerce.number().int().min(0).default(0),
@@ -266,7 +271,7 @@ export async function POST(req: Request) {
           description: description || null,
           barcode: barcode || null,
           retailPrice,
-          wholesalePrice,
+          wholesalePrice: wholesalePrice ?? retailPrice,
           internalPrice: internalPrice ?? null,
           costPrice: isAdminPost ? (costPrice ?? null) : null,
           stock: 0,

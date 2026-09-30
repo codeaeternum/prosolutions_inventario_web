@@ -106,9 +106,28 @@ export async function PUT(
       stockBranchId,
     } = body
 
-    if (!name || !retailPrice || !wholesalePrice || !categoryId) {
+    if (!name || !categoryId) {
       return NextResponse.json(
-        { error: "Nombre, precios y categoría son requeridos" },
+        { error: "Nombre y categoría son requeridos" },
+        { status: 400 }
+      )
+    }
+    const parsedRetail = parseFloat(retailPrice)
+    if (!Number.isFinite(parsedRetail) || parsedRetail < 0) {
+      return NextResponse.json(
+        { error: "El precio público es requerido" },
+        { status: 400 }
+      )
+    }
+    // Precio aliado vacío = mismo que el público (la mayoría de piezas no se
+    // venden a aliados). Un 0 explícito sí se respeta.
+    const parsedWholesale =
+      wholesalePrice === undefined || wholesalePrice === null || wholesalePrice === ""
+        ? parsedRetail
+        : parseFloat(wholesalePrice)
+    if (!Number.isFinite(parsedWholesale) || parsedWholesale < 0) {
+      return NextResponse.json(
+        { error: "El precio aliado no es válido" },
         { status: 400 }
       )
     }
@@ -180,8 +199,23 @@ export async function PUT(
 
     // Calcular diferencia de stock para movimiento de inventario.
     // La existencia se ajusta en UNA sucursal (stockBranchId o la del usuario);
-    // nunca como valor absoluto sobre el total.
-    const stockDiff = parseInt(stock) - existingProduct.stock
+    // nunca como valor absoluto sobre el total. Campo vacío/ausente = sin
+    // ajuste (evita NaN y evita que un campo vacío dispare un ajuste a 0).
+    const parsedStock = stock === undefined || stock === null || stock === "" ? null : parseInt(stock, 10)
+    if (parsedStock !== null && (!Number.isFinite(parsedStock) || parsedStock < 0)) {
+      return NextResponse.json(
+        { error: "Las existencias no son válidas" },
+        { status: 400 }
+      )
+    }
+    const stockDiff = parsedStock === null ? 0 : parsedStock - existingProduct.stock
+    const parsedMinStock = minStock === undefined || minStock === null || minStock === "" ? existingProduct.minStock : parseInt(minStock, 10)
+    if (!Number.isFinite(parsedMinStock) || parsedMinStock < 0) {
+      return NextResponse.json(
+        { error: "El stock mínimo no es válido" },
+        { status: 400 }
+      )
+    }
     // El costo solo lo define el dueño: un empleado que mande otro valor lo
     // pisa el precio existente (su formulario ni siquiera lo muestra).
     const isAdmin = session.user.role === "ADMIN"
@@ -193,7 +227,9 @@ export async function PUT(
     const parsedInternalPrice = internalPrice === undefined
       ? existingProduct.internalPrice
       : (internalPrice != null && internalPrice !== "") ? parseFloat(internalPrice) : null
-    const parsedVisibility = marketVisibility === undefined
+    // Publicar al mercado es decisión del dueño: si un empleado manda el
+    // campo se ignora y se conserva la visibilidad actual.
+    const parsedVisibility = !isAdmin || marketVisibility === undefined
       ? existingProduct.marketVisibility
       : ["HIDDEN", "ALLIES", "PUBLIC"].includes(marketVisibility) ? marketVisibility : null
     if (parsedVisibility === null) {
@@ -210,8 +246,8 @@ export async function PUT(
 
       // Track price changes
       const priceFields = [
-        { field: "retailPrice", oldVal: existingProduct.retailPrice, newVal: parseFloat(retailPrice) },
-        { field: "wholesalePrice", oldVal: existingProduct.wholesalePrice, newVal: parseFloat(wholesalePrice) },
+        { field: "retailPrice", oldVal: existingProduct.retailPrice, newVal: parsedRetail },
+        { field: "wholesalePrice", oldVal: existingProduct.wholesalePrice, newVal: parsedWholesale },
         { field: "internalPrice", oldVal: existingProduct.internalPrice ?? 0, newVal: parsedInternalPrice ?? 0 },
         { field: "costPrice", oldVal: existingProduct.costPrice ?? 0, newVal: parsedCostPrice ?? 0 },
       ]
@@ -237,12 +273,12 @@ export async function PUT(
           name,
           description: description || null,
           barcode: barcode || null,
-          retailPrice: parseFloat(retailPrice),
-          wholesalePrice: parseFloat(wholesalePrice),
+          retailPrice: parsedRetail,
+          wholesalePrice: parsedWholesale,
           internalPrice: parsedInternalPrice,
           costPrice: parsedCostPrice,
           marketVisibility: parsedVisibility,
-          minStock: parseInt(minStock),
+          minStock: parsedMinStock,
           images: images || [],
           isUniversal: isUniversal ?? false,
           isActive: isActive ?? true,
@@ -313,12 +349,12 @@ export async function PUT(
     const auditAfter = {
       nombre: name,
       codigoBarras: barcode || null,
-      precio: parseFloat(retailPrice),
-      aliado: parseFloat(wholesalePrice),
+      precio: parsedRetail,
+      aliado: parsedWholesale,
       tallerPropio: parsedInternalPrice,
       costo: parsedCostPrice,
-      stock: Number.isFinite(stockDiff) ? existingProduct.stock + stockDiff : existingProduct.stock,
-      stockMinimo: parseInt(minStock),
+      stock: existingProduct.stock + stockDiff,
+      stockMinimo: parsedMinStock,
       activo: isActive ?? true,
       universal: isUniversal ?? false,
       categoriaId: categoryId,
