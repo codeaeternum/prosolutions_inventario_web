@@ -206,6 +206,10 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
 
     // Bloquea el submit mientras una foto sigue subiendo (evita guardar sin ella).
     const [uploadingImages, setUploadingImages] = useState(false)
+    const nameRef = useRef<HTMLInputElement>(null)
+    // Buscador de modelos compatibles (reemplaza el select de cientos de filas).
+    const [modelQuery, setModelQuery] = useState("")
+    const formRef = useRef<HTMLFormElement>(null)
 
     const [formData, setFormData] = useState({
         name: "",
@@ -293,16 +297,30 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
         [selectedBrand, models]
     )
 
-    function generateSKU() {
+    // Coincidencias del buscador: texto libre + filtro de marca, sin los ya elegidos.
+    const modelMatches = useMemo(() => {
+        const base = (selectedBrand ? filteredModels : models)
+            .filter((m) => !selectedModels.some((s) => s.id === m.id))
+        const q = modelQuery.trim().toLowerCase()
+        if (!q) return base.slice(0, 12)
+        return base
+            .filter((m) => `${m.brand.name} ${m.name}`.toLowerCase().includes(q))
+            .slice(0, 12)
+    }, [models, filteredModels, selectedBrand, selectedModels, modelQuery])
+
+    // SKU sugerido en vivo: categoría + primer modelo (mismo criterio del botón varita).
+    const skuSuggestion = useMemo(() => {
         const catName = categories.find(c => c.id === formData.categoryId)?.name || ""
+        if (!catName) return ""
         const catCode = categoryAbbrevs[catName.toLowerCase()] || catName.substring(0, 3).toUpperCase()
-        if (selectedModels.length === 0) {
-            setFormData(prev => ({ ...prev, barcode: catCode + "-UNI" }))
-            return
-        }
+        if (formData.isUniversal || selectedModels.length === 0) return `${catCode}-UNI`
         const firstModel = selectedModels[0]
         const brandCode = brandAbbrevs[firstModel.brand.name.toLowerCase()] || firstModel.brand.name.substring(0, 2).toUpperCase()
-        setFormData(prev => ({ ...prev, barcode: `${catCode}-${brandCode}-${abbreviateModel(firstModel.name)}` }))
+        return `${catCode}-${brandCode}-${abbreviateModel(firstModel.name)}`
+    }, [categories, formData.categoryId, formData.isUniversal, selectedModels])
+
+    function generateSKU() {
+        if (skuSuggestion) setFormData(prev => ({ ...prev, barcode: skuSuggestion }))
     }
 
     async function handleAddCategory() {
@@ -385,6 +403,19 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
         e.preventDefault()
         if (saving) return
         setError("")
+
+        // Validación propia con nombres de campo (las burbujas nativas de
+        // Chrome quedan escondidas dentro del scroll del diálogo).
+        const missing: string[] = []
+        if (!formData.name.trim()) missing.push("Nombre")
+        if (!formData.categoryId) missing.push("Categoría")
+        if (!formData.retailPrice.trim() || Number.isNaN(parseFloat(formData.retailPrice))) missing.push("Precio público")
+        if (missing.length > 0) {
+            const msg = `Completa: ${missing.join(", ")}`
+            setError(msg)
+            toast.error(msg)
+            return
+        }
 
         if (!formData.isUniversal && selectedModels.length === 0) {
             setError("Selecciona al menos un modelo o marca como universal")
@@ -504,10 +535,34 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 }
             }
             toast.success(editing ? "Producto actualizado" : "Producto dado de alta")
-            close()
+            // "Guardar y crear otro" se distingue por el botón que disparó el
+            // submit (submitter), sin estado residual si la validación falla.
+            const createAnother =
+                !editing &&
+                ((e.nativeEvent as SubmitEvent).submitter as HTMLElement | null)?.dataset.intent === "another"
+            if (createAnother) {
+                // Alta en serie: limpia el form y deja el foco en Nombre.
+                setFormData({
+                    name: "", description: "", barcode: "",
+                    retailPrice: "", wholesalePrice: "", internalPrice: "", costPrice: "",
+                    marketVisibility: "HIDDEN", stock: "0", minStock: "1",
+                    categoryId: formData.categoryId, // conserva categoría — capturas por lote suelen ser del mismo tipo
+                    isUniversal: false, isActive: true,
+                })
+                setSelectedModels([])
+                setImages([])
+                setStockByBranch({})
+                setModelQuery("")
+                formRef.current?.parentElement?.scrollTo({ top: 0 })
+                nameRef.current?.focus()
+            } else {
+                close()
+            }
             onSaved()
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Error al guardar")
+            const msg = err instanceof Error ? err.message : "Error al guardar"
+            setError(msg)
+            toast.error(msg)
         } finally {
             setSaving(false)
         }
@@ -533,8 +588,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     }
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-6">
-            <DialogHeader>
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-6" noValidate>
+            {/* Título fijo: no se pierde al hacer scroll dentro del diálogo. */}
+            <DialogHeader className="sticky top-0 z-10 -mt-6 border-b bg-background pb-3 pt-1 -mx-1 px-1">
                 <DialogTitle>{editing ? "Editar producto" : "Dar de alta producto"}</DialogTitle>
                 <DialogDescription>
                     {editing
@@ -563,10 +619,12 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                         <Label htmlFor="pf-name">Nombre del producto *</Label>
                         <Input
                             id="pf-name"
+                            ref={nameRef}
                             value={formData.name}
                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                             placeholder="Ej: Pantalla LCD Original"
                             required
+                            autoFocus={!editing}
                         />
                     </div>
 
@@ -591,10 +649,20 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 placeholder="Se auto-genera o captura manual"
                                 className="min-w-0"
                             />
-                            <Button type="button" variant="outline" onClick={generateSKU} title="Auto-generar SKU">
+                            <Button type="button" variant="outline" onClick={generateSKU} disabled={!skuSuggestion} title="Auto-generar SKU">
                                 <Wand2 className="h-4 w-4" />
                             </Button>
                         </div>
+                        {/* Sugerencia en vivo: aparece al elegir categoría/modelo y no pisa lo escrito. */}
+                        {!formData.barcode && skuSuggestion && (
+                            <button
+                                type="button"
+                                onClick={generateSKU}
+                                className="text-xs text-primary hover:underline"
+                            >
+                                Usar sugerido: <span className="font-mono font-medium">{skuSuggestion}</span>
+                            </button>
+                        )}
                     </div>
 
                     <div className="space-y-2">
@@ -761,26 +829,34 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             </Select>
                         </div>
                     )}
+                </div>
+            </div>
 
-                    <div className={`grid gap-4 ${editing ? "grid-cols-2" : "grid-cols-1"}`}>
-                        {editing && (
-                            <div className="space-y-2">
-                                <Label htmlFor="pf-stock">Existencias (total)</Label>
-                                <Input
-                                    id="pf-stock"
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    inputMode="numeric"
-                                    value={formData.stock}
-                                    onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                                    required
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    El ajuste se aplica en {stockBranchName || "la sucursal elegida"}.
-                                </p>
-                            </div>
-                        )}
+            {/* Existencias */}
+            <section className="space-y-4 rounded-lg border p-4">
+                <div>
+                    <p className="font-medium">Existencias</p>
+                    <p className="text-sm text-muted-foreground">
+                        {editing
+                            ? "El ajuste se aplica sobre una sola sucursal."
+                            : "Deja en blanco las sucursales sin existencias; cada cantidad queda como entrada inicial."}
+                    </p>
+                </div>
+                {editing ? (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="space-y-2">
+                            <Label htmlFor="pf-stock">Existencias (total)</Label>
+                            <Input
+                                id="pf-stock"
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={formData.stock}
+                                onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                                required
+                            />
+                        </div>
                         <div className="space-y-2">
                             <Label htmlFor="pf-minstock">Stock mínimo (alerta)</Label>
                             <Input
@@ -793,9 +869,6 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
                             />
                         </div>
-                    </div>
-
-                    {editing ? (
                         <div className="space-y-2">
                             <Label htmlFor="pf-stock-branch">Sucursal del ajuste</Label>
                             {/* Empleado: su sucursal va fija (label); el admin elige. */}
@@ -816,37 +889,70 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 </Select>
                             )}
                         </div>
-                    ) : (
-                        <div className="space-y-2">
-                            <Label>Stock inicial por sucursal</Label>
-                            <div className="space-y-2 rounded-lg border p-3">
-                                {stockBranches.map((b) => (
-                                    <div key={b.id} className="flex items-center gap-3">
-                                        <span className="min-w-0 flex-1 truncate text-sm">{b.name}</span>
-                                        <Input
-                                            type="number"
-                                            min="0"
-                                            step="1"
-                                            inputMode="numeric"
-                                            className="w-24 shrink-0"
-                                            placeholder="0"
-                                            value={stockByBranch[b.id] ?? ""}
-                                            onChange={(e) => setStockByBranch((prev) => ({ ...prev, [b.id]: e.target.value }))}
-                                            aria-label={`Stock inicial en ${b.name}`}
-                                        />
-                                    </div>
-                                ))}
-                                {stockBranches.length === 0 && (
-                                    <p className="text-xs text-muted-foreground">No hay sucursales activas.</p>
-                                )}
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        <div className="flex items-end justify-between gap-4">
+                            <div className="space-y-2 w-40">
+                                <Label htmlFor="pf-minstock">Stock mínimo (alerta)</Label>
+                                <Input
+                                    id="pf-minstock"
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    inputMode="numeric"
+                                    value={formData.minStock}
+                                    onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
+                                />
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                                Deja en blanco las sucursales sin existencias; cada cantidad queda registrada como entrada inicial.
-                            </p>
+                            {stockBranches.length > 1 && Object.values(stockByBranch).some((v) => v.trim()) && (
+                                <button
+                                    type="button"
+                                    className="text-xs text-primary hover:underline pb-2"
+                                    onClick={() => {
+                                        const first = Object.values(stockByBranch).find((v) => v.trim())
+                                        if (first) setStockByBranch(Object.fromEntries(stockBranches.map((b) => [b.id, first])))
+                                    }}
+                                >
+                                    Igual cantidad en todas
+                                </button>
+                            )}
                         </div>
-                    )}
+                        <div className="grid gap-2 sm:grid-cols-2">
+                            {stockBranches.map((b) => (
+                                <div key={b.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
+                                    <span className="min-w-0 flex-1 truncate text-sm">{b.name}</span>
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        inputMode="numeric"
+                                        className="w-20 shrink-0"
+                                        placeholder="0"
+                                        value={stockByBranch[b.id] ?? ""}
+                                        onChange={(e) => setStockByBranch((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                                        aria-label={`Stock inicial en ${b.name}`}
+                                    />
+                                </div>
+                            ))}
+                            {stockBranches.length === 0 && (
+                                <p className="text-xs text-muted-foreground">No hay sucursales activas.</p>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </section>
 
-                    <div className="flex items-center gap-2 pt-2">
+            {/* Compatibilidad */}
+            <section className="space-y-4 rounded-lg border p-4">
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <p className="font-medium">Compatibilidad</p>
+                        <p className="text-sm text-muted-foreground">
+                            Modelos de celular con los que es compatible esta refacción.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
                         <input
                             type="checkbox"
                             id="pf-universal"
@@ -854,165 +960,187 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             onChange={(e) => setFormData({ ...formData, isUniversal: e.target.checked })}
                             className="h-4 w-4"
                         />
-                        <Label htmlFor="pf-universal" className="cursor-pointer flex items-center gap-2">
+                        <Label htmlFor="pf-universal" className="cursor-pointer flex items-center gap-1.5 text-sm">
                             <Globe className="h-4 w-4" />
-                            Producto universal (compatible con todos los modelos)
+                            Universal
                         </Label>
                     </div>
                 </div>
-            </div>
 
-            {/* Modelos compatibles */}
-            {!formData.isUniversal && (
-                <div className="space-y-4 rounded-lg border p-4">
-                    <div>
-                        <p className="font-medium">Modelos compatibles</p>
-                        <p className="text-sm text-muted-foreground">
-                            Selecciona los modelos de celular con los que es compatible esta refacción.
-                        </p>
-                    </div>
+                {!formData.isUniversal && (
+                    <>
+                        {selectedModels.length > 0 && (
+                            <div className="flex flex-wrap gap-2 p-3 bg-muted rounded-lg">
+                                {selectedModels.map((model) => (
+                                    <Badge key={model.id} variant="secondary" className="gap-1">
+                                        {model.brand.name} {model.name}
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedModels(selectedModels.filter((m) => m.id !== model.id))}
+                                            className="ml-1 hover:text-destructive"
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    </Badge>
+                                ))}
+                            </div>
+                        )}
 
-                    {selectedModels.length > 0 && (
-                        <div className="flex flex-wrap gap-2 p-3 bg-muted rounded-lg">
-                            {selectedModels.map((model) => (
-                                <Badge key={model.id} variant="secondary" className="gap-1">
-                                    {model.brand.name} {model.name}
-                                    <button
-                                        type="button"
-                                        onClick={() => setSelectedModels(selectedModels.filter((m) => m.id !== model.id))}
-                                        className="ml-1 hover:text-destructive"
-                                    >
-                                        <X className="h-3 w-3" />
-                                    </button>
-                                </Badge>
-                            ))}
-                        </div>
-                    )}
-
-                    <div className="grid gap-4 sm:grid-cols-2">
+                        {/* Buscador de modelos: escribe y elige — Enter agrega la primera coincidencia. */}
                         <div className="space-y-2">
-                            <Label>Filtrar por marca</Label>
                             <div className="flex gap-2">
+                                <Input
+                                    value={modelQuery}
+                                    onChange={(e) => setModelQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault()
+                                            if (modelMatches[0]) {
+                                                handleAddModel(modelMatches[0])
+                                                setModelQuery("")
+                                            }
+                                        }
+                                    }}
+                                    placeholder="Buscar modelo (ej. A54, iPhone 13)…"
+                                    className="min-w-0"
+                                    aria-label="Buscar modelo compatible"
+                                />
                                 <select
                                     value={selectedBrand}
                                     onChange={(e) => setSelectedBrand(e.target.value)}
-                                    className={selectClassName}
+                                    className={selectClassName + " w-36 shrink-0"}
+                                    aria-label="Filtrar por marca"
                                 >
                                     <option value="">Todas las marcas</option>
                                     {brands.map((brand) => (
                                         <option key={brand.id} value={brand.name}>{brand.name}</option>
                                     ))}
                                 </select>
-                                <Dialog open={dialogBrand} onOpenChange={setDialogBrand}>
-                                    <DialogTrigger asChild>
-                                        <Button type="button" variant="outline" size="icon" title="Agregar marca">
-                                            <Plus className="h-4 w-4" />
+                            </div>
+                            <div className="max-h-44 overflow-y-auto rounded-md border divide-y">
+                                {modelMatches.map((model) => (
+                                    <button
+                                        key={model.id}
+                                        type="button"
+                                        onClick={() => { handleAddModel(model); setModelQuery("") }}
+                                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                                    >
+                                        <span className="truncate">{model.brand.name} {model.name}</span>
+                                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                    </button>
+                                ))}
+                                {modelMatches.length === 0 && (
+                                    <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                                        Sin coincidencias — crea el modelo abajo.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            <Dialog open={dialogBrand} onOpenChange={setDialogBrand}>
+                                <DialogTrigger asChild>
+                                    <Button type="button" variant="outline" size="sm">
+                                        <Plus className="h-4 w-4 mr-1" /> Nueva marca
+                                    </Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                    <DialogHeader>
+                                        <DialogTitle>Nueva marca</DialogTitle>
+                                    </DialogHeader>
+                                    <div className="space-y-2 py-2">
+                                        <Label htmlFor="pf-new-brand">Nombre</Label>
+                                        <Input
+                                            id="pf-new-brand"
+                                            value={newBrandName}
+                                            onChange={(e) => setNewBrandName(e.target.value)}
+                                            placeholder="Ej: Samsung"
+                                        />
+                                    </div>
+                                    <DialogFooter>
+                                        <Button type="button" variant="outline" onClick={() => setDialogBrand(false)}>Cancelar</Button>
+                                        <Button type="button" onClick={() => void handleAddBrand()} disabled={adding}>
+                                            {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                            Agregar
                                         </Button>
-                                    </DialogTrigger>
-                                    <DialogContent>
-                                        <DialogHeader>
-                                            <DialogTitle>Nueva marca</DialogTitle>
-                                        </DialogHeader>
-                                        <div className="space-y-2 py-2">
-                                            <Label htmlFor="pf-new-brand">Nombre</Label>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
+                            <Dialog open={dialogModel} onOpenChange={setDialogModel}>
+                                <DialogTrigger asChild>
+                                    <Button type="button" variant="outline" size="sm">
+                                        <Plus className="h-4 w-4 mr-1" /> Nuevo modelo
+                                    </Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                    <DialogHeader>
+                                        <DialogTitle>Nuevo modelo</DialogTitle>
+                                    </DialogHeader>
+                                    <div className="space-y-4 py-2">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="pf-new-model-brand">Marca</Label>
+                                            <select
+                                                id="pf-new-model-brand"
+                                                value={newModelBrandId}
+                                                onChange={(e) => setNewModelBrandId(e.target.value)}
+                                                className={selectClassName}
+                                            >
+                                                <option value="">Selecciona marca</option>
+                                                {brands.map((b) => (
+                                                    <option key={b.id} value={b.id}>{b.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="pf-new-model-name">Nombre del modelo</Label>
                                             <Input
-                                                id="pf-new-brand"
-                                                value={newBrandName}
-                                                onChange={(e) => setNewBrandName(e.target.value)}
-                                                placeholder="Ej: Samsung"
+                                                id="pf-new-model-name"
+                                                value={newModelName}
+                                                onChange={(e) => setNewModelName(e.target.value)}
+                                                placeholder="Ej: Galaxy S24"
                                             />
                                         </div>
-                                        <DialogFooter>
-                                            <Button type="button" variant="outline" onClick={() => setDialogBrand(false)}>Cancelar</Button>
-                                            <Button type="button" onClick={() => void handleAddBrand()} disabled={adding}>
-                                                {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                                Agregar
-                                            </Button>
-                                        </DialogFooter>
-                                    </DialogContent>
-                                </Dialog>
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label>Agregar modelo</Label>
-                            <div className="flex gap-2">
-                                <select
-                                    id="pf-model-select"
-                                    className={selectClassName}
-                                    value=""
-                                    onChange={(e) => {
-                                        const model = models.find((m) => m.id === e.target.value)
-                                        if (model) handleAddModel(model)
-                                    }}
-                                >
-                                    <option value="" disabled>Selecciona modelo para agregar</option>
-                                    {(selectedBrand ? filteredModels : models)
-                                        .filter((m) => !selectedModels.some((s) => s.id === m.id))
-                                        .map((model) => (
-                                            <option key={model.id} value={model.id}>
-                                                {model.brand.name} {model.name}
-                                            </option>
-                                        ))}
-                                </select>
-                                <Dialog open={dialogModel} onOpenChange={setDialogModel}>
-                                    <DialogTrigger asChild>
-                                        <Button type="button" variant="outline" size="sm" title="Crear nuevo modelo">
-                                            Nuevo
+                                    </div>
+                                    <DialogFooter>
+                                        <Button type="button" variant="outline" onClick={() => setDialogModel(false)}>Cancelar</Button>
+                                        <Button type="button" onClick={() => void handleCreateModel()} disabled={adding}>
+                                            {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                            Agregar
                                         </Button>
-                                    </DialogTrigger>
-                                    <DialogContent>
-                                        <DialogHeader>
-                                            <DialogTitle>Nuevo modelo</DialogTitle>
-                                        </DialogHeader>
-                                        <div className="space-y-4 py-2">
-                                            <div className="space-y-2">
-                                                <Label htmlFor="pf-new-model-brand">Marca</Label>
-                                                <select
-                                                    id="pf-new-model-brand"
-                                                    value={newModelBrandId}
-                                                    onChange={(e) => setNewModelBrandId(e.target.value)}
-                                                    className={selectClassName}
-                                                >
-                                                    <option value="">Selecciona marca</option>
-                                                    {brands.map((b) => (
-                                                        <option key={b.id} value={b.id}>{b.name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            <div className="space-y-2">
-                                                <Label htmlFor="pf-new-model-name">Nombre del modelo</Label>
-                                                <Input
-                                                    id="pf-new-model-name"
-                                                    value={newModelName}
-                                                    onChange={(e) => setNewModelName(e.target.value)}
-                                                    placeholder="Ej: Galaxy S24"
-                                                />
-                                            </div>
-                                        </div>
-                                        <DialogFooter>
-                                            <Button type="button" variant="outline" onClick={() => setDialogModel(false)}>Cancelar</Button>
-                                            <Button type="button" onClick={() => void handleCreateModel()} disabled={adding}>
-                                                {adding && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                                Agregar
-                                            </Button>
-                                        </DialogFooter>
-                                    </DialogContent>
-                                </Dialog>
-                            </div>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
                         </div>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </section>
 
-            <DialogFooter className="gap-2">
-                <Button type="button" variant="outline" onClick={close} disabled={saving}>
-                    Cancelar
-                </Button>
-                <Button type="submit" disabled={saving || uploadingImages} title={uploadingImages ? "Espera a que termine de subir la foto" : undefined}>
-                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {uploadingImages ? "Subiendo foto…" : editing ? "Guardar cambios" : "Dar de alta"}
-                </Button>
+            {/* Footer fijo: el submit siempre visible sin llegar al fondo. */}
+            <DialogFooter className="sticky bottom-0 z-10 -mx-1 -mb-6 gap-2 border-t bg-background px-1 pb-1 pt-3 sm:justify-between">
+                <div className="text-xs text-muted-foreground self-center hidden sm:block">
+                    Los campos con * son obligatorios.
+                </div>
+                <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={close} disabled={saving}>
+                        Cancelar
+                    </Button>
+                    {!editing && (
+                        <Button
+                            type="submit"
+                            variant="secondary"
+                            data-intent="another"
+                            disabled={saving || uploadingImages}
+                            title="Guarda y limpia el formulario para dar de alta otra pieza"
+                        >
+                            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Guardar y crear otro
+                        </Button>
+                    )}
+                    <Button type="submit" disabled={saving || uploadingImages} title={uploadingImages ? "Espera a que termine de subir la foto" : undefined}>
+                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {uploadingImages ? "Subiendo foto…" : editing ? "Guardar cambios" : "Dar de alta"}
+                    </Button>
+                </div>
             </DialogFooter>
         </form>
     )
