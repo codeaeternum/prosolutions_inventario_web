@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
@@ -56,6 +56,8 @@ import {
     EyeOff,
     FolderTree,
     History,
+    LayoutGrid,
+    List,
     Loader2,
     Package,
     PackagePlus,
@@ -63,6 +65,7 @@ import {
     Plus,
     Printer,
     QrCode,
+    Rows3,
     ScanBarcode,
     Search,
     Store,
@@ -110,6 +113,14 @@ interface StockPanelProps {
 }
 
 type VisibilidadFiltro = "todos" | "publicos" | "aliados" | "ocultos"
+type VistaStock = "lista" | "mosaico" | "compacta"
+
+const VISTA_STORAGE_KEY = "inv-stock-vista"
+const VISTAS: { value: VistaStock; label: string; icon: typeof List; title: string }[] = [
+    { value: "lista", label: "Lista", icon: List, title: "Vista lista — detalle completo por fila" },
+    { value: "mosaico", label: "Mosaico", icon: LayoutGrid, title: "Vista mosaico — fotos grandes para identificar piezas" },
+    { value: "compacta", label: "Compacta", icon: Rows3, title: "Vista compacta — más productos por pantalla" },
+]
 
 const VISIBILIDAD_FILTROS: { value: VisibilidadFiltro; label: string }[] = [
     { value: "todos", label: "Todos" },
@@ -186,6 +197,27 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [focusCountId, setFocusCountId] = useState<string | null>(null)
     const [countsRefreshKey, setCountsRefreshKey] = useState(0)
     const createCountOp = useRef<ClientOperationKey | null>(null)
+
+    // --- Vista de la lista: lista | mosaico | compacta (preferencia local) ---
+    // useSyncExternalStore lee localStorage sin efecto: el SSR siempre pinta
+    // "lista" (getServerSnapshot) y el cliente hidrata con lo guardado.
+    const vistaGuardada = useSyncExternalStore(
+        useCallback((onStoreChange: () => void) => {
+            window.addEventListener("storage", onStoreChange)
+            window.addEventListener("inv-stock-vista", onStoreChange)
+            return () => {
+                window.removeEventListener("storage", onStoreChange)
+                window.removeEventListener("inv-stock-vista", onStoreChange)
+            }
+        }, []),
+        () => window.localStorage.getItem(VISTA_STORAGE_KEY),
+        () => null,
+    )
+    const vista: VistaStock = vistaGuardada === "mosaico" || vistaGuardada === "compacta" ? vistaGuardada : "lista"
+    const cambiarVista = (v: VistaStock) => {
+        window.localStorage.setItem(VISTA_STORAGE_KEY, v)
+        window.dispatchEvent(new Event("inv-stock-vista"))
+    }
 
     // --- Datos ---------------------------------------------------------------
     const [products, setProducts] = useState<StockProductItem[]>([])
@@ -300,6 +332,70 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         if (product.stock <= product.minStock) return "warning"
         return "success"
     }
+
+    // Existencias por sucursal — la sucursal de trabajo resalta en todas las vistas.
+    const branchChips = (product: StockProductItem) =>
+        product.stocks && product.stocks.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+                {product.stocks.map((s) => (
+                    <span
+                        key={s.branchId}
+                        className={cn(
+                            "inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums",
+                            s.branchId === actionBranchId && "ring-1 ring-primary/50",
+                            s.quantity <= 0 && "text-muted-foreground/60"
+                        )}
+                    >
+                        {s.branch.name} {s.quantity}
+                    </span>
+                ))}
+            </div>
+        ) : (
+            <span className="text-xs text-muted-foreground">Sin existencias</span>
+        )
+
+    // Acciones de producto compartidas por las tres vistas.
+    const productActions = (product: StockProductItem, showEditLabel = false) => (
+        <>
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title={`Imprimir etiquetas de ${product.name}`}
+                aria-label={`Imprimir etiquetas de ${product.name}`}
+                onClick={() => openEtiquetas([product])}
+            >
+                <QrCode className="h-4 w-4" />
+            </Button>
+            <Button
+                variant="ghost"
+                size={showEditLabel ? "sm" : "icon"}
+                className="h-8"
+                title={showEditLabel ? undefined : `Editar ${product.name}`}
+                aria-label={`Editar ${product.name}`}
+                onClick={() => setParams({ editar: product.id })}
+            >
+                <Edit className="h-4 w-4" />
+                {showEditLabel && <span className="ml-1">Editar</span>}
+            </Button>
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title={`Ver historial de ${product.name}`}
+                aria-label={`Ver historial de ${product.name}`}
+                onClick={() => {
+                    const params = new URLSearchParams()
+                    params.set("tab", "historial")
+                    params.set("producto", product.id)
+                    params.set("pnombre", product.name)
+                    router.push(`${pathname}?${params}`)
+                }}
+            >
+                <History className="h-4 w-4" />
+            </Button>
+        </>
+    )
 
     // --- Acciones ------------------------------------------------------------
     const openEtiquetas = (items: StockProductItem[]) => {
@@ -557,6 +653,27 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             {f.label}
                         </Button>
                     ))}
+
+                    {/* Selector de vista — preferencia guardada en el equipo. */}
+                    <div className="ml-auto inline-flex items-center rounded-md border" role="group" aria-label="Cambiar vista de la lista">
+                        {VISTAS.map((v) => {
+                            const VIcon = v.icon
+                            return (
+                                <Button
+                                    key={v.value}
+                                    variant={vista === v.value ? "secondary" : "ghost"}
+                                    size="icon"
+                                    className="h-8 w-9 first:rounded-r-none last:rounded-l-none [&:not(:first-child):not(:last-child)]:rounded-none"
+                                    title={v.title}
+                                    aria-label={v.label}
+                                    aria-pressed={vista === v.value}
+                                    onClick={() => cambiarVista(v.value)}
+                                >
+                                    <VIcon className="h-4 w-4" />
+                                </Button>
+                            )
+                        })}
+                    </div>
                 </div>
             </div>
 
@@ -577,9 +694,146 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     description={hasFilters ? "Prueba con otros filtros o limpia la búsqueda." : "Agrega tu primer producto al inventario."}
                     action={!hasFilters ? { label: "Dar de alta el primer producto", href: `${pathname}?tab=stock&nuevo=1`, icon: Plus } : undefined}
                 />
+            ) : vista === "mosaico" ? (
+                /* ── Mosaico: fotos grandes para ubicar la pieza de un vistazo ── */
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {products.map((product) => {
+                        const badge = VISIBILIDAD_BADGE[product.marketVisibility ?? "HIDDEN"]
+                        return (
+                            <Card key={product.id} className={cn("overflow-hidden hover:shadow-md transition-shadow", loading && "opacity-60")}>
+                                <div className="relative aspect-square bg-muted">
+                                    {product.images[0] ? (
+                                        <Image
+                                            src={product.images[0]}
+                                            alt={product.name}
+                                            fill
+                                            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+                                            className="object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex items-center justify-center h-full">
+                                            <Package className="h-10 w-10 text-muted-foreground/30" />
+                                        </div>
+                                    )}
+                                    <Checkbox
+                                        checked={labelSelected.has(product.id)}
+                                        onCheckedChange={() => toggleLabelSelected(product)}
+                                        aria-label={`Seleccionar ${product.name} para imprimir etiquetas`}
+                                        title="Seleccionar para etiquetas"
+                                        className="absolute left-2 top-2 bg-background/90"
+                                    />
+                                    <Badge
+                                        variant={getStockVariant(product)}
+                                        className="absolute right-2 top-2"
+                                        title={`Total: ${product.stock}`}
+                                    >
+                                        {product.stock}
+                                    </Badge>
+                                </div>
+                                <CardContent className="p-3 space-y-1.5">
+                                    <h3 className="min-h-9 text-sm font-medium leading-tight line-clamp-2" title={product.name}>
+                                        {product.name}
+                                    </h3>
+                                    <p className="truncate text-xs text-muted-foreground">
+                                        {product.category?.name ?? getModelText(product)}
+                                    </p>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="font-bold text-primary">{formatPrice(product.retailPrice)}</span>
+                                        <Badge variant="outline" className={cn("text-[10px] gap-1 font-normal", badge.className)}>
+                                            <badge.icon className="h-3 w-3" />
+                                            {badge.label}
+                                        </Badge>
+                                    </div>
+                                    {branchChips(product)}
+                                    <div className="flex items-center justify-between gap-1 border-t pt-1.5">
+                                        <StockQtyEditor
+                                            productId={product.id}
+                                            productName={product.name}
+                                            quantity={branchQtyOf(product)}
+                                            branchId={actionBranchId}
+                                            reason={`Ajuste rápido en ${actionBranchName || "sucursal"}`}
+                                            onAdjusted={(delta) => applyStockDelta(product.id, actionBranchId, delta)}
+                                        />
+                                        <div className="flex gap-0.5">
+                                            {productActions(product)}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )
+                    })}
+                </div>
+            ) : vista === "compacta" ? (
+                /* ── Compacta: renglones densos, más productos por pantalla ── */
+                <div className="overflow-hidden rounded-lg border">
+                    <div className="hidden md:grid grid-cols-12 gap-2 border-b bg-muted/50 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        <div className="col-span-4">Producto</div>
+                        <div className="col-span-2">Categoría</div>
+                        <div className="col-span-3">Sucursales</div>
+                        <div className="col-span-1 text-center">Total</div>
+                        <div className="col-span-1 text-right">Público</div>
+                        <div className="col-span-1 text-right">Acciones</div>
+                    </div>
+                    {products.map((product, i) => (
+                        <div
+                            key={product.id}
+                            className={cn(
+                                "grid grid-cols-12 items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/40",
+                                i > 0 && "border-t",
+                                loading && "opacity-60",
+                            )}
+                        >
+                            <div className="col-span-12 flex items-center gap-2 min-w-0 md:col-span-4">
+                                <Checkbox
+                                    checked={labelSelected.has(product.id)}
+                                    onCheckedChange={() => toggleLabelSelected(product)}
+                                    aria-label={`Seleccionar ${product.name} para imprimir etiquetas`}
+                                    title="Seleccionar para etiquetas"
+                                    className="flex-shrink-0"
+                                />
+                                <div className="h-8 w-8 relative flex-shrink-0 overflow-hidden rounded bg-muted">
+                                    {product.images[0] ? (
+                                        <Image src={product.images[0]} alt="" fill sizes="32px" className="object-cover" />
+                                    ) : (
+                                        <div className="flex h-full items-center justify-center">
+                                            <Package className="h-3.5 w-3.5 text-muted-foreground/30" />
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="truncate font-medium leading-tight">{product.name}</p>
+                                    <p className="truncate text-[11px] text-muted-foreground">
+                                        {getModelText(product)}{product.barcode ? ` · ${product.barcode}` : ""}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="col-span-3 text-xs text-muted-foreground md:col-span-2">
+                                {product.category?.name ?? "—"}
+                            </div>
+                            <div className="col-span-3 md:col-span-3">{branchChips(product)}</div>
+                            <div className="col-span-2 text-left md:col-span-1 md:text-center">
+                                <Badge variant={getStockVariant(product)}>{product.stock}</Badge>
+                                <StockQtyEditor
+                                    productId={product.id}
+                                    productName={product.name}
+                                    quantity={branchQtyOf(product)}
+                                    branchId={actionBranchId}
+                                    reason={`Ajuste rápido en ${actionBranchName || "sucursal"}`}
+                                    onAdjusted={(delta) => applyStockDelta(product.id, actionBranchId, delta)}
+                                />
+                            </div>
+                            <div className="col-span-2 text-right font-semibold text-primary md:col-span-1">
+                                {formatPrice(product.retailPrice)}
+                            </div>
+                            <div className="col-span-2 flex justify-end gap-0.5 md:col-span-1">
+                                {productActions(product)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             ) : (
+                /* ── Lista: detalle completo por renglón (vista original) ── */
                 <div className="space-y-2">
-                    {/* Encabezado de columnas (desktop) */}
                     <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
@@ -641,26 +895,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                         </div>
 
                                         {/* Chips por sucursal + editor inline */}
-                                        <div className="col-span-4 md:col-span-3">
-                                            {product.stocks && product.stocks.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                    {product.stocks.map((s) => (
-                                                        <span
-                                                            key={s.branchId}
-                                                            className={cn(
-                                                                "inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums",
-                                                                s.branchId === actionBranchId && "ring-1 ring-primary/50",
-                                                                s.quantity <= 0 && "text-muted-foreground/60"
-                                                            )}
-                                                        >
-                                                            {s.branch.name} {s.quantity}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground">Sin existencias</span>
-                                            )}
-                                        </div>
+                                        <div className="col-span-4 md:col-span-3">{branchChips(product)}</div>
 
                                         {/* Total + ajuste inline sobre la sucursal de trabajo */}
                                         <div className="col-span-4 md:col-span-1 text-left md:text-center">
@@ -687,41 +922,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
                                         {/* Acciones por producto */}
                                         <div className="col-span-8 md:col-span-1 flex justify-end gap-1">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                title={`Imprimir etiquetas de ${product.name}`}
-                                                aria-label={`Imprimir etiquetas de ${product.name}`}
-                                                onClick={() => openEtiquetas([product])}
-                                            >
-                                                <QrCode className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-8"
-                                                onClick={() => setParams({ editar: product.id })}
-                                            >
-                                                <Edit className="h-4 w-4 mr-1" />
-                                                Editar
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                title={`Ver historial de ${product.name}`}
-                                                aria-label={`Ver historial de ${product.name}`}
-                                                onClick={() => {
-                                                    const params = new URLSearchParams()
-                                                    params.set("tab", "historial")
-                                                    params.set("producto", product.id)
-                                                    params.set("pnombre", product.name)
-                                                    router.push(`${pathname}?${params}`)
-                                                }}
-                                            >
-                                                <History className="h-4 w-4" />
-                                            </Button>
+                                            {productActions(product, true)}
                                         </div>
                                     </div>
                                 </CardContent>
