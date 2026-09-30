@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth"
 import { getAuthRedirect } from "@/lib/auth.config"
 import { NextResponse } from "next/server"
 
-export default auth((req) => {
+export const proxy = auth((req) => {
   const pathname = req.nextUrl.pathname
   const lowerPathname = pathname.toLowerCase()
   // Intercept legacy public files BEFORE Next's static file handler, including file extensions.
@@ -25,6 +25,5 @@ export default auth((req) => {
 })
 
 export const config = {
-  runtime: "nodejs",
   matcher: ["/((?!api|_next|favicon.ico|.*\\..*|icons|uploads).*)", "/uploads/payments/:path*", "/_next/image"],
 }

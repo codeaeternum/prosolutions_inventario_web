@@ -5,19 +5,19 @@ import path from "node:path"
 import { NextRequest } from "next/server"
 
 const mocks = vi.hoisted(() => ({ authSession: vi.fn(), findReservation: vi.fn(), getAuthRedirect: vi.fn(), findUserById: vi.fn() }))
-// api-auth calls auth() for the session; middleware calls auth(handler) as a wrapper.
+// api-auth calls auth() for the session; the proxy calls auth(handler) as a wrapper.
 vi.mock("@/lib/auth", () => ({ auth: (arg?: unknown) => (typeof arg === "function" ? arg : mocks.authSession()) }))
 vi.mock("@/lib/prisma", () => ({ prisma: { reservation: { findFirst: mocks.findReservation }, user: { findUnique: mocks.findUserById } } }))
 vi.mock("@/lib/auth.config", () => ({ getAuthRedirect: mocks.getAuthRedirect }))
 
 import { GET as uploads } from "@/app/uploads/[[...path]]/route"
-import middleware from "@/middleware"
+import { proxy } from "@/proxy"
 import { paymentProofFilename, writePaymentProof } from "@/lib/payment-proofs"
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=", "base64")
 const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test" } })
-// The middleware only reads req.auth and req.nextUrl; a stub with a real NextURL exercises the same logic.
-const runMiddleware = (req: NextRequest, auth: unknown) => (middleware as any)({ auth, nextUrl: req.nextUrl })
+// The proxy (antes middleware) only reads req.auth and req.nextUrl; a stub with a real NextURL exercises the same logic.
+const runMiddleware = (req: NextRequest, auth: unknown) => (proxy as any)({ auth, nextUrl: req.nextUrl })
 const getUpload = (segments: string[]) => uploads(new NextRequest(`https://app.invalid/uploads/${segments.join("/")}`), { params: Promise.resolve({ path: segments }) })
 
 let directory: string
@@ -33,14 +33,14 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(directory, { recursive: true, force: true }); vi.unstubAllEnvs() })
 
 describe("private proof objects are never served publicly (SEC-05)", () => {
-  it("middleware blocks anonymous and unapproved access before static file serving", async () => {
+  it("proxy blocks anonymous and unapproved access before static file serving", async () => {
     for (const auth of [null, user("pending", "CUSTOMER", "PENDING")]) {
       const response = await runMiddleware(new NextRequest("https://app.invalid/uploads/payments/proof.png"), auth)
       expect(response.status).toBe(401)
       expect(response.headers.get("cache-control")).toContain("no-store")
     }
   })
-  it("middleware rewrites approved sessions to the authorized file handler", async () => {
+  it("proxy rewrites approved sessions to the authorized file handler", async () => {
     const response = await runMiddleware(new NextRequest("https://app.invalid/uploads/payments/proof.png"), user("owner"))
     expect(response.headers.get("x-middleware-rewrite")).toContain("/api/payment-proofs/proof.png")
   })

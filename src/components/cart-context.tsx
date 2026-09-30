@@ -27,7 +27,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const [items, setItems] = useState<CartItem[]>([])
     const [isInitialized, setIsInitialized] = useState(false)
 
-    // Load from localStorage on mount
+    // Load from localStorage on mount. El setState síncrono aquí es intencional:
+    // hidrata el carrito guardado solo en cliente (un useState lazy correría en
+    // SSR/prerender, donde localStorage no existe, y causaría hydration mismatch).
+    /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
         const savedCart = localStorage.getItem("cart")
         if (savedCart) {
@@ -42,6 +45,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         }
         setIsInitialized(true)
     }, [])
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     // Save to localStorage on change
     useEffect(() => {

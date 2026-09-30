@@ -1,6 +1,7 @@
 "use client"
 
 import { repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { DEFAULT_SLA_HOURS } from "@/lib/workshop-config"
 
 export type SemaforoColor = "verde" | "ambar" | "rojo"
 
@@ -17,17 +18,20 @@ export type SemaforoOrder = {
 // Cierres definitivos: la orden ya no compite contra la fecha promesa ni se
 // "atora" en una etapa. Más amplio que terminalStages de la página (que solo
 // marca DELIVERED/CANCELLED para bloquear cobros): NOT_REPAIRED y
-// NOT_AUTHORIZED también son cierre — no llevan semáforo.
-const terminalSemaforo: readonly RepairStage[] = ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"]
+// NOT_AUTHORIZED también son cierre — no llevan semáforo. EXTERNAL_LAB
+// tampoco: el equipo está fuera del taller y su espera la mide la orden
+// espejo del taller asociado.
+const terminalSemaforo: readonly RepairStage[] = ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED", "EXTERNAL_LAB"]
 
-const DAY_MS = 24 * 60 * 60 * 1000
-// Sin fecha promesa, más de 72 h en la misma etapa cuenta como orden atorada.
-const STUCK_MS = 3 * DAY_MS
+const HOUR_MS = 60 * 60 * 1000
+const DAY_MS = 24 * HOUR_MS
 
-/** Semáforo de antigüedad de la orden. null en cierres (no aplica), "rojo"
- *  con la promesa vencida, "ambar" si vence en ≤24 h o lleva >72 h sin
- *  moverse sin fecha promesa, "verde" para el resto. */
-export function semaforo(order: SemaforoOrder, now: Date = new Date()): SemaforoColor | null {
+/** Semáforo de antigüedad de la orden. null en cierres y laboratorio externo
+ *  (no aplican), "rojo" con la promesa vencida o al superar el SLA de su etapa
+ *  sin fecha promesa, "ambar" si la promesa vence en ≤24 h o la etapa entra en
+ *  el último 20% de su SLA, "verde" para el resto. `slaHours` llega del ajuste
+ *  workshop_sla_hours del negocio; sin él rige DEFAULT_SLA_HOURS. */
+export function semaforo(order: SemaforoOrder, now: Date = new Date(), slaHours: Partial<Record<RepairStage, number>> = DEFAULT_SLA_HOURS): SemaforoColor | null {
   if (terminalSemaforo.includes(order.status)) return null
   if (order.promisedAt) {
     const remaining = new Date(order.promisedAt).getTime() - now.getTime()
@@ -35,8 +39,16 @@ export function semaforo(order: SemaforoOrder, now: Date = new Date()): Semaforo
     if (remaining <= DAY_MS) return "ambar"
     return "verde"
   }
-  const lastMove = new Date(order.updatedAt ?? order.createdAt).getTime()
-  return now.getTime() - lastMove > STUCK_MS ? "ambar" : "verde"
+  // Sin fecha promesa el reloj lo pone el SLA de la etapa (updatedAt como
+  // proxy del último movimiento). Las etapas sin SLA propio — WARRANTY, la
+  // única activa fuera de SLA_STAGES — no llevan semáforo por antigüedad.
+  const sla = slaHours[order.status]
+  if (sla === undefined) return null
+  const elapsed = now.getTime() - new Date(order.updatedAt ?? order.createdAt).getTime()
+  const slaMs = sla * HOUR_MS
+  if (elapsed > slaMs) return "rojo"
+  if (elapsed >= slaMs * 0.8) return "ambar"
+  return "verde"
 }
 
 // Leyenda compacta junto al punto: el color da la urgencia de un vistazo y el
@@ -69,14 +81,15 @@ const semaforoStyles: Record<SemaforoColor, { dot: string; text: string }> = {
 
 /** Punto de color + leyenda de antigüedad, del tamaño de los items de la
  *  fila de metadatos de la tarjeta/lista (icono de 12px + texto xs). */
-export function SemaforoBadge({ order, className }: { order: SemaforoOrder; className?: string }) {
+export function SemaforoBadge({ order, slaHours, className }: { order: SemaforoOrder; slaHours?: Partial<Record<RepairStage, number>>; className?: string }) {
   const now = new Date()
-  const color = semaforo(order, now)
+  const color = semaforo(order, now, slaHours)
   if (!color) return null
   const style = semaforoStyles[color]
+  const sla = order.promisedAt ? undefined : slaHours?.[order.status]
   const title = order.promisedAt
     ? `Entrega prometida: ${new Date(order.promisedAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}`
-    : "Sin fecha de entrega prometida"
+    : sla === undefined ? "Sin fecha de entrega prometida" : `Sin fecha de entrega prometida · SLA de etapa: ${sla} h`
   return <span title={title} className={`inline-flex items-center gap-1 ${style.text} ${className ?? ""}`}>
     <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
     {semaforoLabel(order, color, now)}

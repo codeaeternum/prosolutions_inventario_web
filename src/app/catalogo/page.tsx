@@ -9,9 +9,7 @@ import {
   Search,
   Filter,
   X,
-  ChevronDown,
   Package,
-  Smartphone,
   SlidersHorizontal,
   ShoppingCart,
   CalendarCheck,
@@ -43,7 +41,6 @@ import {
 } from "@/components/ui/dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useCurrency } from "@/components/currency-provider"
-import { cn } from "@/lib/utils"
 import type { Product } from "@/types"
 
 interface Brand {
@@ -112,7 +109,6 @@ export default function CatalogoPage() {
   const [quantity, setQuantity] = useState(1)
 
   const isLoggedIn = !!session
-  const isApproved = session?.user?.status === "APPROVED"
   const customerType = session?.user?.customerType || "NORMAL"
 
   // Redirect to pending only if logged in but not approved

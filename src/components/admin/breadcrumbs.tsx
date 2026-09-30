@@ -14,7 +14,7 @@ export function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
         <span className="sr-only">Dashboard</span>
       </Link>
       
-      {items.map((item, index) => (
+      {items.map((item) => (
         <div key={item.label} className="flex items-center space-x-1">
           <ChevronRight className="h-4 w-4 flex-shrink-0" />
           {item.href ? (

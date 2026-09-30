@@ -68,6 +68,7 @@ export function CountdownTimer({
   }, [expiresAt, hasExpired, onExpire])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chequeo inmediato al montar: dispara onExpire si ya venció; el intervalo cubre el resto
     checkExpiration()
     const timer = setInterval(checkExpiration, 1000)
     return () => clearInterval(timer)

@@ -1,14 +1,24 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Check, ClipboardList, Loader2, PackageCheck, PackageSearch, Plus } from "lucide-react"
+import { Check, ClipboardList, Loader2, PackageCheck, PackageSearch, Plus, Store } from "lucide-react"
 import { formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
+
+/** Oferta de un aliado del mercado B2B (GET /api/inventory/sugerencias-compra). */
+interface AllyInfo {
+    businessId: string
+    businessName: string
+    stock: number
+    /** Precio aliado = wholesalePrice ?? retailPrice del producto del aliado. */
+    price: number
+}
 
 interface Suggestion {
     productId: string
@@ -19,6 +29,8 @@ interface Suggestion {
     suggestedQty: number
     retailPrice: number
     alreadyInList: boolean
+    /** Aliados con la pieza en existencia (vacío si ninguno la publica). */
+    aliados?: AllyInfo[]
 }
 
 interface SugerirCompraPanelProps {
@@ -33,6 +45,9 @@ interface SugerirCompraPanelProps {
  * Tarjeta "qué conviene pedir": lee /api/inventory/sugerencias-compra y manda
  * cada pieza a la lista de compras (POST /api/encargos/compras → alta manual
  * ligada al producto). La cantidad sugerida se puede editar antes de agregar.
+ * Bajo el nombre, chips informativos muestran qué aliado del mercado B2B la
+ * tiene en existencia y a qué precio aliado (abren /admin/mercado) — así el
+ * dueño decide entre "pedir a proveedor" y "pedir al aliado".
  */
 export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
     const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -175,6 +190,7 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                     <div className="space-y-2">
                         {suggestions.map(s => {
                             const inList = isInList(s)
+                            const aliados = s.aliados ?? []
                             return (
                                 <div
                                     key={s.productId}
@@ -185,6 +201,34 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                                         <p className="text-xs text-muted-foreground">
                                             tienes {s.stock} / mínimo {s.minStock} · {formatPrice(s.retailPrice)}
                                         </p>
+                                        {/* Chips informativos: qué aliado la tiene y a qué precio.
+                                            Abren el Mercado — el flujo de "agregar a la lista"
+                                            (pedir a proveedor) no cambia. */}
+                                        {aliados.length > 0 && (
+                                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                                                <Store className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                                <span className="mr-0.5 text-[11px] text-muted-foreground">
+                                                    la tiene:
+                                                </span>
+                                                {aliados.map(a => (
+                                                    <Link
+                                                        key={a.businessId}
+                                                        href="/admin/mercado"
+                                                        title={`${a.businessName} tiene ${a.stock} en existencia · ${formatPrice(a.price)} precio aliado — abrir Mercado`}
+                                                        className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                    >
+                                                        <Badge
+                                                            variant="secondary"
+                                                            className="max-w-56 gap-1 truncate font-normal hover:bg-secondary/60"
+                                                        >
+                                                            <span className="truncate">{a.businessName}</span>
+                                                            <span aria-hidden>·</span>
+                                                            {formatPrice(a.price)}
+                                                        </Badge>
+                                                    </Link>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                     {s.encargosPendientes > 0 && (
                                         <Badge variant="warning">

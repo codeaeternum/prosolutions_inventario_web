@@ -291,8 +291,14 @@ export function PedidosPanel() {
                         <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                           {formatDate(row.createdAt)}
                         </TableCell>
-                        <TableCell>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {row.tipo === "ENCARGO" && row.status === "READY" ? (
+                            <Button variant="outline" size="sm" asChild>
+                              <Link href={`/admin/ventas?encargo=${row.id}`}>Cobrar</Link>
+                            </Button>
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

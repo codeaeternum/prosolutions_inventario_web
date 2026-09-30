@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
-import { PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store } from "lucide-react"
+import { PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store, MessageCircle } from "lucide-react"
+import { hasWhatsAppPhone, openWhatsApp } from "@/lib/whatsapp"
 
 // ============================ Tipos ============================
 
@@ -187,6 +188,9 @@ export function EncargosPanel() {
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([])
     const [needs, setNeeds] = useState<Needs>({ partsShortage: [], lowStock: [], manual: [] })
     const [loading, setLoading] = useState(true)
+    // Nombre del negocio para el mensaje de "Avisar" por WhatsApp (mismo
+    // endpoint que usa <BusinessName />; su default es "ProSolutions").
+    const [businessName, setBusinessName] = useState("ProSolutions")
 
     // ---- Encargos de clientes ----
     const [encargos, setEncargos] = useState<EncargoRow[]>([])
@@ -272,6 +276,9 @@ export function EncargosPanel() {
         }).catch(() => {})
         fetch("/api/suppliers").then(r => (r.ok ? r.json() : null)).then(d => {
             setSuppliers((d?.suppliers ?? []).filter((s: { isActive: boolean }) => s.isActive))
+        }).catch(() => {})
+        fetch("/api/business").then(r => (r.ok ? r.json() : null)).then(d => {
+            if (typeof d?.name === "string" && d.name.trim()) setBusinessName(d.name.trim())
         }).catch(() => {})
     }, [])
 
@@ -472,6 +479,14 @@ export function EncargosPanel() {
         } finally {
             setBusy(false)
         }
+    }
+
+    // "Avisar": un toque abre WhatsApp con el aviso de pieza lista. Solo se
+    // ofrece cuando el encargo está READY y el cliente ligado tiene teléfono.
+    const avisarEncargo = (item: EncargoRow) => {
+        if (!item.customer || !hasWhatsAppPhone(item.customer.phone)) return
+        const pieza = item.quantity > 1 ? `${item.quantity} × ${item.description}` : item.description
+        openWhatsApp(item.customer.phone, `Hola ${item.customer.name}, tu pieza ${pieza} ya llegó a ${businessName}. Puedes pasar a recogerla.`)
     }
 
     // --- Selección → líneas de la OC (lista de compras) ---
@@ -841,9 +856,22 @@ export function EncargosPanel() {
                                                 </Button>
                                             )}
                                             {item.status === "READY" && (
-                                                <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void markEncargo(item, "DELIVERED")}>
-                                                    <Check className="w-4 h-4 mr-1" /> Entregada
-                                                </Button>
+                                                <>
+                                                    {hasWhatsAppPhone(item.customer?.phone) && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            disabled={busy}
+                                                            title={`Avisar a ${item.customer?.name} por WhatsApp`}
+                                                            onClick={() => avisarEncargo(item)}
+                                                        >
+                                                            <MessageCircle className="w-4 h-4 mr-1" /> Avisar
+                                                        </Button>
+                                                    )}
+                                                    <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void markEncargo(item, "DELIVERED")}>
+                                                        <Check className="w-4 h-4 mr-1" /> Entregada
+                                                    </Button>
+                                                </>
                                             )}
                                             {["PENDING", "ORDERED", "READY", "DELIVERED"].includes(item.status) && (
                                                 <Button size="sm" variant="destructive" disabled={busy} onClick={() => void markEncargo(item, "CANCELLED")}>

@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
 import { BarcodeScanner } from "@/components/barcode-scanner"
-import { CheckCircle, QrCode, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
+import { CheckCircle, ClipboardList, QrCode, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
 import { CartPanel } from "@/components/pos/cart-panel"
@@ -60,6 +60,9 @@ export default function VentasPage() {
 
     const [showQuotes, setShowQuotes] = useState(false)
     const [showMobileCart, setShowMobileCart] = useState(false)
+    // ?encargo=<id> — "Cobrar" desde Pedidos: prellena cliente + pieza y
+    // muestra la cotización/anticipo del encargo como referencia de cobro.
+    const [encargoCtx, setEncargoCtx] = useState<{ description: string; priceQuoted: number | null; deposit: number } | null>(null)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
@@ -79,6 +82,28 @@ export default function VentasPage() {
         if (preselectId) {
             fetch(`/api/users/pos?id=${preselectId}`).then(r => r.ok ? r.json() : null)
                 .then(d => { const u = d?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
+        }
+        // ?encargo=<id> — cobrar un encargo que ya llegó: cliente, pieza y
+        // referencia de lo cotizado/anticipado. El encargo se marca DELIVERED
+        // aparte; aquí solo se prellena el ticket.
+        const encargoId = params.get("encargo")
+        if (encargoId) {
+            fetch("/api/encargos").then(r => r.ok ? r.json() : null).then(d => {
+                const e = (d?.encargos ?? []).find((x: { id: string }) => x.id === encargoId)
+                if (!e) return
+                setEncargoCtx({ description: e.description, priceQuoted: e.priceQuoted ?? null, deposit: e.deposit ?? 0 })
+                if (e.customerId) {
+                    fetch(`/api/users/pos?id=${e.customerId}`).then(r => r.ok ? r.json() : null)
+                        .then(dd => { const u = dd?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
+                }
+                if (e.productId) {
+                    fetch(`/api/search/pos?q=${encodeURIComponent(e.productId)}`).then(r => r.ok ? r.json() : null)
+                        .then(dd => {
+                            const p = (dd?.products ?? []).find((x: PosProduct) => x.id === e.productId)
+                            if (p) setCart(prev => prev.length ? prev : [{ product: p, quantity: Math.max(1, e.quantity ?? 1) }])
+                        }).catch(() => {})
+                }
+            }).catch(() => {})
         }
     }, [])
 
@@ -245,6 +270,20 @@ export default function VentasPage() {
                     </Button>
                 </div>
             </div>
+
+            {encargoCtx && (
+                <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
+                    <CardContent className="p-3 flex items-center gap-3">
+                        <ClipboardList className="h-5 w-5 text-amber-600 shrink-0" />
+                        <p className="text-sm text-amber-800 dark:text-amber-300 flex-1 min-w-0">
+                            <span className="font-medium">Encargo:</span> {encargoCtx.description}
+                            {encargoCtx.priceQuoted != null && ` · Cotizado ${formatPrice(encargoCtx.priceQuoted)}`}
+                            {encargoCtx.deposit > 0 && ` · Anticipo ${formatPrice(encargoCtx.deposit)}`}
+                        </p>
+                        <Button variant="ghost" size="sm" onClick={() => setEncargoCtx(null)}>Quitar</Button>
+                    </CardContent>
+                </Card>
+            )}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
                 <ProductCatalog branchId={branchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} refreshKey={docsRefreshKey} />

@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle } from "lucide-react"
+import { hasWhatsAppPhone, openWhatsApp } from "@/lib/whatsapp"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -21,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { semaforo, SemaforoBadge } from "@/components/admin/taller/semaforo"
+import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
 import { toast } from "sonner"
 
 type Branch = { id: string; name: string }
@@ -127,7 +129,14 @@ function PatternDots({ value }: { value: string }) {
   </span>
 }
 
-function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }: { title: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; onOpen: (id: string) => void }) {
+// La firma de entrega se guarda como data URL (trazo del canvas), que el
+// optimizador de next/image no procesa: <img> directo es la opción correcta.
+function DeliverySignature({ data }: { data: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={data} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" />
+}
+
+function BoardColumn({ title, style, orders, total, dimmed, showStage, slaHours, onOpen, onAvisar }: { title: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; slaHours: SlaHours; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
   return <section aria-label={title} className={`flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3 ${dimmed ? "opacity-70" : ""}`}>
     <header className="mb-3 flex items-center gap-2 px-1">
       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
@@ -136,7 +145,7 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
     </header>
     <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
       {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
-        : orders.map(order => <button key={order.id} onClick={() => onOpen(order.id)} className="w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
+        : orders.map(order => <div key={order.id} className="relative"><button onClick={() => onOpen(order.id)} className="w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
           <p className="flex items-center justify-between gap-2"><strong className="text-xs text-muted-foreground">{folioOf(order)}</strong>{showStage && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[order.status].badge}`}>{repairLabels[order.status]}</span>}</p>
           <p className="font-medium leading-snug">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</p>
           <p className="text-xs text-muted-foreground">{order.customerName}</p>
@@ -144,14 +153,18 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, onOpen }:
             <span className="flex items-center gap-1"><MapPin size={12} />{order.currentBranch.name}</span>
             <span className="flex items-center gap-1"><Wrench size={12} />{order.assignedTo?.name ?? "Sin asignar"}</span>
             <PromisedAt order={order} />
-            <SemaforoBadge order={order} />
+            <SemaforoBadge order={order} slaHours={slaHours} />
           </div>
           {(orderBalanceCents(order) > 0 || isScheduledToday(order) || order.location) && <div className="flex flex-wrap gap-1.5 pt-0.5">
             {orderBalanceCents(order) > 0 && <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-300">Adeudo {money(orderBalanceCents(order))}</span>}
             {isScheduledToday(order) && <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">Hoy</span>}
             {order.location && <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"><MapPin size={11} />{order.location}</span>}
           </div>}
-        </button>)}
+        </button>
+        {/* "Avisar" en un toque: la tarjeta entera es <button>, así que el chip
+            va como overlay hermano (botón dentro de botón no es HTML válido). */}
+        {order.status === "READY" && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); onAvisar(order) }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={14} /></button>}
+      </div>)}
       {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
     </div>
   </section>
@@ -177,6 +190,9 @@ export default function WorkshopPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  // Umbrales del semáforo por etapa (workshop_sla_hours); defaults hasta que
+  // responda la configuración del negocio.
+  const [slaHours, setSlaHours] = useState<SlaHours>(DEFAULT_SLA_HOURS)
   const [selected, setSelected] = useState<Order | null>(null)
   const [evidenceLinkExpired, setEvidenceLinkExpired] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -200,6 +216,9 @@ export default function WorkshopPage() {
   const [accessSecret, setAccessSecret] = useState<{ loading: boolean; fetched: boolean; value: string | null }>({ loading: false, fetched: false, value: null })
   const [discardDialog, setDiscardDialog] = useState(false)
   const [opening, setOpening] = useState(false)
+  // Nombre del negocio para el WhatsApp de "Avisar" (orden lista). Mismo
+  // endpoint que <BusinessName />, cuyo default también es "ProSolutions".
+  const [businessName, setBusinessName] = useState("ProSolutions")
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const requestVersion = useRef(0)
@@ -243,6 +262,13 @@ export default function WorkshopPage() {
       total: (labor + approved.reduce((sum, p) => sum + p.unitPriceCents * p.qty, 0)) / 100,
     }
   }
+  // "Avisar": un toque abre WhatsApp con el aviso de orden lista. Los chips
+  // solo se renderizan en READY con teléfono — el guard es doble seguridad.
+  const avisarCliente = (order: Order) => {
+    if (!hasWhatsAppPhone(order.customerPhone)) return
+    const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
+    openWhatsApp(order.customerPhone, `Hola ${order.customerName}, tu equipo ${equipo} (orden ${folioOf(order)}) está listo en ${businessName}.`)
+  }
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
   const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
   const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
@@ -265,6 +291,11 @@ export default function WorkshopPage() {
   useEffect(() => () => {
     detailVersion.current += 1
     detailRequest.current?.abort()
+  }, [])
+  useEffect(() => {
+    fetch("/api/business").then(r => (r.ok ? r.json() : null)).then(data => {
+      if (typeof data?.name === "string" && data.name.trim()) setBusinessName(data.name.trim())
+    }).catch(() => {})
   }, [])
   useEffect(() => {
     if (!hasUnsavedChanges) return
@@ -328,6 +359,16 @@ export default function WorkshopPage() {
     finally { if (version === requestVersion.current) setLoading(false) }
   }, [branch, page, search, stage, view])
   useEffect(() => { const timer = setTimeout(() => { void load() }, 200); return () => clearTimeout(timer) }, [load])
+  // Los SLA del semáforo se leen una sola vez al montar: el ajuste se edita
+  // en Configuración y el tablero lo refleja en la siguiente visita.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/workshop-config")
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => { if (!cancelled && data) setSlaHours(readSlaHours(data.slaHours)) })
+      .catch(() => { /* Sin configuración legible quedan los defaults. */ })
+    return () => { cancelled = true }
+  }, [])
 
   async function openOrder(id: string, preserveDrafts = false, push = true) {
     if (push && new URLSearchParams(window.location.search).get("orden") !== id) syncOrderUrl(id)
@@ -590,13 +631,13 @@ export default function WorkshopPage() {
   // Chip del tablero: rojos del semáforo entre las órdenes cargadas (hasta 20
   // por columna); el conteo exacto de todas las atrasadas vive en la vista
   // "Atrasadas".
-  const boardOverdueCount = board ? boardStages.reduce((sum, stageKey) => sum + (board.orders[stageKey] ?? []).filter(order => semaforo(order) === "rojo").length, 0) : 0
+  const boardOverdueCount = board ? boardStages.reduce((sum, stageKey) => sum + (board.orders[stageKey] ?? []).filter(order => semaforo(order, new Date(), slaHours) === "rojo").length, 0) : 0
 
   return <div className="mx-auto max-w-6xl space-y-6 pb-20">
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : tab === "precios" ? "Precios sugeridos por servicio, modelos de equipo y listas del taller." : "De la recepción a la entrega, con un historial por equipo."}</p></div>
       {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} /><Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button>{partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}><Send className="mr-2 h-4 w-4" />Enviar a taller</Button>}</>}
+        {selected && <><ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} />{selected.status === "READY" && hasWhatsAppPhone(selected.customerPhone) && <Button variant="outline" onClick={() => avisarCliente(selected)} title="Avisar al cliente por WhatsApp"><MessageCircle className="mr-2 h-4 w-4" />Avisar</Button>}<Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button>{partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}><Send className="mr-2 h-4 w-4" />Enviar a taller</Button>}</>}
         <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
       </div>
         : tab === "ordenes" ? <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div> : null}
@@ -620,18 +661,18 @@ export default function WorkshopPage() {
       </div>
       {loading ? <p role="status">Cargando órdenes…</p> : kanbanMode ? (total === 0 ? emptyList : <div className="space-y-3">
         {boardOverdueCount > 0 && <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-rose-600 dark:text-rose-400"><span aria-hidden className="h-2 w-2 rounded-full bg-rose-500" />{boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}</p>}
-        <div className="flex items-start gap-3 overflow-x-auto pb-2">{activeBoardStages.map(value => <BoardColumn key={value} title={repairLabels[value]} style={stageStyles[value]} orders={board?.orders[value] ?? []} total={board?.totals[value] ?? 0} onOpen={id => void openOrder(id)} />)}
-          <BoardColumn title="Cerradas" style={closedColumnStyle} dimmed showStage onOpen={id => void openOrder(id)}
+        <div className="flex items-start gap-3 overflow-x-auto pb-2">{activeBoardStages.map(value => <BoardColumn key={value} title={repairLabels[value]} style={stageStyles[value]} orders={board?.orders[value] ?? []} total={board?.totals[value] ?? 0} slaHours={slaHours} onOpen={id => void openOrder(id)} onAvisar={avisarCliente} />)}
+          <BoardColumn title="Cerradas" style={closedColumnStyle} dimmed showStage slaHours={slaHours} onOpen={id => void openOrder(id)} onAvisar={avisarCliente}
             orders={board ? closedColumnStages.flatMap(value => board.orders[value] ?? []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20) : []}
             total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0} />
         </div>
         <p className="text-xs text-muted-foreground">{total} órdenes{board && boardStages.some(value => board.totals[value] > board.orders[value].length) ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto." : ""}</p>
-      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <button key={order.id} onClick={() => void openOrder(order.id)} className="space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} /><SemaforoBadge order={order} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>)}</div>}
+      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <div key={order.id} className="relative"><button onClick={() => void openOrder(order.id)} className={`h-full w-full space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary${order.status === "READY" && hasWhatsAppPhone(order.customerPhone) ? " pr-12" : ""}`}><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} /><SemaforoBadge order={order} slaHours={slaHours} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>{/* "Avisar" en un toque: overlay hermano porque la tarjeta ya es <button>. */}{order.status === "READY" && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); avisarCliente(order) }} className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={15} /></button>}</div>)}</div>}
       {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
       </>}
     </>}
-    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}{selected.delegatedOrderId && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Send size={12} />Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}</span>{mirrorLive && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Folio espejo {mirrorLive.folio}<span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>{mirrorLive.statusLabel}</span></span>}{selected.delegatedAt && <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>}<Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">Ver en portal aliado</Link></p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><img src={selected.deliverySignatureData} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" /></dd></div>}</dl></section>
+    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}{selected.delegatedOrderId && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Send size={12} />Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}</span>{mirrorLive && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Folio espejo {mirrorLive.folio}<span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>{mirrorLive.statusLabel}</span></span>}{selected.delegatedAt && <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>}<Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">Ver en portal aliado</Link></p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><DeliverySignature data={selected.deliverySignatureData} /></dd></div>}</dl></section>
       <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
         canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening} branches={branches} currentBranchId={selected.currentBranch.id}
         readOnly={partsClosedStages.includes(selected.status) || Boolean(selected.delegatedOrderId)}

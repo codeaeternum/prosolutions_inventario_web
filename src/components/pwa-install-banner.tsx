@@ -9,8 +9,6 @@ const STORAGE_KEY = "pwa-install-banner-dismissed"
 
 export function PwaInstallBanner() {
   const [visible, setVisible] = useState(false)
-  const [isStandalone, setIsStandalone] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -23,8 +21,7 @@ export function PwaInstallBanner() {
     const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
     const dismissed = localStorage.getItem(STORAGE_KEY) === "1"
 
-    setIsStandalone(standalone)
-    setIsMobile(mobile)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- lee matchMedia/localStorage una vez al montar (APIs solo de navegador)
     setVisible(!standalone && mobile && !dismissed)
   }, [])
 
