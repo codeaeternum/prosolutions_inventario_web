@@ -93,13 +93,28 @@ export async function GET(req: Request) {
       ...(isCatalogStaff(viewer) ? { stocks: { where: { businessId }, include: { branch: { select: { id: true, name: true } } } } } : {}),
     }
 
+    // Resumen para el panel de staff: una pasada agregada sobre el catálogo.
+    // Público/clientes no lo reciben (no aplica a su vista ni le suma trabajo).
+    const statsPromise = isCatalogStaff(viewer)
+      ? prisma.$queryRaw<{ productos: number; unidades: number; bajoMinimo: number; sinStock: number }[]>`
+          SELECT count(*)::int AS productos,
+                 COALESCE(sum(stock), 0)::int AS unidades,
+                 count(*) FILTER (WHERE stock <= "minStock")::int AS "bajoMinimo",
+                 count(*) FILTER (WHERE stock = 0)::int AS "sinStock"
+          FROM "Product"
+          WHERE "businessId" = ${businessId} AND "isActive" = true`
+      : Promise.resolve(null)
+
     if (lowStock) {
       // lowStock se filtra en JS (no se puede comparar columnas en Prisma)
-      const all = await prisma.product.findMany({
-        where,
-        include,
-        orderBy: { createdAt: "desc" },
-      })
+      const [all, stats] = await Promise.all([
+        prisma.product.findMany({
+          where,
+          include,
+          orderBy: { createdAt: "desc" },
+        }),
+        statsPromise,
+      ])
       const filtered = all.filter((p) => p.stock <= p.minStock)
       const total = filtered.length
       const products = filtered.slice((page - 1) * limit, page * limit)
@@ -110,10 +125,11 @@ export async function GET(req: Request) {
         page,
         limit,
         totalPages,
+        ...(stats?.[0] ? { stats: stats[0] } : {}),
       }, { headers: catalogResponseHeaders })
     }
 
-    const [products, total] = await Promise.all([
+    const [products, total, stats] = await Promise.all([
       prisma.product.findMany({
         where,
         include,
@@ -122,6 +138,7 @@ export async function GET(req: Request) {
         take: limit,
       }),
       prisma.product.count({ where }),
+      statsPromise,
     ])
 
     const totalPages = Math.ceil(total / limit) || 1
@@ -131,6 +148,7 @@ export async function GET(req: Request) {
       page,
       limit,
       totalPages,
+      ...(stats?.[0] ? { stats: stats[0] } : {}),
     }, { headers: catalogResponseHeaders })
   } catch (error) {
     console.error("Error fetching products:", error)

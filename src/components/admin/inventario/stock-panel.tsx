@@ -25,6 +25,14 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Pagination } from "@/components/ui/pagination"
 import { EmptyState } from "@/components/admin/empty-state"
 import { ExportButton } from "@/components/admin/export-button"
@@ -52,8 +60,10 @@ import {
     ClipboardList,
     Download,
     Edit,
+    Ellipsis,
     Eye,
     EyeOff,
+    FilterX,
     FolderTree,
     History,
     LayoutGrid,
@@ -66,7 +76,6 @@ import {
     Printer,
     QrCode,
     Rows3,
-    ScanBarcode,
     Search,
     Store,
     Upload,
@@ -220,6 +229,8 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     }
 
     // --- Datos ---------------------------------------------------------------
+    interface InventoryStats { productos: number; unidades: number; bajoMinimo: number; sinStock: number }
+    const [stats, setStats] = useState<InventoryStats | null>(null)
     const [products, setProducts] = useState<StockProductItem[]>([])
     const [total, setTotal] = useState(0)
     const [totalPages, setTotalPages] = useState(1)
@@ -230,6 +241,20 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     // Búsqueda con debounce: el input vive en estado local y viaja a la URL.
     const [searchInput, setSearchInput] = useState(search)
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const searchRef = useRef<HTMLInputElement>(null)
+
+    // "/" enfoca el buscador desde cualquier punto de la pantalla.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            const t = e.target as HTMLElement | null
+            if (e.key !== "/" || !t) return
+            if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable) return
+            e.preventDefault()
+            searchRef.current?.focus()
+        }
+        window.addEventListener("keydown", onKeyDown)
+        return () => window.removeEventListener("keydown", onKeyDown)
+    }, [])
 
     const setParams = useCallback((patch: Record<string, string | null>) => {
         const params = new URLSearchParams(searchParams.toString())
@@ -266,10 +291,12 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 setProducts(data.products ?? [])
                 setTotal(data.total ?? 0)
                 setTotalPages(data.totalPages ?? 1)
+                setStats(data.stats ?? null)
             } else {
                 setProducts(Array.isArray(data) ? data : [])
                 setTotal(Array.isArray(data) ? data.length : 0)
                 setTotalPages(1)
+                setStats(null)
             }
         } catch {
             if (!signal?.aborted) setLoadError("No se pudieron cargar los productos. Revisa tu conexión y vuelve a intentar.")
@@ -500,9 +527,14 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
     const hasFilters = search !== "" || categoryId !== "" || visibilidad !== "todos" || lowStock
 
+    const limpiarFiltros = () => {
+        setSearchInput("")
+        setParams({ search: null, categoryId: null, visibilidad: null, lowStock: null, page: null })
+    }
+
     return (
         <div className="space-y-4">
-            {/* Acciones globales sobre la lista */}
+            {/* ── Fila 1: acciones primarias + sucursal de trabajo + herramientas ── */}
             <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={() => setParams({ nuevo: "1" })}>
                     <Plus className="mr-2 h-4 w-4" />
@@ -511,22 +543,6 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 <Button variant="outline" onClick={() => setParams({ entrada: "1" })}>
                     <PackagePlus className="mr-2 h-4 w-4" />
                     Entrada rápida
-                </Button>
-                {branches.length >= 2 && (
-                    <Button variant="outline" onClick={() => setTraspasoOpen(true)}>
-                        <ArrowLeftRight className="mr-2 h-4 w-4" />
-                        <span className="hidden sm:inline">Mover entre sucursales</span>
-                        <span className="sm:hidden">Mover</span>
-                    </Button>
-                )}
-                <Button variant="outline" onClick={() => setMermaOpen(true)}>
-                    <PackageX className="mr-2 h-4 w-4" />
-                    Merma
-                </Button>
-                <Button variant="outline" onClick={openCountDialog} disabled={branches.length === 0}>
-                    <ClipboardList className="mr-2 h-4 w-4" />
-                    <span className="hidden sm:inline">Conteo físico</span>
-                    <span className="sm:hidden">Conteo</span>
                 </Button>
                 {labelSelected.size > 0 && (
                     <>
@@ -550,39 +566,16 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     </>
                 )}
 
-                <div className="ml-auto flex flex-wrap items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setParams({ captura: "1" })}>
-                        <Zap className="mr-1 h-4 w-4" />
-                        Captura rápida
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setParams({ herramienta: "clasificacion" })}>
-                        <FolderTree className="mr-1 h-4 w-4" />
-                        Clasificación
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setParams({ herramienta: "etiquetas" })}>
-                        <QrCode className="mr-1 h-4 w-4" />
-                        Etiquetas
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-                        <Upload className="mr-1 h-4 w-4" />
-                        <span className="hidden sm:inline">Importar</span>
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
-                        {exporting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
-                        <span className="hidden sm:inline">Exportar</span>
-                    </Button>
-                    <ExportButton type="products" label="CSV" />
-                </div>
-            </div>
-
-            {/* Sucursal de trabajo: el empleado la tiene fija, el admin elige. */}
-            <div className="flex items-center gap-2 text-sm">
-                <ScanBarcode className="h-4 w-4 text-muted-foreground" />
-                {isAdmin ? (
-                    <>
-                        <span className="text-muted-foreground">Operando en:</span>
+                {/* Sucursal de trabajo: contexto de los ajustes rápidos. El
+                    empleado la tiene fija como badge; el admin la elige. */}
+                <div className="ml-auto flex items-center gap-2">
+                    <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
+                        <Store className="h-3.5 w-3.5" />
+                        Operando en:
+                    </span>
+                    {isAdmin ? (
                         <Select value={actionBranchId ?? ""} onValueChange={setWorkBranchId}>
-                            <SelectTrigger className="h-8 w-auto min-w-40">
+                            <SelectTrigger className="h-9 w-auto min-w-36" aria-label="Sucursal de trabajo">
                                 <SelectValue placeholder="Sucursal" />
                             </SelectTrigger>
                             <SelectContent>
@@ -591,56 +584,112 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                 ))}
                             </SelectContent>
                         </Select>
-                    </>
-                ) : (
-                    <span className="text-muted-foreground">
-                        Operando en: <span className="font-medium text-foreground">{actionBranchName || "tu sucursal"}</span>
-                    </span>
-                )}
+                    ) : (
+                        <Badge variant="secondary" className="gap-1.5 px-3 py-1.5 text-sm font-medium">
+                            <Store className="h-3.5 w-3.5" />
+                            {actionBranchName || "Tu sucursal"}
+                        </Badge>
+                    )}
+
+                    {/* Herramientas de uso ocasional: fuera del camino pero a un click. */}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Herramientas de inventario" title="Herramientas de inventario">
+                                <Ellipsis className="h-4 w-4" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-60">
+                            <DropdownMenuLabel>Herramientas</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => setTraspasoOpen(true)} disabled={branches.length < 2}>
+                                <ArrowLeftRight className="mr-2 h-4 w-4" />
+                                Mover entre sucursales
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setMermaOpen(true)}>
+                                <PackageX className="mr-2 h-4 w-4" />
+                                Registrar merma
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={openCountDialog} disabled={branches.length === 0}>
+                                <ClipboardList className="mr-2 h-4 w-4" />
+                                Conteo físico
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setParams({ captura: "1" })}>
+                                <Zap className="mr-2 h-4 w-4" />
+                                Captura rápida
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setParams({ herramienta: "clasificacion" })}>
+                                <FolderTree className="mr-2 h-4 w-4" />
+                                Clasificación (categorías, marcas, modelos)
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setParams({ herramienta: "etiquetas" })}>
+                                <QrCode className="mr-2 h-4 w-4" />
+                                Imprimir etiquetas
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setImportOpen(true)}>
+                                <Upload className="mr-2 h-4 w-4" />
+                                Importar Excel
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={handleExport} disabled={exporting}>
+                                {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                                Exportar Excel
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                    <ExportButton type="products" label="CSV" className="h-9" />
+                </div>
             </div>
 
-            {/* Filtros */}
-            <div className="flex flex-col gap-3">
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="relative flex-1 sm:max-w-sm">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            value={searchInput}
-                            onChange={(e) => setSearchInput(e.target.value)}
-                            placeholder="Buscar por nombre o código..."
-                            aria-label="Buscar productos por nombre o código"
-                            className="pl-9"
-                        />
-                    </div>
-                    <Select
-                        value={categoryId || "ALL"}
-                        onValueChange={(v) => setParams({ categoryId: v === "ALL" ? null : v, page: null })}
-                    >
-                        <SelectTrigger className="w-full sm:w-52">
-                            <SelectValue placeholder="Categoría" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="ALL">Todas las categorías</SelectItem>
-                            {categories.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <Button
-                        variant={lowStock ? "default" : "outline"}
-                        size="sm"
-                        className="self-start sm:self-center"
-                        onClick={() => setParams({ lowStock: lowStock ? null : "true", page: null })}
-                    >
-                        <AlertTriangle className="mr-1 h-4 w-4" />
-                        Stock bajo
-                    </Button>
+            {/* ── Fila 2: filtros + vista ── */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative flex-1 sm:max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        ref={searchRef}
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        placeholder="Buscar por nombre o código…  ( / )"
+                        aria-label="Buscar productos por nombre o código (atajo: tecla /)"
+                        className="pl-9 pr-8"
+                    />
+                    {searchInput && (
+                        <button
+                            type="button"
+                            onClick={() => setSearchInput("")}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                            aria-label="Limpiar búsqueda"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    )}
                 </div>
+                <Select
+                    value={categoryId || "ALL"}
+                    onValueChange={(v) => setParams({ categoryId: v === "ALL" ? null : v, page: null })}
+                >
+                    <SelectTrigger className="w-full sm:w-48">
+                        <SelectValue placeholder="Categoría" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="ALL">Todas las categorías</SelectItem>
+                        {categories.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+                <Button
+                    variant={lowStock ? "default" : "outline"}
+                    size="sm"
+                    className="h-9 self-start sm:self-center"
+                    onClick={() => setParams({ lowStock: lowStock ? null : "true", page: null })}
+                >
+                    <AlertTriangle className="mr-1 h-4 w-4" />
+                    Stock bajo
+                </Button>
 
                 {/* Chips de visibilidad en el mercado → ?visibilidad= */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground mr-1">
-                        <Store className="h-3.5 w-3.5" />
+                <div className="flex flex-wrap items-center gap-1">
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground mr-0.5">
                         Visibilidad
                     </span>
                     {VISIBILIDAD_FILTROS.map((f) => (
@@ -648,34 +697,65 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             key={f.value}
                             variant={visibilidad === f.value ? "default" : "outline"}
                             size="sm"
+                            className="h-8"
                             onClick={() => setParams({ visibilidad: f.value === "todos" ? null : f.value, page: null })}
                         >
                             {f.label}
                         </Button>
                     ))}
+                </div>
 
-                    {/* Selector de vista — preferencia guardada en el equipo. */}
-                    <div className="ml-auto inline-flex items-center rounded-md border" role="group" aria-label="Cambiar vista de la lista">
-                        {VISTAS.map((v) => {
-                            const VIcon = v.icon
-                            return (
-                                <Button
-                                    key={v.value}
-                                    variant={vista === v.value ? "secondary" : "ghost"}
-                                    size="icon"
-                                    className="h-8 w-9 first:rounded-r-none last:rounded-l-none [&:not(:first-child):not(:last-child)]:rounded-none"
-                                    title={v.title}
-                                    aria-label={v.label}
-                                    aria-pressed={vista === v.value}
-                                    onClick={() => cambiarVista(v.value)}
-                                >
-                                    <VIcon className="h-4 w-4" />
-                                </Button>
-                            )
-                        })}
-                    </div>
+                {/* Selector de vista — preferencia guardada en el equipo. */}
+                <div className="inline-flex items-center self-start rounded-md border sm:ml-auto" role="group" aria-label="Cambiar vista de la lista">
+                    {VISTAS.map((v) => {
+                        const VIcon = v.icon
+                        return (
+                            <Button
+                                key={v.value}
+                                variant={vista === v.value ? "secondary" : "ghost"}
+                                size="icon"
+                                className="h-8 w-9 first:rounded-r-none last:rounded-l-none [&:not(:first-child):not(:last-child)]:rounded-none"
+                                title={v.title}
+                                aria-label={v.label}
+                                aria-pressed={vista === v.value}
+                                onClick={() => cambiarVista(v.value)}
+                            >
+                                <VIcon className="h-4 w-4" />
+                            </Button>
+                        )
+                    })}
                 </div>
             </div>
+
+            {/* ── Fila 3: resumen del inventario (los números bajo mínimo/sin
+                   stock también activan el filtro de stock bajo) ── */}
+            {(stats || hasFilters) && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    {stats && (
+                        <>
+                            <span><span className="font-semibold text-foreground">{stats.productos.toLocaleString("es-MX")}</span> productos</span>
+                            <span><span className="font-semibold text-foreground">{stats.unidades.toLocaleString("es-MX")}</span> unidades</span>
+                            <button
+                                type="button"
+                                onClick={() => setParams({ lowStock: lowStock ? null : "true", page: null })}
+                                title="Ver solo los productos bajo mínimo"
+                                className={cn("rounded-sm underline-offset-2 hover:underline", stats.bajoMinimo > 0 ? "font-medium text-amber-600 dark:text-amber-400" : "")}
+                            >
+                                {stats.bajoMinimo} bajo mínimo
+                            </button>
+                            <span className={stats.sinStock > 0 ? "font-medium text-destructive" : ""}>
+                                {stats.sinStock} sin stock
+                            </span>
+                        </>
+                    )}
+                    {hasFilters && (
+                        <Button variant="ghost" size="sm" className="-my-1 ml-auto h-6 gap-1 px-2 text-muted-foreground hover:text-foreground" onClick={limpiarFiltros}>
+                            <FilterX className="h-3.5 w-3.5" />
+                            Limpiar filtros
+                        </Button>
+                    )}
+                </div>
+            )}
 
             {/* Lista única de productos */}
             {loadError ? (
@@ -684,8 +764,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     <Button variant="outline" onClick={() => void fetchProducts()}>Reintentar</Button>
                 </div>
             ) : loading && products.length === 0 ? (
-                <div className="flex items-center justify-center h-64">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <div className="space-y-2" aria-busy="true" aria-label="Cargando productos">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <div key={i} className="h-[92px] animate-pulse rounded-lg border bg-muted/40" style={{ animationDelay: `${i * 60}ms` }} />
+                    ))}
                 </div>
             ) : products.length === 0 ? (
                 <EmptyState
@@ -701,7 +783,14 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         const badge = VISIBILIDAD_BADGE[product.marketVisibility ?? "HIDDEN"]
                         return (
                             <Card key={product.id} className={cn("overflow-hidden hover:shadow-md transition-shadow", loading && "opacity-60")}>
-                                <div className="relative aspect-square bg-muted">
+                                <div
+                                    className="relative aspect-square cursor-pointer bg-muted"
+                                    role="button"
+                                    tabIndex={0}
+                                    title={`Editar ${product.name}`}
+                                    onClick={() => setParams({ editar: product.id })}
+                                    onKeyDown={(e) => { if (e.key === "Enter") setParams({ editar: product.id }) }}
+                                >
                                     {product.images[0] ? (
                                         <Image
                                             src={product.images[0]}
@@ -718,13 +807,14 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                     <Checkbox
                                         checked={labelSelected.has(product.id)}
                                         onCheckedChange={() => toggleLabelSelected(product)}
+                                        onClick={(e) => e.stopPropagation()}
                                         aria-label={`Seleccionar ${product.name} para imprimir etiquetas`}
                                         title="Seleccionar para etiquetas"
                                         className="absolute left-2 top-2 bg-background/90"
                                     />
                                     <Badge
                                         variant={getStockVariant(product)}
-                                        className="absolute right-2 top-2"
+                                        className="pointer-events-none absolute right-2 top-2"
                                         title={`Total: ${product.stock}`}
                                     >
                                         {product.stock}
@@ -875,7 +965,16 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                                 )}
                                             </div>
                                             <div className="min-w-0 flex-1">
-                                                <h3 className="font-medium truncate">{product.name}</h3>
+                                                <h3 className="font-medium truncate">
+                                                    <button
+                                                        type="button"
+                                                        className="truncate text-left hover:underline"
+                                                        title={`Editar ${product.name}`}
+                                                        onClick={() => setParams({ editar: product.id })}
+                                                    >
+                                                        {product.name}
+                                                    </button>
+                                                </h3>
                                                 <p className="text-xs text-muted-foreground truncate">
                                                     {getModelText(product)}
                                                     {product.barcode ? ` · ${product.barcode}` : ""}
