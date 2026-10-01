@@ -93,6 +93,20 @@ function fakeDb() {
         users[where.id] = { ...(users[where.id] ?? { id: where.id }), ...data }
         return users[where.id]
       }),
+      updateMany: vi.fn(async ({ where, data }: any) => {
+        let count = 0
+        for (const user of Object.values(users)) {
+          if (
+            user.id === where.id &&
+            (where.status === undefined || user.status === where.status) &&
+            (where.role === undefined || user.role === where.role)
+          ) {
+            Object.assign(user, data)
+            count++
+          }
+        }
+        return { count }
+      }),
     },
   } as unknown as VerificationDb
   return { db, rows, users }
@@ -227,5 +241,28 @@ describe("markVerified", () => {
     await markVerified(db, "u1", "TELEGRAM")
     expect(users.u1.phoneVerifiedAt).toBeInstanceOf(Date)
     expect(users.u1.emailVerifiedAt).toBeUndefined()
+  })
+
+  it("promueve APPROVED al dueño auto-registrado (PENDING + ADMIN)", async () => {
+    const { db, users } = fakeDb()
+    users.owner = { id: "owner", status: "PENDING", role: "ADMIN" }
+    await markVerified(db, "owner", "EMAIL")
+    expect(users.owner.status).toBe("APPROVED")
+    expect(users.owner.emailVerifiedAt).toBeInstanceOf(Date)
+  })
+
+  it("NO promueve clientes pendientes (esperan aprobación del negocio)", async () => {
+    const { db, users } = fakeDb()
+    users.customer = { id: "customer", status: "PENDING", role: "CUSTOMER" }
+    await markVerified(db, "customer", "EMAIL")
+    expect(users.customer.status).toBe("PENDING")
+    expect(users.customer.emailVerifiedAt).toBeInstanceOf(Date)
+  })
+
+  it("no toca a quien ya está APPROVED", async () => {
+    const { db, users } = fakeDb()
+    users.staff = { id: "staff", status: "APPROVED", role: "EMPLOYEE" }
+    await markVerified(db, "staff", "TELEGRAM")
+    expect(users.staff.status).toBe("APPROVED")
   })
 })

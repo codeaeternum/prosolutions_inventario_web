@@ -36,6 +36,8 @@ export default async function VerificarPage({
           name: true,
           email: true,
           phone: true,
+          role: true,
+          status: true,
           emailVerifiedAt: true,
           phoneVerifiedAt: true,
         },
@@ -49,6 +51,9 @@ export default async function VerificarPage({
           initialIdentifier={identifierParam || account?.email || ""}
           sent={sent}
           telegramUrl={telegramUrl}
+          // El alta de /api/signup queda PENDING hasta verificar un canal:
+          // para ese usuario la verificación sí es requisito de acceso.
+          requiresVerification={account?.status === "PENDING" && account?.role === "ADMIN"}
           account={
             account
               ? {

@@ -145,4 +145,11 @@ export async function markVerified(
 ): Promise<void> {
   const field = channel === "EMAIL" ? "emailVerifiedAt" : "phoneVerifiedAt"
   await db.user.update({ where: { id: userId }, data: { [field]: new Date() } })
+  // Dueño auto-registrado (/api/signup): demostrar un canal de contacto real
+  // activa su negocio. PENDING+ADMIN solo existe por ese alta; los clientes
+  // PENDING siguen esperando aprobación del admin de su negocio.
+  await db.user.updateMany({
+    where: { id: userId, status: "PENDING", role: "ADMIN" },
+    data: { status: "APPROVED" },
+  })
 }

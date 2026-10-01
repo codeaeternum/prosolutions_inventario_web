@@ -179,6 +179,13 @@ export async function POST(req: Request) {
 
     const hashedPassword = await bcrypt.hash(password, 12)
 
+    // La cuenta nace PENDING solo si hay un canal por donde entregar la
+    // verificación: correo vía Resend, o teléfono vía bot de Telegram. Un
+    // PENDING sin canal posible quedaría atascado para siempre. Con canal,
+    // el dueño se activa (APPROVED) al verificar — markVerified lo promueve.
+    const telegramReady = Boolean(process.env.TELEGRAM_BOT_USERNAME || process.env.TELEGRAM_BOT_TOKEN)
+    const canVerify = Boolean(process.env.RESEND_API_KEY) || (Boolean(phoneOrNull) && telegramReady)
+
     // Ids del alta para emitir los códigos de verificación fuera de la tx.
     let createdBusinessId: string | null = null
     let createdUserId: string | null = null
@@ -202,7 +209,7 @@ export async function POST(req: Request) {
             phone: phoneOrNull,
             password: hashedPassword,
             role: "ADMIN",
-            status: "APPROVED",
+            status: canVerify ? "PENDING" : "APPROVED",
           },
           select: { id: true },
         })
@@ -276,6 +283,8 @@ export async function POST(req: Request) {
         verification: {
           emailSent,
           telegramUrl,
+          // true cuando el alta quedó PENDING hasta verificar un canal.
+          required: canVerify,
         },
         urls: {
           home: `/${slug}`,

@@ -1,47 +1,32 @@
-"use client"
+import { redirect } from "next/navigation"
+import { auth } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
+import { PendingCard } from "./pending-card"
 
-import { signOut } from "next-auth/react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Clock, LogOut, Wrench } from "lucide-react"
+/**
+ * /pending — cuentas que aún no operan.
+ *
+ * Tres casos:
+ * - ADMIN + PENDING: dueño auto-registrado (/api/signup) → lo manda a
+ *   /verificar; su cuenta se activa sola al confirmar correo o teléfono.
+ * - APPROVED en BD pero el JWT dice PENDING (se verificó con la sesión
+ *   vieja): aviso + botón que rehace el login vía /post-login.
+ * - CUSTOMER/WORKSHOP + PENDING: esperando aprobación del negocio.
+ */
+export const dynamic = "force-dynamic"
 
-export default function PendingPage() {
-  return (
-      <Card className="w-full max-w-md text-center">
-        <CardHeader>
-          <div className="flex justify-center mb-2">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <Wrench className="h-7 w-7" />
-            </div>
-          </div>
-          <p className="text-lg font-bold tracking-tight mb-4">Reficio</p>
-          <div className="flex justify-center mb-4">
-            <div className="p-4 bg-warning/10 rounded-full">
-              <Clock className="h-12 w-12 text-warning" />
-            </div>
-          </div>
-          <CardTitle className="text-2xl">Cuenta Pendiente</CardTitle>
-          <CardDescription>
-            Tu cuenta está en espera de aprobación
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            El administrador revisará tu solicitud pronto.
-            Una vez aprobada, podrás acceder al catálogo completo
-            y realizar reservaciones.
-          </p>
-        </CardContent>
-        <CardFooter className="flex flex-col gap-2">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => signOut({ callbackUrl: "/login" })}
-          >
-            <LogOut className="mr-2 h-4 w-4" />
-            Cerrar Sesión
-          </Button>
-        </CardFooter>
-      </Card>
-  )
+export default async function PendingPage() {
+  const session = await auth()
+  if (!session?.user?.id) redirect("/login")
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { status: true, role: true },
+  })
+
+  if (user?.status === "PENDING" && user.role === "ADMIN") {
+    redirect("/verificar?sent=1")
+  }
+
+  return <PendingCard alreadyApproved={user?.status === "APPROVED"} />
 }

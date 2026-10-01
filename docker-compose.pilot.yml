@@ -26,6 +26,8 @@ services:
       NEXTAUTH_URL: ${PILOT_URL:-http://localhost:3316}
       AUTH_TRUST_HOST: "true"
       TELEGRAM_BOT_TOKEN: ""
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-Reficio <noreply@resend.dev>}
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
       REPAIR_EVIDENCE_DIR: /app/storage/repair-evidence
       # El piloto también se publica tras Cloudflare Tunnel: el rate limit usa

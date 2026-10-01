@@ -29,9 +29,11 @@ type Props = {
   sent: boolean
   telegramUrl: string | null
   account: Account | null
+  /** Alta de negocio pendiente: la verificación desbloquea el acceso. */
+  requiresVerification?: boolean
 }
 
-export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, account }: Props) {
+export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, account, requiresVerification = false }: Props) {
   const [identifier, setIdentifier] = useState(initialIdentifier)
   const [code, setCode] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -126,16 +128,24 @@ export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, accoun
             {verifiedChannel === "EMAIL" ? "Correo verificado" : "Teléfono verificado"}
           </CardTitle>
           <CardDescription>
-            Tu cuenta ya muestra el contacto confirmado.
+            {requiresVerification || !account
+              ? "Tu negocio ya está activo. Inicia sesión para entrar al panel."
+              : "Tu cuenta ya muestra el contacto confirmado."}
           </CardDescription>
         </CardHeader>
         <CardFooter className="flex flex-col gap-3">
+          {/* Recién activada o sin sesión: /admin rebotaría (JWT viejo o
+              ausente) — el login es el camino determinista. */}
           <Button className="w-full" asChild>
-            <Link href="/admin">Ir a mi panel</Link>
+            <Link href={requiresVerification || !account ? "/login" : "/admin"}>
+              {requiresVerification || !account ? "Iniciar sesión" : "Ir a mi panel"}
+            </Link>
           </Button>
-          <Button variant="ghost" className="w-full" asChild>
-            <Link href="/login">Iniciar sesión</Link>
-          </Button>
+          {account && !requiresVerification && (
+            <Button variant="ghost" className="w-full" asChild>
+              <Link href="/login">Iniciar sesión</Link>
+            </Button>
+          )}
         </CardFooter>
       </Card>
     )
@@ -267,8 +277,9 @@ export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, accoun
           )}
 
           <p className="text-xs text-muted-foreground text-center">
-            Verificar tu contacto es opcional y no bloquea tu cuenta: solo activa
-            las notificaciones y la insignia de confianza.
+            {requiresVerification
+              ? "Tu negocio se activa al verificar tu correo o tu teléfono por Telegram — basta con un canal."
+              : "Verificar tu contacto es opcional y no bloquea tu cuenta: solo activa las notificaciones y la insignia de confianza."}
           </p>
         </CardFooter>
       </form>
