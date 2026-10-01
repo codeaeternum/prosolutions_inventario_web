@@ -15,6 +15,8 @@ interface ImageUploadProps {
   uploadEndpoint?: string
   onUploadingChange?: (uploading: boolean) => void
   disabled?: boolean
+  /** Tira horizontal compacta (thumbnails + botón agregar) en vez del dropzone grande. */
+  compact?: boolean
 }
 
 export function ImageUpload({
@@ -26,6 +28,7 @@ export function ImageUpload({
   uploadEndpoint = "/api/upload/product",
   onUploadingChange,
   disabled = false,
+  compact = false,
 }: ImageUploadProps) {
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -105,6 +108,91 @@ export function ImageUpload({
     if (!disabled && !uploadingRef.current) fileInputRef.current?.click()
   }
 
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/*"
+      multiple={maxImages > 1}
+      disabled={disabled || uploading}
+      onChange={(e) => handleFiles(e.target.files)}
+      className="hidden"
+    />
+  )
+
+  if (compact) {
+    return (
+      <div className={cn("space-y-2", className)}>
+        {fileInput}
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-2 rounded-lg transition-colors",
+            dragOver && "ring-2 ring-primary/50"
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {images.map((image, index) => (
+            <div
+              key={index}
+              className="relative h-16 w-16 shrink-0 rounded-md overflow-hidden bg-muted group"
+            >
+              <Image
+                src={image}
+                alt={`Imagen ${index + 1}`}
+                fill
+                sizes="64px"
+                className="object-cover"
+                unoptimized={image.startsWith("/api/payment-proofs/") || image.startsWith("/uploads/payments/")}
+              />
+              <button
+                type="button"
+                onClick={() => removeImage(index)}
+                className="absolute top-0.5 right-0.5 p-0.5 bg-destructive text-destructive-foreground rounded-full shadow-sm hover:bg-destructive/90 transition-colors"
+                title="Eliminar imagen"
+                aria-label={`Eliminar imagen ${index + 1}`}
+                disabled={disabled || uploading}
+              >
+                <X className="h-3 w-3" />
+              </button>
+              {index === 0 && (
+                <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-px bg-primary text-primary-foreground rounded">
+                  Principal
+                </span>
+              )}
+            </div>
+          ))}
+          {images.length < maxImages && (
+            <button
+              type="button"
+              onClick={openFileDialog}
+              disabled={disabled || uploading}
+              className={cn(
+                "flex h-16 min-w-28 items-center justify-center gap-1.5 rounded-md border-2 border-dashed px-3 text-xs transition-colors",
+                "border-muted-foreground/25 text-muted-foreground hover:border-primary/50 hover:bg-muted/50 hover:text-foreground",
+                (disabled || uploading) && "cursor-not-allowed opacity-50"
+              )}
+              title="Arrastra imágenes aquí o haz clic"
+            >
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <ImagePlus className="h-4 w-4" />
+                  {images.length === 0 ? "Agregar fotos" : `${images.length}/${maxImages}`}
+                </>
+              )}
+            </button>
+          )}
+        </div>
+        {uploadError && (
+          <p role="alert" className="text-xs text-destructive">{uploadError}</p>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className={cn("space-y-4", className)}>
       {/* Preview Grid */}
@@ -163,15 +251,7 @@ export function ImageUpload({
               : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
           )}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple={maxImages > 1}
-            disabled={disabled || uploading}
-            onChange={(e) => handleFiles(e.target.files)}
-            className="hidden"
-          />
+          {fileInput}
 
           {uploading ? (
             <div className="flex flex-col items-center gap-2">

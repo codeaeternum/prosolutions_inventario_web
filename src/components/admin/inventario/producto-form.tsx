@@ -23,6 +23,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { ImageUpload } from "@/components/image-upload"
+import { cn } from "@/lib/utils"
 import { Globe, Loader2, Plus, Store, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
 
@@ -206,6 +207,8 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
 
     // Bloquea el submit mientras una foto sigue subiendo (evita guardar sin ella).
     const [uploadingImages, setUploadingImages] = useState(false)
+    // Descripción es secundaria: va colapsada salvo que el producto ya tenga una.
+    const [showDescription, setShowDescription] = useState(false)
     const nameRef = useRef<HTMLInputElement>(null)
     // Buscador de modelos compatibles (reemplaza el select de cientos de filas).
     const [modelQuery, setModelQuery] = useState("")
@@ -266,6 +269,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     if (cancelled) return
                     setSelectedModels(data.models ?? [])
                     setImages(data.images ?? [])
+                    setShowDescription(Boolean(data.description?.trim()))
                     setFormData({
                         name: data.name,
                         description: data.description ?? "",
@@ -553,6 +557,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 setImages([])
                 setStockByBranch({})
                 setModelQuery("")
+                setShowDescription(false)
                 formRef.current?.parentElement?.scrollTo({ top: 0 })
                 nameRef.current?.focus()
             } else {
@@ -588,7 +593,19 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     }
 
     return (
-        <form ref={formRef} onSubmit={handleSubmit} className="space-y-6" noValidate>
+        <form
+            ref={formRef}
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            noValidate
+            // Ctrl/Cmd+Enter guarda desde cualquier campo (captura rápida).
+            onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                    e.preventDefault()
+                    formRef.current?.requestSubmit()
+                }
+            }}
+        >
             {/* Título fijo: no se pierde al hacer scroll dentro del diálogo. */}
             <DialogHeader className="sticky top-0 z-10 -mt-6 border-b bg-background pb-3 pt-1 -mx-1 px-1">
                 <DialogTitle>{editing ? "Editar producto" : "Dar de alta producto"}</DialogTitle>
@@ -605,40 +622,29 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 </div>
             )}
 
-            {/* Fotografías */}
-            <div className="space-y-2">
-                <Label>Fotografías</Label>
-                <ImageUpload images={images} onChange={setImages} maxImages={5} onUploadingChange={setUploadingImages} />
-                <p className="text-xs text-muted-foreground">Hasta 5 imágenes; la primera es la principal.</p>
-            </div>
+            {/* Producto: identidad de la pieza (nombre, código, categoría, fotos). */}
+            <section className="space-y-4 rounded-lg border p-4">
+                <div>
+                    <p className="font-medium">Producto</p>
+                    <p className="text-sm text-muted-foreground">
+                        Qué es la pieza y cómo se identifica.
+                    </p>
+                </div>
 
-            <div className="grid gap-6 lg:grid-cols-2">
-                {/* Información básica */}
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="pf-name">Nombre del producto *</Label>
-                        <Input
-                            id="pf-name"
-                            ref={nameRef}
-                            value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                            placeholder="Ej: Pantalla LCD Original"
-                            required
-                            autoFocus={!editing}
-                        />
-                    </div>
+                <div className="space-y-2">
+                    <Label htmlFor="pf-name">Nombre del producto *</Label>
+                    <Input
+                        id="pf-name"
+                        ref={nameRef}
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        placeholder="Ej: Pantalla LCD Original"
+                        required
+                        autoFocus={!editing}
+                    />
+                </div>
 
-                    <div className="space-y-2">
-                        <Label htmlFor="pf-description">Descripción</Label>
-                        <textarea
-                            id="pf-description"
-                            value={formData.description}
-                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                            placeholder="Descripción detallada del producto..."
-                            className="flex min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-                        />
-                    </div>
-
+                <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                         <Label htmlFor="pf-barcode">Código SKU / barras</Label>
                         <div className="flex gap-2">
@@ -710,105 +716,145 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             </Dialog>
                         </div>
                     </div>
+                </div>
 
-                    {editing && (
-                        <div className="flex items-center gap-2 pt-2">
-                            <input
-                                type="checkbox"
-                                id="pf-active"
-                                checked={formData.isActive}
-                                onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                                className="h-4 w-4"
+                {/* Fotos como tira compacta: ocupan una sola fila hasta que hay imágenes. */}
+                <div className="space-y-2">
+                    <Label>Fotos <span className="text-muted-foreground font-normal">(opcional, hasta 5)</span></Label>
+                    <ImageUpload images={images} onChange={setImages} maxImages={5} onUploadingChange={setUploadingImages} compact />
+                </div>
+
+                {/* La descripción es secundaria: colapsada por defecto para no
+                    alargar la captura. Se expande sola si el producto ya tiene. */}
+                {showDescription ? (
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <Label htmlFor="pf-description">Descripción</Label>
+                            <button
+                                type="button"
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => setShowDescription(false)}
+                            >
+                                Quitar
+                            </button>
+                        </div>
+                        <textarea
+                            id="pf-description"
+                            value={formData.description}
+                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                            placeholder="Detalles: calidad, incluye, observaciones…"
+                            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+                        />
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        className="text-xs text-primary hover:underline"
+                        onClick={() => setShowDescription(true)}
+                    >
+                        + Agregar descripción (opcional)
+                    </button>
+                )}
+
+                {editing && (
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            id="pf-active"
+                            checked={formData.isActive}
+                            onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+                            className="h-4 w-4"
+                        />
+                        <Label htmlFor="pf-active" className="cursor-pointer">
+                            Producto activo (visible en sistema, catálogo y bot)
+                        </Label>
+                    </div>
+                )}
+            </section>
+
+            {/* Precios: todos en una fila; ganancia y visibilidad dinámicas. */}
+            <section className="space-y-4 rounded-lg border p-4">
+                <div>
+                    <p className="font-medium">Precios</p>
+                    <p className="text-sm text-muted-foreground">
+                        Aliado y taller son opcionales; vacíos cobran el precio público.
+                    </p>
+                </div>
+
+                <div className={`grid gap-4 sm:grid-cols-2 ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+                    <div className="space-y-2">
+                        <Label htmlFor="pf-retail">Precio público *</Label>
+                        <Input
+                            id="pf-retail"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.retailPrice}
+                            onChange={(e) => setFormData({ ...formData, retailPrice: e.target.value })}
+                            placeholder="0.00"
+                            required
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="pf-wholesale">Precio aliado</Label>
+                        <Input
+                            id="pf-wholesale"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.wholesalePrice}
+                            onChange={(e) => setFormData({ ...formData, wholesalePrice: e.target.value })}
+                            placeholder="= al público"
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="pf-internal">Taller propio</Label>
+                        <Input
+                            id="pf-internal"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.internalPrice}
+                            onChange={(e) => setFormData({ ...formData, internalPrice: e.target.value })}
+                            placeholder="= al público"
+                        />
+                    </div>
+                    {/* El costo revela el margen: solo el dueño lo ve/captura. */}
+                    {isAdmin && (
+                        <div className="space-y-2">
+                            <Label htmlFor="pf-cost">Costo</Label>
+                            <Input
+                                id="pf-cost"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={formData.costPrice}
+                                onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                                placeholder="0.00"
                             />
-                            <Label htmlFor="pf-active" className="cursor-pointer">
-                                Producto activo (visible en sistema, catálogo y bot)
-                            </Label>
                         </div>
                     )}
                 </div>
 
-                {/* Precios y stock */}
-                <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="pf-retail">Precio público *</Label>
-                            <Input
-                                id="pf-retail"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={formData.retailPrice}
-                                onChange={(e) => setFormData({ ...formData, retailPrice: e.target.value })}
-                                placeholder="0.00"
-                                required
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="pf-wholesale">Precio aliado</Label>
-                            <Input
-                                id="pf-wholesale"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={formData.wholesalePrice}
-                                onChange={(e) => setFormData({ ...formData, wholesalePrice: e.target.value })}
-                                placeholder="Vacío = igual al público"
-                            />
-                        </div>
-                    </div>
-
-                    <div className={`grid gap-4 ${isAdmin ? "grid-cols-2" : "grid-cols-1"}`}>
-                        <div className="space-y-2">
-                            <Label htmlFor="pf-internal">Taller propio</Label>
-                            <Input
-                                id="pf-internal"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={formData.internalPrice}
-                                onChange={(e) => setFormData({ ...formData, internalPrice: e.target.value })}
-                                placeholder="Vacío = cobra precio público"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                Pieza usada en una reparación propia; sin precio se cobra al público.
-                            </p>
-                        </div>
-                        {/* El costo revela el margen: solo el dueño lo ve/captura. */}
-                        {isAdmin && (
-                            <div className="space-y-2">
-                                <Label htmlFor="pf-cost">Costo</Label>
-                                <Input
-                                    id="pf-cost"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={formData.costPrice}
-                                    onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
-                                    placeholder="0.00"
-                                />
-                            </div>
+                {/* Ganancia estimada: solo con costo capturado (admin). */}
+                {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted px-3 py-2 text-sm">
+                        <span className="font-medium">Ganancia:</span>
+                        <span className="text-green-600">
+                            Público ${(parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
+                        </span>
+                        {formData.wholesalePrice && (
+                            <span className="text-blue-600">
+                                Aliado ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
+                            </span>
                         )}
                     </div>
+                )}
 
-                    {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (
-                        <div className="p-3 bg-muted rounded-lg text-sm space-y-1">
-                            <p className="font-medium">Ganancia estimada:</p>
-                            <div className="flex flex-wrap gap-4">
-                                <span className="text-green-600">
-                                    Público: ${(parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
-                                </span>
-                                {formData.wholesalePrice && (
-                                    <span className="text-blue-600">
-                                        Aliado: ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Visibilidad en el mercado: publicar fuera del taller es
-                        decisión del dueño (como el costo), no del empleado. */}
-                    {isAdmin && (
+                {/* Visibilidad en el mercado: publicar fuera del taller es
+                    decisión del dueño (como el costo), no del empleado. */}
+                {isAdmin && (
+                    <div className="grid gap-4 sm:grid-cols-2 sm:items-end">
                         <div className="space-y-2">
                             <Label htmlFor="pf-visibility" className="flex items-center gap-1.5">
                                 <Store className="h-4 w-4 text-muted-foreground" />
@@ -828,9 +874,16 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 </SelectContent>
                             </Select>
                         </div>
-                    )}
-                </div>
-            </div>
+                        {/* Aviso dinámico: publicar sin precio aliado usa el público. */}
+                        {formData.marketVisibility !== "HIDDEN" && !formData.wholesalePrice.trim() && (
+                            <p className="text-xs text-amber-600 dark:text-amber-500 sm:pb-3">
+                                Sin precio aliado se publicará a precio público
+                                {formData.retailPrice ? ` ($${formData.retailPrice})` : ""}.
+                            </p>
+                        )}
+                    </div>
+                )}
+            </section>
 
             {/* Existencias */}
             <section className="space-y-4 rounded-lg border p-4">
@@ -1008,7 +1061,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 <select
                                     value={selectedBrand}
                                     onChange={(e) => setSelectedBrand(e.target.value)}
-                                    className={selectClassName + " w-36 shrink-0"}
+                                    className={cn(selectClassName, "w-36 shrink-0")}
                                     aria-label="Filtrar por marca"
                                 >
                                     <option value="">Todas las marcas</option>
@@ -1118,7 +1171,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
             {/* Footer fijo: el submit siempre visible sin llegar al fondo. */}
             <DialogFooter className="sticky bottom-0 z-10 -mx-1 -mb-6 gap-2 border-t bg-background px-1 pb-1 pt-3 sm:justify-between">
                 <div className="text-xs text-muted-foreground self-center hidden sm:block">
-                    Los campos con * son obligatorios.
+                    Los campos con * son obligatorios. <kbd className="rounded border px-1">Ctrl</kbd>+<kbd className="rounded border px-1">Enter</kbd> guarda.
                 </div>
                 <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={close} disabled={saving}>
