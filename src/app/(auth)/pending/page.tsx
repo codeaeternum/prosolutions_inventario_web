@@ -10,8 +10,10 @@ import { PendingCard } from "./pending-card"
  * - ADMIN + PENDING: dueño auto-registrado (/api/signup) → lo manda a
  *   /verificar; su cuenta se activa sola al confirmar correo o teléfono.
  * - APPROVED en BD pero el JWT dice PENDING (se verificó con la sesión
- *   vieja): aviso + botón que rehace el login vía /post-login.
- * - CUSTOMER/WORKSHOP + PENDING: esperando aprobación del negocio.
+ *   vieja): aviso + botón que refresca la sesión con useSession().update()
+ *   (el jwt callback relee la BD y regraba la cookie) y entra vía /post-login.
+ * - CUSTOMER/WORKSHOP + PENDING: esperando aprobación del negocio; el mismo
+ *   botón de actualización les deja entrar en cuanto los aprueben.
  */
 export const dynamic = "force-dynamic"
 

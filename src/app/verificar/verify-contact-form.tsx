@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { signOut, useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -34,15 +36,32 @@ type Props = {
 }
 
 export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, account, requiresVerification = false }: Props) {
+  const router = useRouter()
+  const { update } = useSession()
   const [identifier, setIdentifier] = useState(initialIdentifier)
   const [code, setCode] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isContinuing, setIsContinuing] = useState(false)
   const [isStarting, setIsStarting] = useState<"EMAIL" | "PHONE" | null>(null)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState(
     sent ? "Te enviamos un código de 6 dígitos a tu correo." : ""
   )
   const [verifiedChannel, setVerifiedChannel] = useState<string | null>(null)
+
+  // Entrar sin re-login: update() dispara el jwt callback, que relee la fila
+  // en la BD (status ya APPROVED tras verificar) y regraba la cookie;
+  // /post-login elige el destino según el rol fresco.
+  const continueToPanel = async () => {
+    setIsContinuing(true)
+    try {
+      await update({})
+      router.push("/post-login")
+      router.refresh()
+    } finally {
+      setIsContinuing(false)
+    }
+  }
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -128,22 +147,34 @@ export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, accoun
             {verifiedChannel === "EMAIL" ? "Correo verificado" : "Teléfono verificado"}
           </CardTitle>
           <CardDescription>
-            {requiresVerification || !account
+            {!account
               ? "Tu negocio ya está activo. Inicia sesión para entrar al panel."
-              : "Tu cuenta ya muestra el contacto confirmado."}
+              : requiresVerification
+                ? "Tu negocio ya está activo. Continúa para entrar a tu panel."
+                : "Tu cuenta ya muestra el contacto confirmado."}
           </CardDescription>
         </CardHeader>
         <CardFooter className="flex flex-col gap-3">
-          {/* Recién activada o sin sesión: /admin rebotaría (JWT viejo o
-              ausente) — el login es el camino determinista. */}
-          <Button className="w-full" asChild>
-            <Link href={requiresVerification || !account ? "/login" : "/admin"}>
-              {requiresVerification || !account ? "Iniciar sesión" : "Ir a mi panel"}
-            </Link>
-          </Button>
-          {account && !requiresVerification && (
-            <Button variant="ghost" className="w-full" asChild>
+          {/* Con sesión: update() refresca el JWT (antes el status quedaba
+              PENDING hasta reingresar). Sin sesión el login sigue siendo el
+              único camino. */}
+          {account ? (
+            <Button className="w-full" onClick={continueToPanel} disabled={isContinuing}>
+              {isContinuing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Ir a mi panel
+            </Button>
+          ) : (
+            <Button className="w-full" asChild>
               <Link href="/login">Iniciar sesión</Link>
+            </Button>
+          )}
+          {account && (
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => signOut({ callbackUrl: "/login" })}
+            >
+              Usar otra cuenta
             </Button>
           )}
         </CardFooter>
