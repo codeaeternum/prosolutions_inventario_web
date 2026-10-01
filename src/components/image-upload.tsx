@@ -33,6 +33,9 @@ export function ImageUpload({
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  // Reorden de thumbnails (variante compact): cuál se arrastra y sobre cuál está.
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
   const uploadingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -84,7 +87,8 @@ export function ImageUpload({
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
-    setDragOver(true)
+    // El anillo solo cuando vienen archivos; al reordenar thumbnails no aplica.
+    if (e.dataTransfer.types.includes("Files")) setDragOver(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -96,6 +100,46 @@ export function ImageUpload({
     e.preventDefault()
     setDragOver(false)
     handleFiles(e.dataTransfer.files)
+  }
+
+  // Reorden por drag de las fotos ya subidas (solo compact): el primer elemento
+  // del array es la foto principal, así que basta moverlo dentro de `images`.
+  const moveImage = (from: number, to: number) => {
+    if (from === to) return
+    const next = [...images]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    onChange(next)
+  }
+
+  const handleThumbDragStart = (e: React.DragEvent, index: number) => {
+    setDraggingIndex(index)
+    e.dataTransfer.effectAllowed = "move"
+    // Firefox no inicia el drag sin setData.
+    e.dataTransfer.setData("text/plain", String(index))
+  }
+
+  const handleThumbDragOver = (e: React.DragEvent, index: number) => {
+    // draggingIndex null = se arrastran archivos, no un thumbnail: lo maneja el contenedor.
+    if (draggingIndex === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = "move"
+    setDropTargetIndex(index === draggingIndex ? null : index)
+  }
+
+  const handleThumbDrop = (e: React.DragEvent, index: number) => {
+    if (draggingIndex === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    moveImage(draggingIndex, index)
+    setDraggingIndex(null)
+    setDropTargetIndex(null)
+  }
+
+  const handleThumbDragEnd = () => {
+    setDraggingIndex(null)
+    setDropTargetIndex(null)
   }
 
   const removeImage = (index: number) => {
@@ -136,7 +180,18 @@ export function ImageUpload({
           {images.map((image, index) => (
             <div
               key={index}
-              className="relative h-16 w-16 shrink-0 rounded-md overflow-hidden bg-muted group"
+              draggable={!disabled && !uploading}
+              onDragStart={(e) => handleThumbDragStart(e, index)}
+              onDragOver={(e) => handleThumbDragOver(e, index)}
+              onDrop={(e) => handleThumbDrop(e, index)}
+              onDragEnd={handleThumbDragEnd}
+              title={images.length > 1 ? "Arrastra para reordenar" : undefined}
+              className={cn(
+                "relative h-16 w-16 shrink-0 rounded-md overflow-hidden bg-muted group",
+                !disabled && !uploading && "cursor-grab",
+                draggingIndex === index && "opacity-40",
+                dropTargetIndex === index && "ring-2 ring-primary"
+              )}
             >
               <Image
                 src={image}

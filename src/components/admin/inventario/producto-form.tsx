@@ -546,17 +546,23 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 ((e.nativeEvent as SubmitEvent).submitter as HTMLElement | null)?.dataset.intent === "another"
             if (createAnother) {
                 // Alta en serie: limpia el form y deja el foco en Nombre.
+                // Conserva categoría, visibilidad y el filtro de marca — la
+                // captura por lote suele repetir tipo/proveedor/destino. Los
+                // precios y el stock se limpian: son por pieza y arrastrarlos
+                // generaría datos erróneos.
                 setFormData({
                     name: "", description: "", barcode: "",
                     retailPrice: "", wholesalePrice: "", internalPrice: "", costPrice: "",
-                    marketVisibility: "HIDDEN", stock: "0", minStock: "1",
-                    categoryId: formData.categoryId, // conserva categoría — capturas por lote suelen ser del mismo tipo
+                    marketVisibility: formData.marketVisibility, stock: "0", minStock: "1",
+                    categoryId: formData.categoryId,
                     isUniversal: false, isActive: true,
                 })
                 setSelectedModels([])
                 setImages([])
                 setStockByBranch({})
                 setModelQuery("")
+                // `selectedBrand` (filtro del select de marca) se conserva a
+                // propósito: no hay setSelectedBrand("") en este reset.
                 setShowDescription(false)
                 formRef.current?.parentElement?.scrollTo({ top: 0 })
                 nameRef.current?.focus()
