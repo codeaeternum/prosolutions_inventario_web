@@ -15,7 +15,7 @@ services:
       retries: 10
     restart: unless-stopped
   app:
-    image: prosolutions-app:formux
+    image: prosolutions-app:verifysuite
     build:
       context: .
       target: runner
@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
   migrate:
     profiles: ["setup"]
-    image: prosolutions-app-migrate:40a426a
+    image: prosolutions-app-migrate:verifysuite
     build:
       context: .
       target: migrate
