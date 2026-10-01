@@ -148,9 +148,17 @@ export function BusinessesPanel() {
                                         )}
                                     </TableCell>
                                     <TableCell>
-                                        <Badge variant={b.isActive ? "success" : "destructive"}>
-                                            {b.isActive ? "Activa" : "Suspendida"}
-                                        </Badge>
+                                        <div className="flex items-center gap-1.5">
+                                            <Badge variant={b.isActive ? "success" : "destructive"}>
+                                                {b.isActive ? "Activa" : "Suspendida"}
+                                            </Badge>
+                                            {/* Sin operación → candidata a borrado desde el detalle. */}
+                                            {b.counts.products === 0 && b.counts.repairOrders === 0 && b.counts.sales === 0 && (
+                                                <Badge variant="outline" className="text-muted-foreground" title="Sin operación registrada: se puede eliminar desde la ficha">
+                                                    Vacía
+                                                </Badge>
+                                            )}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="text-right tabular-nums">{b.counts.users}</TableCell>
                                     <TableCell className="text-right tabular-nums">{b.counts.products}</TableCell>

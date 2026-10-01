@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { BusinessStatusButton } from "@/components/platform/business-status-button"
+import { BusinessDeleteButton } from "@/components/platform/business-delete-button"
 import {
   ArrowLeft,
   Building2,
@@ -316,6 +317,21 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
           ) : (
             <p className="text-muted-foreground">Sin usuarios de staff.</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Zona de peligro: solo para altas vacías (prueba/broma); con datos
+          operativos el servidor rechaza el borrado y toca suspender. */}
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-destructive">Zona de peligro</CardTitle>
+          <CardDescription>
+            Eliminar borra la empresa y sus datos semilla de forma permanente.
+            Solo procede si el negocio nunca operó.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <BusinessDeleteButton business={{ id: business.id, name: business.name }} />
         </CardContent>
       </Card>
     </div>

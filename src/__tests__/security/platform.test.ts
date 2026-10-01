@@ -5,32 +5,68 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
  * puede listar/consultar empresas o suspenderlas — y nunca se toca la base de
  * datos sin pasar antes por requireSuperAdmin.
  */
-const mocks = vi.hoisted(() => ({
-  auth: vi.fn(),
-  findBusinesses: vi.fn(),
-  findBusiness: vi.fn(),
-  updateBusiness: vi.fn(),
-  saleGroup: vi.fn(),
-  orderGroup: vi.fn(),
-  findUsers: vi.fn(),
-  findOrders: vi.fn(),
-  findOrderFirst: vi.fn(),
-  findSales: vi.fn(),
-  findSaleFirst: vi.fn(),
-  saleAggregate: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const findBusinesses = vi.fn()
+  const findBusiness = vi.fn()
+  const updateBusiness = vi.fn()
+  const saleGroup = vi.fn()
+  const orderGroup = vi.fn()
+  const findUsers = vi.fn()
+  const findOrders = vi.fn()
+  const findOrderFirst = vi.fn()
+  const findSales = vi.fn()
+  const findSaleFirst = vi.fn()
+  const saleAggregate = vi.fn()
+
+  // Gate del DELETE: un count por modelo "operativo"; todos por defecto en 0.
+  const blocking = [
+    "category", "brand", "model", "deviceModel", "product", "productModel",
+    "priceHistory", "branchStock", "inventoryMovement", "inventoryCount",
+    "inventoryCountItem", "sale", "saleItem", "payment", "reservation",
+    "creditMovement", "cashRegister", "cashMovement", "cashRequest",
+    "repairOrder", "repairPart", "repairEvent", "repairPhoto",
+    "marketplaceRequest", "encargo", "supplier", "purchase", "purchaseItem",
+    "supplierPayment", "shoppingItem", "directoryEvent",
+  ]
+  const count = Object.fromEntries(blocking.map((a) => [a, vi.fn().mockResolvedValue(0)]))
+  const del = Object.fromEntries(
+    ["businessOperation", "auditEvent", "pushSubscription", "settings",
+      "systemSettings", "workshopService", "user", "branch"]
+      .map((a) => [a, vi.fn().mockResolvedValue({ count: 1 })])
+  )
+  const businessDelete = vi.fn().mockResolvedValue({})
+  const prisma: Record<string, unknown> = {
+    business: { findMany: findBusinesses, findUnique: findBusiness, update: updateBusiness, delete: businessDelete },
+    user: { findMany: findUsers, deleteMany: del.user },
+    businessOperation: { deleteMany: del.businessOperation },
+    auditEvent: { deleteMany: del.auditEvent },
+    pushSubscription: { deleteMany: del.pushSubscription },
+    settings: { deleteMany: del.settings },
+    systemSettings: { deleteMany: del.systemSettings },
+    workshopService: { deleteMany: del.workshopService },
+    branch: { deleteMany: del.branch },
+    ...Object.fromEntries(blocking.map((a) => [a, { count: count[a] }])),
+  }
+  ;(prisma.sale as Record<string, unknown>).groupBy = saleGroup
+  ;(prisma.sale as Record<string, unknown>).aggregate = saleAggregate
+  ;(prisma.sale as Record<string, unknown>).findMany = findSales
+  ;(prisma.sale as Record<string, unknown>).findFirst = findSaleFirst
+  ;(prisma.repairOrder as Record<string, unknown>).groupBy = orderGroup
+  ;(prisma.repairOrder as Record<string, unknown>).findMany = findOrders
+  ;(prisma.repairOrder as Record<string, unknown>).findFirst = findOrderFirst
+  prisma.$transaction = vi.fn((fn: (tx: unknown) => Promise<unknown>) => fn(prisma))
+
+  return {
+    auth: vi.fn(), findBusinesses, findBusiness, updateBusiness, saleGroup,
+    orderGroup, findUsers, findOrders, findOrderFirst, findSales, findSaleFirst,
+    saleAggregate, count, del, businessDelete, prisma,
+  }
+})
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    business: { findMany: mocks.findBusinesses, findUnique: mocks.findBusiness, update: mocks.updateBusiness },
-    sale: { groupBy: mocks.saleGroup, aggregate: mocks.saleAggregate, findMany: mocks.findSales, findFirst: mocks.findSaleFirst },
-    repairOrder: { groupBy: mocks.orderGroup, findMany: mocks.findOrders, findFirst: mocks.findOrderFirst },
-    user: { findMany: mocks.findUsers },
-  },
-}))
+vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }))
 
 import { GET as listBusinesses } from "@/app/api/platform/businesses/route"
-import { GET as businessDetail, PATCH as patchBusiness } from "@/app/api/platform/businesses/[id]/route"
+import { GET as businessDetail, PATCH as patchBusiness, DELETE as deleteBusiness } from "@/app/api/platform/businesses/[id]/route"
 
 const superAdmin = { user: { id: "op", role: "ADMIN", status: "APPROVED", customerType: "NORMAL", businessId: "biz-reficio", isSuperAdmin: true } }
 const tenantAdmin = { user: { id: "t1", role: "ADMIN", status: "APPROVED", customerType: "NORMAL", businessId: "biz-tenant", isSuperAdmin: false } }
@@ -129,5 +165,71 @@ describe("platform console API", () => {
     expect(res.status).toBe(200)
     expect(mocks.updateBusiness).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "b1" }, data: { isActive: false } }))
     expect((await res.json()).business.isActive).toBe(false)
+  })
+
+  describe("DELETE (empresa vacía)", () => {
+    const del = (id: string) =>
+      deleteBusiness(new Request(`https://app.invalid/api/platform/businesses/${id}`, { method: "DELETE" }), paramsOf(id))
+
+    it("denies anonymous sessions and tenant admins before any database read", async () => {
+      for (const session of [null, tenantAdmin]) {
+        mocks.auth.mockResolvedValue(session)
+        expect([401, 403]).toContain((await del("b1")).status)
+      }
+      expect(mocks.findBusiness).not.toHaveBeenCalled()
+      expect(mocks.businessDelete).not.toHaveBeenCalled()
+    })
+
+    it("returns 404 for an unknown business", async () => {
+      mocks.auth.mockResolvedValue(superAdmin)
+      mocks.findBusiness.mockResolvedValueOnce(null)
+      expect((await del("missing")).status).toBe(404)
+      expect(mocks.businessDelete).not.toHaveBeenCalled()
+    })
+
+    it("rejects with 409 when the business has operational data", async () => {
+      mocks.auth.mockResolvedValue(superAdmin)
+      mocks.findBusiness.mockResolvedValue({ id: "b1", name: "Taller Uno", slug: "taller-uno" })
+      mocks.count.sale.mockResolvedValueOnce(3)
+      mocks.count.product.mockResolvedValueOnce(2)
+
+      const res = await del("b1")
+      expect(res.status).toBe(409)
+      const body = await res.json()
+      expect(body.error).toContain("Suspéndela")
+      expect(body.blockers).toMatchObject({ sale: 3, product: 2 })
+      // Gate falló antes de la transacción: nada se borró.
+      expect(mocks.del.user).not.toHaveBeenCalled()
+      expect(mocks.businessDelete).not.toHaveBeenCalled()
+    })
+
+    it("deletes an empty business inside a transaction, seed rows first", async () => {
+      mocks.auth.mockResolvedValue(superAdmin)
+      mocks.findBusiness.mockResolvedValue({ id: "b1", name: "Alta basura", slug: "alta-basura" })
+
+      const res = await del("b1")
+      expect(res.status).toBe(200)
+      expect((await res.json()).deleted).toBe("alta-basura")
+
+      // Tablas con FK Restrict a user se borran antes que el user.
+      for (const accessor of ["businessOperation", "auditEvent", "pushSubscription", "settings", "systemSettings", "workshopService", "user", "branch"]) {
+        expect(mocks.del[accessor as keyof typeof mocks.del]).toHaveBeenCalledWith({ where: { businessId: "b1" } })
+      }
+      expect(mocks.del.businessOperation.mock.invocationCallOrder[0])
+        .toBeLessThan(mocks.del.user.mock.invocationCallOrder[0])
+      expect(mocks.del.auditEvent.mock.invocationCallOrder[0])
+        .toBeLessThan(mocks.del.user.mock.invocationCallOrder[0])
+      expect(mocks.businessDelete).toHaveBeenCalledWith({ where: { id: "b1" } })
+    })
+
+    it("maps a residual FK violation inside the transaction to 409", async () => {
+      mocks.auth.mockResolvedValue(superAdmin)
+      mocks.findBusiness.mockResolvedValue({ id: "b1", name: "Taller Uno", slug: "taller-uno" })
+      mocks.businessDelete.mockRejectedValueOnce({ code: "P2014" })
+
+      const res = await del("b1")
+      expect(res.status).toBe(409)
+      expect((await res.json()).error).toContain("Suspéndela")
+    })
   })
 })
