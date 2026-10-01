@@ -27,6 +27,11 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_EMAIL: ${VAPID_EMAIL:-mailto:admin@prosolutions.com}
       REFICIO_SIGNUP_ENABLED: ${REFICIO_SIGNUP_ENABLED:-false}
+      # Verificación por correo (Resend) para altas nuevas: con key activa el
+      # signup nace PENDING y se activa al verificar. Sin key solo aplica
+      # Telegram; sin ningún canal el alta queda aprobada directo.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-Reficio <noreply@reficio.app>}
       # Cifrado del PIN/patrón de equipos; si falta se deriva de NEXTAUTH_SECRET.
       DEVICE_SECRET_KEY: ${DEVICE_SECRET_KEY:-}
     volumes:
