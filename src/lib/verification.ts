@@ -133,23 +133,46 @@ export async function consumeVerificationCode(
   return consumed ?? { ...row, consumedAt }
 }
 
+/** Resultado de markVerified: indica si la verificación promovió a un dueño. */
+export type MarkVerifiedResult = {
+  /** true solo cuando un PENDING+ADMIN pasó a APPROVED en esta llamada. */
+  promotedOwner: boolean
+  /** Datos para el correo de bienvenida; solo vienen si promotedOwner. */
+  email?: string | null
+  businessName?: string | null
+  businessSlug?: string | null
+}
+
 /**
  * Marca el contacto verificado en el usuario. EMAIL → emailVerifiedAt;
  * PHONE y TELEGRAM → phoneVerifiedAt (el deep-link de Telegram verifica el
  * teléfono registrado y de paso liga el telegramId desde el bot).
+ * Devuelve { promotedOwner, ... } para que el caller dispare el correo de
+ * bienvenida solo cuando esta verificación activó la cuenta de un dueño.
  */
 export async function markVerified(
   db: VerificationDb,
   userId: string,
   channel: VerificationChannel,
-): Promise<void> {
+): Promise<MarkVerifiedResult> {
   const field = channel === "EMAIL" ? "emailVerifiedAt" : "phoneVerifiedAt"
-  await db.user.update({ where: { id: userId }, data: { [field]: new Date() } })
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: { [field]: new Date() },
+    select: { email: true, business: { select: { name: true, slug: true } } },
+  })
   // Dueño auto-registrado (/api/signup): demostrar un canal de contacto real
   // activa su negocio. PENDING+ADMIN solo existe por ese alta; los clientes
   // PENDING siguen esperando aprobación del admin de su negocio.
-  await db.user.updateMany({
+  const promoted = await db.user.updateMany({
     where: { id: userId, status: "PENDING", role: "ADMIN" },
     data: { status: "APPROVED" },
   })
+  if (promoted.count === 0) return { promotedOwner: false }
+  return {
+    promotedOwner: true,
+    email: updated.email,
+    businessName: updated.business?.name ?? null,
+    businessSlug: updated.business?.slug ?? null,
+  }
 }

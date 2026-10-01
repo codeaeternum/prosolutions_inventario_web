@@ -2,6 +2,7 @@ import type { Context, Telegraf } from "telegraf"
 import type { PrismaClient } from "@prisma/client"
 import type { WizardState } from "../lib/types"
 import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
+import { sendWelcomeEmail } from "../../lib/mailer"
 
 export type { WizardState }
 
@@ -33,7 +34,12 @@ async function handleVerifyPayload(ctx: Context, prisma: PrismaClient, telegramI
     })
     const conflict = holder && holder.id !== target.id
 
-    await markVerified(prisma, target.id, consumed.channel)
+    const verified = await markVerified(prisma, target.id, consumed.channel)
+    // Dueño recién activado: correo de bienvenida sin bloquear el reply.
+    if (verified.promotedOwner && verified.email) {
+      void sendWelcomeEmail(verified.email, verified.businessName, verified.businessSlug)
+        .catch((err) => console.error("[bot/start] Error enviando bienvenida:", err))
+    }
 
     if (!conflict && !target.telegramId) {
       await prisma.user.update({ where: { id: target.id }, data: { telegramId } })

@@ -8,6 +8,7 @@ import {
   markVerified,
   VerificationError,
 } from "@/lib/verification"
+import { sendWelcomeEmail } from "@/lib/mailer"
 
 /**
  * POST /api/verify — consume un código de verificación de contacto.
@@ -72,7 +73,12 @@ export async function POST(req: Request) {
       }
       if (!consumed) throw lastError ?? new VerificationError("MISMATCH", "Código incorrecto")
       if (consumed.userId) {
-        await markVerified(prisma, consumed.userId, consumed.channel)
+        const verified = await markVerified(prisma, consumed.userId, consumed.channel)
+        // Dueño recién activado: correo de bienvenida sin bloquear la respuesta.
+        if (verified.promotedOwner && verified.email) {
+          void sendWelcomeEmail(verified.email, verified.businessName, verified.businessSlug)
+            .catch((err) => console.error("[verify] Error enviando bienvenida:", err))
+        }
       }
       return NextResponse.json({ verified: true, channel: consumed.channel })
     } catch (error) {

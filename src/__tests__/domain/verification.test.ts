@@ -265,4 +265,43 @@ describe("markVerified", () => {
     await markVerified(db, "staff", "TELEGRAM")
     expect(users.staff.status).toBe("APPROVED")
   })
+
+  it("devuelve promotedOwner con email y slug del negocio al activar al dueño", async () => {
+    const { db, users } = fakeDb()
+    users.owner = {
+      id: "owner",
+      status: "PENDING",
+      role: "ADMIN",
+      email: "dueno@taller.com",
+      business: { name: "Taller Don José", slug: "taller-don-jose" },
+    }
+    const result = await markVerified(db, "owner", "EMAIL")
+    expect(result.promotedOwner).toBe(true)
+    expect(result.email).toBe("dueno@taller.com")
+    expect(result.businessName).toBe("Taller Don José")
+    expect(result.businessSlug).toBe("taller-don-jose")
+  })
+
+  it("reporta promotedOwner=false para un cliente PENDING", async () => {
+    const { db, users } = fakeDb()
+    users.customer = { id: "customer", status: "PENDING", role: "CUSTOMER", email: "c@x.com" }
+    const result = await markVerified(db, "customer", "EMAIL")
+    expect(result.promotedOwner).toBe(false)
+    expect(result.email).toBeUndefined()
+  })
+
+  it("reporta promotedOwner=false si el dueño ya estaba APPROVED", async () => {
+    const { db, users } = fakeDb()
+    users.owner = { id: "owner", status: "APPROVED", role: "ADMIN", email: "d@x.com" }
+    const result = await markVerified(db, "owner", "PHONE")
+    expect(result.promotedOwner).toBe(false)
+  })
+
+  it("reporta promotedOwner=false para staff EMPLOYEE pendiente", async () => {
+    const { db, users } = fakeDb()
+    users.staff = { id: "staff", status: "PENDING", role: "EMPLOYEE" }
+    const result = await markVerified(db, "staff", "TELEGRAM")
+    expect(result.promotedOwner).toBe(false)
+    expect(users.staff.status).toBe("PENDING")
+  })
 })
