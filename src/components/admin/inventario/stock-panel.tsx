@@ -45,6 +45,7 @@ import { TraspasoBuscarDialog } from "@/components/admin/inventario/traspaso-bus
 import { MermaDialog } from "@/components/admin/inventario/merma-dialog"
 import { EtiquetasDialog } from "@/components/admin/inventario/etiquetas-dialog"
 import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
+import { FotosImportDialog } from "@/components/admin/inventario/fotos-import-dialog"
 import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
 import { CategoriesPanel } from "@/app/admin/categorias/panel"
 import { BrandsPanel } from "@/app/admin/marcas/panel"
@@ -66,6 +67,7 @@ import {
     FilterX,
     FolderTree,
     History,
+    ImagePlus,
     LayoutGrid,
     List,
     Loader2,
@@ -222,6 +224,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [mermaOpen, setMermaOpen] = useState(false)
     const [traspasoOpen, setTraspasoOpen] = useState(false)
     const [importOpen, setImportOpen] = useState(false)
+    const [fotosOpen, setFotosOpen] = useState(false)
 
     // --- Etiquetas imprimibles ------------------------------------------------
     const [etiquetasOpen, setEtiquetasOpen] = useState(false)
@@ -415,6 +418,28 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             .map((pm) => `${pm.model.brand.name} ${pm.model.name}`)
             .join(", ") + (list.length > 2 ? ` +${list.length - 2}` : "")
     }
+
+    /** Sin compatibilidad: no es universal y no tiene modelos mapeados. */
+    const faltaCompat = (product: StockProductItem) =>
+        !product.isUniversal && (product.models?.length ?? 0) === 0
+
+    /** Chip ámbar clickeable → abre el formulario en edición para asignar modelos. */
+    const compatBadge = (product: StockProductItem) =>
+        faltaCompat(product) ? (
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation()
+                    setParams({ editar: product.id })
+                }}
+                title="Sin modelos compatibles — clic para asignarlos"
+                aria-label={`${product.name} no tiene modelos compatibles, editar`}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-200 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-900/60"
+            >
+                <AlertTriangle className="h-3 w-3" />
+                Sin compat
+            </button>
+        ) : null
 
     const getStockVariant = (product: StockProductItem): "destructive" | "warning" | "success" => {
         if (product.stock === 0) return "destructive"
@@ -764,6 +789,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                 <Upload className="mr-2 h-4 w-4" />
                                 Importar Excel
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setFotosOpen(true)}>
+                                <ImagePlus className="mr-2 h-4 w-4" />
+                                Importar fotos por archivo
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={handleExport} disabled={exporting}>
                                 {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                                 Exportar Excel
@@ -1006,8 +1035,8 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                     <h3 className="min-h-9 text-sm font-medium leading-tight line-clamp-2" title={product.name}>
                                         {product.name}
                                     </h3>
-                                    <p className="truncate text-xs text-muted-foreground">
-                                        {product.category?.name ?? getModelText(product)}
+                                    <p className="truncate text-xs text-muted-foreground" title={[product.category?.name, getModelText(product)].filter(Boolean).join(" · ")}>
+                                        {[product.category?.name, getModelText(product)].filter(Boolean).join(" · ") || "—"}
                                     </p>
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="font-bold text-primary">{formatPrice(product.retailPrice)}</span>
@@ -1016,6 +1045,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                             {badge.label}
                                         </Badge>
                                     </div>
+                                    {compatBadge(product)}
                                     {branchChips(product)}
                                     <div className="flex items-center justify-between gap-1 border-t pt-1.5">
                                         <StockQtyEditor
@@ -1073,7 +1103,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                 <div className="min-w-0">
                                     <p className="truncate font-medium leading-tight">{product.name}</p>
                                     <p className="truncate text-[11px] text-muted-foreground">
-                                        {getModelText(product)}{product.barcode ? ` · ${product.barcode}` : ""}
+                                        {compatBadge(product) ?? <>{getModelText(product)}{product.barcode ? ` · ${product.barcode}` : ""}</>}
                                     </p>
                                 </div>
                             </div>
@@ -1104,7 +1134,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             ) : (
                 /* ── Lista: detalle completo por renglón (vista original) ── */
                 <div className="space-y-2">
-                    <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    <div className="sticky top-16 z-10 hidden md:grid grid-cols-12 gap-4 border-b bg-background/95 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide backdrop-blur">
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
                         <div className="col-span-2">Existencias por sucursal</div>
@@ -1154,8 +1184,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                                     </button>
                                                 </h3>
                                                 <p className="text-xs text-muted-foreground truncate">
-                                                    {getModelText(product)}
-                                                    {product.barcode ? ` · ${product.barcode}` : ""}
+                                                    {compatBadge(product) ?? <>{getModelText(product)}{product.barcode ? ` · ${product.barcode}` : ""}</>}
                                                 </p>
                                                 <Badge variant="outline" className={cn("mt-1 text-[10px] gap-1 font-normal", badge.className)}>
                                                     <VisIcon className="h-3 w-3" />
@@ -1523,6 +1552,14 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Diálogo: importar fotos por nombre de archivo */}
+            <FotosImportDialog
+                open={fotosOpen}
+                onOpenChange={setFotosOpen}
+                products={products}
+                onDone={() => void fetchProducts()}
+            />
         </div>
     )
 }
