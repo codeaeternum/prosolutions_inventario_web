@@ -15,7 +15,7 @@ services:
       retries: 10
     restart: unless-stopped
   app:
-    image: prosolutions-app:verifysuite
+    image: prosolutions-app:invfix
     build:
       context: .
       target: runner
@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
   migrate:
     profiles: ["setup"]
-    image: prosolutions-app-migrate:verifysuite
+    image: prosolutions-app-migrate:invfix
     build:
       context: .
       target: migrate
