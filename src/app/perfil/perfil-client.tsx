@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useCurrency } from "@/components/currency-provider"
+import { ContactCard } from "./contact-card"
 
 interface UserData {
     name?: string | null
@@ -26,6 +27,13 @@ interface UserData {
     role?: string
     status?: string
     customerType?: string
+}
+
+interface ContactData {
+    email: string | null
+    phone: string | null
+    emailVerified: boolean
+    phoneVerified: boolean
 }
 
 function getStatusBadge(status: string) {
@@ -54,7 +62,7 @@ function getCustomerTypeBadge(type: string) {
     }
 }
 
-export default function PerfilClient({ user }: { user: UserData }) {
+export default function PerfilClient({ user, contact }: { user: UserData; contact: ContactData }) {
     const { formatPrice } = useCurrency()
     const [isLoggingOut, setIsLoggingOut] = useState(false)
     const [credit, setCredit] = useState<{ creditLimit: number | null; creditBalance: number } | null>(null)
@@ -115,6 +123,15 @@ export default function PerfilClient({ user }: { user: UserData }) {
                         </div>
                     </CardContent>
                 </Card>
+
+                {/* Datos de contacto: edición self-service + insignias de verificación */}
+                <ContactCard
+                    name={user.name ?? ""}
+                    email={contact.email}
+                    phone={contact.phone}
+                    emailVerified={contact.emailVerified}
+                    phoneVerified={contact.phoneVerified}
+                />
 
                 {/* Crédito: saldo y límite */}
                 {credit != null && (credit.creditBalance > 0 || credit.creditLimit != null) && (

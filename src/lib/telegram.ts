@@ -56,6 +56,30 @@ export function escapeTelegramHtml(value: string): string {
 }
 
 /**
+ * Mensaje HTML directo a un chat de Telegram ya resuelto (telegramId ligado).
+ * A diferencia de sendTelegramToCustomer no filtra por rol/tenant: el caller
+ * ya validó a quién le escribe (p. ej. la re-verificación del perfil al
+ * dueño de la sesión). Silencioso con log; devuelve si se envió.
+ */
+export async function sendTelegramMessage(telegramId: string, message: string): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN
+  if (!token) return false
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: telegramId, text: message, parse_mode: "HTML" }),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) console.error(`[telegram] sendMessage directo falló: HTTP ${res.status}`)
+    return res.ok
+  } catch (error) {
+    console.error("[telegram] sendMessage directo falló:", error)
+    return false
+  }
+}
+
+/**
  * Envía un mensaje HTML por Telegram a UN cliente del negocio: User con
  * role CUSTOMER y telegramId ligado (alta por /start del bot o deep-link
  * verify_<code>). El filtro businessId + role es el guard multi-tenant:
