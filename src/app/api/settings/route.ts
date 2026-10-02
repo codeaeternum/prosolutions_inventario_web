@@ -54,9 +54,12 @@ function parseFolioDigits(raw: string | undefined): number {
 }
 
 // GET - Obtener configuración.
-// Anónimo (checkout público /carrito): solo los campos que la reserva pública
-// necesita — nunca datos bancarios (CLABE/cuentas) ni textos del ticket.
-// Con sesión: respuesta completa para la pantalla de configuración.
+// Sin sesión staff (anónimo, CUSTOMER, WORKSHOP o cuenta pendiente): solo los
+// campos que la reserva pública /carrito necesita — nunca datos bancarios
+// (CLABE/cuentas), el taller asociado ni textos del ticket. Antes bastaba
+// CUALQUIER sesión para recibir el payload completo.
+// Con sesión de staff (ADMIN/EMPLOYEE aprobado): respuesta completa para la
+// pantalla de configuración.
 // El GET es de solo lectura: si el negocio no tiene fila Settings todavía se
 // responde con los defaults sin crearla (un GET anónimo no debe escribir).
 export async function GET() {
@@ -67,7 +70,10 @@ export async function GET() {
       where: { businessId },
     })
 
-    if (!session) {
+    const staffViewer =
+      session?.user?.status === "APPROVED" &&
+      (session.user.role === "ADMIN" || session.user.role === "EMPLOYEE")
+    if (!staffViewer) {
       return NextResponse.json({
         tempReservationMinutes: settings?.tempReservationMinutes ?? DEFAULTS.tempReservationMinutes,
         depositPercentage: settings?.depositPercentage ?? DEFAULTS.depositPercentage,

@@ -391,7 +391,10 @@ export async function PUT(
     // Post-commit: revisa stock bajo tanto por el ajuste de existencias como
     // por un cambio de minStock (subir el mínimo puede cruzar el umbral solo).
     await syncLowStockAlerts(prisma, businessId, [id])
-    return NextResponse.json(product)
+    // El update devuelve la fila cruda con TODO (costPrice, businessId…); se
+    // serializa por el mismo DTO del GET: el costo es solo del dueño (ADMIN)
+    // y sin él un EMPLOYEE recibía el costo real esquivando productDto.
+    return NextResponse.json(productDto(product, session.user))
   } catch (error) {
     console.error("Error updating product:", error)
     return NextResponse.json(

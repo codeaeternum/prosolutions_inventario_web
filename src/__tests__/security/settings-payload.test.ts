@@ -46,7 +46,9 @@ vi.mock("@/lib/prisma", () => ({
 
 import { GET, PATCH } from "@/app/api/settings/route"
 
-const session = { user: { id: "u-admin", role: "ADMIN", businessId: "biz-1" } }
+// Staff aprobado: el GET completo solo sale para ADMIN/EMPLOYEE aprobados —
+// otras sesiones (cliente, aliado, pendiente) reciben el subset público.
+const session = { user: { id: "u-admin", role: "ADMIN", status: "APPROVED", businessId: "biz-1" } }
 const patchReq = (body: unknown) =>
   new Request("https://app.invalid/api/settings", {
     method: "PATCH",
