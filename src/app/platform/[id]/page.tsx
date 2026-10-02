@@ -62,6 +62,12 @@ const userStatusLabels: Record<string, string> = {
   REJECTED: "Rechazado",
 }
 
+const platformEventLabels: Record<string, string> = {
+  TENANT_SUSPENDED: "Empresa suspendida",
+  TENANT_REACTIVATED: "Empresa reactivada",
+  TENANT_DELETED: "Empresa eliminada",
+}
+
 const userStatusVariants: Record<string, "success" | "warning" | "destructive"> = {
   APPROVED: "success",
   PENDING: "warning",
@@ -319,6 +325,30 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Bitácora de plataforma: suspend/reactivate/delete quedan aquí —
+          el evento sobrevive aunque el negocio se borre (sin FK). */}
+      {business.platformEvents.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Historial de plataforma</CardTitle>
+            <CardDescription>Acciones del operador sobre este negocio.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {business.platformEvents.map(ev => (
+                <li key={ev.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span>
+                    {platformEventLabels[ev.kind] ?? ev.kind}
+                    <span className="text-muted-foreground"> · {ev.actorEmail ?? "operador"}</span>
+                  </span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">{formatDate(ev.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Zona de peligro: solo para altas vacías (prueba/broma); con datos
           operativos el servidor rechaza el borrado y toca suspender. */}

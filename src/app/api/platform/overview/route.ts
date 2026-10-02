@@ -57,6 +57,7 @@ export async function GET() {
       productsTotal,
       ordersActivity,
       salesActivity,
+      pendingSignups,
     ] = await Promise.all([
       prisma.business.count(),
       prisma.business.count({ where: { isActive: true } }),
@@ -77,6 +78,17 @@ export async function GET() {
       // Actividad por empresa: la orden o venta más reciente de cada una.
       prisma.repairOrder.groupBy({ by: ["businessId"], _max: { createdAt: true } }),
       prisma.sale.groupBy({ by: ["businessId"], _max: { createdAt: true } }),
+      // Altas sin verificar: el dueño nunca confirmó correo/teléfono. Solo
+      // metadata del negocio — nada del contenido del tenant.
+      prisma.user.findMany({
+        where: { role: "ADMIN", status: "PENDING" },
+        orderBy: { createdAt: "asc" },
+        take: 20,
+        select: {
+          createdAt: true,
+          business: { select: { id: true, name: true, slug: true } },
+        },
+      }),
     ])
 
     const byRole: Record<"ADMIN" | "EMPLOYEE" | "WORKSHOP" | "CUSTOMER", number> = {
@@ -186,6 +198,15 @@ export async function GET() {
           countLast30d: salesLast30d._count._all,
         },
         products: { total: productsTotal },
+        // Altas de negocio aún sin verificar (dueño PENDING): envejecen hasta
+        // que el cron de purga las limpie o el dueño confirme su contacto.
+        pendingSignups: pendingSignups.map(u => ({
+          businessId: u.business.id,
+          name: u.business.name,
+          slug: u.business.slug,
+          createdAt: u.createdAt,
+          days: Math.floor((now - u.createdAt.getTime()) / DAY_MS),
+        })),
         health,
       },
       { headers: { "Cache-Control": "private, no-store" } }

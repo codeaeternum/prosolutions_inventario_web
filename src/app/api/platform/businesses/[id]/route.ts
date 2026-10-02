@@ -66,16 +66,33 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   try {
-    const existing = await prisma.business.findUnique({ where: { id }, select: { id: true } })
+    const existing = await prisma.business.findUnique({
+      where: { id },
+      select: { id: true, name: true, slug: true },
+    })
     if (!existing) {
       return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 })
     }
 
-    const business = await prisma.business.update({
-      where: { id },
-      data: { isActive: parsed.data.isActive },
-      select: { id: true, name: true, slug: true, isActive: true, updatedAt: true },
-    })
+    const actor = auth.session.user
+    const [business] = await prisma.$transaction([
+      prisma.business.update({
+        where: { id },
+        data: { isActive: parsed.data.isActive },
+        select: { id: true, name: true, slug: true, isActive: true, updatedAt: true },
+      }),
+      // Bitácora de plataforma: qué operador suspendió/reactivó qué empresa.
+      prisma.platformEvent.create({
+        data: {
+          businessId: existing.id,
+          businessSlug: existing.slug,
+          businessName: existing.name,
+          kind: parsed.data.isActive ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED",
+          actorId: actor.id,
+          actorEmail: actor.email ?? null,
+        },
+      }),
+    ])
 
     return NextResponse.json({ business })
   } catch (error) {
@@ -187,6 +204,17 @@ export async function DELETE(_req: Request, { params }: Params) {
       await tx.workshopService.deleteMany({ where: { businessId: id } })
       await tx.user.deleteMany({ where: { businessId: id } })
       await tx.branch.deleteMany({ where: { businessId: id } })
+      // Bitácora sin FK: el evento sobrevive al borrado de la empresa.
+      await tx.platformEvent.create({
+        data: {
+          businessId: business.id,
+          businessSlug: business.slug,
+          businessName: business.name,
+          kind: "TENANT_DELETED",
+          actorId: auth.session.user.id,
+          actorEmail: auth.session.user.email ?? null,
+        },
+      })
       await tx.business.delete({ where: { id } })
     })
   } catch (error) {

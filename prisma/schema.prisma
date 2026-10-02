@@ -1498,3 +1498,21 @@ model NotificationRead {
   @@id([notificationId, userId])
   @@index([userId])
 }
+
+// Bitácora de la consola de plataforma (superadmin Reficio). Sin FK a
+// Business/User a propósito: el evento debe sobrevivir al borrado del tenant
+// y del operador — guarda snapshot legible (slug/nombre/email).
+model PlatformEvent {
+  id           String   @id @default(cuid())
+  businessId   String
+  businessSlug String
+  businessName String
+  kind         String // TENANT_SUSPENDED | TENANT_REACTIVATED | TENANT_DELETED
+  actorId      String
+  actorEmail   String?
+  detail       Json?
+  createdAt    DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([createdAt])
+}

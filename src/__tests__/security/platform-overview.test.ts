@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   businessFindMany: vi.fn(),
   userCount: vi.fn(),
   userGroup: vi.fn(),
+  userFindMany: vi.fn(),
   orderCount: vi.fn(),
   orderGroup: vi.fn(),
   saleCount: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     business: { count: mocks.businessCount, findMany: mocks.businessFindMany },
-    user: { count: mocks.userCount, groupBy: mocks.userGroup },
+    user: { count: mocks.userCount, groupBy: mocks.userGroup, findMany: mocks.userFindMany },
     repairOrder: { count: mocks.orderCount, groupBy: mocks.orderGroup },
     sale: { count: mocks.saleCount, aggregate: mocks.saleAggregate, groupBy: mocks.saleGroup },
     product: { count: mocks.productCount },
@@ -102,6 +103,14 @@ describe("platform overview API", () => {
         { id: "b2", name: "Taller Dos", slug: "taller-dos", category: "electronics-repair", isActive: false, createdAt: new Date("2025-11-01T00:00:00Z") },
       ])
 
+    // Alta sin verificar: dueño ADMIN+PENDING sobre un negocio reciente.
+    mocks.userFindMany.mockResolvedValue([
+      {
+        createdAt: new Date("2026-02-01T00:00:00Z"),
+        business: { id: "b3", name: "Refacciones Nueva", slug: "ref-nueva" },
+      },
+    ])
+
     const res = await overview()
     expect(res.status).toBe(200)
     expect(res.headers.get("cache-control")).toContain("no-store")
@@ -116,6 +125,16 @@ describe("platform overview API", () => {
     expect(body.orders).toEqual({ total: 40, openNow: 12, last7d: 5 })
     expect(body.sales).toEqual({ countTotal: 30, sumLast30d: 12345, countLast30d: 9 })
     expect(body.products).toEqual({ total: 77 })
+
+    // Altas pendientes: solo metadata del negocio + edad en días — sin
+    // exponer correo/teléfono del dueño ni contenido del tenant.
+    expect(body.pendingSignups).toHaveLength(1)
+    expect(body.pendingSignups[0]).toMatchObject({ businessId: "b3", slug: "ref-nueva" })
+    expect(body.pendingSignups[0].days).toBeGreaterThan(0)
+    expect(body.pendingSignups[0]).not.toHaveProperty("email")
+    expect(mocks.userFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { role: "ADMIN", status: "PENDING" } }),
+    )
 
     // Órdenes abiertas = estados no terminales.
     expect(mocks.orderCount).toHaveBeenCalledWith(

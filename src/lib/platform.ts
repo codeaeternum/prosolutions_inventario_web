@@ -149,6 +149,15 @@ export interface PlatformBusinessDetail extends PlatformBusinessSummary {
   users: PlatformBusinessUser[]
   recentRepairOrders: PlatformRecentOrder[]
   recentSales: PlatformRecentSale[]
+  /** Acciones de plataforma sobre este negocio (suspender/reactivar/borrar). */
+  platformEvents: PlatformEventItem[]
+}
+
+export interface PlatformEventItem {
+  id: string
+  kind: string
+  actorEmail: string | null
+  createdAt: Date
 }
 
 const saleFolio = (number: number) => `V-${String(number).padStart(6, "0")}`
@@ -169,7 +178,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
 
   // El folio de las órdenes recientes respeta los dígitos configurados por
   // ESE negocio (order_folio_digits), no un formato fijo de la consola.
-  const [users, orders, sales, salesTotal, lastOrder, lastSale, folioDigits] = await Promise.all([
+  const [users, orders, sales, salesTotal, lastOrder, lastSale, folioDigits, platformEvents] = await Promise.all([
     prisma.user.findMany({
       where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
       orderBy: { createdAt: "asc" },
@@ -222,6 +231,12 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
       select: { createdAt: true },
     }),
     getOrderFolioDigits(id),
+    prisma.platformEvent.findMany({
+      where: { businessId: id },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: { id: true, kind: true, actorEmail: true, createdAt: true },
+    }),
   ])
 
   return {
@@ -247,6 +262,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
       createdAt: s.createdAt,
       total: s.total,
     })),
+    platformEvents,
   }
 }
 

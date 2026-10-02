@@ -43,6 +43,13 @@ interface PlatformOverview {
     orders: { total: number; openNow: number; last7d: number }
     sales: { countTotal: number; sumLast30d: number; countLast30d: number }
     products: { total: number }
+    pendingSignups: {
+        businessId: string
+        name: string
+        slug: string
+        createdAt: string
+        days: number
+    }[]
     health: {
         id: string
         name: string
@@ -166,6 +173,35 @@ export function OverviewPanel() {
                     </div>
                 ))}
             </div>
+
+            {/* Altas sin verificar: el dueño nunca confirmó su contacto; el
+                cron de purga las limpia pasado el TTL. */}
+            {overview.pendingSignups.length > 0 && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/5">
+                    <div className="p-4 sm:p-6 pb-3">
+                        <h3 className="font-semibold">Altas pendientes de verificación</h3>
+                        <p className="text-xs text-muted-foreground">
+                            El dueño aún no confirma su correo o teléfono — candidatas a purga automática.
+                        </p>
+                    </div>
+                    <ul className="px-4 sm:px-6 pb-5 space-y-2">
+                        {overview.pendingSignups.map(p => (
+                            <li key={p.businessId} className="flex items-center justify-between gap-3 text-sm">
+                                <Link
+                                    href={`/platform/${p.businessId}`}
+                                    className="font-medium text-primary hover:underline"
+                                >
+                                    {p.name}
+                                    <span className="ml-2 text-xs text-muted-foreground font-mono">/{p.slug}</span>
+                                </Link>
+                                <Badge variant={p.days >= 7 ? "destructive" : "outline"}>
+                                    {p.days === 0 ? "hoy" : `${p.days}d sin verificar`}
+                                </Badge>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
 
             <div className="rounded-lg border bg-card">
                 <div className="p-4 sm:p-6 pb-3">

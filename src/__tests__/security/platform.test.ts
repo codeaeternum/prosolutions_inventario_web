@@ -35,8 +35,10 @@ const mocks = vi.hoisted(() => {
       .map((a) => [a, vi.fn().mockResolvedValue({ count: 1 })])
   )
   const businessDelete = vi.fn().mockResolvedValue({})
+  const platformEventCreate = vi.fn().mockResolvedValue({})
   const prisma: Record<string, unknown> = {
     business: { findMany: findBusinesses, findUnique: findBusiness, update: updateBusiness, delete: businessDelete },
+    platformEvent: { create: platformEventCreate, findMany: vi.fn().mockResolvedValue([]) },
     user: { findMany: findUsers, deleteMany: del.user },
     businessOperation: { deleteMany: del.businessOperation },
     auditEvent: { deleteMany: del.auditEvent },
@@ -54,12 +56,14 @@ const mocks = vi.hoisted(() => {
   ;(prisma.repairOrder as Record<string, unknown>).groupBy = orderGroup
   ;(prisma.repairOrder as Record<string, unknown>).findMany = findOrders
   ;(prisma.repairOrder as Record<string, unknown>).findFirst = findOrderFirst
-  prisma.$transaction = vi.fn((fn: (tx: unknown) => Promise<unknown>) => fn(prisma))
+  // $transaction soporta ambas formas: array de promesas (PATCH) y callback (DELETE).
+  prisma.$transaction = vi.fn((arg: unknown) =>
+    Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => Promise<unknown>)(prisma))
 
   return {
     auth: vi.fn(), findBusinesses, findBusiness, updateBusiness, saleGroup,
     orderGroup, findUsers, findOrders, findOrderFirst, findSales, findSaleFirst,
-    saleAggregate, count, del, businessDelete, prisma,
+    saleAggregate, count, del, businessDelete, platformEventCreate, prisma,
   }
 })
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -159,12 +163,23 @@ describe("platform console API", () => {
     mocks.findBusiness.mockResolvedValueOnce(null)
     expect((await patchBusiness(patchReq("missing", JSON.stringify({ isActive: false })), paramsOf("missing"))).status).toBe(404)
 
-    mocks.findBusiness.mockResolvedValueOnce({ id: "b1" })
+    mocks.findBusiness.mockResolvedValueOnce({ id: "b1", name: "Taller Uno", slug: "taller-uno" })
     mocks.updateBusiness.mockResolvedValue({ id: "b1", name: "Taller Uno", slug: "taller-uno", isActive: false, updatedAt: new Date() })
     const res = await patchBusiness(patchReq("b1", JSON.stringify({ isActive: false })), paramsOf("b1"))
     expect(res.status).toBe(200)
     expect(mocks.updateBusiness).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "b1" }, data: { isActive: false } }))
     expect((await res.json()).business.isActive).toBe(false)
+
+    // Bitácora: suspensión queda registrada con snapshot del negocio + actor.
+    expect(mocks.platformEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        businessId: "b1",
+        businessSlug: "taller-uno",
+        businessName: "Taller Uno",
+        kind: "TENANT_SUSPENDED",
+        actorId: "op",
+      }),
+    })
   })
 
   describe("DELETE (empresa vacía)", () => {
@@ -220,6 +235,10 @@ describe("platform console API", () => {
       expect(mocks.del.auditEvent.mock.invocationCallOrder[0])
         .toBeLessThan(mocks.del.user.mock.invocationCallOrder[0])
       expect(mocks.businessDelete).toHaveBeenCalledWith({ where: { id: "b1" } })
+      // La bitácora se escribe DENTRO de la tx (sobrevive al borrado: sin FK).
+      expect(mocks.platformEventCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ kind: "TENANT_DELETED", businessSlug: "alta-basura", actorId: "op" }),
+      })
     })
 
     it("maps a residual FK violation inside the transaction to 409", async () => {

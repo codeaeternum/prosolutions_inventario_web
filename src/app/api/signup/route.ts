@@ -236,6 +236,20 @@ export async function POST(req: Request) {
             priceCents: null,
           })),
         })
+        // Bitácora de plataforma: el alta queda registrada junto con la
+        // suspensión/eliminación (PlatformEvent no tiene FK — sobrevive al
+        // borrado del tenant).
+        await tx.platformEvent.create({
+          data: {
+            businessId: business.id,
+            businessSlug: slug,
+            businessName,
+            kind: "TENANT_CREATED",
+            actorId: adminUser.id,
+            actorEmail: emailNorm,
+            detail: { selfService: true, businessKind },
+          },
+        })
       })
     } catch (error) {
       if (isUniqueViolation(error)) {
