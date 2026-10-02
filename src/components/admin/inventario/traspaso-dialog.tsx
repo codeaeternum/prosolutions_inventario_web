@@ -91,7 +91,8 @@ function TraspasoForm({ product, branches, lockedFromId, onSaved, close }: Trasp
     const operation = useRef<ClientOperationKey | null>(null)
 
     const fromStock = stockByBranch.get(fromId) ?? 0
-    const qty = parseInt(quantity)
+    // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+    const qty = Number(quantity)
     const qtyValid = Number.isInteger(qty) && qty >= 1 && qty <= fromStock
     const canSubmit = !saving && Boolean(fromId) && Boolean(toId) && fromId !== toId && qtyValid
 
@@ -105,7 +106,7 @@ function TraspasoForm({ product, branches, lockedFromId, onSaved, close }: Trasp
         }
         const max = stockByBranch.get(value) ?? 0
         setQuantity((q) => {
-            const n = parseInt(q)
+            const n = Number(q)
             return Number.isInteger(n) && n >= 1 && n <= max ? q : "1"
         })
     }

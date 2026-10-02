@@ -143,7 +143,8 @@ function MermaForm({ branches, lockedBranchId, onSaved, close }: MermaFormProps)
         setResults([])
     }
 
-    const qty = parseInt(quantity)
+    // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+    const qty = Number(quantity)
     const stockAtBranch = product?.stock ?? 0
     const qtyValid = Number.isInteger(qty) && qty >= 1 && qty <= stockAtBranch
     const canSubmit = !saving && Boolean(product) && Boolean(branchId) && qtyValid && Boolean(reason.trim())

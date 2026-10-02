@@ -272,6 +272,7 @@ function EtiquetasBody({ products, onClose }: { products: EtiquetaProduct[]; onC
                                 onChange={(e) => setSearch(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === "Enter") void runSearch() }}
                                 className="pl-8"
+                                aria-label="Buscar producto para agregar a la tanda"
                             />
                         </div>
                         <Button variant="outline" onClick={() => void runSearch()} disabled={searching || !search.trim()}>

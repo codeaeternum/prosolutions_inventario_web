@@ -153,7 +153,11 @@ export function ProveedoresPanel() {
         fetch(`/api/supplier-payments?supplierId=${encodeURIComponent(historySupplier.id)}`)
             .then(r => (r.ok ? r.json() : Promise.reject(new Error("Error al cargar pagos"))))
             .then(d => { if (!cancelled) setPayments(d?.payments ?? []) })
-            .catch(() => { if (!cancelled) setPayments([]) })
+            .catch(() => {
+                if (cancelled) return
+                setPayments([])
+                toast.error("No se pudo cargar el historial de pagos")
+            })
         return () => { cancelled = true }
     }, [historySupplier])
 

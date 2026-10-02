@@ -78,7 +78,12 @@ export function TraspasoBuscarDialog({ branches, lockedFromId, open, onOpenChang
     }
 
     const pickProduct = (p: StockSearchProduct) => {
-        if (!p.branches?.some((b) => b.quantity > 0)) {
+        // Con origen fijo (empleado) solo sirve existencia en SU sucursal;
+        // stock en otras sucursales abriría un traspaso que no puede ejecutar.
+        const canMove = lockedFromId
+            ? p.branches?.some((b) => b.branchId === lockedFromId && b.quantity > 0)
+            : p.branches?.some((b) => b.quantity > 0)
+        if (!canMove) {
             toast.error(`"${p.name}" no tiene existencias para mover.`)
             return
         }

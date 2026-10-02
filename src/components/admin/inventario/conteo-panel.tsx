@@ -95,8 +95,9 @@ const STATUS_CONFIG: Record<CountStatus, { label: string; className: string }> =
 
 /** Cantidad contada válida (entero >= 0) o null si la captura está incompleta. */
 function countedQtyOf(row: EditableRow): number | null {
-    const counted = parseInt(row.counted)
-    if (!Number.isInteger(counted) || counted < 0) return null
+    // Number() (no parseInt): "1.5" no se trunca a 1 — se rechaza como captura.
+    const counted = Number(row.counted)
+    if (row.counted.trim() === "" || !Number.isInteger(counted) || counted < 0) return null
     return counted
 }
 
@@ -292,7 +293,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
 
     const saveRows = useCallback(async (): Promise<boolean> => {
         if (!detail || saving) return false
-        const items = rows.map(r => ({ productId: r.productId, countedQty: parseInt(r.counted) }))
+        const items = rows.map(r => ({ productId: r.productId, countedQty: Number(r.counted) }))
         saveOp.current = getClientOperationKey(saveOp.current, { countId: detail.id, items })
         setSaving(true)
         try {
@@ -332,7 +333,9 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
     const confirmAction = async (action: "apply" | "cancel") => {
         if (!detail || acting) return
         const payload = { action }
-        actOp.current = getClientOperationKey(actOp.current, payload)
+        // La huella incluye el conteo: una llave retenida tras un fallo de red
+        // no se reutiliza si el usuario aplica/cancela OTRO conteo.
+        actOp.current = getClientOperationKey(actOp.current, { ...payload, countId: detail.id })
         setActing(true)
         try {
             const res = await fetch(`/api/inventory/counts/${detail.id}`, {

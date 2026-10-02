@@ -106,7 +106,8 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
      * el nombre del producto; se manda explícita para que la fila quede clara.
      */
     const addOne = async (s: Suggestion): Promise<boolean> => {
-        const quantity = parseInt(qty[s.productId] ?? "", 10)
+        // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+        const quantity = Number(qty[s.productId] ?? "")
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
             toast.error(`Cantidad inválida para ${s.name}: captura un entero entre 1 y 9,999`)
             return false
@@ -180,7 +181,7 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
     const requestFromAlly = async (s: Suggestion, a: AllyInfo) => {
         const chipKey = `${s.productId}:${a.businessId}`
         if (busy || requesting || requested[chipKey]) return
-        const quantity = parseInt(qty[s.productId] ?? "", 10)
+        const quantity = Number(qty[s.productId] ?? "")
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
             toast.error(`Cantidad inválida para pedir ${s.name}: captura un entero entre 1 y 9,999`)
             return

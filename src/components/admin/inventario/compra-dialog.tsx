@@ -176,7 +176,8 @@ function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFor
 
     const parsedLines = lines.map(l => ({
         productId: l.product.id,
-        quantity: parseInt(l.quantity),
+        // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+        quantity: Number(l.quantity),
         unitCostCents: Math.round((parseFloat(l.cost) || 0) * 100),
     }))
     const linesValid = lines.length > 0 && parsedLines.every(l => Number.isInteger(l.quantity) && l.quantity >= 1 && l.unitCostCents >= 0)

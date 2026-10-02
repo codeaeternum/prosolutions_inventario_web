@@ -113,6 +113,24 @@ function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close }: {
         return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
     }, [search, branchId, searchProducts])
 
+    // Al cambiar de sucursal, refresca el stock del producto ya elegido.
+    useEffect(() => {
+        if (!product || !branchId) return
+        let cancelled = false
+        const q = product.barcode || product.name
+        fetch(`/api/search/pos?q=${encodeURIComponent(q)}&branchId=${branchId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+                if (cancelled) return
+                const found = (d?.products ?? []).find((p: SearchProduct) => p.id === product.id)
+                if (found) setProduct(prev => (prev && prev.id === found.id ? { ...prev, stock: found.stock } : prev))
+            })
+            .catch(() => {})
+        return () => { cancelled = true }
+        // Solo re-consultar cuando cambia la sucursal o el producto elegido.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [branchId, product?.id])
+
     const pickProduct = (p: SearchProduct) => {
         setProduct(p)
         setSearch("")
@@ -125,6 +143,10 @@ function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close }: {
         try {
             const res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}${branchId ? `&branchId=${branchId}` : ""}`)
             const data = await res.json().catch(() => null)
+            if (!res.ok) {
+                toast.error(data?.error || "No se pudo buscar el código. Reintenta.")
+                return
+            }
             const products: SearchProduct[] = data?.products ?? []
             const exact = products.find((p) => p.barcode === code || p.id === code)
             if (exact) {
@@ -141,7 +163,8 @@ function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close }: {
         }
     }
 
-    const qty = parseInt(quantity)
+    // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+    const qty = Number(quantity)
     const qtyValid = Number.isInteger(qty) && qty >= 1
     const canSubmit = !saving && Boolean(product) && Boolean(branchId) && qtyValid
 

@@ -201,7 +201,9 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
         const { purchase, action } = pending
         setActing(true)
         const payload = { action }
-        operation.current = getClientOperationKey(operation.current, payload)
+        // La huella incluye la OC: una llave retenida tras un fallo de red no se
+        // reutiliza si el usuario confirma la misma acción sobre OTRA orden.
+        operation.current = getClientOperationKey(operation.current, { ...payload, purchaseId: purchase.id })
         try {
             const res = await fetch(`/api/purchases/${purchase.id}`, {
                 method: "POST",
@@ -233,7 +235,8 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
     /** Recepción parcial: POST { action: "RECEIVE_PARTIAL", items: […] } con la captura de UNA línea. */
     const submitPartialReceive = async (purchase: PurchaseRow, purchaseItemId: string, pendingQty: number) => {
         if (receiving) return
-        const qty = parseInt(receiveQty)
+        // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.
+        const qty = Number(receiveQty)
         if (!Number.isInteger(qty) || qty < 1 || qty > pendingQty) {
             toast.error(`Cantidad inválida: recibe entre 1 y ${pendingQty} unidades.`)
             return
