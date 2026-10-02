@@ -22,9 +22,9 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import { ImageUpload } from "@/components/image-upload"
+import Image from "next/image"
 import { cn } from "@/lib/utils"
-import { AlertTriangle, Globe, Loader2, Plus, Store, Wand2, X } from "lucide-react"
+import { AlertTriangle, ChevronLeft, ChevronRight, Globe, ImagePlus, Loader2, Plus, Store, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
 
 const selectClassName =
@@ -49,6 +49,9 @@ export const VISIBILIDAD_LABELS: Record<MarketVisibility, string> = {
     ALLIES: "Aliados",
     PUBLIC: "Público",
 }
+
+/** Tope de fotos por producto (la primera del array es la principal). */
+const MAX_PRODUCT_IMAGES = 12
 
 interface Brand {
     id: string
@@ -216,8 +219,13 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     const [newModelBrandId, setNewModelBrandId] = useState("")
     const [adding, setAdding] = useState(false)
 
-    // Bloquea el submit mientras una foto sigue subiendo (evita guardar sin ella).
-    const [uploadingImages, setUploadingImages] = useState(false)
+    // Fotos en vuelo: cada archivo elegido muestra un placeholder con spinner
+    // hasta que /api/upload/product responde. Mientras haya pendientes el
+    // submit queda bloqueado para no guardar el producto sin esas fotos.
+    const [pendingUploads, setPendingUploads] = useState<{ id: string; name: string }[]>([])
+    const uploadingImages = pendingUploads.length > 0
+    const photoInputRef = useRef<HTMLInputElement>(null)
+    const [photoDragOver, setPhotoDragOver] = useState(false)
     // Descripción es secundaria: va colapsada salvo que el producto ya tenga una.
     const [showDescription, setShowDescription] = useState(false)
     const nameRef = useRef<HTMLInputElement>(null)
@@ -440,6 +448,57 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
         }
     }
 
+    // Sube las fotos de a una (mismo endpoint que antes): si un archivo
+    // falla se avisa con toast y el resto del lote continúa. Cada URL
+    // devuelta se agrega al final y el tope se revalida en el append.
+    const uploadProductImages = async (files: FileList | File[] | null) => {
+        const list = files ? Array.from(files) : []
+        if (list.length === 0) return
+        const remaining = MAX_PRODUCT_IMAGES - images.length - pendingUploads.length
+        if (remaining <= 0) {
+            toast.error(`Máximo ${MAX_PRODUCT_IMAGES} fotos por producto`)
+            return
+        }
+        const queue = list.slice(0, remaining)
+        if (list.length > queue.length) {
+            toast.error(`Solo caben ${remaining} foto${remaining === 1 ? "" : "s"} más (máximo ${MAX_PRODUCT_IMAGES})`)
+        }
+        const pending = queue.map((f) => ({ id: crypto.randomUUID(), name: f.name }))
+        setPendingUploads((prev) => [...prev, ...pending])
+        for (const [i, file] of queue.entries()) {
+            const pendingId = pending[i].id
+            try {
+                if (!file.type.startsWith("image/")) throw new Error(`«${file.name}» no es una imagen`)
+                const body = new FormData()
+                body.append("file", file)
+                const res = await fetch("/api/upload/product", { method: "POST", body })
+                const data: { url?: string; error?: string } | null = await res.json().catch(() => null)
+                if (!res.ok || !data?.url) throw new Error(data?.error ?? `No se pudo subir «${file.name}»`)
+                const url = data.url
+                setImages((prev) => (prev.length < MAX_PRODUCT_IMAGES ? [...prev, url] : prev))
+            } catch (err) {
+                toast.error(err instanceof Error ? err.message : `No se pudo subir «${file.name}»`)
+            } finally {
+                setPendingUploads((prev) => prev.filter((p) => p.id !== pendingId))
+            }
+        }
+    }
+
+    // El orden del array manda: images[0] es la foto principal.
+    const moveImage = (from: number, to: number) => {
+        setImages((prev) => {
+            if (to < 0 || to >= prev.length) return prev
+            const next = [...prev]
+            const [moved] = next.splice(from, 1)
+            next.splice(to, 0, moved)
+            return next
+        })
+    }
+
+    const removeImage = (index: number) => {
+        setImages((prev) => prev.filter((_, i) => i !== index))
+    }
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         if (saving) return
@@ -596,6 +655,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 })
                 setSelectedModels([])
                 setImages([])
+                setPendingUploads([])
                 setStockByBranch({})
                 setModelQuery("")
                 // `selectedBrand` (filtro del select de marca) se conserva a
@@ -761,10 +821,129 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     </div>
                 </div>
 
-                {/* Fotos como tira compacta: ocupan una sola fila hasta que hay imágenes. */}
+                {/* Fotos: tira de thumbnails. La primera es la principal y se
+                    reordena con flechas (sin drag & drop: en pantallas chicas
+                    estorbaba al hacer scroll). La zona también acepta soltar
+                    archivos encima. */}
                 <div className="space-y-2">
-                    <Label>Fotos <span className="text-muted-foreground font-normal">(opcional, hasta 5)</span></Label>
-                    <ImageUpload images={images} onChange={setImages} maxImages={5} onUploadingChange={setUploadingImages} compact />
+                    <Label>
+                        Fotos{" "}
+                        <span className="text-muted-foreground font-normal">
+                            (opcional, hasta {MAX_PRODUCT_IMAGES}; la primera es la principal)
+                        </span>
+                    </Label>
+                    <input
+                        ref={photoInputRef}
+                        type="file"
+                        multiple
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        aria-label="Seleccionar fotos del producto"
+                        onChange={(e) => {
+                            void uploadProductImages(e.target.files)
+                            // Limpiar el input permite volver a elegir el mismo archivo.
+                            e.target.value = ""
+                        }}
+                    />
+                    <div
+                        className={cn(
+                            "flex flex-wrap items-center gap-2 rounded-lg transition-colors",
+                            photoDragOver && "ring-2 ring-primary/50"
+                        )}
+                        onDragOver={(e) => {
+                            e.preventDefault()
+                            if (e.dataTransfer.types.includes("Files")) setPhotoDragOver(true)
+                        }}
+                        onDragLeave={(e) => {
+                            e.preventDefault()
+                            setPhotoDragOver(false)
+                        }}
+                        onDrop={(e) => {
+                            e.preventDefault()
+                            setPhotoDragOver(false)
+                            void uploadProductImages(e.dataTransfer.files)
+                        }}
+                    >
+                        {images.map((url, index) => (
+                            <div
+                                key={`${url}-${index}`}
+                                className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-muted"
+                            >
+                                <Image
+                                    src={url}
+                                    alt={`Foto ${index + 1} de ${formData.name.trim() || "el producto"}`}
+                                    fill
+                                    sizes="80px"
+                                    className="object-cover"
+                                    unoptimized={url.startsWith("/api/payment-proofs/") || url.startsWith("/uploads/payments/")}
+                                />
+                                {index === 0 && (
+                                    <span className="absolute left-0.5 top-0.5 rounded bg-primary px-1 py-px text-[9px] text-primary-foreground">
+                                        Principal
+                                    </span>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => removeImage(index)}
+                                    aria-label={`Quitar foto ${index + 1}`}
+                                    title={`Quitar foto ${index + 1}`}
+                                    className="absolute right-0.5 top-0.5 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow-sm transition-colors hover:bg-destructive/90"
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                                {images.length > 1 && (
+                                    <div className="absolute inset-x-0 bottom-0 flex justify-between bg-black/45 px-0.5 py-0.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => moveImage(index, index - 1)}
+                                            disabled={index === 0}
+                                            aria-label={`Mover foto ${index + 1} a la izquierda`}
+                                            title={index === 0 ? "Ya es la foto principal" : `Mover foto ${index + 1} a la izquierda`}
+                                            className="rounded p-0.5 text-white transition-colors hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent"
+                                        >
+                                            <ChevronLeft className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => moveImage(index, index + 1)}
+                                            disabled={index === images.length - 1}
+                                            aria-label={`Mover foto ${index + 1} a la derecha`}
+                                            title={`Mover foto ${index + 1} a la derecha`}
+                                            className="rounded p-0.5 text-white transition-colors hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent"
+                                        >
+                                            <ChevronRight className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {pendingUploads.map((p) => (
+                            <div
+                                key={p.id}
+                                role="status"
+                                aria-label={`Subiendo ${p.name}`}
+                                className="flex h-20 w-20 shrink-0 items-center justify-center rounded-md border bg-muted"
+                            >
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        ))}
+                        {images.length + pendingUploads.length < MAX_PRODUCT_IMAGES && (
+                            <button
+                                type="button"
+                                onClick={() => photoInputRef.current?.click()}
+                                className="flex h-20 min-w-28 items-center justify-center gap-1.5 rounded-md border-2 border-dashed border-muted-foreground/25 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/50 hover:text-foreground"
+                                title="Arrastra imágenes aquí o haz clic para agregar"
+                            >
+                                <ImagePlus className="h-4 w-4" />
+                                Agregar fotos
+                            </button>
+                        )}
+                    </div>
+                    {images.length >= MAX_PRODUCT_IMAGES && (
+                        <p className="text-xs text-muted-foreground">
+                            Llegaste al máximo de {MAX_PRODUCT_IMAGES} fotos; quita alguna para agregar otra.
+                        </p>
+                    )}
                 </div>
 
                 {/* La descripción es secundaria: colapsada por defecto para no
@@ -1238,9 +1417,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             Guardar y crear otro
                         </Button>
                     )}
-                    <Button type="submit" disabled={saving || uploadingImages} title={uploadingImages ? "Espera a que termine de subir la foto" : undefined}>
+                    <Button type="submit" disabled={saving || uploadingImages} title={uploadingImages ? "Espera a que terminen de subir las fotos" : undefined}>
                         {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        {uploadingImages ? "Subiendo foto…" : editing ? "Guardar cambios" : "Dar de alta"}
+                        {uploadingImages ? "Subiendo fotos…" : editing ? "Guardar cambios" : "Dar de alta"}
                     </Button>
                 </div>
             </DialogFooter>
