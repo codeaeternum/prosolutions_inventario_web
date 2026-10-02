@@ -122,22 +122,24 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
 
             <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
                 <div className="overflow-x-auto pb-2">
-                    <TabsList className="mb-4 flex-nowrap min-w-max">
+                    {/* Móvil: grid de 4 columnas para que las 4 pestañas quepan
+                        sin scroll; sm+: ancho natural con scroll como fallback. */}
+                    <TabsList className="mb-4 grid w-full min-w-0 grid-cols-4 sm:inline-flex sm:w-auto sm:min-w-max sm:flex-nowrap">
                         <TabsTrigger value="stock" className="flex items-center gap-2">
-                            <Package className="h-4 w-4" />
-                            Stock
+                            <Package className="hidden h-4 w-4 shrink-0 sm:block" />
+                            <span className="truncate">Stock</span>
                         </TabsTrigger>
                         <TabsTrigger value="entradas" className="flex items-center gap-2">
-                            <ShoppingCart className="h-4 w-4" />
-                            Entradas
+                            <ShoppingCart className="hidden h-4 w-4 shrink-0 sm:block" />
+                            <span className="truncate">Entradas</span>
                         </TabsTrigger>
                         <TabsTrigger value="encargos" className="flex items-center gap-2">
-                            <ClipboardList className="h-4 w-4" />
-                            Encargos
+                            <ClipboardList className="hidden h-4 w-4 shrink-0 sm:block" />
+                            <span className="truncate">Encargos</span>
                         </TabsTrigger>
                         <TabsTrigger value="historial" className="flex items-center gap-2">
-                            <History className="h-4 w-4" />
-                            Historial
+                            <History className="hidden h-4 w-4 shrink-0 sm:block" />
+                            <span className="truncate">Historial</span>
                         </TabsTrigger>
                     </TabsList>
                 </div>

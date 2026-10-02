@@ -77,6 +77,7 @@ import {
     QrCode,
     Rows3,
     Search,
+    SlidersHorizontal,
     Store,
     Upload,
     Users,
@@ -229,7 +230,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     }
 
     // --- Datos ---------------------------------------------------------------
-    interface InventoryStats { productos: number; unidades: number; bajoMinimo: number; sinStock: number }
+    interface InventoryStats { productos: number; unidades: number; bajoMinimo: number; sinStock: number; sinPrecio: number; sinFoto: number; sinCompat: number }
     const [stats, setStats] = useState<InventoryStats | null>(null)
     const [products, setProducts] = useState<StockProductItem[]>([])
     const [total, setTotal] = useState(0)
@@ -338,6 +339,24 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 return { ...p, stock: p.stock + delta, stocks }
             })
         )
+        // Mismo criterio que el SQL del API: bajoMinimo = stock <= minStock,
+        // sinStock = stock = 0, unidades = Σ stock. Se actualiza optimista para
+        // que los chips no queden viejos tras el ajuste rápido.
+        setStats((prev) => {
+            if (!prev) return prev
+            const p = products.find((x) => x.id === productId)
+            if (!p) return { ...prev, unidades: prev.unidades + delta }
+            const before = p.stock
+            const after = before + delta
+            const crossedLow = (before <= p.minStock) !== (after <= p.minStock)
+            const crossedEmpty = (before === 0) !== (after === 0)
+            return {
+                ...prev,
+                unidades: prev.unidades + delta,
+                bajoMinimo: prev.bajoMinimo + (crossedLow ? (after <= p.minStock ? 1 : -1) : 0),
+                sinStock: prev.sinStock + (crossedEmpty ? (after === 0 ? 1 : -1) : 0),
+            }
+        })
     }
 
     const branchQtyOf = (product: StockProductItem): number => {
@@ -526,6 +545,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     }
 
     const hasFilters = search !== "" || categoryId !== "" || visibilidad !== "todos" || lowStock
+    // En móvil los filtros van colapsados; el badge cuenta los activos
+    // (la búsqueda no cuenta — el propio campo ya lo muestra).
+    const [filtersOpen, setFiltersOpen] = useState(false)
+    const activeFilterCount = (categoryId !== "" ? 1 : 0) + (lowStock ? 1 : 0) + (visibilidad !== "todos" ? 1 : 0)
 
     const limpiarFiltros = () => {
         setSearchInput("")
@@ -640,29 +663,49 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 </div>
             </div>
 
-            {/* ── Fila 2: filtros + vista ── */}
+            {/* ── Fila 2: filtros + vista. En móvil solo el buscador queda
+                   siempre visible; el resto se colapsa tras "Filtros" con
+                   badge de cuántos están activos ── */}
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                <div className="relative flex-1 sm:max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        ref={searchRef}
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        placeholder="Buscar por nombre o código…  ( / )"
-                        aria-label="Buscar productos por nombre o código (atajo: tecla /)"
-                        className="pl-9 pr-8"
-                    />
-                    {searchInput && (
-                        <button
-                            type="button"
-                            onClick={() => setSearchInput("")}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                            aria-label="Limpiar búsqueda"
-                        >
-                            <X className="h-4 w-4" />
-                        </button>
-                    )}
+                <div className="flex gap-2">
+                    <div className="relative flex-1 sm:max-w-sm">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            ref={searchRef}
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            placeholder="Buscar por nombre o código…"
+                            aria-label="Buscar productos por nombre o código (atajo: tecla /)"
+                            className="pl-9 pr-8"
+                        />
+                        {searchInput && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchInput("")}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                                aria-label="Limpiar búsqueda"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        )}
+                    </div>
+                    <Button
+                        variant={filtersOpen ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-9 shrink-0 gap-1.5 sm:hidden"
+                        onClick={() => setFiltersOpen((o) => !o)}
+                        aria-expanded={filtersOpen}
+                    >
+                        <SlidersHorizontal className="h-4 w-4" />
+                        Filtros
+                        {activeFilterCount > 0 && (
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-xs font-semibold text-primary-foreground">
+                                {activeFilterCount}
+                            </span>
+                        )}
+                    </Button>
                 </div>
+                <div className={cn("gap-2 sm:flex sm:flex-row sm:flex-wrap sm:items-center", filtersOpen ? "flex flex-col" : "hidden sm:flex")}>
                 <Select
                     value={categoryId || "ALL"}
                     onValueChange={(v) => setParams({ categoryId: v === "ALL" ? null : v, page: null })}
@@ -725,6 +768,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         )
                     })}
                 </div>
+                </div>
             </div>
 
             {/* ── Fila 3: resumen del inventario (los números bajo mínimo/sin
@@ -746,6 +790,19 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             <span className={stats.sinStock > 0 ? "font-medium text-destructive" : ""}>
                                 {stats.sinStock} sin stock
                             </span>
+                            {/* Salud del catálogo: datos incompletos que conviene
+                                ir limpiando (precio placeholder, sin foto, sin
+                                modelos compatibles). */}
+                            {(stats.sinPrecio > 0 || stats.sinFoto > 0 || stats.sinCompat > 0) && (
+                                <span className="text-muted-foreground/80" title="Salud del catálogo">
+                                    · salud:{" "}
+                                    {[
+                                        stats.sinPrecio > 0 && `${stats.sinPrecio} sin precio real`,
+                                        stats.sinFoto > 0 && `${stats.sinFoto} sin foto`,
+                                        stats.sinCompat > 0 && `${stats.sinCompat} sin compatibilidad`,
+                                    ].filter(Boolean).join(" · ")}
+                                </span>
+                            )}
                         </>
                     )}
                     {hasFilters && (

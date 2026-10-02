@@ -99,6 +99,31 @@ export function StockQtyEditor({
         try {
             await adjustBranchStock({ productId, delta, branchId, reason, operation })
             onAdjusted?.(delta)
+            // Undo: la reversa queda como movimiento compensatorio en el
+            // historial (el ajuste original no se borra — auditoría intacta).
+            const undone = { current: null }
+            toast.success(`${delta > 0 ? "+" : ""}${delta} · ${productName ?? "producto"}`, {
+                description: `Quedan ${target} en existencia`,
+                action: {
+                    label: "Deshacer",
+                    onClick: () => {
+                        void (async () => {
+                            try {
+                                await adjustBranchStock({
+                                    productId,
+                                    delta: -delta,
+                                    branchId,
+                                    reason: "Reversa de ajuste rápido",
+                                    operation: undone,
+                                })
+                                onAdjusted?.(-delta)
+                            } catch (e) {
+                                toast.error(e instanceof Error ? e.message : "No se pudo revertir el ajuste.")
+                            }
+                        })()
+                    },
+                },
+            })
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "No se pudo ajustar el stock. Reintenta.")
         } finally {
