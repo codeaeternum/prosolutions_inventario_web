@@ -916,10 +916,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     <div className="hidden md:grid grid-cols-12 gap-2 border-b bg-muted/50 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
-                        <div className="col-span-3">Sucursales</div>
+                        <div className="col-span-2">Sucursales</div>
                         <div className="col-span-1 text-center">Total</div>
                         <div className="col-span-1 text-right">Público</div>
-                        <div className="col-span-1 text-right">Acciones</div>
+                        <div className="col-span-2 text-right">Acciones</div>
                     </div>
                     {products.map((product, i) => (
                         <div
@@ -957,7 +957,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             <div className="col-span-3 text-xs text-muted-foreground md:col-span-2">
                                 {product.category?.name ?? "—"}
                             </div>
-                            <div className="col-span-3 md:col-span-3">{branchChips(product)}</div>
+                            <div className="col-span-3 md:col-span-2">{branchChips(product)}</div>
                             <div className="col-span-2 text-left md:col-span-1 md:text-center">
                                 <Badge variant={getStockVariant(product)}>{product.stock}</Badge>
                                 <StockQtyEditor
@@ -972,7 +972,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             <div className="col-span-2 text-right font-semibold text-primary md:col-span-1">
                                 {formatPrice(product.retailPrice)}
                             </div>
-                            <div className="col-span-2 flex justify-end gap-0.5 md:col-span-1">
+                            <div className="col-span-2 flex justify-end gap-0.5 md:col-span-2">
                                 {productActions(product)}
                             </div>
                         </div>
@@ -984,10 +984,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
-                        <div className="col-span-3">Existencias por sucursal</div>
+                        <div className="col-span-2">Existencias por sucursal</div>
                         <div className="col-span-1 text-center">Total</div>
                         <div className="col-span-1 text-right">Público</div>
-                        <div className="col-span-1 text-right">Acciones</div>
+                        <div className="col-span-2 text-right">Acciones</div>
                     </div>
 
                     {products.map((product) => {
@@ -1051,7 +1051,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                         </div>
 
                                         {/* Chips por sucursal + editor inline */}
-                                        <div className="col-span-4 md:col-span-3">{branchChips(product)}</div>
+                                        <div className="col-span-4 md:col-span-2">{branchChips(product)}</div>
 
                                         {/* Total + ajuste inline sobre la sucursal de trabajo */}
                                         <div className="col-span-4 md:col-span-1 text-left md:text-center">
@@ -1077,7 +1077,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                         </div>
 
                                         {/* Acciones por producto */}
-                                        <div className="col-span-8 md:col-span-1 flex justify-end gap-1">
+                                        <div className="col-span-8 md:col-span-2 flex justify-end gap-1">
                                             {productActions(product, true)}
                                         </div>
                                     </div>
