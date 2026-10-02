@@ -5,6 +5,7 @@ import { z } from "zod"
 import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
+import { normalizeProductName } from "@/lib/utils"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
@@ -101,11 +102,16 @@ export async function GET(req: Request) {
     // Resumen para el panel de staff: una pasada agregada sobre el catálogo.
     // Público/clientes no lo reciben (no aplica a su vista ni le suma trabajo).
     const statsPromise = isCatalogStaff(viewer)
-      ? prisma.$queryRaw<{ productos: number; unidades: number; bajoMinimo: number; sinStock: number }[]>`
+      ? prisma.$queryRaw<{ productos: number; unidades: number; bajoMinimo: number; sinStock: number; sinPrecio: number; sinFoto: number; sinCompat: number }[]>`
           SELECT count(*)::int AS productos,
                  COALESCE(sum(stock), 0)::int AS unidades,
                  count(*) FILTER (WHERE stock <= "minStock")::int AS "bajoMinimo",
-                 count(*) FILTER (WHERE stock = 0)::int AS "sinStock"
+                 count(*) FILTER (WHERE stock = 0)::int AS "sinStock",
+                 count(*) FILTER (WHERE "retailPrice" <= 1)::int AS "sinPrecio",
+                 count(*) FILTER (WHERE cardinality("images") = 0)::int AS "sinFoto",
+                 count(*) FILTER (WHERE NOT "isUniversal" AND NOT EXISTS (
+                     SELECT 1 FROM "ProductModel" pm WHERE pm."productId" = "Product"."id"
+                 ))::int AS "sinCompat"
           FROM "Product"
           WHERE "businessId" = ${businessId} AND "isActive" = true`
       : Promise.resolve(null)
@@ -267,7 +273,7 @@ export async function POST(req: Request) {
       const created = await tx.product.create({
         data: {
           businessId,
-          name,
+          name: normalizeProductName(name),
           description: description || null,
           barcode: barcode || null,
           retailPrice,

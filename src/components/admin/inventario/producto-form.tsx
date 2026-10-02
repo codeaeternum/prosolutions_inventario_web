@@ -24,13 +24,24 @@ import {
 } from "@/components/ui/select"
 import { ImageUpload } from "@/components/image-upload"
 import { cn } from "@/lib/utils"
-import { Globe, Loader2, Plus, Store, Wand2, X } from "lucide-react"
+import { AlertTriangle, Globe, Loader2, Plus, Store, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
 
 const selectClassName =
     "flex h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
 
 export type MarketVisibility = "HIDDEN" | "ALLIES" | "PUBLIC"
+
+/** Apodos comunes en nombres de pieza → marca canónica del catálogo. */
+const BRAND_NAME_ALIASES: Record<string, string> = {
+    redmi: "xiaomi",
+    poco: "xiaomi",
+    moto: "motorola",
+    iphone: "apple",
+    ipad: "apple",
+    galaxy: "samsung",
+    pixel: "google",
+}
 
 /** Vocabulario del negocio: Oculto / solo Aliados / Público general. */
 export const VISIBILIDAD_LABELS: Record<MarketVisibility, string> = {
@@ -313,6 +324,32 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     }, [models, filteredModels, selectedBrand, selectedModels, modelQuery])
 
     // SKU sugerido en vivo: categoría + primer modelo (mismo criterio del botón varita).
+    // Aviso suave cuando el nombre menciona una marca distinta a la de los
+    // modelos elegidos ("pantalla redmi …" + modelo Realme = captura cruzada).
+    // Solo avisa — no bloquea: hay nombres legítimos sin marca.
+    const brandMismatch = useMemo(() => {
+        if (formData.isUniversal || selectedModels.length === 0) return null
+        const fold = (s: string) =>
+            s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        const tokens = new Set(fold(formData.name).split(/[^a-z0-9]+/).filter(Boolean))
+        const canonical = (s: string) => fold(s)
+        const mentioned = new Set<string>()
+        for (const b of brands) {
+            const key = canonical(b.name)
+            if (tokens.has(key)) mentioned.add(key)
+        }
+        for (const [alias, canon] of Object.entries(BRAND_NAME_ALIASES)) {
+            if (tokens.has(alias)) mentioned.add(canon)
+        }
+        const chosen = new Set(selectedModels.map((m) => canonical(m.brand.name)))
+        const conflict = [...mentioned].find((m) => !chosen.has(m))
+        if (!conflict) return null
+        const display =
+            brands.find((b) => canonical(b.name) === conflict)?.name ??
+            conflict.charAt(0).toUpperCase() + conflict.slice(1)
+        return { mentioned: display, chosen: [...chosen].map((c) => brands.find((b) => canonical(b.name) === c)?.name ?? c) }
+    }, [formData.name, formData.isUniversal, selectedModels, brands])
+
     const skuSuggestion = useMemo(() => {
         const catName = categories.find(c => c.id === formData.categoryId)?.name || ""
         if (!catName) return ""
@@ -1028,6 +1065,12 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
 
                 {!formData.isUniversal && (
                     <>
+                        {brandMismatch && (
+                            <p className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                El nombre menciona «{brandMismatch.mentioned}» pero elegiste modelos de {brandMismatch.chosen.join(", ")} — revisa que sea correcto.
+                            </p>
+                        )}
                         {selectedModels.length > 0 && (
                             <div className="flex flex-wrap gap-2 p-3 bg-muted rounded-lg">
                                 {selectedModels.map((model) => (

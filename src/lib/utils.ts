@@ -92,6 +92,48 @@ export function titleCaseName(value: string): string {
     .join(" ")
 }
 
+/**
+ * Normaliza el casing de un nombre de producto capturado en mostrador.
+ * Solo actúa cuando TODO el nombre está en mayúsculas o en minúsculas
+ * (errores típicos de captura rápida/Excel); el casing mixto se respeta.
+ * "PANTALLA Y7P" → "Pantalla Y7P" · "pantalla samsung a06 5g" →
+ * "Pantalla Samsung A06 5G" · "Pantalla iPhone 6s" → sin cambio.
+ * Conserva en mayúsculas los tokens con dígitos y los acrónimos comunes.
+ */
+const PRODUCT_ACRONYMS = new Set([
+  "lcd", "oled", "amoled", "incell", "tft", "ips", "nfc", "usb",
+  "4g", "5g", "se", "xr", "xs",
+])
+
+/** Marcas con casing propio que no deben aplanarse a Title Case. */
+const PRODUCT_CANONICAL_CASE: Record<string, string> = {
+  iphone: "iPhone",
+  ipad: "iPad",
+  ipod: "iPod",
+  macbook: "MacBook",
+  airpods: "AirPods",
+}
+
+export function normalizeProductName(value: string): string {
+  const name = value.trim().replace(/\s+/g, " ")
+  const letters = name.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, "")
+  if (!letters) return name
+  const isAllCaps = letters === letters.toLocaleUpperCase("es-MX")
+  const isAllLower = letters === letters.toLocaleLowerCase("es-MX")
+  if (!isAllCaps && !isAllLower) return name
+  return name
+    .split(" ")
+    .map((word) => {
+      const lower = word.toLocaleLowerCase("es-MX")
+      if (PRODUCT_CANONICAL_CASE[lower]) return PRODUCT_CANONICAL_CASE[lower]
+      if (/\d/.test(word) || PRODUCT_ACRONYMS.has(lower)) {
+        return word.toLocaleUpperCase("es-MX")
+      }
+      return lower.charAt(0).toLocaleUpperCase("es-MX") + lower.slice(1)
+    })
+    .join(" ")
+}
+
 export function generateSlug(text: string): string {
   return text
     .toLowerCase()

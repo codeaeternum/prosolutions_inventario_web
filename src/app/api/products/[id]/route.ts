@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma"
 import { releaseStock, takeStock } from "@/lib/domain/operations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
+import { normalizeProductName } from "@/lib/utils"
 import type { Prisma } from "@prisma/client"
 
 type TransactionClient = Prisma.TransactionClient
@@ -270,7 +271,7 @@ export async function PUT(
       const updatedProduct = await tx.product.update({
         where: { id, businessId },
         data: {
-          name,
+          name: normalizeProductName(name),
           description: description || null,
           barcode: barcode || null,
           retailPrice: parsedRetail,

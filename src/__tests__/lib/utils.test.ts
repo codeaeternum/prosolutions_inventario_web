@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatDate, formatPrice, generateSlug, normalizePhone, titleCaseName } from "@/lib/utils"
+import { formatDate, formatPrice, generateSlug, normalizePhone, normalizeProductName, titleCaseName } from "@/lib/utils"
 
 describe("formatDate", () => {
   it("formats a date string in es-MX locale", () => {
@@ -101,5 +101,34 @@ describe("generateSlug", () => {
 
   it("removes leading and trailing hyphens", () => {
     expect(generateSlug("-hello-")).toBe("hello")
+  })
+})
+
+describe("normalizeProductName", () => {
+  it("title-cases ALL-CAPS names keeping model tokens", () => {
+    expect(normalizeProductName("PANTALLA Y7P")).toBe("Pantalla Y7P")
+    expect(normalizeProductName("PANTALLA SAMSUNG A06 4G")).toBe("Pantalla Samsung A06 4G")
+    expect(normalizeProductName("BATERÍA IPHONE 15 PRO MAX")).toBe("Batería iPhone 15 Pro Max")
+  })
+
+  it("title-cases all-lowercase names and keeps acronyms upper", () => {
+    expect(normalizeProductName("pantalla honor x8")).toBe("Pantalla Honor X8")
+    expect(normalizeProductName("pantalla lcd samsung a03s")).toBe("Pantalla LCD Samsung A03S")
+    expect(normalizeProductName("flex de carga 5g")).toBe("Flex De Carga 5G")
+  })
+
+  it("leaves intentional mixed case untouched", () => {
+    expect(normalizeProductName("Pantalla iPhone 6s Negra")).toBe("Pantalla iPhone 6s Negra")
+    expect(normalizeProductName("Pantalla Moto G04 / G04S")).toBe("Pantalla Moto G04 / G04S")
+  })
+
+  it("collapses extra whitespace and trims", () => {
+    expect(normalizeProductName("  pantalla   moto  e20 ")).toBe("Pantalla Moto E20")
+  })
+
+  it("returns blank/numeric-only input unchanged", () => {
+    expect(normalizeProductName("")).toBe("")
+    expect(normalizeProductName("   ")).toBe("")
+    expect(normalizeProductName("12345")).toBe("12345")
   })
 })
