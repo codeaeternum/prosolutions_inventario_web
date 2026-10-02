@@ -72,6 +72,7 @@ import {
     Package,
     PackagePlus,
     PackageX,
+    Percent,
     Plus,
     Printer,
     QrCode,
@@ -148,6 +149,32 @@ const VISIBILIDAD_BADGE: Record<MarketVisibility, { label: string; icon: typeof 
 const DEFAULT_LIMIT = 20
 const SUBTABS_CLASIFICACION = ["categorias", "marcas", "modelos"] as const
 
+// Placeholder de foto: tinte determinista por categoría (misma categoría =
+// mismo color en toda la app) + inicial, para distinguir piezas sin imagen.
+const CATEGORY_TINTS = [
+    "bg-sky-100 text-sky-600 dark:bg-sky-950/70 dark:text-sky-400",
+    "bg-violet-100 text-violet-600 dark:bg-violet-950/70 dark:text-violet-400",
+    "bg-amber-100 text-amber-600 dark:bg-amber-950/70 dark:text-amber-400",
+    "bg-emerald-100 text-emerald-600 dark:bg-emerald-950/70 dark:text-emerald-400",
+    "bg-rose-100 text-rose-600 dark:bg-rose-950/70 dark:text-rose-400",
+    "bg-cyan-100 text-cyan-600 dark:bg-cyan-950/70 dark:text-cyan-400",
+    "bg-orange-100 text-orange-600 dark:bg-orange-950/70 dark:text-orange-400",
+    "bg-indigo-100 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400",
+]
+function categoryTint(name: string | null | undefined) {
+    if (!name) return "bg-muted text-muted-foreground/40"
+    const hash = [...name].reduce((a, c) => a + c.charCodeAt(0), 0)
+    return CATEGORY_TINTS[hash % CATEGORY_TINTS.length]
+}
+function CategoryPlaceholder({ name, letterCls, iconCls }: { name: string | null | undefined; letterCls: string; iconCls: string }) {
+    const initial = name?.trim().charAt(0).toUpperCase()
+    return (
+        <div className={cn("flex h-full w-full items-center justify-center", categoryTint(name))}>
+            {initial ? <span className={cn("font-semibold", letterCls)}>{initial}</span> : <Package className={iconCls} />}
+        </div>
+    )
+}
+
 export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps) {
     const { formatPrice } = useCurrency()
     const searchParams = useSearchParams()
@@ -174,6 +201,10 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         visibilidadParam === "publicos" || visibilidadParam === "aliados" || visibilidadParam === "ocultos"
             ? visibilidadParam : "todos"
     const lowStock = searchParams.get("lowStock") === "true"
+    // Filtros de salud del catálogo (el API solo los honra para staff).
+    const sinPrecio = searchParams.get("sinPrecio") === "true"
+    const sinFoto = searchParams.get("sinFoto") === "true"
+    const sinCompat = searchParams.get("sinCompat") === "true"
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT))
 
@@ -197,6 +228,15 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [etiquetasProducts, setEtiquetasProducts] = useState<StockProductItem[]>([])
     // Multi-selección por id → producto completo: sobrevive a cambios de página/filtro.
     const [labelSelected, setLabelSelected] = useState<Map<string, StockProductItem>>(new Map())
+    // Ajuste masivo de precios sobre la selección (checkbox de cada fila).
+    const [bulkOpen, setBulkOpen] = useState(false)
+    const [bulkMode, setBulkMode] = useState<"set" | "percent">("set")
+    const [bulkRetail, setBulkRetail] = useState("")
+    const [bulkWholesale, setBulkWholesale] = useState("")
+    const [bulkCost, setBulkCost] = useState("")
+    const [bulkPercent, setBulkPercent] = useState("")
+    const [bulkBusy, setBulkBusy] = useState(false)
+    const bulkOp = useRef<ClientOperationKey | null>(null)
 
     // --- Conteo físico -------------------------------------------------------
     const [countDialogOpen, setCountDialogOpen] = useState(false)
@@ -282,6 +322,9 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             if (categoryId) params.set("categoryId", categoryId)
             if (visibilidad !== "todos") params.set("visibilidad", visibilidad)
             if (lowStock) params.set("lowStock", "true")
+            if (sinPrecio) params.set("sinPrecio", "true")
+            if (sinFoto) params.set("sinFoto", "true")
+            if (sinCompat) params.set("sinCompat", "true")
             params.set("page", String(page))
             params.set("limit", String(limit))
             const res = await fetch(`/api/products?${params}`, { signal })
@@ -304,7 +347,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         } finally {
             if (!signal?.aborted) setLoading(false)
         }
-    }, [search, categoryId, visibilidad, lowStock, page, limit])
+    }, [search, categoryId, visibilidad, lowStock, sinPrecio, sinFoto, sinCompat, page, limit])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -450,6 +493,64 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         setEtiquetasOpen(true)
     }
 
+    // Ajuste masivo: asigna precios o aplica un % sobre la selección actual.
+    // El endpoint registra cada cambio en PriceHistory vía su auditoría.
+    const applyBulkPrices = async () => {
+        const ids = Array.from(labelSelected.keys())
+        if (ids.length === 0) return
+        const num = (v: string) => {
+            const n = parseFloat(v)
+            return v.trim() !== "" && Number.isFinite(n) ? n : undefined
+        }
+        const body: Record<string, unknown> = { ids }
+        if (bulkMode === "set") {
+            const set: Record<string, number> = {}
+            for (const [field, raw] of [
+                ["retailPrice", bulkRetail],
+                ["wholesalePrice", bulkWholesale],
+                ["costPrice", bulkCost],
+            ] as const) {
+                const n = num(raw)
+                if (n !== undefined) set[field] = n
+            }
+            if (Object.keys(set).length === 0) {
+                toast.error("Captura al menos un precio para asignar.")
+                return
+            }
+            body.set = set
+        } else {
+            const p = num(bulkPercent)
+            if (p === undefined) {
+                toast.error("Captura el porcentaje (ej. 10 o -15).")
+                return
+            }
+            body.percent = p
+        }
+        bulkOp.current = getClientOperationKey(bulkOp.current, body)
+        setBulkBusy(true)
+        try {
+            const res = await fetch("/api/products/bulk", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...body, idempotencyKey: bulkOp.current.key }),
+            })
+            const data = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(data?.error || "No se pudo aplicar el ajuste")
+            bulkOp.current = null
+            toast.success(`${data.updated ?? ids.length} producto(s) actualizados`, {
+                description: data?.skipped?.length ? `${data.skipped.length} omitido(s): inactivos o sin acceso` : undefined,
+            })
+            setBulkOpen(false)
+            setBulkRetail(""); setBulkWholesale(""); setBulkCost(""); setBulkPercent("")
+            setLabelSelected(new Map())
+            void fetchProducts()
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "No se pudo aplicar el ajuste. Reintenta.")
+        } finally {
+            setBulkBusy(false)
+        }
+    }
+
     const toggleLabelSelected = (product: StockProductItem) => {
         setLabelSelected((prev) => {
             const next = new Map(prev)
@@ -544,15 +645,17 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         }
     }
 
-    const hasFilters = search !== "" || categoryId !== "" || visibilidad !== "todos" || lowStock
+    const hasSaludFilter = sinPrecio || sinFoto || sinCompat
+    const hasFilters = search !== "" || categoryId !== "" || visibilidad !== "todos" || lowStock || hasSaludFilter
     // En móvil los filtros van colapsados; el badge cuenta los activos
     // (la búsqueda no cuenta — el propio campo ya lo muestra).
     const [filtersOpen, setFiltersOpen] = useState(false)
     const activeFilterCount = (categoryId !== "" ? 1 : 0) + (lowStock ? 1 : 0) + (visibilidad !== "todos" ? 1 : 0)
+        + (sinPrecio ? 1 : 0) + (sinFoto ? 1 : 0) + (sinCompat ? 1 : 0)
 
     const limpiarFiltros = () => {
         setSearchInput("")
-        setParams({ search: null, categoryId: null, visibilidad: null, lowStock: null, page: null })
+        setParams({ search: null, categoryId: null, visibilidad: null, lowStock: null, sinPrecio: null, sinFoto: null, sinCompat: null, page: null })
     }
 
     return (
@@ -569,6 +672,14 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 </Button>
                 {labelSelected.size > 0 && (
                     <>
+                        <Button
+                            variant="outline"
+                            onClick={() => setBulkOpen(true)}
+                            title="Asignar precios o aplicar un porcentaje a la selección"
+                        >
+                            <Percent className="mr-2 h-4 w-4" />
+                            Ajustar precios ({labelSelected.size})
+                        </Button>
                         <Button
                             variant="outline"
                             onClick={() => openEtiquetas(Array.from(labelSelected.values()))}
@@ -791,16 +902,32 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                 {stats.sinStock} sin stock
                             </span>
                             {/* Salud del catálogo: datos incompletos que conviene
-                                ir limpiando (precio placeholder, sin foto, sin
-                                modelos compatibles). */}
+                                ir limpiando. Cada métrica es un filtro clickeable. */}
                             {(stats.sinPrecio > 0 || stats.sinFoto > 0 || stats.sinCompat > 0) && (
-                                <span className="text-muted-foreground/80" title="Salud del catálogo">
+                                <span className="text-muted-foreground/80">
                                     · salud:{" "}
-                                    {[
-                                        stats.sinPrecio > 0 && `${stats.sinPrecio} sin precio real`,
-                                        stats.sinFoto > 0 && `${stats.sinFoto} sin foto`,
-                                        stats.sinCompat > 0 && `${stats.sinCompat} sin compatibilidad`,
-                                    ].filter(Boolean).join(" · ")}
+                                    {([
+                                        ["sinPrecio", stats.sinPrecio, "sin precio real", sinPrecio],
+                                        ["sinFoto", stats.sinFoto, "sin foto", sinFoto],
+                                        ["sinCompat", stats.sinCompat, "sin compatibilidad", sinCompat],
+                                    ] as const)
+                                        .filter(([, n]) => n > 0)
+                                        .map(([key, n, label, active], i) => (
+                                            <span key={key}>
+                                                {i > 0 && " · "}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setParams({ [key]: active ? null : "true", page: null })}
+                                                    title={`Ver solo productos ${label}`}
+                                                    className={cn(
+                                                        "rounded-sm underline-offset-2 hover:underline",
+                                                        active && "font-semibold text-primary underline",
+                                                    )}
+                                                >
+                                                    {n} {label}
+                                                </button>
+                                            </span>
+                                        ))}
                                 </span>
                             )}
                         </>
@@ -857,9 +984,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                             className="object-cover"
                                         />
                                     ) : (
-                                        <div className="flex items-center justify-center h-full">
-                                            <Package className="h-10 w-10 text-muted-foreground/30" />
-                                        </div>
+                                        <CategoryPlaceholder name={product.category?.name} letterCls="text-4xl" iconCls="h-10 w-10" />
                                     )}
                                     <Checkbox
                                         checked={labelSelected.has(product.id)}
@@ -942,9 +1067,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                     {product.images[0] ? (
                                         <Image src={product.images[0]} alt="" fill sizes="32px" className="object-cover" />
                                     ) : (
-                                        <div className="flex h-full items-center justify-center">
-                                            <Package className="h-3.5 w-3.5 text-muted-foreground/30" />
-                                        </div>
+                                        <CategoryPlaceholder name={product.category?.name} letterCls="text-xs" iconCls="h-3.5 w-3.5" />
                                     )}
                                 </div>
                                 <div className="min-w-0">
@@ -1016,9 +1139,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                                         className="object-cover"
                                                     />
                                                 ) : (
-                                                    <div className="flex items-center justify-center h-full">
-                                                        <Package className="h-5 w-5 text-muted-foreground/30" />
-                                                    </div>
+                                                    <CategoryPlaceholder name={product.category?.name} letterCls="text-lg" iconCls="h-5 w-5" />
                                                 )}
                                             </div>
                                             <div className="min-w-0 flex-1">
@@ -1101,6 +1222,9 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             ...(categoryId && { categoryId }),
                             ...(visibilidad !== "todos" && { visibilidad }),
                             ...(lowStock && { lowStock: "true" }),
+                            ...(sinPrecio && { sinPrecio: "true" }),
+                            ...(sinFoto && { sinFoto: "true" }),
+                            ...(sinCompat && { sinCompat: "true" }),
                         }}
                     />
                 </div>
@@ -1207,6 +1331,87 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 }}
                 products={etiquetasOpen ? etiquetasProducts : []}
             />
+
+            {/* Diálogo: ajuste masivo de precios sobre la selección */}
+            <Dialog open={bulkOpen} onOpenChange={(o) => !bulkBusy && setBulkOpen(o)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Ajustar precios · {labelSelected.size} producto(s)</DialogTitle>
+                        <DialogDescription>
+                            Asigna valores directos o aplica un porcentaje. Los campos vacíos no se tocan;
+                            cada cambio queda en el historial de precios del producto.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="flex gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant={bulkMode === "set" ? "default" : "outline"}
+                            onClick={() => setBulkMode("set")}
+                        >
+                            Asignar precios
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant={bulkMode === "percent" ? "default" : "outline"}
+                            onClick={() => setBulkMode("percent")}
+                        >
+                            Porcentaje %
+                        </Button>
+                    </div>
+
+                    {bulkMode === "set" ? (
+                        <div className="grid grid-cols-2 gap-3">
+                            {(([
+                                ["Público", bulkRetail, setBulkRetail],
+                                ["Aliados", bulkWholesale, setBulkWholesale],
+                                // El costo solo lo puede fijar el dueño (el API lo
+                                // ignora para empleados, igual que en la edición).
+                                ...(isAdmin ? [["Costo", bulkCost, setBulkCost]] : []),
+                            ]) as [string, string, (v: string) => void][]).map(([label, value, setter]) => (
+                                <div key={label} className="space-y-1">
+                                    <Label className="text-xs">{label}</Label>
+                                    <div className="relative">
+                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+                                        <Input
+                                            type="number" min="0" step="0.01" inputMode="decimal"
+                                            value={value} onChange={(e) => setter(e.target.value)}
+                                            className="pl-6" placeholder="sin cambio"
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            <Label className="text-xs">Porcentaje sobre precio público y aliados</Label>
+                            <div className="relative">
+                                <Input
+                                    type="number" step="0.1" inputMode="decimal"
+                                    value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)}
+                                    className="pr-8" placeholder="ej. 10 o -15"
+                                />
+                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Un producto a $100 con +10% queda a $110. No aplica a costo ni taller propio.
+                            </p>
+                        </div>
+                    )}
+
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setBulkOpen(false)} disabled={bulkBusy}>
+                            Cancelar
+                        </Button>
+                        <Button onClick={() => void applyBulkPrices()} disabled={bulkBusy}>
+                            {bulkBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Aplicar a {labelSelected.size}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Diálogo: importar desde Excel */}
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
