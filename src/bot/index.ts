@@ -1,4 +1,5 @@
 import { expireReservations } from "../lib/domain/reservations"
+import { purgePendingSignups } from "../lib/pending-signup-purge"
 import 'dotenv/config'
 import { Telegraf } from 'telegraf'
 import * as cron from 'node-cron'
@@ -114,6 +115,20 @@ cron.schedule('*/30 * * * *', async () => {
         if (isDev) console.log('Reservation expiration', result)
     } catch (e) {
         console.error('Error in expiration job:', e)
+    }
+})
+
+// Purga diaria (04:17) de altas de negocio cuyo owner sigue PENDING — nunca
+// verificaron su contacto. El endpoint /api/cron/purge-pending-signups usa
+// la misma lógica para forzarla a mano o desde schedulers externos.
+cron.schedule('17 4 * * *', async () => {
+    try {
+        const result = await purgePendingSignups(prisma)
+        if (result.purged > 0 || result.skipped.length > 0) {
+            console.log('Pending signup purge:', result)
+        }
+    } catch (e) {
+        console.error('Error in pending signup purge job:', e)
     }
 })
 
