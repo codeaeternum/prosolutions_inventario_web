@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
                 where: movementWhere,
                 include: {
                     product: { select: { id: true, name: true, barcode: true, costPrice: true } },
-                    user: { select: { id: true, name: true } },
+                    user: { select: { id: true, name: true, role: true } },
                     branch: { select: { id: true, name: true } },
                     toBranch: { select: { id: true, name: true } },
                 },
@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
                 where: { ...reservationWhere, ...(productId ? { productId } : {}) },
                 include: {
                     product: { select: { id: true, name: true, barcode: true } },
-                    user: { select: { id: true, name: true } },
+                    user: { select: { id: true, name: true, role: true } },
                 },
                 orderBy: { updatedAt: "desc" },
                 take: offset + limit,

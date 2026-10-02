@@ -53,6 +53,7 @@ interface Movement {
     user: {
         id: string
         name: string
+        role?: string
     } | null
     branch?: { id: string; name: string } | null
     toBranch?: { id: string; name: string } | null
@@ -158,8 +159,22 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
         DAMAGED: "Dañado",
         LOST: "Perdido",
     }
-    const displayReason = (reason: string | null) =>
-        reason ? (reasonLabels[reason] ?? reason) : null
+    const displayReason = (reason: string | null) => {
+        if (!reason) return null
+        if (reasonLabels[reason]) return reasonLabels[reason]
+        // Referencias crudas ("Reserva temporal #tjn5eq7e") → solo la parte
+        // legible; el texto completo sigue disponible en el tooltip (title).
+        return reason.replace(/\s*#\w{5,}\s*$/, "")
+    }
+
+    // El usuario ligado al movimiento puede ser la cuenta cliente que reservó
+    // (rol CUSTOMER) — se muestra como "Cliente: nombre" para no confundirlo
+    // con un empleado; sin usuario = acción del sistema (cron, auto).
+    const displayUser = (mov: Movement) => {
+        if (!mov.user?.name) return "Sistema"
+        if (mov.user.role === "CUSTOMER") return `Cliente: ${mov.user.name}`
+        return mov.user.name
+    }
 
     const getTypeConfig = (type: string) => {
         switch (type) {
@@ -223,7 +238,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
         let text = `*PROSOLUTIONS - ${config.label}*\n`
         text += `Folio: ${mov.id.substring(0, 8)}\n`
         text += `Fecha: ${formatDate(mov.createdAt)}\n`
-        if (mov.user?.name) text += `Atendió: ${mov.user.name}\n`
+        if (mov.user?.name) text += `Atendió: ${displayUser(mov)}\n`
         text += `------------------------\n`
         text += `${mov.quantity}x ${mov.product?.name || "Producto"}`
         if (mov.unitPrice) text += ` - ${formatPrice(mov.unitPrice)}`
@@ -349,7 +364,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                                                     {mov.totalPrice ? formatPrice(mov.totalPrice) : "-"}
                                                 </TableCell>
                                                 <TableCell className="hidden md:table-cell">
-                                                    {mov.user?.name || "Sistema"}
+                                                    {displayUser(mov)}
                                                 </TableCell>
                                                 <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
                                                     {mov.type === "TRANSFER" && mov.toBranch
