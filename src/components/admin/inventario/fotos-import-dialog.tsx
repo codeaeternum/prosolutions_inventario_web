@@ -74,6 +74,8 @@ interface FotoRow {
     previewUrl: string
     /** "" = sin asignar: la fila se omite al confirmar. */
     productId: string
+    /** El usuario eligió el destino a mano: no se re-adivina al cargar el catálogo. */
+    manual?: boolean
     status: "pending" | "ok" | "error"
     error?: string
 }
@@ -102,6 +104,9 @@ export function FotosImportDialog({ open, onOpenChange, products, onDone }: Foto
 }
 
 function FotosForm({ products, onDone, close }: { products: FotoImportProduct[]; onDone: () => void; close: () => void }) {
+    // Catálogo completo para el match: `products` llega filtrado/paginado según la
+    // vista actual; aquí se reemplaza por la lista sin filtros (hasta 10 páginas).
+    const [catalog, setCatalog] = useState<FotoImportProduct[]>(products)
     const [rows, setRows] = useState<FotoRow[]>([])
     const [dragOver, setDragOver] = useState(false)
     const [working, setWorking] = useState(false)
@@ -114,6 +119,31 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
     useEffect(() => {
         const previews = previewsRef.current
         return () => previews.forEach(url => URL.revokeObjectURL(url))
+    }, [])
+
+    // Carga el catálogo completo en segundo plano y re-afina los matches
+    // automáticos (los que el usuario ya movió a mano se respetan).
+    useEffect(() => {
+        let cancelled = false
+        void (async () => {
+            const all: FotoImportProduct[] = []
+            try {
+                for (let page = 1; page <= 10; page++) {
+                    const res = await fetch(`/api/products?page=${page}&limit=100`)
+                    if (!res.ok) return
+                    const data = await res.json().catch(() => null)
+                    const list = (data?.products ?? []) as FotoImportProduct[]
+                    all.push(...list)
+                    if (all.length >= (data?.total ?? all.length) || list.length === 0) break
+                }
+            } catch { /* sin catálogo completo: se trabaja con lo visible */ }
+            if (cancelled || all.length === 0) return
+            setCatalog(all)
+            setRows(prev => prev.map(r =>
+                r.manual ? r : { ...r, productId: guessProductId(stemOf(r.file.name), all) }
+            ))
+        })()
+        return () => { cancelled = true }
     }, [])
 
     const addFiles = (files: FileList | null) => {
@@ -134,7 +164,7 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
                     key: Math.random().toString(36).substring(7),
                     file,
                     previewUrl,
-                    productId: guessProductId(stemOf(file.name), products),
+                    productId: guessProductId(stemOf(file.name), catalog),
                     status: "pending",
                 })
             }
@@ -143,7 +173,7 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
     }
 
     const setRowProduct = (key: string, productId: string) =>
-        setRows(prev => prev.map(r => r.key === key ? { ...r, productId, status: "pending", error: undefined } : r))
+        setRows(prev => prev.map(r => r.key === key ? { ...r, productId, manual: true, status: "pending", error: undefined } : r))
 
     const removeRow = (key: string) =>
         setRows(prev => {
@@ -311,7 +341,7 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
                                         className="h-9 w-44 sm:w-56 shrink-0 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
                                     >
                                         <option value="">— Sin asignar —</option>
-                                        {products.map(p => (
+                                        {catalog.map(p => (
                                             <option key={p.id} value={p.id}>{productLabel(p)}</option>
                                         ))}
                                     </select>
