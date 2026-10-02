@@ -51,6 +51,11 @@ export async function GET(req: Request) {
     const brandId = searchParams.get("brandId")
     const search = searchParams.get("search")
     const lowStock = searchParams.get("lowStock") === "true"
+    // Filtros de "salud del catálogo" del panel de staff; cada uno replica el
+    // criterio exacto del resumen agregado (stats) calculado más abajo.
+    const sinPrecio = searchParams.get("sinPrecio") === "true"
+    const sinFoto = searchParams.get("sinFoto") === "true"
+    const sinCompat = searchParams.get("sinCompat") === "true"
     // marketVisibility es un flag interno de gestión: el filtro solo aplica
     // para staff (se ignora silenciosamente para público/clientes).
     const VISIBILIDAD: Record<string, string> = { publicos: "PUBLIC", aliados: "ALLIES", ocultos: "HIDDEN" }
@@ -59,32 +64,46 @@ export async function GET(req: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
-    if (lowStock && !isCatalogStaff(viewer)) return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+    if ((lowStock || sinPrecio || sinFoto || sinCompat) && !isCatalogStaff(viewer)) return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+
+    // modelId y search producen cada uno un OR; se acumulan en un AND para no
+    // sobrescribirse (un search dentro de un modelo debe conservar el modelo).
+    const orClauses = [
+      ...(modelId
+        ? [[{ models: { some: { modelId } } }, { isUniversal: true }]]
+        : []),
+      ...(search
+        ? [[
+            { name: { contains: search, mode: "insensitive" as const } },
+            { barcode: { contains: search, mode: "insensitive" as const } },
+            { description: { contains: search, mode: "insensitive" as const } },
+            { category: { name: { contains: search, mode: "insensitive" as const } } },
+            { models: { some: { model: { brand: { name: { contains: search, mode: "insensitive" as const } } } } } },
+            { models: { some: { model: { name: { contains: search, mode: "insensitive" as const } } } } },
+          ]]
+        : []),
+    ]
+
+    // Salud del catálogo (solo staff — validado arriba con 403):
+    // sinPrecio = precio placeholder; sinFoto = lista de imágenes vacía;
+    // sinCompat = no universal y sin mapeos en ProductModel.
+    // Sus cláusulas se suman al mismo AND que los OR de modelId/search.
+    const andClauses = [
+      ...orClauses.map((clauses) => ({ OR: clauses })),
+      ...(sinCompat ? [{ isUniversal: false }, { models: { none: {} } }] : []),
+    ]
 
     const where = {
       businessId,
       isActive: true,
       ...(visibilidad && { marketVisibility: visibilidad }),
       ...(categoryId && { categoryId }),
-      ...(modelId && {
-        OR: [
-          { models: { some: { modelId } } },
-          { isUniversal: true },
-        ],
-      }),
       ...(brandId && {
         models: { some: { model: { brandId } } },
       }),
-      ...(search && {
-        OR: [
-          { name: { contains: search, mode: "insensitive" as const } },
-          { barcode: { contains: search, mode: "insensitive" as const } },
-          { description: { contains: search, mode: "insensitive" as const } },
-          { category: { name: { contains: search, mode: "insensitive" as const } } },
-          { models: { some: { model: { brand: { name: { contains: search, mode: "insensitive" as const } } } } } },
-          { models: { some: { model: { name: { contains: search, mode: "insensitive" as const } } } } },
-        ],
-      }),
+      ...(andClauses.length > 0 && { AND: andClauses }),
+      ...(sinPrecio && { retailPrice: { lte: 1 } }),
+      ...(sinFoto && { images: { isEmpty: true } }),
     }
 
     const include = {

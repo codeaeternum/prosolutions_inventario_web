@@ -331,6 +331,64 @@ describe("GET /api/products (auth opcional, DTO por viewer)", () => {
       expect(res.status).toBe(403)
     }
   })
+
+  it("sinPrecio=true (staff): el where filtra placeholders con retailPrice.lte=1", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seedList()
+    const res = await listProducts(req(`${url}?sinPrecio=true`))
+    expect(res.status).toBe(200)
+    const where = mocks.prisma.product.findMany.mock.calls[0][0].where
+    expect(where.retailPrice).toEqual({ lte: 1 })
+    // El count usa el mismo where para paginar el subconjunto.
+    expect(mocks.prisma.product.count.mock.calls[0][0].where.retailPrice).toEqual({ lte: 1 })
+  })
+
+  it("sinFoto=true (staff): el where exige lista de imágenes vacía", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seedList()
+    const res = await listProducts(req(`${url}?sinFoto=true`))
+    expect(res.status).toBe(200)
+    expect(mocks.prisma.product.findMany.mock.calls[0][0].where.images).toEqual({ isEmpty: true })
+  })
+
+  it("sinCompat=true (staff): no universal Y sin mapeos en ProductModel", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seedList()
+    const res = await listProducts(req(`${url}?sinCompat=true`))
+    expect(res.status).toBe(200)
+    expect(mocks.prisma.product.findMany.mock.calls[0][0].where.AND).toEqual([
+      { isUniversal: false },
+      { models: { none: {} } },
+    ])
+  })
+
+  it("los filtros de salud se combinan entre sí y con los demás (AND)", async () => {
+    mocks.auth.mockResolvedValue(admin)
+    seedList()
+    const res = await listProducts(req(`${url}?sinPrecio=true&sinFoto=true&sinCompat=true&categoryId=cat-9`))
+    expect(res.status).toBe(200)
+    expect(mocks.prisma.product.findMany.mock.calls[0][0].where).toMatchObject({
+      businessId: BIZ,
+      isActive: true,
+      categoryId: "cat-9",
+      retailPrice: { lte: 1 },
+      images: { isEmpty: true },
+      AND: [{ isUniversal: false }, { models: { none: {} } }],
+    })
+  })
+
+  it.each([["sinPrecio"], ["sinFoto"], ["sinCompat"]])(
+    "%s=true exige staff: anónimo, CUSTOMER y WORKSHOP reciben 403 sin tocar la base",
+    async (param) => {
+      seedList()
+      for (const session of [anonymous, customer, workshop]) {
+        mocks.auth.mockResolvedValue(session)
+        const res = await listProducts(req(`${url}?${param}=true`))
+        expect(res.status).toBe(403)
+      }
+      expect(mocks.prisma.product.findMany).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe("GET /api/products/[id] (auth opcional)", () => {
