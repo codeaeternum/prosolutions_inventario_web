@@ -390,6 +390,27 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
         return `${catCode}-${brandCode}-${abbreviateModel(firstModel.name)}`
     }, [categories, formData.categoryId, formData.isUniversal, selectedModels])
 
+    // Avisos suaves de coherencia entre precios: se muestran bajo la
+    // parrilla y nunca bloquean el guardado. El aviso contra el costo
+    // solo aplica al admin (el empleado no ve el costo).
+    const priceWarnings = useMemo(() => {
+        const warnings: string[] = []
+        const retail = parseFloat(formData.retailPrice)
+        const wholesale = parseFloat(formData.wholesalePrice)
+        const internal = parseFloat(formData.internalPrice)
+        const cost = parseFloat(formData.costPrice)
+        if (isAdmin && cost > 0 && !Number.isNaN(retail) && retail <= cost) {
+            warnings.push("El precio público no supera al costo — revisa el margen.")
+        }
+        if (!Number.isNaN(wholesale) && !Number.isNaN(retail) && wholesale > retail) {
+            warnings.push("El precio de taller es mayor que el público.")
+        }
+        if (!Number.isNaN(internal) && !Number.isNaN(retail) && internal > retail) {
+            warnings.push("El precio de taller propio es mayor que el público.")
+        }
+        return warnings
+    }, [isAdmin, formData.retailPrice, formData.wholesalePrice, formData.internalPrice, formData.costPrice])
+
     function generateSKU() {
         if (skuSuggestion) setFormData(prev => ({ ...prev, barcode: skuSuggestion }))
     }
@@ -1021,7 +1042,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 <div>
                     <p className="font-medium">Precios</p>
                     <p className="text-sm text-muted-foreground">
-                        Aliado y taller son opcionales; vacíos cobran el precio público.
+                        Taller y taller propio son opcionales; vacíos cobran el precio público.
                     </p>
                 </div>
 
@@ -1040,7 +1061,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                         />
                     </div>
                     <div className="space-y-2">
-                        <Label htmlFor="pf-wholesale">Precio aliado</Label>
+                        <Label htmlFor="pf-wholesale">Taller</Label>
                         <Input
                             id="pf-wholesale"
                             type="number"
@@ -1080,6 +1101,14 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     )}
                 </div>
 
+                {/* Coherencia de precios: avisos ámbar que nunca bloquean el guardado. */}
+                {priceWarnings.map((warning) => (
+                    <p key={warning} className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        {warning}
+                    </p>
+                ))}
+
                 {/* Ganancia estimada: solo con costo capturado (admin). */}
                 {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted px-3 py-2 text-sm">
@@ -1089,7 +1118,12 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                         </span>
                         {formData.wholesalePrice && (
                             <span className="text-blue-600">
-                                Aliado ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
+                                Taller ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
+                            </span>
+                        )}
+                        {formData.internalPrice && (
+                            <span className="text-violet-600">
+                                Taller propio ${(parseFloat(formData.internalPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.internalPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
                             </span>
                         )}
                     </div>
@@ -1118,10 +1152,10 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                 </SelectContent>
                             </Select>
                         </div>
-                        {/* Aviso dinámico: publicar sin precio aliado usa el público. */}
+                        {/* Aviso dinámico: publicar sin precio de taller usa el público. */}
                         {formData.marketVisibility !== "HIDDEN" && !formData.wholesalePrice.trim() && (
                             <p className="text-xs text-amber-600 dark:text-amber-500 sm:pb-3">
-                                Sin precio aliado se publicará a precio público
+                                Sin precio de taller se publicará a precio público
                                 {formData.retailPrice ? ` ($${formData.retailPrice})` : ""}.
                             </p>
                         )}
