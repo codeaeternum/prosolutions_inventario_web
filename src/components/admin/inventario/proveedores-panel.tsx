@@ -238,14 +238,14 @@ export function ProveedoresPanel() {
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-muted-foreground">
-                    {suppliers.length} proveedor{suppliers.length === 1 ? "" : "es"} registrado{suppliers.length === 1 ? "" : "s"}
-                </p>
+            <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={openCreate}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nuevo proveedor
                 </Button>
+                <p className="ml-auto text-sm text-muted-foreground">
+                    {suppliers.length} proveedor{suppliers.length === 1 ? "" : "es"} registrado{suppliers.length === 1 ? "" : "s"}
+                </p>
             </div>
 
             {error && (
@@ -297,10 +297,10 @@ export function ProveedoresPanel() {
                                                 key={row.supplierId}
                                                 onClick={() => setFocusSupplierId(cur => (cur === row.supplierId ? null : row.supplierId))}
                                                 className={`border-b last:border-0 cursor-pointer transition-colors hover:bg-muted/50 ${focusSupplierId === row.supplierId ? "bg-muted/60" : ""}`}
-                                                title="Ver detalle del proveedor"
+                                                title={focusSupplierId === row.supplierId ? "Mostrar todos los proveedores" : `Ver solo ${row.name}`}
                                             >
                                                 <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{row.name}</td>
-                                                <AgingCell value={row.current} className="text-green-600" />
+                                                <AgingCell value={row.current} />
                                                 <AgingCell value={row.d1_15} className="text-amber-600" />
                                                 <AgingCell value={row.d16_30} className="text-orange-600" />
                                                 <AgingCell value={row.d31_60} className="text-red-600" />
@@ -314,7 +314,7 @@ export function ProveedoresPanel() {
                                     <tfoot>
                                         <tr className="border-t text-xs font-semibold">
                                             <td className="px-2 py-1.5">Totales</td>
-                                            <AgingCell value={aging.totals.current} className="text-green-600" />
+                                            <AgingCell value={aging.totals.current} />
                                             <AgingCell value={aging.totals.d1_15} className="text-amber-600" />
                                             <AgingCell value={aging.totals.d16_30} className="text-orange-600" />
                                             <AgingCell value={aging.totals.d31_60} className="text-red-600" />
@@ -404,7 +404,7 @@ export function ProveedoresPanel() {
                                                         A favor {formatPrice(-bal.saldoCents / 100)}
                                                     </span>
                                                 ) : (
-                                                    <span className="font-medium text-green-600">Liquidado</span>
+                                                    <span className="font-medium text-muted-foreground">Liquidado</span>
                                                 )}
                                             </div>
                                             {bal.saldoCents > 0 && (
@@ -461,6 +461,7 @@ export function ProveedoresPanel() {
                                     placeholder="Ej: Refaccionaria del Centro"
                                     maxLength={200}
                                     required
+                                    autoFocus
                                 />
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -42,7 +42,7 @@ import { EmptyState } from "@/components/admin/empty-state"
 import { SugerirCompraPanel } from "@/components/admin/inventario/sugerir-compra-panel"
 import { CompraDialog } from "@/components/admin/inventario/compra-dialog"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
-import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Pencil, Plus, Send, ShoppingCart, XCircle } from "lucide-react"
+import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Pencil, Plus, Send, ShoppingCart, X, XCircle } from "lucide-react"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -88,8 +88,9 @@ interface BranchOption { id: string; name: string; isActive?: boolean }
 const STATUS_CONFIG: Record<PurchaseStatus, { label: string; className: string }> = {
     DRAFT: { label: "Borrador", className: "bg-muted text-muted-foreground border-border" },
     ORDERED: { label: "Ordenada", className: "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300" },
-    RECEIVED: { label: "Recibida", className: "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300" },
-    CANCELLED: { label: "Cancelada", className: "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300" },
+    // Estados terminales en neutro: ya no piden acción (sin verde "sano" ni rojo "alerta").
+    RECEIVED: { label: "Recibida", className: "bg-muted text-foreground border-border" },
+    CANCELLED: { label: "Cancelada", className: "bg-muted text-muted-foreground border-border line-through" },
 }
 
 const STATUS_FILTERS = [
@@ -276,10 +277,14 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
             {/* Qué conviene pedir: stock bajo + encargos pendientes → lista de compras */}
             <SugerirCompraPanel onChanged={onNeedsChanged} />
 
-            {/* Toolbar */}
-            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:items-center">
+            {/* Toolbar: acción primaria primero; el filtro queda como control secundario */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <Button onClick={() => setCreateOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Nueva compra
+                </Button>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full sm:w-48">
+                    <SelectTrigger className="w-full sm:w-44">
                         <SelectValue placeholder="Estado" />
                     </SelectTrigger>
                     <SelectContent>
@@ -288,12 +293,6 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                         ))}
                     </SelectContent>
                 </Select>
-                <div className="sm:ml-auto">
-                    <Button onClick={() => setCreateOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Nueva compra
-                    </Button>
-                </div>
             </div>
 
             {error ? (
@@ -373,7 +372,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                             </Badge>
                                                         )}
                                                         {p.totalCents > 0 && p.paidCents >= p.totalCents && (
-                                                            <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300">
+                                                            <Badge variant="secondary">
                                                                 Pagada
                                                             </Badge>
                                                         )}
@@ -537,9 +536,10 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                                 type="number"
                                                                 min={1}
                                                                 max={pendingQty}
+                                                                inputMode="numeric"
                                                                 value={receiveQty}
                                                                 onChange={e => setReceiveQty(e.target.value)}
-                                                                className="h-7 w-20 text-right"
+                                                                className="h-7 w-20 text-right tabular-nums"
                                                                 autoFocus
                                                                 disabled={receiving}
                                                                 aria-label={`Cantidad a recibir de ${item.product.name}`}
@@ -547,8 +547,17 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                             <Button type="submit" size="sm" className="h-7 px-2" disabled={receiving}>
                                                                 {receiving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "OK"}
                                                             </Button>
-                                                            <Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setReceivingItem(null)} disabled={receiving}>
-                                                                ✕
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                className="h-7 px-2"
+                                                                onClick={() => setReceivingItem(null)}
+                                                                disabled={receiving}
+                                                                title="Dejar de capturar"
+                                                                aria-label="Dejar de capturar la recepción parcial"
+                                                            >
+                                                                <X className="h-3.5 w-3.5" />
                                                             </Button>
                                                         </form>
                                                     ) : (
@@ -583,7 +592,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                     </div>
                                     <div className="flex justify-between gap-2">
                                         <span className="text-muted-foreground">Saldo</span>
-                                        <span className={`font-medium tabular-nums ${detail.totalCents - detail.paidCents > 0 ? "text-red-600" : "text-green-600"}`}>
+                                        <span className={`font-medium tabular-nums ${detail.totalCents - detail.paidCents > 0 ? "text-red-600" : "text-muted-foreground"}`}>
                                             {detail.totalCents - detail.paidCents > 0
                                                 ? formatPrice((detail.totalCents - detail.paidCents) / 100)
                                                 : "Liquidada"}
@@ -632,7 +641,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                         <Button variant="outline" onClick={() => { setEditTarget(detail); setDetail(null) }}>
                                             <Pencil className="mr-2 h-4 w-4" /> Editar
                                         </Button>
-                                        <Button variant="outline" onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
+                                        <Button onClick={() => { setDetail(null); requestAction(detail, "ORDER") }}>
                                             <Send className="mr-2 h-4 w-4" /> Ordenar
                                         </Button>
                                     </>

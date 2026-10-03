@@ -219,6 +219,11 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                 <CardTitle className="text-lg flex items-center gap-2">
                     <PackageSearch className="h-5 w-5 text-muted-foreground" />
                     Sugerencias de compra
+                    {!loading && !error && pendingCount > 0 && (
+                        <Badge variant="warning" className="ml-auto">
+                            {pendingCount} por agregar
+                        </Badge>
+                    )}
                 </CardTitle>
                 <CardDescription>
                     Qué conviene pedir según el stock mínimo, los encargos que esperan pieza y la rotación del mes
@@ -309,7 +314,8 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                                         min={1}
                                         max={9999}
                                         step={1}
-                                        className="h-8 w-20 text-right"
+                                        inputMode="numeric"
+                                        className="h-8 w-20 text-right tabular-nums"
                                         value={qty[s.productId] ?? ""}
                                         onChange={e => setQty(prev => ({ ...prev, [s.productId]: e.target.value }))}
                                         disabled={busy || inList}

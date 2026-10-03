@@ -283,6 +283,7 @@ function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFor
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="pl-9"
+                            autoFocus
                         />
                     </div>
                     {(results.length > 0 || searching) && (
@@ -326,38 +327,51 @@ function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFor
                                 const qty = parseInt(line.quantity) || 0
                                 const unit = parseFloat(line.cost) || 0
                                 return (
-                                    <div key={line.key} className="grid sm:grid-cols-12 gap-3 p-3 items-center">
-                                        <div className="sm:col-span-5 min-w-0">
+                                    <div key={line.key} className="grid grid-cols-2 gap-x-3 gap-y-2 p-3 sm:grid-cols-12 sm:items-center sm:gap-3">
+                                        <div className="col-span-2 min-w-0 sm:col-span-5">
                                             <p className="font-medium text-sm leading-tight truncate">{line.product.name}</p>
                                             <p className="text-xs text-muted-foreground mt-0.5">{line.product.barcode || "Sin código"}</p>
                                         </div>
+                                        {/* En móvil la fila no tiene encabezado: mini-etiquetas sobre cada campo */}
                                         <div className="sm:col-span-2">
+                                            <span className="mb-1 block text-xs text-muted-foreground sm:hidden" aria-hidden>Cantidad</span>
                                             <Input
                                                 type="number"
                                                 min={1}
+                                                inputMode="numeric"
                                                 value={line.quantity}
                                                 onChange={e => updateLine(line.key, { quantity: e.target.value })}
-                                                className="h-9"
+                                                className="h-9 tabular-nums"
                                                 aria-label={`Cantidad de ${line.product.name}`}
                                             />
                                         </div>
                                         <div className="sm:col-span-2">
+                                            <span className="mb-1 block text-xs text-muted-foreground sm:hidden" aria-hidden>Costo unit.</span>
                                             <Input
                                                 type="number"
                                                 min={0}
                                                 step="0.01"
+                                                inputMode="decimal"
                                                 placeholder="0.00"
                                                 value={line.cost}
                                                 onChange={e => updateLine(line.key, { cost: e.target.value })}
-                                                className="h-9"
+                                                className="h-9 tabular-nums"
                                                 aria-label={`Costo unitario de ${line.product.name}`}
                                             />
                                         </div>
-                                        <div className="sm:col-span-2 text-right text-sm font-medium tabular-nums">
+                                        <div className="self-center text-sm font-medium tabular-nums sm:col-span-2 sm:text-right">
+                                            <span className="mr-1.5 text-xs font-normal text-muted-foreground sm:hidden">Importe</span>
                                             {formatPrice(qty * unit)}
                                         </div>
-                                        <div className="sm:col-span-1 flex justify-end">
-                                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500" onClick={() => removeLine(line.key)} aria-label={`Quitar ${line.product.name}`}>
+                                        <div className="flex items-center justify-end sm:col-span-1">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="text-muted-foreground hover:text-red-500"
+                                                onClick={() => removeLine(line.key)}
+                                                title={`Quitar ${line.product.name}`}
+                                                aria-label={`Quitar ${line.product.name}`}
+                                            >
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>

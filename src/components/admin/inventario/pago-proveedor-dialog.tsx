@@ -180,9 +180,11 @@ function PagoForm({ supplier, purchases, fixedPurchase, onSaved, close }: PagoFo
                             type="number"
                             min={0}
                             step="0.01"
+                            inputMode="decimal"
                             placeholder="0.00"
                             value={amount}
                             onChange={e => setAmount(e.target.value)}
+                            className="tabular-nums"
                             autoFocus
                         />
                         {exceedsOc && (
