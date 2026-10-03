@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { createPortal } from "react-dom"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
@@ -52,6 +53,7 @@ import { BrandsPanel } from "@/app/admin/marcas/panel"
 import { ModelsPanel } from "@/app/admin/modelos/panel"
 
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { useCurrency } from "@/components/currency-provider"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -234,6 +236,13 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [labelSelected, setLabelSelected] = useState<Map<string, StockProductItem>>(new Map())
     // Ajuste masivo de precios sobre la selección (checkbox de cada fila).
     const [bulkOpen, setBulkOpen] = useState(false)
+    // La barra de selección va en portal a body: hay ancestros con transform
+    // que convertirían el `fixed` en `absolute` (quedaba fuera del viewport).
+    const [barMounted, setBarMounted] = useState(false)
+    useEffect(() => {
+        // Diferido: setState sincrónico en efecto está prohibido por la regla.
+        void Promise.resolve().then(() => setBarMounted(true))
+    }, [])
     const [bulkMode, setBulkMode] = useState<"set" | "percent">("set")
     const [bulkRetail, setBulkRetail] = useState("")
     const [bulkWholesale, setBulkWholesale] = useState("")
@@ -442,21 +451,6 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                 Sin compat
             </button>
         ) : null
-
-    // El color solo grita cuando hay que actuar: 0 = rojo, bajo mínimo =
-    // ámbar, sano = neutro (sin verde, para no sumar ruido en mostrador).
-    const getStockVariant = (product: StockProductItem): "destructive" | "warning" | "secondary" => {
-        if (product.stock === 0) return "destructive"
-        if (product.stock <= product.minStock) return "warning"
-        return "secondary"
-    }
-
-    const stockTitle = (product: StockProductItem) =>
-        product.stock === 0
-            ? "Agotado"
-            : product.stock <= product.minStock
-                ? `Bajo mínimo — el piso es ${product.minStock}`
-                : `Stock sano (mínimo ${product.minStock})`
 
     // Existencias por sucursal — la sucursal de trabajo resalta en todas las vistas.
     const branchChips = (product: StockProductItem) =>
@@ -706,36 +700,6 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     <PackagePlus className="mr-2 h-4 w-4" />
                     Entrada rápida
                 </Button>
-                {labelSelected.size > 0 && (
-                    <>
-                        <Button
-                            variant="outline"
-                            onClick={() => setBulkOpen(true)}
-                            title="Asignar precios o aplicar un porcentaje a la selección"
-                        >
-                            <Percent className="mr-2 h-4 w-4" />
-                            Ajustar precios ({labelSelected.size})
-                        </Button>
-                        <Button
-                            variant="outline"
-                            onClick={() => openEtiquetas(Array.from(labelSelected.values()))}
-                        >
-                            <Printer className="mr-2 h-4 w-4" />
-                            Imprimir etiquetas ({labelSelected.size})
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9"
-                            title="Limpiar selección de etiquetas"
-                            aria-label="Limpiar selección de etiquetas"
-                            onClick={() => setLabelSelected(new Map())}
-                        >
-                            <X className="h-4 w-4" />
-                        </Button>
-                    </>
-                )}
-
                 {/* Sucursal de trabajo: contexto de los ajustes rápidos. El
                     empleado la tiene fija como badge; el admin la elige. */}
                 <div className="ml-auto flex items-center gap-2">
@@ -1050,13 +1014,6 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                         title="Seleccionar para etiquetas"
                                         className="absolute left-2 top-2 bg-background/90"
                                     />
-                                    <Badge
-                                        variant={getStockVariant(product)}
-                                        className="pointer-events-none absolute right-2 top-2"
-                                        title={stockTitle(product)}
-                                    >
-                                        {product.stock}
-                                    </Badge>
                                 </div>
                                 <CardContent className="p-3 space-y-1.5">
                                     <h3 className="min-h-9 text-sm font-medium leading-tight line-clamp-2" title={product.name}>
@@ -1099,7 +1056,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
                         <div className="col-span-2">Sucursales</div>
-                        <div className="col-span-1 text-center">Total</div>
+                        <div className="col-span-1 text-center">Stock</div>
                         <div className="col-span-1 text-right">Público</div>
                         <div className="col-span-2 text-right">Acciones</div>
                     </div>
@@ -1139,7 +1096,6 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             </div>
                             <div className="col-span-3 md:col-span-2">{branchChips(product)}</div>
                             <div className="col-span-2 text-left md:col-span-1 md:text-center">
-                                <Badge variant={getStockVariant(product)} title={stockTitle(product)}>{product.stock}</Badge>
                                 <StockQtyEditor
                                     productId={product.id}
                                     productName={product.name}
@@ -1165,7 +1121,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         <div className="col-span-4">Producto</div>
                         <div className="col-span-2">Categoría</div>
                         <div className="col-span-2">Existencias por sucursal</div>
-                        <div className="col-span-1 text-center">Total</div>
+                        <div className="col-span-1 text-center">Stock</div>
                         <div className="col-span-1 text-right">Público</div>
                         <div className="col-span-2 text-right">Acciones</div>
                     </div>
@@ -1232,10 +1188,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
                                         {/* Total + ajuste inline sobre la sucursal de trabajo */}
                                         <div className="col-span-4 md:col-span-1 text-left md:text-center">
-                                            <Badge variant={getStockVariant(product)} title={stockTitle(product)}>
-                                                {product.stock}
-                                            </Badge>
-                                            <div className="mt-1 flex md:justify-center">
+                                            <div className="flex md:justify-center">
                                                 <StockQtyEditor
                                                     productId={product.id}
                                                     productName={product.name}
@@ -1285,6 +1238,49 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         }}
                     />
                 </div>
+            )}
+
+            {/* Barra flotante de selección: queda fija sobre la nav inferior
+                en móvil (h-16) y al pie en desktop — siempre visible mientras
+                haya productos marcados, sin importar el scroll. Va en portal
+                porque un ancestro con transform rompería el `fixed`. */}
+            {barMounted && labelSelected.size > 0 && createPortal(
+                <div
+                    role="toolbar"
+                    aria-label="Acciones para la selección"
+                    className="fixed inset-x-3 bottom-20 z-40 flex items-center justify-center gap-2 rounded-full border bg-background/95 px-3 py-2 shadow-lg backdrop-blur-sm lg:inset-x-auto lg:bottom-6 lg:left-1/2 lg:-translate-x-1/2"
+                >
+                    <span className="pl-1 text-sm font-medium tabular-nums">
+                        {labelSelected.size} sel.
+                    </span>
+                    <Button
+                        size="sm"
+                        onClick={() => setBulkOpen(true)}
+                        title="Asignar precios o aplicar un porcentaje a la selección"
+                    >
+                        <Percent className="mr-1.5 h-4 w-4" />
+                        Ajustar precios
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEtiquetas(Array.from(labelSelected.values()))}
+                    >
+                        <Printer className="mr-1.5 h-4 w-4" />
+                        Etiquetas
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Limpiar selección"
+                        aria-label="Limpiar selección"
+                        onClick={() => setLabelSelected(new Map())}
+                    >
+                        <X className="h-4 w-4" />
+                    </Button>
+                </div>,
+                document.body
             )}
 
             {/* Sesiones de conteo físico (abiertas e historial) */}
@@ -1390,7 +1386,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             />
 
             {/* Diálogo: ajuste masivo de precios sobre la selección */}
-            <Dialog open={bulkOpen} onOpenChange={(o) => !bulkBusy && setBulkOpen(o)}>
+            <Dialog open={bulkOpen} onOpenChange={guardedClose(setBulkOpen, bulkBusy)}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Ajustar precios · {labelSelected.size} producto(s)</DialogTitle>
