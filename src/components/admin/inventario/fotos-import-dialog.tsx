@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
 import {
     Dialog,
@@ -11,7 +12,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { ImagePlus, Loader2, Trash2 } from "lucide-react"
+import { Camera, ImagePlus, Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -87,8 +88,18 @@ interface FotoRow {
  * /api/products/photos (append por producto).
  */
 export function FotosImportDialog({ open, onOpenChange, products, onDone }: FotosImportDialogProps) {
+    // Espejo del `working` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras una tanda de subida está en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-3xl">
                 {/* DialogContent desmonta al cerrar: la lista reinicia su estado en cada apertura. */}
                 {open && (
@@ -96,6 +107,7 @@ export function FotosImportDialog({ open, onOpenChange, products, onDone }: Foto
                         products={products}
                         onDone={onDone}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -103,7 +115,7 @@ export function FotosImportDialog({ open, onOpenChange, products, onDone }: Foto
     )
 }
 
-function FotosForm({ products, onDone, close }: { products: FotoImportProduct[]; onDone: () => void; close: () => void }) {
+function FotosForm({ products, onDone, close, onBusyChange }: { products: FotoImportProduct[]; onDone: () => void; close: () => void; onBusyChange: (busy: boolean) => void }) {
     // Catálogo completo para el match: `products` llega filtrado/paginado según la
     // vista actual; aquí se reemplaza por la lista sin filtros (hasta 10 páginas).
     const [catalog, setCatalog] = useState<FotoImportProduct[]>(products)
@@ -112,6 +124,7 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
     const [working, setWorking] = useState(false)
     const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const cameraInputRef = useRef<HTMLInputElement>(null)
     const previewsRef = useRef<Set<string>>(new Set())
     const operation = useRef<ClientOperationKey | null>(null)
 
@@ -120,6 +133,12 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
         const previews = previewsRef.current
         return () => previews.forEach(url => URL.revokeObjectURL(url))
     }, [])
+
+    // Espeja `working` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(working)
+        return () => onBusyChange(false)
+    }, [working, onBusyChange])
 
     // Carga el catálogo completo en segundo plano y re-afina los matches
     // automáticos (los que el usuario ya movió a mano se respetan).
@@ -148,7 +167,9 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
 
     const addFiles = (files: FileList | null) => {
         if (!files?.length || working) return
-        const valid = Array.from(files).filter(f => ACCEPTED.has(f.type))
+        // Las capturas de cámara pueden llegar sin MIME ("image.jpg"): se acepta por extensión.
+        const valid = Array.from(files).filter(f =>
+            ACCEPTED.has(f.type) || (!f.type && /\.(jpe?g|png|webp)$/i.test(f.name)))
         if (valid.length < files.length) {
             toast.error("Algunos archivos se omitieron: solo JPEG, PNG o WebP.")
         }
@@ -285,7 +306,11 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
                     tabIndex={working ? -1 : 0}
                     aria-label="Seleccionar imágenes"
                     aria-disabled={working}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click() } }}
+                    onKeyDown={(e) => {
+                        // Los botones internos manejan su propio Enter/Espacio.
+                        if (e.target !== e.currentTarget) return
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInputRef.current?.click() }
+                    }}
                     onClick={() => { if (!working) fileInputRef.current?.click() }}
                     onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes("Files")) setDragOver(true) }}
                     onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
@@ -306,10 +331,45 @@ function FotosForm({ products, onDone, close }: { products: FotoImportProduct[];
                         onChange={(e) => { addFiles(e.target.files); e.target.value = "" }}
                         className="hidden"
                     />
-                    <div className="flex flex-col items-center gap-1.5">
+                    {/* capture="environment" abre la cámara trasera en móviles; en desktop
+                        solo abre el selector de archivos (sin multiple: una foto por captura). */}
+                    <input
+                        ref={cameraInputRef}
+                        type="file"
+                        accept={ACCEPT}
+                        capture="environment"
+                        disabled={working}
+                        aria-label="Tomar foto con la cámara"
+                        onChange={(e) => { addFiles(e.target.files); e.target.value = "" }}
+                        className="hidden"
+                    />
+                    <div className="flex flex-col items-center gap-2">
                         <ImagePlus className="h-6 w-6 text-muted-foreground" />
-                        <p className="text-sm font-medium">Arrastra fotos aquí o haz clic para seleccionar</p>
-                        <p className="text-xs text-muted-foreground">JPEG, PNG o WebP · el nombre del archivo sugiere el producto</p>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={working}
+                                onClick={(e) => { e.stopPropagation(); if (!working) fileInputRef.current?.click() }}
+                            >
+                                <ImagePlus className="mr-2 h-4 w-4" />
+                                Elegir archivos
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={working}
+                                onClick={(e) => { e.stopPropagation(); if (!working) cameraInputRef.current?.click() }}
+                            >
+                                <Camera className="mr-2 h-4 w-4" />
+                                Tomar foto
+                            </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            o arrastra imágenes aquí · JPEG, PNG o WebP · el nombre del archivo sugiere el producto
+                        </p>
                     </div>
                 </div>
 
