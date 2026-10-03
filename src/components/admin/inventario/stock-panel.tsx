@@ -246,6 +246,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const [bulkMode, setBulkMode] = useState<"set" | "percent">("set")
     const [bulkRetail, setBulkRetail] = useState("")
     const [bulkWholesale, setBulkWholesale] = useState("")
+    const [bulkInternal, setBulkInternal] = useState("")
     const [bulkCost, setBulkCost] = useState("")
     const [bulkPercent, setBulkPercent] = useState("")
     const [bulkBusy, setBulkBusy] = useState(false)
@@ -538,6 +539,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             for (const [field, raw] of [
                 ["retailPrice", bulkRetail],
                 ["wholesalePrice", bulkWholesale],
+                ["internalPrice", bulkInternal],
                 ["costPrice", bulkCost],
             ] as const) {
                 const n = num(raw)
@@ -1419,7 +1421,8 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         <div className="grid grid-cols-2 gap-3">
                             {(([
                                 ["Público", bulkRetail, setBulkRetail],
-                                ["Aliados", bulkWholesale, setBulkWholesale],
+                                ["Taller", bulkWholesale, setBulkWholesale],
+                                ["Taller propio", bulkInternal, setBulkInternal],
                                 // El costo solo lo puede fijar el dueño (el API lo
                                 // ignora para empleados, igual que en la edición).
                                 ...(isAdmin ? [["Costo", bulkCost, setBulkCost]] : []),
@@ -1439,7 +1442,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         </div>
                     ) : (
                         <div className="space-y-1">
-                            <Label className="text-xs">Porcentaje sobre precio público y aliados</Label>
+                            <Label className="text-xs">Porcentaje sobre precio público y taller</Label>
                             <div className="relative">
                                 <Input
                                     type="number" step="0.1" inputMode="decimal"

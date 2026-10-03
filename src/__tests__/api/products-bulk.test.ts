@@ -71,6 +71,7 @@ const product = (id: string, over: Record<string, unknown> = {}) => ({
   name: `Producto ${id}`,
   retailPrice: 100,
   wholesalePrice: 50,
+  internalPrice: 80,
   costPrice: 30,
   ...over,
 })
@@ -133,6 +134,7 @@ describe("validación del body", () => {
     ["set y percent a la vez", { ids: ["p1"], set: { retailPrice: 10 }, percent: 10 }],
     ["set vacío", { ids: ["p1"], set: {} }],
     ["precio negativo", { ids: ["p1"], set: { retailPrice: -5 } }],
+    ["internalPrice negativo", { ids: ["p1"], set: { internalPrice: -5 } }],
     ["ids no string", { ids: [1, 2], percent: 10 }],
     ["idempotencyKey inválida", { ids: ["p1"], percent: 10, idempotencyKey: "x" }],
   ])("400 cuando %s", async (_label, body) => {
@@ -199,6 +201,75 @@ describe("modo set", () => {
     expect(mocks.productUpdate).not.toHaveBeenCalled()
     expect(mocks.auditCreate).not.toHaveBeenCalled()
   })
+
+  it("set internalPrice lo fija y deja historial + bitácora (taller propio)", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    const res = await post({ ids: ["p1"], set: { internalPrice: 95 } })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ updated: 1, skipped: [] })
+    const call = mocks.productUpdate.mock.calls[0][0]
+    expect(call.where).toEqual({ id: "p1", businessId: "biz-1" })
+    expect(call.data).toEqual({ internalPrice: 95 })
+    expect(mocks.priceHistoryCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.priceHistoryCreate.mock.calls[0][0].data).toMatchObject({
+      productId: "p1",
+      field: "internalPrice",
+      oldValue: 80,
+      newValue: 95,
+    })
+    // Misma llave y estilo de resumen que PUT /api/products/[id].
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit.changes).toEqual({ tallerPropio: { before: 80, after: 95 } })
+    expect(audit.summary).toContain("Taller propio")
+  })
+
+  it("set internalPrice: null lo limpia (vuelve a cobrarse al público)", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    const res = await post({ ids: ["p1"], set: { internalPrice: null } })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ updated: 1, skipped: [] })
+    expect(mocks.productUpdate.mock.calls[0][0].data).toEqual({ internalPrice: null })
+    // PriceHistory.newValue es Float no-nulo: la limpieza queda como 0.
+    expect(mocks.priceHistoryCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.priceHistoryCreate.mock.calls[0][0].data).toMatchObject({
+      field: "internalPrice",
+      oldValue: 80,
+      newValue: 0,
+    })
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit.changes).toEqual({ tallerPropio: { before: 80, after: null } })
+    expect(audit.summary).toContain("Taller propio")
+  })
+
+  it("internalPrice ausente en set no lo toca", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    await post({ ids: ["p1"], set: { retailPrice: 150 } })
+    const data = mocks.productUpdate.mock.calls[0][0].data
+    expect(data).toEqual({ retailPrice: 150 })
+    expect(data).not.toHaveProperty("internalPrice")
+    // Historial solo del campo cambiado.
+    expect(mocks.priceHistoryCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.priceHistoryCreate.mock.calls[0][0].data.field).toBe("retailPrice")
+  })
+
+  it("limpiar un internalPrice ya null no escribe ni audita (cae a skipped)", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1", { internalPrice: null })])
+    const res = await post({ ids: ["p1"], set: { internalPrice: null } })
+    expect(await res.json()).toEqual({ updated: 0, skipped: ["p1"] })
+    expect(mocks.productUpdate).not.toHaveBeenCalled()
+    expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+
+  it("un empleado sí puede mover internalPrice (solo costPrice es del dueño)", async () => {
+    mocks.auth.mockResolvedValue(session("u-emp", "EMPLOYEE"))
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    const res = await post({ ids: ["p1"], set: { internalPrice: 60, costPrice: 10 } })
+    expect(res.status).toBe(200)
+    // internalPrice entra al patch; costPrice se ignora como siempre.
+    expect(mocks.productUpdate.mock.calls[0][0].data).toEqual({ internalPrice: 60 })
+    expect(mocks.priceHistoryCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.priceHistoryCreate.mock.calls[0][0].data.field).toBe("internalPrice")
+  })
 })
 
 describe("modo percent", () => {
@@ -224,7 +295,22 @@ describe("modo percent", () => {
     const data = mocks.productUpdate.mock.calls[0][0].data
     expect(data).toEqual({ retailPrice: 160 })
     expect(data).not.toHaveProperty("wholesalePrice")
+    expect(data).not.toHaveProperty("internalPrice")
     expect(data).not.toHaveProperty("costPrice")
+  })
+
+  it("no mueve internalPrice (el taller propio sigue al costo, no al margen)", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    const res = await post({ ids: ["p1"], percent: 10 })
+    expect(res.status).toBe(200)
+    const data = mocks.productUpdate.mock.calls[0][0].data
+    expect(data).toEqual({ retailPrice: 110, wholesalePrice: 55 })
+    expect(data).not.toHaveProperty("internalPrice")
+    // Historial: solo los dos campos que sí se movieron.
+    expect(mocks.priceHistoryCreate).toHaveBeenCalledTimes(2)
+    expect(mocks.priceHistoryCreate.mock.calls.map((c) => c[0].data.field).sort())
+      .toEqual(["retailPrice", "wholesalePrice"])
+    expect(mocks.auditCreate.mock.calls[0][0].data.changes).not.toHaveProperty("tallerPropio")
   })
 
   it("nunca deja precios negativos: clamp a 0", async () => {
@@ -266,7 +352,7 @@ describe("bitácora", () => {
     expect(first.summary).toContain("Ajuste masivo +10%")
     expect(first.changes).toEqual({
       precio: { before: 100, after: 110 },
-      aliado: { before: 50, after: 55 },
+      taller: { before: 50, after: 55 },
     })
     const second = mocks.auditCreate.mock.calls[1][0].data
     expect(second.entityId).toBe("p2")
