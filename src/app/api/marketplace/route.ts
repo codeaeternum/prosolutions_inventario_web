@@ -34,7 +34,7 @@ const visibilitySchema = z.intersection(
 // GET /api/marketplace?search=&category=&hidden=1
 // Catálogo B2B del negocio:
 // - WORKSHOP (taller aliado): solo productos ALLIES|PUBLIC, con su precio de
-//   mayoreo. Nunca ve HIDDEN ni precios internos/de costo.
+//   taller. Nunca ve HIDDEN ni precios internos/de costo.
 // - Staff (ADMIN/EMPLOYEE con módulo mercado): TODOS los activos, cada uno con
 //   su nivel marketVisibility — es la fuente del control de publicación de
 //   /admin/mercado. `hidden=1` queda aceptado por compat (ya no es necesario:

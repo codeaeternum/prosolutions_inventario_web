@@ -54,7 +54,7 @@ function CartLine({ item, workshopActive, processing, onUpdateQuantity, onRemove
             <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{item.product.name}</p>
                 <p className="text-[11px] text-muted-foreground">
-                    {formatPrice(price)} c/u{workshopActive ? " · mayoreo" : ""}
+                    {formatPrice(price)} c/u{workshopActive ? " · taller" : ""}
                 </p>
             </div>
             <div className="flex items-center gap-1">
@@ -108,7 +108,7 @@ export function CartPanel(props: CartPanelProps) {
                     <ReceiptText className="h-4 w-4" />
                     Ticket
                     {units > 0 && <Badge>{units}</Badge>}
-                    {workshopActive && <Badge variant="secondary">Mayoreo</Badge>}
+                    {workshopActive && <Badge variant="secondary">Taller</Badge>}
                 </span>
                 {resumedDoc && (
                     <Badge variant="secondary" className="gap-1 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">

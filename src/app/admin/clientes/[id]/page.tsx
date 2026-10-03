@@ -178,12 +178,12 @@ function saleFolio(number: number) {
 
 function TypeBadge({ type }: { type: Cliente["customerType"] }) {
   if (type === "STORE") {
-    return <Badge variant="secondary"><Store className="mr-1 h-3 w-3" />Mayoreo</Badge>
+    return <Badge variant="secondary"><Store className="mr-1 h-3 w-3" />Taller</Badge>
   }
   if (type === "TECHNICIAN") {
     return <Badge variant="secondary"><Wrench className="mr-1 h-3 w-3" />Técnico</Badge>
   }
-  return <Badge variant="outline"><ShoppingBag className="mr-1 h-3 w-3" />Menudeo</Badge>
+  return <Badge variant="outline"><ShoppingBag className="mr-1 h-3 w-3" />Público</Badge>
 }
 
 function copyText(value: string, label: string) {

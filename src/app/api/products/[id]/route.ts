@@ -120,15 +120,15 @@ export async function PUT(
         { status: 400 }
       )
     }
-    // Precio aliado vacío = mismo que el público (la mayoría de piezas no se
-    // venden a aliados). Un 0 explícito sí se respeta.
+    // Precio de taller vacío = mismo que el público (la mayoría de piezas no
+    // se venden a aliados). Un 0 explícito sí se respeta.
     const parsedWholesale =
       wholesalePrice === undefined || wholesalePrice === null || wholesalePrice === ""
         ? parsedRetail
         : parseFloat(wholesalePrice)
     if (!Number.isFinite(parsedWholesale) || parsedWholesale < 0) {
       return NextResponse.json(
-        { error: "El precio aliado no es válido" },
+        { error: "El precio de taller no es válido" },
         { status: 400 }
       )
     }
@@ -337,7 +337,7 @@ export async function PUT(
       nombre: existingProduct.name,
       codigoBarras: existingProduct.barcode,
       precio: existingProduct.retailPrice,
-      aliado: existingProduct.wholesalePrice,
+      taller: existingProduct.wholesalePrice,
       tallerPropio: existingProduct.internalPrice,
       costo: existingProduct.costPrice,
       stock: existingProduct.stock,
@@ -351,7 +351,7 @@ export async function PUT(
       nombre: name,
       codigoBarras: barcode || null,
       precio: parsedRetail,
-      aliado: parsedWholesale,
+      taller: parsedWholesale,
       tallerPropio: parsedInternalPrice,
       costo: parsedCostPrice,
       stock: existingProduct.stock + stockDiff,
@@ -366,7 +366,7 @@ export async function PUT(
       const parts: string[] = []
       if (changes.precio) parts.push(`Precio ${money(existingProduct.retailPrice)} → ${money(auditAfter.precio)}`)
       if (changes.costo) parts.push(`Costo ${money(existingProduct.costPrice)} → ${money(auditAfter.costo)}`)
-      if (changes.aliado) parts.push(`Aliado ${money(existingProduct.wholesalePrice)} → ${money(auditAfter.aliado)}`)
+      if (changes.taller) parts.push(`Taller ${money(existingProduct.wholesalePrice)} → ${money(auditAfter.taller)}`)
       if (changes.tallerPropio) parts.push(`Taller propio ${money(existingProduct.internalPrice)} → ${money(auditAfter.tallerPropio)}`)
       if (changes.nombre) parts.push(`Nombre "${existingProduct.name}" → "${name}"`)
       if (changes.activo) parts.push(auditAfter.activo ? "Reactivado" : "Desactivado")

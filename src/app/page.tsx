@@ -127,7 +127,7 @@ const features = [
   {
     icon: Users,
     title: "Mercado entre talleres",
-    desc: "Tus talleres aliados compran refacciones de tu stock con precio de mayoreo. Tú decides qué productos ven.",
+    desc: "Tus talleres aliados compran refacciones de tu stock con precio de taller. Tú decides qué productos ven.",
     wide: false,
   },
   {

@@ -138,7 +138,7 @@ export function MarketplacePublicationPanel({
               <TableHead>Producto</TableHead>
               <TableHead className="text-center">Stock</TableHead>
               <TableHead>Público</TableHead>
-              <TableHead>Aliado</TableHead>
+              <TableHead>Taller</TableHead>
               <TableHead>Visibilidad en el mercado</TableHead>
             </TableRow>
           </TableHeader>

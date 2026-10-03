@@ -29,8 +29,8 @@ interface PublicProductCardProps {
 }
 
 /**
- * Tarjeta del catálogo público (/<slug>/market). El público ve precio de
- * menudeo (retailPrice); el mayoreo es solo para cuentas aprobadas.
+ * Tarjeta del catálogo público (/<slug>/market). El público ve precio
+ * público (retailPrice); el precio de taller es solo para cuentas aprobadas.
  * CTA principal: "Preguntar" por WhatsApp con el producto y código ya
  * escritos en el mensaje; sin teléfono público cae a un enlace a la vitrina.
  */

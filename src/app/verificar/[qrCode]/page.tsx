@@ -169,7 +169,7 @@ export default async function VerifyPage({
               <p className="text-sm text-muted-foreground">{reservation.user.phone}</p>
             )}
             <Badge variant="outline" className="mt-2 text-xs">
-              {reservation.user.customerType === "STORE" ? "Mayoreo" : "Menudeo"}
+              {reservation.user.customerType === "STORE" ? "Taller" : "Público"}
             </Badge>
           </div>
 

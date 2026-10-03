@@ -254,7 +254,7 @@ export function CapturaRapidaPanel() {
         if (!name) return toast.error("Escribe el nombre del producto."), nameRef.current?.focus()
         if (!form.categoryId) return toast.error("Selecciona la categoría.")
         if (!Number.isFinite(retail) || retail < 0) return toast.error("Captura el precio al público.")
-        if (!Number.isFinite(wholesale) || wholesale < 0) return toast.error("El precio de mayoreo debe ser ≥ 0.")
+        if (!Number.isFinite(wholesale) || wholesale < 0) return toast.error("El precio de taller debe ser ≥ 0.")
         if (cost !== null && (!Number.isFinite(cost) || cost < 0)) return toast.error("El costo debe ser ≥ 0.")
         if (!Number.isInteger(stock) || stock < 0) return toast.error("El stock inicial debe ser un entero ≥ 0.")
         if (stock > 0 && !branchId) return toast.error("Selecciona la sucursal que recibe el stock inicial.")
@@ -595,7 +595,7 @@ export function CapturaRapidaPanel() {
                                     />
                                 </div>
                                 <div className="space-y-1.5">
-                                    <Label htmlFor="qc-wholesale">Mayoreo (opc.)</Label>
+                                    <Label htmlFor="qc-wholesale">Taller (opc.)</Label>
                                     <Input
                                         id="qc-wholesale"
                                         type="number"

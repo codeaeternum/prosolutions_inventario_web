@@ -22,7 +22,7 @@ const createProductSchema = z
     // pieza se ofrezca gratis a aliados).
     wholesalePrice: z.preprocess(
       (v) => (v === "" || v === null || v === undefined ? undefined : v),
-      z.coerce.number().min(0, "Precio aliado debe ser ≥ 0").optional()
+      z.coerce.number().min(0, "Precio de taller debe ser ≥ 0").optional()
     ),
     internalPrice: z.coerce.number().min(0, "Precio de taller propio debe ser ≥ 0").optional().nullable(),
     costPrice: z.coerce.number().min(0, "Precio de costo debe ser ≥ 0").optional().nullable(),

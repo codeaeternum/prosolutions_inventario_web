@@ -26,7 +26,7 @@ export interface AllyOffer {
     productId: string
     /** Piezas en existencia en el tenant aliado (total del producto). */
     stock: number
-    /** Precio aliado: wholesalePrice del producto; retailPrice si no hay mayoreo. */
+    /** Precio de taller: wholesalePrice del producto; retailPrice si no hay. */
     price: number
 }
 
@@ -88,7 +88,7 @@ const allyWhere = (businessId: string): Prisma.ProductWhereInput => ({
     business: { isActive: true, id: { not: businessId } },
 })
 
-/** Precio aliado publicado: mayoreo si existe, si no el menudeo público. */
+/** Precio de taller publicado: wholesalePrice si existe, si no el público. */
 const allyPriceOf = (row: AllyProductRow): number => row.wholesalePrice || row.retailPrice
 
 /**

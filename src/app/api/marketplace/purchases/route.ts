@@ -37,7 +37,7 @@ const purchaseInclude = {
 
 // GET /api/marketplace/purchases
 // Historial de compras surtidas del mercado B2B: solicitudes FULFILLED con su
-// venta ligada (folio, partidas a precio mayoreo, pagos). Los montos siempre
+// venta ligada (folio, partidas a precio de taller, pagos). Los montos siempre
 // salen del servidor (sale.total / sale.items), nunca del cliente.
 // Una cuenta WORKSHOP solo ve sus propias compras y además recibe el saldo a
 // crédito de su cuenta (los abonos son globales al cliente, no por venta).

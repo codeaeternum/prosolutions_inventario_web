@@ -97,7 +97,7 @@ function TypeBadge({ type }: { type: Cliente["customerType"] }) {
     return (
       <Badge variant="secondary">
         <Store className="mr-1 h-3 w-3" />
-        Mayoreo
+        Taller
       </Badge>
     )
   }
@@ -112,7 +112,7 @@ function TypeBadge({ type }: { type: Cliente["customerType"] }) {
   return (
     <Badge variant="outline">
       <ShoppingBag className="mr-1 h-3 w-3" />
-      Menudeo
+      Público
     </Badge>
   )
 }
@@ -252,9 +252,9 @@ export function ClientesPanel() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">Todos los tipos</SelectItem>
-              <SelectItem value="NORMAL">Menudeo</SelectItem>
+              <SelectItem value="NORMAL">Público</SelectItem>
               <SelectItem value="TECHNICIAN">Técnico</SelectItem>
-              <SelectItem value="STORE">Mayoreo</SelectItem>
+              <SelectItem value="STORE">Taller</SelectItem>
             </SelectContent>
           </Select>
           <Button

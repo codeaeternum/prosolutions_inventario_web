@@ -213,8 +213,8 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                         await ctx.reply(`✅ *Producto creado exitosamente!*
 
 📦 *${newProduct.name}*
-💰 Menudeo: $${newProduct.retailPrice}
-💰 Mayoreo: $${newProduct.wholesalePrice}
+💰 Público: $${newProduct.retailPrice}
+💰 Taller: $${newProduct.wholesalePrice}
 📊 Stock: ${newProduct.stock}
 📷 Imagen: ✅
 
@@ -413,7 +413,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         adminSession.data.costPrice = cost
                     }
                     adminSession.step = 'PRICE_RETAIL'
-                    await ctx.reply('4️⃣ *Precio de MENUDEO:*\n(Solo el número, ej: "4500")', { parse_mode: 'Markdown' })
+                    await ctx.reply('4️⃣ *Precio al PÚBLICO:*\n(Solo el número, ej: "4500")', { parse_mode: 'Markdown' })
                     return
                 }
                 if (adminSession.step === 'PRICE_RETAIL') {
@@ -421,7 +421,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     if (isNaN(price) || price <= 0) return ctx.reply('❌ Ingresa un precio válido.')
                     adminSession.data.retailPrice = price
                     adminSession.step = 'PRICE_WHOLESALE'
-                    await ctx.reply('5️⃣ *Precio de MAYOREO:*\n(Solo el número, ej: "3500")', { parse_mode: 'Markdown' })
+                    await ctx.reply('5️⃣ *Precio de TALLER:*\n(Solo el número, ej: "3500")', { parse_mode: 'Markdown' })
                     return
                 }
                 if (adminSession.step === 'PRICE_WHOLESALE') {
@@ -451,7 +451,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         stock: adminSession.data.stock!,
                     })
                     delete sessions.adminProduct[telegramId]
-                    await ctx.reply(`✅ *Producto creado exitosamente!*\n\n📦 *${newProduct.name}*\n💰 Menudeo: $${newProduct.retailPrice}\n💰 Mayoreo: $${newProduct.wholesalePrice}\n📊 Stock: ${newProduct.stock}\n\nID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
+                    await ctx.reply(`✅ *Producto creado exitosamente!*\n\n📦 *${newProduct.name}*\n💰 Público: $${newProduct.retailPrice}\n💰 Taller: $${newProduct.wholesalePrice}\n📊 Stock: ${newProduct.stock}\n\nID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     return
                 }
                 return

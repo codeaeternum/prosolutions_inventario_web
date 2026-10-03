@@ -118,7 +118,7 @@ export function MarketplaceProductCard({
         <div className="flex items-end justify-between gap-2">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Precio aliado
+              Taller
             </p>
             <p className="text-lg font-bold text-primary leading-tight">
               {formatPrice(product.wholesalePrice)}

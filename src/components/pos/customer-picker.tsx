@@ -89,7 +89,7 @@ export function CustomerPicker({ value, onChange, disabled, requiresCredit, plac
                     <p className="text-sm font-semibold truncate flex items-center gap-1.5">
                         <User className="h-3.5 w-3.5 shrink-0 text-primary" />
                         {value.name}
-                        {value.customerType === "STORE" && <Badge variant="secondary" className="text-[10px] px-1"><Store className="h-2.5 w-2.5 mr-0.5" />Mayoreo</Badge>}
+                        {value.customerType === "STORE" && <Badge variant="secondary" className="text-[10px] px-1"><Store className="h-2.5 w-2.5 mr-0.5" />Taller</Badge>}
                         {value.customerType === "TECHNICIAN" && <Badge variant="secondary" className="text-[10px] px-1"><Wrench className="h-2.5 w-2.5 mr-0.5" />Técnico</Badge>}
                     </p>
                     {available != null && (

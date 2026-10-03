@@ -37,8 +37,9 @@ export type AuditAlertEntry = {
   changes?: unknown
 }
 
-/** Llaves del diff de producto que significan dinero para el dueño. */
-const PRICE_CHANGE_KEYS = new Set(["precio", "mayoreo", "costo"])
+/** Llaves del diff de producto que significan dinero para el dueño
+ *  (incluye las llaves viejas "mayoreo"/"aliado" de eventos ya grabados). */
+const PRICE_CHANGE_KEYS = new Set(["precio", "taller", "tallerPropio", "costo", "mayoreo", "aliado"])
 
 // Telegram interpreta el mensaje como HTML (parse_mode HTML): un "<" o "&"
 // en un nombre de producto/usuario invalidaría el envío, así que se escapan.
@@ -69,9 +70,9 @@ function isThrottled(key: string, now: number): boolean {
 }
 
 /**
- * PRODUCT_UPDATE solo alarma si movió dinero: el diff trae precio/mayoreo/
- * costo o — si no hay diff utilizable — el summary lo menciona
- * ("Precio $500.00 → $450.00").
+ * PRODUCT_UPDATE solo alarma si movió dinero: el diff trae precio/taller/
+ * tallerPropio/costo o — si no hay diff utilizable — el summary lo menciona
+ * ("Precio $500.00 → $450.00", "Taller $450.00 → $400.00").
  */
 function touchesPrice(entry: AuditAlertEntry): boolean {
   const { changes } = entry
@@ -80,7 +81,7 @@ function touchesPrice(entry: AuditAlertEntry): boolean {
       if (PRICE_CHANGE_KEYS.has(key)) return true
     }
   }
-  return /precio|costo|mayoreo/i.test(entry.summary)
+  return /precio|costo|taller|mayoreo|aliado/i.test(entry.summary)
 }
 
 const mxDateTime = new Intl.DateTimeFormat("es-MX", {

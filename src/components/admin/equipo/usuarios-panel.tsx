@@ -550,7 +550,7 @@ export function UsuariosPanel() {
                     <SelectContent>
                       <SelectItem value="NORMAL">Particular</SelectItem>
                       <SelectItem value="TECHNICIAN">Técnico</SelectItem>
-                      <SelectItem value="STORE">Tienda (Mayoreo)</SelectItem>
+                      <SelectItem value="STORE">Tienda (Taller)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -899,7 +899,7 @@ export function UsuariosPanel() {
                               <SelectTrigger className="h-9 w-[140px]" disabled={updating === user.id}>
                                 <span>
                                   {user.customerType === "STORE"
-                                    ? "Tienda (Mayoreo)"
+                                    ? "Tienda (Taller)"
                                     : user.customerType === "TECHNICIAN"
                                       ? "Técnico"
                                       : "Particular"}
@@ -908,7 +908,7 @@ export function UsuariosPanel() {
                               <SelectContent>
                                 <SelectItem value="NORMAL">Particular</SelectItem>
                                 <SelectItem value="TECHNICIAN">Técnico</SelectItem>
-                                <SelectItem value="STORE">Tienda (Mayoreo)</SelectItem>
+                                <SelectItem value="STORE">Tienda (Taller)</SelectItem>
                               </SelectContent>
                             </Select>
                           )}

@@ -257,7 +257,7 @@ export default async function PublicServicesPage({ params }: PageProps) {
             </div>
             <h2 className="font-semibold text-lg">Mercado de refacciones</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Pantallas, baterías, flexores y accesorios — precio de menudeo al público.
+              Pantallas, baterías, flexores y accesorios — precio al público.
             </p>
             <span className="mt-auto inline-flex items-center gap-1 text-sm font-medium text-primary">
               Ver catálogo

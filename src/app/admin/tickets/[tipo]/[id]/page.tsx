@@ -116,7 +116,7 @@ export default async function TicketPage({
     if (saleDoc) {
       const METHOD_LABEL: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
       // Nota de venta a taller (SaleKind.WORKSHOP): otro encabezado, folio NT-,
-      // sello de mayoreo y el cliente se identifica por su negocio.
+      // sello de precio taller y el cliente se identifica por su negocio.
       const isWorkshop = saleDoc.kind === "WORKSHOP"
       const isQuote = saleDoc.kind === "QUOTE"
       const isLayaway = saleDoc.kind === "LAYAWAY"
@@ -141,7 +141,7 @@ export default async function TicketPage({
           ? (saleDoc.customer?.businessName ?? saleDoc.customer?.name)
           : saleDoc.customer?.name,
         clientLabel: isWorkshop && saleDoc.customer ? "Taller/Negocio" : undefined,
-        badge: isWorkshop ? "Documento para taller — precio de mayoreo"
+        badge: isWorkshop ? "Documento para taller — precio de taller"
           : isQuote && saleDoc.expiresAt ? `Vigente hasta ${new Date(saleDoc.expiresAt).toLocaleDateString("es-MX")}`
             : isLayaway && balance > 0 ? `Saldo pendiente: ${formatPrice(balance)}`
               : undefined,

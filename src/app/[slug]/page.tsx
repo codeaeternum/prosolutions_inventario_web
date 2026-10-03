@@ -97,7 +97,7 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
       href: `/${target.slug}/market`,
       icon: Store,
       title: "Mercado de refacciones",
-      desc: "Pantallas, baterías, flexores y más — precio de menudeo al público.",
+      desc: "Pantallas, baterías, flexores y más — precio al público.",
     },
     {
       href: `/${target.slug}/order-status`,
@@ -306,7 +306,7 @@ function WorkshopLanding({ target }: { target: WorkshopTarget }) {
             </div>
             <h2 className="font-semibold text-lg">¿Necesitas refacciones?</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Solicita a nuestro proveedor: precio de mayoreo para talleres aliados.
+              Solicita a nuestro proveedor: precio de taller para talleres aliados.
             </p>
             <span className="mt-auto inline-flex items-center gap-1 text-sm font-medium text-primary">
               Ir al mercado

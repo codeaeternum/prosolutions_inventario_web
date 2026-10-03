@@ -544,8 +544,12 @@ const formatValue = (v: unknown): string => {
   }
 }
 
+// Campos de dinero del diff de producto (español e inglés, vocablo nuevo y
+// viejo: "precio"/"taller"/"tallerPropio"/"costo" + "aliado"/"mayoreo").
+const PRICE_FIELD_RE = /price|cost|amount|precio|taller|aliado|mayoreo/i
+
 function auditLabelOf(action: string, changes: { field: string }[]): string {
-  if (action === "PRODUCT_UPDATE" && changes.some(c => /price|cost|amount/i.test(c.field))) {
+  if (action === "PRODUCT_UPDATE" && changes.some(c => PRICE_FIELD_RE.test(c.field))) {
     return "Cambio de precio"
   }
   if (AUDIT_LABELS[action]) return AUDIT_LABELS[action]
@@ -565,7 +569,7 @@ function auditItem(row: AuditRow): ActivityItem {
     const before = first ? asNum(first.before) : null
     const after = first ? asNum(first.after) : null
     const detail =
-      changes.length === 1 && first && /price|cost|amount/i.test(first.field) && before != null && after != null
+      changes.length === 1 && first && PRICE_FIELD_RE.test(first.field) && before != null && after != null
         ? `${money(before)} → ${money(after)}`
         : first
           ? `${first.field}: ${formatValue(first.before)} → ${formatValue(first.after)}`

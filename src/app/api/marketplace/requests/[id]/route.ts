@@ -28,7 +28,7 @@ const requestInclude = {
 // PATCH /api/marketplace/requests/:id
 // { action: "APPROVE"|"REJECT"|"FULFILL", decisionNote?, paymentMethod?, branchId?, customerId? }
 // Módulo mercado. La aprobación es un acuerdo comercial: NO descuenta inventario.
-// FULFILL sí genera la venta (sell) a precio de mayoreo — con idempotencyKey
+// FULFILL sí genera la venta (sell) a precio de taller — con idempotencyKey
 // derivado de la solicitud, reintentar nunca duplica la venta — y luego marca
 // la solicitud como FULFILLED ligada a esa venta (saleId).
 export async function PATCH(

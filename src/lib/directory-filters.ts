@@ -14,7 +14,7 @@ import {
  *
  * Misma regla de oro que directory.ts — solo lo que la vitrina /<slug>/market
  * ya mostraría: producto isActive && marketVisibility "PUBLIC", de un negocio
- * isActive && showInDirectory. Nunca costos, mayoreo ni stock exacto.
+ * isActive && showInDirectory. Nunca costos, precio de taller ni stock exacto.
  */
 
 export interface DirectoryCategory {

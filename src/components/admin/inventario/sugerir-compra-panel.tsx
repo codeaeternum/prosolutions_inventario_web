@@ -20,7 +20,7 @@ interface AllyInfo {
      */
     productId: string
     stock: number
-    /** Precio aliado = wholesalePrice ?? retailPrice del producto del aliado. */
+    /** Precio de taller = wholesalePrice ?? retailPrice del producto del aliado. */
     price: number
 }
 
@@ -52,7 +52,7 @@ interface SugerirCompraPanelProps {
  * cada pieza a la lista de compras (POST /api/encargos/compras → alta manual
  * ligada al producto). La cantidad sugerida se puede editar antes de agregar.
  * Bajo el nombre, chips de aliados muestran qué negocio del mercado B2B la
- * tiene en existencia y a qué precio aliado — cada chip es un botón "Pedir"
+ * tiene en existencia y a qué precio de taller — cada chip es un botón "Pedir"
  * que manda la solicitud directo a ese aliado (POST /api/marketplace/requests,
  * mismo contrato que el "Pedirla" de encargos) con la cantidad capturada en
  * la fila — así el dueño decide entre "pedir a proveedor" y "pedir al aliado".
@@ -283,7 +283,7 @@ export function SugerirCompraPanel({ onChanged }: SugerirCompraPanelProps) {
                                                             onClick={() => void requestFromAlly(s, a)}
                                                             title={done
                                                                 ? `Solicitud enviada a ${a.businessName}`
-                                                                : `Pedir a ${a.businessName} — ${a.stock} en existencia · ${formatPrice(a.price)} precio aliado`}
+                                                                : `Pedir a ${a.businessName} — ${a.stock} en existencia · ${formatPrice(a.price)} precio de taller`}
                                                             className="max-w-64 font-normal"
                                                         >
                                                             {sendingThis ? (

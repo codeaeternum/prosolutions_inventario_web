@@ -94,7 +94,7 @@ interface SaleResponse {
 const DISCOUNT_REASON_PRESETS = [
     "Cliente frecuente",
     "Promoción",
-    "Mayoreo",
+    "Taller",
     "Error de precio",
     "Daño cosmético",
     "Cortesía",
@@ -171,7 +171,7 @@ function CheckoutForm({
 
     const changeDocType = (type: DocType) => {
         setDocType(type)
-        // "A taller" enciende el modo mayoreo del ticket; volver a Venta lo apaga.
+        // "A taller" enciende el modo taller del ticket; volver a Venta lo apaga.
         if (type === "WORKSHOP") onWorkshopSaleChange(true)
         else if (!workshopCustomer) onWorkshopSaleChange(false)
     }
@@ -466,7 +466,7 @@ function CheckoutForm({
                             ))}
                         </div>
                     )}
-                    {workshopCustomer && <Badge variant="secondary">Taller — mayoreo automático</Badge>}
+                    {workshopCustomer && <Badge variant="secondary">Precio de taller automático</Badge>}
 
                     {/* Cliente: obligatorio en apartado/crédito, opcional en lo demás. */}
                     {(docType === "LAYAWAY" || docType === "QUOTE" || usesCredit || customer) && (

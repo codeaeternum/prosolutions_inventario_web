@@ -771,7 +771,7 @@ export default function CatalogoPage() {
                           )}
                         </div>
                         {customerType === "STORE" && (
-                          <span className="text-[10px] text-cyan-600">mayoreo</span>
+                          <span className="text-[10px] text-cyan-600">taller</span>
                         )}
                       </div>
                     </CardContent>

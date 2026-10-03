@@ -95,7 +95,7 @@ export function productImage(product: PosProduct): string | null {
     return fromList || product.imageUrl || null
 }
 
-/** Precio que cobra el mostrador según el modo de venta (mayoreo/menudeo). */
+/** Precio que cobra el mostrador según el modo de venta (taller/público). */
 export function unitPriceOf(product: PosProduct, workshopActive: boolean): number {
     return workshopActive ? product.wholesalePrice : product.retailPrice
 }

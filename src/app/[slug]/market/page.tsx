@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
   return {
     title: `Mercado de refacciones — ${target.name}`,
-    description: `Catálogo público de refacciones y accesorios de ${target.name}. Precios de menudeo.`,
+    description: `Catálogo público de refacciones y accesorios de ${target.name}. Precios al público.`,
     robots: { index: true, follow: true },
   }
 }
@@ -132,7 +132,7 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Mercado de refacciones</h1>
               <p className="text-sm text-muted-foreground">
-                ¿Quieres repararlo tú? Esta pieza está disponible aquí · precios de menudeo
+                ¿Quieres repararlo tú? Esta pieza está disponible aquí · precios al público
               </p>
             </div>
           </div>
@@ -245,9 +245,9 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
             )}
 
             <p className="text-xs text-muted-foreground text-center mt-8">
-              {total} producto{total === 1 ? "" : "s"} · Precios de menudeo. ¿Tienes taller?{" "}
+              {total} producto{total === 1 ? "" : "s"} · Precios al público. ¿Tienes taller?{" "}
               <Link href={`/login?callbackUrl=${encodeURIComponent("/admin/mercado")}`} className="text-primary hover:underline">
-                Pide precio de mayoreo
+                Pide precio de taller
               </Link>
             </p>
           </>

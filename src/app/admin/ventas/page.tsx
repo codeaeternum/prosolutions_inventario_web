@@ -42,7 +42,7 @@ export default function VentasPage() {
         typeof window !== "undefined" && new URLSearchParams(window.location.search).get("escanear") === "1" ? "qr" : "producto")
     const [cart, setCart] = useState<CartItem[]>([])
     const [customer, setCustomer] = useState<PosCustomer | null>(null)
-    // Nota a taller: precio de mayoreo. Un cliente STORE/TECHNICIAN la fuerza.
+    // Nota a taller: precio de taller. Un cliente STORE/TECHNICIAN la fuerza.
     const [workshopSale, setWorkshopSale] = useState(false)
     const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number; kind?: string } | null>(null)
     const [lastTicket, setLastTicket] = useState<LastTicket | null>(null)

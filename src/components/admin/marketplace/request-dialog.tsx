@@ -125,7 +125,7 @@ function RequestForm({ product, sellerName, onClose, onSuccess, formatPrice, isW
       <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
         <p className="font-medium leading-snug">{product.name}</p>
         <p className="text-sm text-muted-foreground">
-          Precio aliado:{" "}
+          Precio taller:{" "}
           <span className="font-semibold text-primary">
             {formatPrice(product.wholesalePrice)}
           </span>

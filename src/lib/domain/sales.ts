@@ -141,9 +141,9 @@ const saleSchema = z.object({
   paymentMethod: METHODS.optional(),
   customerId: z.string().min(1).optional(),
   branchId: z.string().min(1).optional(),
-  // Lista de precios: "auto" (default) cobra mayoreo solo si el cliente es STORE;
-  // "wholesale"/"retail" fuerzan la lista sin importar el tipo de cliente
-  // (p. ej. el surtido de una solicitud del mercado B2B siempre va a mayoreo).
+  // Lista de precios: "auto" (default) cobra precio de taller solo si el cliente
+  // es STORE; "wholesale"/"retail" fuerzan la lista sin importar el tipo de
+  // cliente (p. ej. el surtido de una solicitud del mercado B2B siempre va a taller).
   priceTier: z.enum(["auto", "wholesale", "retail"]).optional(),
   // Marca del mostrador para emitir "nota de venta a taller" (SaleKind.WORKSHOP)
   // aunque el comprador sea walk-in sin cuenta STORE/TECHNICIAN. El servidor
@@ -169,8 +169,8 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
         ? "WORKSHOP" : "RETAIL"
 
     // Precios del servidor; stock por sucursal con decremento condicional.
-    // Toda nota a taller cobra la lista de mayoreo salvo lista explícita:
-    // el walk-in de taller sin cuenta STORE/TECHNICIAN también va a mayoreo.
+    // Toda nota a taller cobra la lista de taller salvo lista explícita:
+    // el walk-in de taller sin cuenta STORE/TECHNICIAN también va a taller.
     const tier = input.priceTier ?? (kind === "WORKSHOP" ? "wholesale" : "auto")
     const lines = []
     let totalCents = 0

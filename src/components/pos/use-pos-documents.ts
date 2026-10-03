@@ -9,7 +9,7 @@ interface UsePosDocumentsArgs {
     cart: CartItem[]
     customer: PosCustomer | null
     branchId: string
-    /** Modo mayoreo del ticket (suspender con kind WORKSHOP fotografía mayoreo). */
+    /** Modo taller del ticket (suspender con kind WORKSHOP fotografía el precio de taller). */
     workshopActive: boolean
     /** Candado compartido con el checkout para no tocar el ticket en vuelo. */
     submittingRef: MutableRefObject<boolean>
@@ -32,7 +32,7 @@ export function usePosDocuments({
     const suspendSale = async (note: string): Promise<boolean> => {
         if (!cart.length || submittingRef.current) return false
         const payload = {
-            // WORKSHOP fotografía precio de mayoreo en el documento suspendido.
+            // WORKSHOP fotografía precio de taller en el documento suspendido.
             kind: workshopActive ? "WORKSHOP" : "RETAIL",
             note: note || undefined,
             items: cart.map(i => ({ productId: i.product.id, quantity: i.quantity })),

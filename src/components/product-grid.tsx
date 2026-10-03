@@ -98,7 +98,7 @@ export function ProductGrid({ products, isLoggedIn, isApproved, customerType }: 
               )}
               {isLoggedIn && isApproved && customerType === "STORE" && (
                 <span className="text-[10px] font-normal text-cyan-600 ml-1">
-                  mayoreo
+                  taller
                 </span>
               )}
             </div>

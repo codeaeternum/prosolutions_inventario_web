@@ -164,7 +164,7 @@ export function MarketplaceOutgoingPanel({
   }, [search])
 
   const openRequest = (s: Suggestion) => {
-    // El diálogo solo necesita id/nombre/precio aliado para armar el POST.
+    // El diálogo solo necesita id/nombre/precio de taller para armar el POST.
     setRequestTarget({
       id: s.id,
       name: s.name,
@@ -236,7 +236,7 @@ export function MarketplaceOutgoingPanel({
                     <p className="text-sm font-semibold whitespace-nowrap">
                       {formatPrice(s.wholesalePrice)}
                       <span className="block text-[10px] font-normal text-muted-foreground text-right">
-                        precio aliado
+                        precio taller
                       </span>
                     </p>
                   )}
@@ -275,7 +275,7 @@ export function MarketplaceOutgoingPanel({
                 <TableHead>Producto</TableHead>
                 <TableHead>Proveedor</TableHead>
                 <TableHead className="text-center">Cant.</TableHead>
-                <TableHead>Precio aliado</TableHead>
+                <TableHead>Precio taller</TableHead>
                 <TableHead>Fecha</TableHead>
                 {!isWorkshop && <TableHead>Pidió</TableHead>}
                 <TableHead>Estado</TableHead>

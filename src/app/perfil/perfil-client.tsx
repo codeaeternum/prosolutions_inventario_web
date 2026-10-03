@@ -52,7 +52,7 @@ function getStatusBadge(status: string) {
 function getCustomerTypeBadge(type: string) {
     switch (type) {
         case "STORE":
-            return <Badge variant="secondary">Tienda (Mayoreo)</Badge>
+            return <Badge variant="secondary">Tienda (Taller)</Badge>
         case "TECHNICIAN":
             return <Badge variant="secondary">Técnico</Badge>
         case "NORMAL":

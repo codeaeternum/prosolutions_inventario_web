@@ -7,7 +7,7 @@ import { isValidSlug } from "@/lib/slug-rules"
  *
  * Regla de oro: aquí solo sale lo que ya es público en la vitrina /<slug> —
  * nombre, slug, categoría, logo, dirección y conteos. NUNCA emails, teléfonos
- * de usuarios, precios de mayoreo/costo ni stock exacto.
+ * de usuarios, precios de taller/costo ni stock exacto.
  */
 
 /** Logo público: solo paths locales de uploads (misma regla que public-slug). */
@@ -39,7 +39,7 @@ export interface DirectoryBusiness {
 export interface DirectoryProduct {
   id: string
   name: string
-  /** Precio público de menudeo (el que ya muestra /<slug>/market). */
+  /** Precio público (el que ya muestra /<slug>/market). */
   retailPrice: number
   image: string | null
   /** Disponible/Agotado — jamás el número exacto de piezas. */

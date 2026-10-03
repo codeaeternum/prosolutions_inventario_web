@@ -351,7 +351,7 @@ export default function MercadoPage() {
           </h1>
           <p className="text-muted-foreground">
             {isWorkshop
-              ? "Compra refacciones a precio de aliado y da seguimiento a tus pedidos"
+              ? "Compra refacciones a precio de taller y da seguimiento a tus pedidos"
               : "Publica piezas para aliados y público, atiende solicitudes y pide a otros negocios"}
           </p>
         </div>
@@ -507,13 +507,13 @@ export default function MercadoPage() {
             solicita al negocio. No se renderiza para staff. */}
         {isWorkshop && (
           <TabsContent value="catalogo" className="space-y-6">
-            {/* Banner del portal: nombre del taller + precios de aliado */}
+            {/* Banner del portal: nombre del taller + precios de taller */}
             <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
               <Handshake className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <p className="text-sm text-muted-foreground">
                 Compras para{" "}
                 <span className="font-medium text-foreground">{workshopName}</span>
-                {" · "}precios de aliado
+                {" · "}precios de taller
               </p>
             </div>
 

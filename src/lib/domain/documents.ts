@@ -82,7 +82,7 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
     const customer = input.customerId ? await actor(tx, input.customerId, "customer", businessId) : null
 
     // Precio prometido: snapshot del servidor al momento de crear el
-    // documento (mayoreo para talleres y clientes STORE/TECHNICIAN). El
+    // documento (precio de taller para talleres y clientes STORE/TECHNICIAN). El
     // cliente nunca dicta el precio — checkout cobra exactamente esto.
     const wholesale = input.kind === "WORKSHOP" || customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN"
     const lines = []

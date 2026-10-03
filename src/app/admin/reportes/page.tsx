@@ -413,7 +413,7 @@ export default function ReportsPage() {
               {formatPrice(stats.totalStockValue)}
             </div>
             <p className="text-xs text-muted-foreground">
-              precio mayoreo
+              precio taller
             </p>
           </CardContent>
         </Card>
@@ -606,7 +606,7 @@ export default function ReportsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="text-xs">
-                      {client.customerType === "STORE" ? "Mayoreo" : "Menudeo"}
+                      {client.customerType === "STORE" ? "Taller" : "Público"}
                     </Badge>
                     <Badge className="bg-green-500 hover:bg-green-600">
                       {client.completedReservations} compras

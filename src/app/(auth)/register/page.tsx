@@ -216,7 +216,7 @@ export default function RegisterPage() {
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm font-medium">Tipo de cuenta solicitada:</p>
               <p className="text-primary font-bold">
-                {formData.customerType === "STORE" ? "Mayorista" : "Menudeo"}
+                {formData.customerType === "STORE" ? "Taller" : "Público"}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 El administrador determinará el tipo final de tu cuenta
@@ -431,7 +431,7 @@ export default function RegisterPage() {
                     "font-medium",
                     formData.customerType === "NORMAL" ? "text-primary" : ""
                   )}>
-                    Menudeo
+                    Público
                   </span>
                   <span className="text-xs text-muted-foreground text-center">
                     Compras pequeñas
@@ -456,7 +456,7 @@ export default function RegisterPage() {
                     "font-medium",
                     formData.customerType === "STORE" ? "text-primary" : ""
                   )}>
-                    Mayoreo
+                    Taller
                   </span>
                   <span className="text-xs text-muted-foreground text-center">
                     Compras por volumen

@@ -8,9 +8,9 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 // través de TODAS las empresas del directorio (isActive && showInDirectory).
 // Solo productos que la vitrina ya mostraría: isActive && marketVisibility
 // "PUBLIC" (el mismo nivel de /<slug>/market — lo exclusivo de aliados no
-// sale aquí). Se exponen nombre, precio de menudeo, imagen, disponibilidad
+// sale aquí). Se exponen nombre, precio público, imagen, disponibilidad
 // binaria (con nombres de sucursal, nunca cantidades) y el negocio
-// (nombre + slug) — nunca costos, mayoreo ni stock exacto.
+// (nombre + slug) — nunca costos, precio de taller ni stock exacto.
 //
 // `cat` (nombre de Category) es opcional: solo limita a esa categoría — con
 // q también presente filtra el texto dentro de ella, y sin q permite el

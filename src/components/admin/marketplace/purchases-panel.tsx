@@ -194,7 +194,7 @@ function PurchaseCard({
           </div>
         </div>
 
-        {/* Partidas cobradas a precio de mayoreo */}
+        {/* Partidas cobradas a precio de taller */}
         <ul className="divide-y text-sm">
           {sale.items.map((item) => (
             <li key={item.id} className="flex items-baseline justify-between gap-3 py-1.5">

@@ -25,8 +25,8 @@ export const MARKET_VISIBILITY_LABELS: Record<MarketVisibility, string> = {
 /** Descripción corta de cada nivel (tooltips / ayuda en el panel). */
 export const MARKET_VISIBILITY_HINTS: Record<MarketVisibility, string> = {
   HIDDEN: "No sale en el mercado: ni aliados ni público lo ven.",
-  ALLIES: "Lo ven los talleres aliados con cuenta, a precio de mayoreo.",
-  PUBLIC: "Lo ve todo el público en tu vitrina y en el directorio, a precio de menudeo.",
+  ALLIES: "Lo ven los talleres aliados con cuenta, a precio de taller.",
+  PUBLIC: "Lo ve todo el público en tu vitrina y en el directorio, a precio público.",
 }
 
 export const marketVisibilitySchema = z.enum(MARKET_VISIBILITY_LEVELS)
