@@ -1,6 +1,7 @@
 "use client"
 
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -49,6 +50,7 @@ import {
     PackageSearch,
     ArrowLeftRight,
     Scale,
+    Search,
     Ban,
     RotateCcw,
     CircleDashed,
@@ -90,7 +92,10 @@ interface Movement {
 }
 
 // Valores que acepta ?type= en /api/inventory. "Ajuste (+)/(−)" se fusionó en
-// "Ajustes": la API mapeaba ambos a ADJUSTMENT y devolvía lo mismo.
+// "Ajustes" (la API mapeaba ambos a ADJUSTMENT y devolvía lo mismo) y "Mermas"
+// se quitó: desde que type=OUT devuelve solo salidas sin venta (paymentMethod
+// null), ambos filtros traían exactamente el mismo set. DAMAGED/LOST quedan
+// como atajos al subtipo que la API marca en notes ("merma:damaged"/"merma:lost").
 const movementTypes = [
     { value: "ALL", label: "Todos" },
     { value: "SALE", label: "Ventas" },
@@ -100,7 +105,6 @@ const movementTypes = [
     { value: "TRANSFER", label: "Traspasos" },
     { value: "ADJUSTMENT", label: "Ajustes" },
     { value: "RETURN", label: "Devoluciones" },
-    { value: "MERMAS", label: "Mermas" },
     { value: "DAMAGED", label: "Dañado" },
     { value: "LOST", label: "Perdido" },
 ]
@@ -195,11 +199,19 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
     // Marca de tiempo de la última carga para el "hace N min" (ver formatWhen).
     const [now, setNow] = useState<number | null>(null)
 
-    // Filters — solo lo que la API acepta: type, branchId, productId.
+    // Filters — lo que acepta la API: type, branchId, productId, q, from, to.
     const [typeFilter, setTypeFilter] = useState<string>("ALL")
     const [branchFilter, setBranchFilter] = useState<string>("ALL")
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
     const [filtersOpen, setFiltersOpen] = useState(false)
+    // `search` es el texto crudo del input; `debouncedQ` es el término ya
+    // limpio que viaja a la API (producto, código de barras, motivo, notas).
+    const [search, setSearch] = useState("")
+    const [debouncedQ, setDebouncedQ] = useState("")
+    // Rango de fechas inclusive (YYYY-MM-DD): la API filtra createdAt en
+    // movimientos y updatedAt en reservas.
+    const [from, setFrom] = useState("")
+    const [to, setTo] = useState("")
 
     // Return dialog
     const [returnDialogOpen, setReturnDialogOpen] = useState(false)
@@ -228,6 +240,15 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
             if (productId) {
                 params.set("productId", productId)
             }
+            if (debouncedQ) {
+                params.set("q", debouncedQ)
+            }
+            if (from) {
+                params.set("from", from)
+            }
+            if (to) {
+                params.set("to", to)
+            }
 
             const res = await fetch(`/api/inventory?${params.toString()}`)
             const data = await res.json()
@@ -245,7 +266,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
         } finally {
             setLoading(false)
         }
-    }, [page, typeFilter, branchFilter, productId, limit])
+    }, [page, typeFilter, branchFilter, productId, debouncedQ, from, to, limit])
 
     useEffect(() => {
         // Diferido a un callback: setState sincrónico en el cuerpo del efecto está prohibido.
@@ -257,6 +278,17 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
         void Promise.resolve().then(() => setPage(1))
     }, [productId])
 
+    // Búsqueda con debounce (~350 ms), mismo patrón que stock-panel y
+    // actividad-panel: el término limpio dispara el refetch vía debouncedQ y
+    // reinicia la página — con la vieja el offset podría quedar fuera de rango.
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedQ(search.trim())
+            setPage(1)
+        }, 350)
+        return () => clearTimeout(timer)
+    }, [search])
+
     useEffect(() => {
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
             setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive))
@@ -267,12 +299,22 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
     // offset podría caer más allá del total filtrado y mostrar lista vacía.
     const applyTypeFilter = (value: string) => { setTypeFilter(value); setPage(1) }
     const applyBranchFilter = (value: string) => { setBranchFilter(value); setPage(1) }
+    const applyFromFilter = (value: string) => { setFrom(value); setPage(1) }
+    const applyToFilter = (value: string) => { setTo(value); setPage(1) }
 
-    const activeFilterCount = (typeFilter !== "ALL" ? 1 : 0) + (branchFilter !== "ALL" ? 1 : 0) + (productId ? 1 : 0)
+    const activeFilterCount =
+        (typeFilter !== "ALL" ? 1 : 0) + (branchFilter !== "ALL" ? 1 : 0) +
+        (productId ? 1 : 0) + (search.trim() ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0)
     const hasActiveFilters = activeFilterCount > 0
     const clearFilters = () => {
         setTypeFilter("ALL")
         setBranchFilter("ALL")
+        // debouncedQ se limpia al momento: el debounce lo asentaría 350 ms
+        // después, pero el conteo y el refetch deben reflejar el click ya.
+        setSearch("")
+        setDebouncedQ("")
+        setFrom("")
+        setTo("")
         onClearProduct?.()
         setPage(1)
     }
@@ -453,9 +495,9 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    {/* ── Filtros: la API solo acepta type, branchId y productId
-                        (chip). En móvil se colapsan tras "Filtros" con el
-                        conteo de activos, igual que en Stock ── */}
+                    {/* ── Filtros: type, branchId, productId (chip), búsqueda
+                        libre y rango de fechas. En móvil se colapsan tras
+                        "Filtros" con el conteo de activos, igual que en Stock ── */}
                     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                         <div className="flex flex-wrap items-center gap-2">
                             <Button
@@ -506,6 +548,18 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                                 filtersOpen ? "flex flex-col" : "hidden sm:flex"
                             )}
                         >
+                            {/* Búsqueda libre: crece en desktop para llenar el
+                                hueco de la fila de filtros */}
+                            <div className="relative w-full sm:min-w-[200px] sm:flex-1">
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                                <Input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Producto, código, motivo..."
+                                    aria-label="Buscar en historial"
+                                    className="pl-9"
+                                />
+                            </div>
                             <Select value={typeFilter} onValueChange={applyTypeFilter}>
                                 <SelectTrigger className="w-full sm:w-48" aria-label="Filtrar por tipo de movimiento">
                                     <SelectValue placeholder="Tipo" />
@@ -529,6 +583,24 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                                     </SelectContent>
                                 </Select>
                             )}
+                            {/* Rango de fechas: cada uno se acota con el otro
+                                para que Desde nunca quede después de Hasta */}
+                            <Input
+                                type="date"
+                                value={from}
+                                max={to || undefined}
+                                onChange={(e) => applyFromFilter(e.target.value)}
+                                aria-label="Desde"
+                                className="w-full sm:w-36"
+                            />
+                            <Input
+                                type="date"
+                                value={to}
+                                min={from || undefined}
+                                onChange={(e) => applyToFilter(e.target.value)}
+                                aria-label="Hasta"
+                                className="w-full sm:w-36"
+                            />
                             {hasActiveFilters && (
                                 <Button
                                     variant="ghost"
@@ -713,8 +785,9 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                 </CardContent>
             </Card>
 
-            {/* Return Dialog */}
-            <Dialog open={returnDialogOpen} onOpenChange={setReturnDialogOpen}>
+            {/* Return Dialog — guardedClose impide cerrarlo (Escape / clic
+                fuera) mientras el POST de la devolución sigue en vuelo */}
+            <Dialog open={returnDialogOpen} onOpenChange={guardedClose(setReturnDialogOpen, returningInProgress)}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Registrar Devolución</DialogTitle>
@@ -766,7 +839,9 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                     )}
 
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setReturnDialogOpen(false)}>
+                        {/* Cancelar cierra por fuera de onOpenChange: se
+                            deshabilita para no saltar el guardedClose */}
+                        <Button variant="outline" onClick={() => setReturnDialogOpen(false)} disabled={returningInProgress}>
                             Cancelar
                         </Button>
                         <Button onClick={handleReturn} disabled={returningInProgress} className="gap-2">

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { assertBranchAllowed, assertOperationBranch, getSession, requireAdmin, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
+import { parseBusinessDateParam } from "@/lib/business-time"
 import { MovementType } from "@prisma/client"
 
 /** Mapea tipo de la UI al enum de Prisma (solo para movimientos de inventario). */
@@ -42,9 +43,40 @@ export async function GET(request: NextRequest) {
         const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50") || 50))
         const offset = Math.min(20000, Math.max(0, parseInt(searchParams.get("offset") || "0") || 0))
 
+        // from/to: fecha corta "YYYY-MM-DD" = día completo del negocio
+        // (00:00:00.000 / 23:59:59.999 en BUSINESS_TIME_ZONE, ver
+        // business-time.ts); valores con hora/ISO completo pasan tal cual.
+        // parseBusinessDateParam devuelve null tanto para ausente como para
+        // inválido — el raw distingue el caso y un valor presente pero
+        // inválido es 400.
+        const fromRaw = searchParams.get("from")
+        const toRaw = searchParams.get("to")
+        const from = parseBusinessDateParam(fromRaw, "start")
+        const to = parseBusinessDateParam(toRaw, "end")
+        if ((fromRaw?.trim() && !from) || (toRaw?.trim() && !to)) {
+            return NextResponse.json({ error: "Fechas inválidas: usa YYYY-MM-DD o ISO 8601 en from/to." }, { status: 400 })
+        }
+        const dateRange = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) }
+        // Búsqueda libre: nombre/código del producto, motivo y notas (las
+        // mermas llevan "merma:damaged"|"merma:lost" en notes, así q también
+        // las alcanza). Tope de 100 chars para no armar LIKEs gigantes.
+        const q = (searchParams.get("q") ?? "").trim().slice(0, 100)
+
         const movementWhere: Record<string, unknown> = { businessId }
         if (productId) movementWhere.productId = productId
         if (branchId) movementWhere.branchId = branchId
+        if (from || to) movementWhere.createdAt = dateRange
+        if (q) {
+            const contains = { contains: q, mode: "insensitive" as const }
+            movementWhere.AND = [{
+                OR: [
+                    { product: { name: contains } },
+                    { product: { barcode: contains } },
+                    { reason: contains },
+                    { notes: contains },
+                ],
+            }]
+        }
 
         let reservationWhere: { businessId: string; status: { in: ("COMPLETED" | "CANCELLED")[] } } | { businessId: string; status: "COMPLETED" } | { businessId: string; status: "CANCELLED" } = { businessId, status: { in: ["COMPLETED", "CANCELLED"] } }
         let movementTypeFilter: MovementType | null = null
@@ -58,6 +90,13 @@ export async function GET(request: NextRequest) {
         } else if (typeParam === "CANCELLED") {
             onlyReservations = true
             reservationWhere = { businessId, status: "CANCELLED" }
+        } else if (typeParam === "OUT") {
+            // "Salidas" honestas: OUT a secas NO incluye las ventas POS/bot
+            // (paymentMethod no null), que se ven con type=SALE. Queda
+            // equivalente a MERMAS — la UI retira la opción redundante.
+            movementWhere.type = "OUT"
+            movementWhere.paymentMethod = null
+            onlyMovements = true
         } else if (typeParam === "DAMAGED" || typeParam === "LOST" || typeParam === "MERMAS") {
             // DAMAGED/LOST se persisten como OUT (el enum MovementType no los
             // incluye). Las mermas nuevas llevan notes "merma:damaged"|"merma:lost"
@@ -78,6 +117,22 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Reservas: su fecha visible es updatedAt (cuándo se completó/canceló),
+        // así que el rango y la búsqueda se aplican sobre esa columna.
+        const reservationFilters: Record<string, unknown> = { ...reservationWhere }
+        if (productId) reservationFilters.productId = productId
+        if (from || to) reservationFilters.updatedAt = dateRange
+        if (q) {
+            const contains = { contains: q, mode: "insensitive" as const }
+            reservationFilters.AND = [{
+                OR: [
+                    { product: { name: contains } },
+                    { product: { barcode: contains } },
+                    { adminNotes: contains },
+                ],
+            }]
+        }
+
         const [movements, reservations, totalMovements, totalReservations] = await Promise.all([
             onlyReservations ? Promise.resolve([]) : prisma.inventoryMovement.findMany({
                 where: movementWhere,
@@ -91,7 +146,7 @@ export async function GET(request: NextRequest) {
                 take: offset + limit,
             }),
             onlyMovements ? Promise.resolve([]) : prisma.reservation.findMany({
-                where: { ...reservationWhere, ...(productId ? { productId } : {}) },
+                where: reservationFilters,
                 include: {
                     product: { select: { id: true, name: true, barcode: true } },
                     user: { select: { id: true, name: true, role: true } },
@@ -100,7 +155,7 @@ export async function GET(request: NextRequest) {
                 take: offset + limit,
             }),
             onlyReservations ? Promise.resolve(0) : prisma.inventoryMovement.count({ where: movementWhere }),
-            onlyMovements ? Promise.resolve(0) : prisma.reservation.count({ where: { ...reservationWhere, ...(productId ? { productId } : {}) } }),
+            onlyMovements ? Promise.resolve(0) : prisma.reservation.count({ where: reservationFilters }),
         ])
 
         // Merge and sort (movements/reservations already filtered above)
