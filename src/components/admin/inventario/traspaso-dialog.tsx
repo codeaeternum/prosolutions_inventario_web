@@ -1,7 +1,8 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -48,8 +49,18 @@ interface TraspasoDialogProps {
 }
 
 export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved, lockedFromId }: TraspasoDialogProps) {
+    // Espejo del `saving` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras el POST sigue en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-md">
                 {/* DialogContent desmonta al cerrar: el form reinicia su estado en cada apertura. */}
                 {product && (
@@ -59,6 +70,7 @@ export function TraspasoDialog({ product, branches, open, onOpenChange, onSaved,
                         lockedFromId={lockedFromId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -72,9 +84,10 @@ interface TraspasoFormProps {
     lockedFromId: string | null
     onSaved: () => void
     close: () => void
+    onBusyChange: (busy: boolean) => void
 }
 
-function TraspasoForm({ product, branches, lockedFromId, onSaved, close }: TraspasoFormProps) {
+function TraspasoForm({ product, branches, lockedFromId, onSaved, close, onBusyChange }: TraspasoFormProps) {
     const stockByBranch = new Map(product.branches.map((b) => [b.branchId, b.quantity]))
     // Origen por defecto: la sucursal fijada (empleado) o la que tenga más stock.
     const lockedBranch = lockedFromId ? branches.find((b) => b.id === lockedFromId) ?? null : null
@@ -89,6 +102,12 @@ function TraspasoForm({ product, branches, lockedFromId, onSaved, close }: Trasp
     const [reason, setReason] = useState("")
     const [saving, setSaving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
+
+    // Espeja `saving` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(saving)
+        return () => onBusyChange(false)
+    }, [saving, onBusyChange])
 
     const fromStock = stockByBranch.get(fromId) ?? 0
     // Number() (no parseInt): "1.5" se rechaza en vez de truncarse a 1.

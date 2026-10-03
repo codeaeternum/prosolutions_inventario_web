@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -53,8 +54,18 @@ interface EntradaRapidaDialogProps {
  * el panel de lote, con la misma llave de idempotencia.
  */
 export function EntradaRapidaDialog({ branches, lockedBranchId, open, onOpenChange, onSaved }: EntradaRapidaDialogProps) {
+    // Espejo del `saving` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras el POST sigue en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-md">
                 {open && (
                     <EntradaRapidaForm
@@ -62,6 +73,7 @@ export function EntradaRapidaDialog({ branches, lockedBranchId, open, onOpenChan
                         lockedBranchId={lockedBranchId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -69,11 +81,12 @@ export function EntradaRapidaDialog({ branches, lockedBranchId, open, onOpenChan
     )
 }
 
-function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close }: {
+function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close, onBusyChange }: {
     branches: Branch[]
     lockedBranchId: string | null
     onSaved: () => void
     close: () => void
+    onBusyChange: (busy: boolean) => void
 }) {
     const [product, setProduct] = useState<SearchProduct | null>(null)
     const [branchId, setBranchId] = useState(lockedBranchId ?? branches[0]?.id ?? "")
@@ -89,6 +102,12 @@ function EntradaRapidaForm({ branches, lockedBranchId, onSaved, close }: {
 
     const [saving, setSaving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
+
+    // Espeja `saving` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(saving)
+        return () => onBusyChange(false)
+    }, [saving, onBusyChange])
 
     // La búsqueda devuelve el stock de la sucursal elegida (branchId en la query).
     const searchProducts = useCallback(async (query: string, branch: string) => {

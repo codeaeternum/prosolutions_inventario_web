@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -119,8 +120,19 @@ export function ProductoFormDialog({
     lockedBranchId,
     onSaved,
 }: ProductoFormDialogProps) {
+    // Espejo del busy del form (guardado, subida de fotos o alta de categoría /
+    // marca / modelo en vuelo): guardedClose bloquea Escape y el clic fuera
+    // mientras una mutación sigue corriendo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-4xl">
                 {/* Desmontar al cerrar reinicia el formulario en cada apertura. */}
                 {open && (
@@ -132,6 +144,7 @@ export function ProductoFormDialog({
                         lockedBranchId={lockedBranchId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -192,9 +205,10 @@ interface ProductoFormProps {
     lockedBranchId: string | null
     onSaved: () => void
     close: () => void
+    onBusyChange: (busy: boolean) => void
 }
 
-function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBranchId, onSaved, close }: ProductoFormProps) {
+function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBranchId, onSaved, close, onBusyChange }: ProductoFormProps) {
     const editing = Boolean(productId)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -259,6 +273,14 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     const [stockByBranch, setStockByBranch] = useState<Record<string, string>>({})
 
     const saveOp = useRef<ClientOperationKey | null>(null)
+
+    // Espeja el busy (guardado, subida de fotos o alta de clasificación en
+    // vuelo) hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    const busy = saving || uploadingImages || adding
+    useEffect(() => {
+        onBusyChange(busy)
+        return () => onBusyChange(false)
+    }, [busy, onBusyChange])
 
     const fetchCatalogs = useCallback(async () => {
         const [brandsRes, modelsRes, categoriesRes] = await Promise.all([
@@ -789,7 +811,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                                 ))}
                             </select>
-                            <Dialog open={dialogCategory} onOpenChange={setDialogCategory}>
+                            <Dialog open={dialogCategory} onOpenChange={guardedClose(setDialogCategory, adding)}>
                                 <DialogTrigger asChild>
                                     <Button type="button" variant="outline" size="icon" title="Agregar categoría">
                                         <Plus className="h-4 w-4" />
@@ -1319,7 +1341,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                            <Dialog open={dialogBrand} onOpenChange={setDialogBrand}>
+                            <Dialog open={dialogBrand} onOpenChange={guardedClose(setDialogBrand, adding)}>
                                 <DialogTrigger asChild>
                                     <Button type="button" variant="outline" size="sm">
                                         <Plus className="h-4 w-4 mr-1" /> Nueva marca
@@ -1347,7 +1369,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                                     </DialogFooter>
                                 </DialogContent>
                             </Dialog>
-                            <Dialog open={dialogModel} onOpenChange={setDialogModel}>
+                            <Dialog open={dialogModel} onOpenChange={guardedClose(setDialogModel, adding)}>
                                 <DialogTrigger asChild>
                                     <Button type="button" variant="outline" size="sm">
                                         <Plus className="h-4 w-4 mr-1" /> Nuevo modelo

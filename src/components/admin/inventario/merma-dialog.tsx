@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -57,8 +58,18 @@ interface MermaDialogProps {
 }
 
 export function MermaDialog({ branches, open, onOpenChange, onSaved, lockedBranchId }: MermaDialogProps) {
+    // Espejo del `saving` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras el POST sigue en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-md">
                 {/* DialogContent desmonta al cerrar: el form reinicia su estado en cada apertura. */}
                 {open && (
@@ -67,6 +78,7 @@ export function MermaDialog({ branches, open, onOpenChange, onSaved, lockedBranc
                         lockedBranchId={lockedBranchId ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -79,9 +91,10 @@ interface MermaFormProps {
     lockedBranchId: string | null
     onSaved: () => void
     close: () => void
+    onBusyChange: (busy: boolean) => void
 }
 
-function MermaForm({ branches, lockedBranchId, onSaved, close }: MermaFormProps) {
+function MermaForm({ branches, lockedBranchId, onSaved, close, onBusyChange }: MermaFormProps) {
     const [product, setProduct] = useState<SearchProduct | null>(null)
     const [type, setType] = useState<MermaType>("DAMAGED")
     const [branchId, setBranchId] = useState(lockedBranchId ?? branches[0]?.id ?? "")
@@ -95,6 +108,12 @@ function MermaForm({ branches, lockedBranchId, onSaved, close }: MermaFormProps)
 
     const [saving, setSaving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
+
+    // Espeja `saving` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(saving)
+        return () => onBusyChange(false)
+    }, [saving, onBusyChange])
 
     // La búsqueda devuelve el stock de la sucursal elegida (branchId en la query).
     const searchProducts = useCallback(async (query: string, branch: string) => {

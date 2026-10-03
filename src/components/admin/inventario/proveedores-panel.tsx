@@ -28,6 +28,7 @@ import {
 import { EmptyState } from "@/components/admin/empty-state"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
 import { Ban, Banknote, CalendarClock, ChevronDown, ChevronUp, History, Loader2, Mail, Pencil, Phone, Plus, Truck, X } from "lucide-react"
+import { guardedClose } from "@/lib/dialog-guard"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -439,7 +440,7 @@ export function ProveedoresPanel() {
             )}
 
             {/* Crear / editar */}
-            <Dialog open={formOpen} onOpenChange={(open) => { if (!saving) setFormOpen(open) }}>
+            <Dialog open={formOpen} onOpenChange={guardedClose(setFormOpen, saving)}>
                 <DialogContent className="sm:max-w-md">
                     <form onSubmit={handleSubmit}>
                         <DialogHeader>
@@ -513,7 +514,14 @@ export function ProveedoresPanel() {
             </Dialog>
 
             {/* Confirmación de desactivar */}
-            <AlertDialog open={deactivateTarget !== null} onOpenChange={(open) => { if (!open && !deactivating) setDeactivateTarget(null) }}>
+            <AlertDialog
+                open={deactivateTarget !== null}
+                onOpenChange={guardedClose(
+                    // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                    (o) => { if (!(typeof o === "function" ? o(deactivateTarget !== null) : o)) setDeactivateTarget(null) },
+                    deactivating,
+                )}
+            >
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>¿Desactivar a {deactivateTarget?.name}?</AlertDialogTitle>

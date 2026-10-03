@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -645,7 +646,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
             )}
 
             {/* Confirmación: aplicar ajustes */}
-            <AlertDialog open={confirmApply} onOpenChange={setConfirmApply}>
+            <AlertDialog open={confirmApply} onOpenChange={guardedClose(setConfirmApply, acting)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>¿Aplicar los ajustes del conteo {detail?.folio}?</AlertDialogTitle>
@@ -756,7 +757,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
             </Dialog>
 
             {/* Confirmación: cancelar conteo */}
-            <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+            <AlertDialog open={confirmCancel} onOpenChange={guardedClose(setConfirmCancel, acting)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>¿Cancelar el conteo {detail?.folio}?</AlertDialogTitle>

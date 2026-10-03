@@ -1,7 +1,8 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -58,8 +59,18 @@ interface PagoProveedorDialogProps {
 }
 
 export function PagoProveedorDialog({ open, onOpenChange, supplier, purchases, fixedPurchase, onSaved }: PagoProveedorDialogProps) {
+    // Espejo del `saving` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras el POST sigue en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-md">
                 {/* DialogContent desmonta al cerrar: el form reinicia su estado en cada apertura. */}
                 {open && supplier && (
@@ -69,6 +80,7 @@ export function PagoProveedorDialog({ open, onOpenChange, supplier, purchases, f
                         fixedPurchase={fixedPurchase ?? null}
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -82,15 +94,22 @@ interface PagoFormProps {
     fixedPurchase: PendingPurchase | null
     onSaved: () => void
     close: () => void
+    onBusyChange: (busy: boolean) => void
 }
 
-function PagoForm({ supplier, purchases, fixedPurchase, onSaved, close }: PagoFormProps) {
+function PagoForm({ supplier, purchases, fixedPurchase, onSaved, close, onBusyChange }: PagoFormProps) {
     const [purchaseId, setPurchaseId] = useState(fixedPurchase?.id ?? GENERAL)
     const [amount, setAmount] = useState("")
     const [method, setMethod] = useState("TRANSFER")
     const [notes, setNotes] = useState("")
     const [saving, setSaving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
+
+    // Espeja `saving` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(saving)
+        return () => onBusyChange(false)
+    }, [saving, onBusyChange])
 
     const selected = fixedPurchase ?? purchases.find(p => p.id === purchaseId) ?? null
     const amountCents = Math.round((parseFloat(amount) || 0) * 100)

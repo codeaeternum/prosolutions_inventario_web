@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -493,8 +494,21 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                 onSaved={() => void fetchPurchases()}
             />
 
-            {/* Detalle de la orden */}
-            <Dialog open={detail !== null} onOpenChange={(open) => { if (!open) { setDetail(null); setReceivingItem(null) } }}>
+            {/* Detalle de la orden: también muta (recepción parcial por línea) —
+                guardedClose bloquea Escape/clic fuera mientras el POST está en vuelo. */}
+            <Dialog
+                open={detail !== null}
+                onOpenChange={guardedClose(
+                    // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                    (o) => {
+                        if (!(typeof o === "function" ? o(detail !== null) : o)) {
+                            setDetail(null)
+                            setReceivingItem(null)
+                        }
+                    },
+                    receiving,
+                )}
+            >
                 <DialogContent className="sm:max-w-lg">
                     {detail && (
                         <>
@@ -658,7 +672,14 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
             </Dialog>
 
             {/* Confirmación de cambio de estado */}
-            <AlertDialog open={pending !== null} onOpenChange={(open) => { if (!open && !acting) setPending(null) }}>
+            <AlertDialog
+                open={pending !== null}
+                onOpenChange={guardedClose(
+                    // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                    (o) => { if (!(typeof o === "function" ? o(pending !== null) : o)) setPending(null) },
+                    acting,
+                )}
+            >
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>

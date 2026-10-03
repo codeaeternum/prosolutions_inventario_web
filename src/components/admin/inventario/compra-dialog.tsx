@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -78,8 +79,18 @@ interface CompraDialogProps {
 }
 
 export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved, purchase }: CompraDialogProps) {
+    // Espejo del `saving` del form: guardedClose bloquea Escape y el clic fuera
+    // mientras el POST/PATCH sigue en vuelo (evita reintentos con otra key).
+    const [busy, setBusy] = useState(false)
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog
+            open={open}
+            onOpenChange={guardedClose(
+                // guardedClose espera un setter estilo useState; aquí solo llegan booleanos.
+                (v) => onOpenChange(typeof v === "function" ? v(open) : v),
+                busy,
+            )}
+        >
             <DialogContent className="sm:max-w-2xl">
                 {/* DialogContent desmonta al cerrar: el form reinicia su estado en cada apertura. */}
                 {open && (
@@ -89,6 +100,7 @@ export function CompraDialog({ suppliers, branches, open, onOpenChange, onSaved,
                         onSaved={onSaved}
                         close={() => onOpenChange(false)}
                         purchase={purchase ?? null}
+                        onBusyChange={setBusy}
                     />
                 )}
             </DialogContent>
@@ -102,11 +114,12 @@ interface CompraFormProps {
     onSaved: () => void
     close: () => void
     purchase: PurchaseToEdit | null
+    onBusyChange: (busy: boolean) => void
 }
 
 const NO_SUPPLIER = "__none__"
 
-function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFormProps) {
+function CompraForm({ suppliers, branches, onSaved, close, purchase, onBusyChange }: CompraFormProps) {
     const editing = purchase !== null
     const [supplierId, setSupplierId] = useState(purchase?.supplier?.id ?? NO_SUPPLIER)
     const [branchId, setBranchId] = useState(purchase?.branch.id ?? branches[0]?.id ?? "")
@@ -128,6 +141,12 @@ function CompraForm({ suppliers, branches, onSaved, close, purchase }: CompraFor
 
     const [saving, setSaving] = useState(false)
     const operation = useRef<ClientOperationKey | null>(null)
+
+    // Espeja `saving` hacia el Dialog padre (guardedClose) y lo libera al desmontar.
+    useEffect(() => {
+        onBusyChange(saving)
+        return () => onBusyChange(false)
+    }, [saving, onBusyChange])
 
     const searchProducts = useCallback(async (query: string) => {
         if (query.trim().length < 2) {
