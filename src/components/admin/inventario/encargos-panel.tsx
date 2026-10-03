@@ -1,8 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { EmptyState } from "@/components/admin/empty-state"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
-import { PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store, MessageCircle } from "lucide-react"
+import { ArrowRight, PackageCheck, PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store, MessageCircle, LucideIcon } from "lucide-react"
 import { hasWhatsAppPhone, openWhatsApp } from "@/lib/whatsapp"
 
 // ============================ Tipos ============================
@@ -85,10 +87,12 @@ interface Needs {
 const orderFolio = (number: number) => `OT-${String(number).padStart(6, "0")}`
 const cents = (value: number | null | undefined) => Math.round((value ?? 0) * 100)
 
-const ENCARGO_STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "warning" }> = {
+// Color solo donde hay que actuar: PENDING pide que alguien la pida, READY
+// avisa que ya se puede entregar. ORDERED/DELIVERED/CANCELLED quedan neutras.
+const ENCARGO_STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "warning" | "success" }> = {
     PENDING: { label: "Pendiente", variant: "warning" },
     ORDERED: { label: "Pedida", variant: "secondary" },
-    READY: { label: "Lista para entregar", variant: "default" },
+    READY: { label: "Lista para entregar", variant: "success" },
     DELIVERED: { label: "Entregada", variant: "outline" },
     CANCELLED: { label: "Cancelada", variant: "destructive" },
 }
@@ -108,9 +112,12 @@ const ENCARGO_FILTERS = [
  * Si el endpoint aún no existe o falla, el área simplemente muestra
  * "Sin sugerencias" — nunca rompe el panel.
  */
-function AllySuggestions({ query, busy, onPick }: {
+function AllySuggestions({ query, busy, pending, onPick }: {
     query: string
+    /** true mientras CUALQUIER acción del panel está en vuelo (bloquea el botón). */
     busy: boolean
+    /** true solo cuando la solicitud al aliado en vuelo salió de ESTE buscador. */
+    pending: boolean
     onPick: (suggestion: AllySuggestion) => void
 }) {
     const [suggestions, setSuggestions] = useState<AllySuggestion[]>([])
@@ -169,7 +176,7 @@ function AllySuggestions({ query, busy, onPick }: {
                                 </p>
                             </div>
                             <Button type="button" size="sm" variant="outline" disabled={busy || !s.available} onClick={() => onPick(s)}>
-                                <Handshake className="h-4 w-4 mr-1" /> Pedirla
+                                {pending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Handshake className="h-4 w-4 mr-1" />} Pedirla
                             </Button>
                         </div>
                     ))}
@@ -221,13 +228,17 @@ export function EncargosPanel() {
     const [allyBoxFor, setAllyBoxFor] = useState<string | null>(null)
     const [allyTerm, setAllyTerm] = useState("")
 
-    // Selección para la orden de compra (lista de compras del almacén)
+    // Selección para la orden de compra (lista de compras del almacén).
+    // El "stock bajo" ya no se tilda aquí: las sugerencias viven en Entradas
+    // y llegan a esta lista como insumos ligados a producto.
     const [partChecked, setPartChecked] = useState<Record<string, boolean>>({})
-    const [lowChecked, setLowChecked] = useState<Record<string, boolean>>({})
     const [manualChecked, setManualChecked] = useState<Record<string, boolean>>({})
     const [supplierId, setSupplierId] = useState("none")
     const [ocNotes, setOcNotes] = useState("")
     const [busy, setBusy] = useState(false)
+    // Qué acción está en vuelo (para poner el spinner en el botón que la
+    // disparó); `busy` sigue bloqueando todo mientras haya una.
+    const [pendingKey, setPendingKey] = useState<string | null>(null)
 
     // Alta manual de insumos
     const [description, setDescription] = useState("")
@@ -391,6 +402,7 @@ export function EncargosPanel() {
         event.preventDefault()
         if (busy) return
         setBusy(true)
+        setPendingKey("encargo:new")
         try {
             const created = await createEncargo()
             if (!created) return
@@ -401,6 +413,7 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
@@ -428,6 +441,7 @@ export function EncargosPanel() {
     const orderFromAlly = async (item: EncargoRow | null, suggestion: AllySuggestion) => {
         if (busy) return
         setBusy(true)
+        setPendingKey(`ally:${item?.id ?? "form"}`)
         try {
             let target = item
             if (!target) {
@@ -459,12 +473,14 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
     const markEncargo = async (item: EncargoRow, action: "ORDERED" | "READY" | "DELIVERED" | "CANCELLED") => {
         if (busy) return
         setBusy(true)
+        setPendingKey(`${item.id}:${action}`)
         try {
             await transitionEncargo(item, action)
             toast.success(
@@ -478,6 +494,7 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
@@ -490,20 +507,10 @@ export function EncargosPanel() {
     }
 
     // --- Selección → líneas de la OC (lista de compras) ---
-    const selectedItems = () => {
-        const map = new Map<string, { productId: string; quantity: number; unitCostCents: number }>()
-        for (const row of needs.partsShortage) {
-            if (!partChecked[row.productId]) continue
-            map.set(row.productId, { productId: row.productId, quantity: row.shortage, unitCostCents: cents(row.costPrice) })
-        }
-        for (const row of needs.lowStock) {
-            if (!lowChecked[row.productId]) continue
-            const prev = map.get(row.productId)
-            // Mismo producto en ambas secciones: la mayor cantidad cubre las dos demandas.
-            map.set(row.productId, { productId: row.productId, quantity: Math.max(prev?.quantity ?? 0, row.suggested), unitCostCents: prev?.unitCostCents ?? cents(row.costPrice) })
-        }
-        return [...map.values()]
-    }
+    const selectedItems = () =>
+        needs.partsShortage
+            .filter(row => partChecked[row.productId])
+            .map(row => ({ productId: row.productId, quantity: row.shortage, unitCostCents: cents(row.costPrice) }))
     const manualIds = needs.manual.filter(item => manualChecked[item.id]).map(item => item.id)
     const selectionCount = selectedItems().length + manualIds.length
 
@@ -517,6 +524,7 @@ export function EncargosPanel() {
         if (!Number.isFinite(cost) || cost < 0) return toast.error("El costo estimado no es válido")
         if (Math.abs(cost * 100 - Math.round(cost * 100)) > 0.000001) return toast.error("El costo admite hasta dos decimales")
         setBusy(true)
+        setPendingKey("manual:new")
         try {
             const payload = { description: description.trim(), quantity: qty, unitCostCents: Math.round(cost * 100), notes: notes.trim() || undefined }
             addKey.current = getClientOperationKey(addKey.current, payload)
@@ -534,12 +542,14 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
     const resolveManual = async (item: ManualRow, action: "PURCHASED" | "CANCELLED") => {
         if (busy) return
         setBusy(true)
+        setPendingKey(`manual:${item.id}:${action}`)
         try {
             const payload = { action }
             resolveKeys.current[item.id] = getClientOperationKey(resolveKeys.current[item.id] ?? null, payload)
@@ -556,6 +566,7 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
@@ -566,6 +577,7 @@ export function EncargosPanel() {
         if (!items.length) return toast.error("La orden de compra necesita al menos un producto del catálogo; los insumos sin producto se marcan aparte con «Comprado»")
         if (!branchId) return toast.error("Selecciona la sucursal destino de la compra")
         setBusy(true)
+        setPendingKey("oc")
         try {
             const payload = { branchId, supplierId: supplierId === "none" ? undefined : supplierId, notes: ocNotes.trim() || undefined, items, manualItemIds: manualIds }
             ocKey.current = getClientOperationKey(ocKey.current, payload)
@@ -576,7 +588,7 @@ export function EncargosPanel() {
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "No se pudo generar la orden de compra")
             ocKey.current = null
-            setPartChecked({}); setLowChecked({}); setManualChecked({}); setOcNotes("")
+            setPartChecked({}); setManualChecked({}); setOcNotes("")
             toast.success(`Orden de compra ${data.folio} creada en borrador`, {
                 description: data.linkedManualItems ? `${data.linkedManualItems} insumo(s) marcados como comprados` : undefined,
                 action: { label: "Ver compras", onClick: () => router.push("/admin/inventario?tab=compras") },
@@ -586,12 +598,19 @@ export function EncargosPanel() {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
         } finally {
             setBusy(false)
+            setPendingKey(null)
         }
     }
 
+    /** Icono del botón: mientras SU acción está en vuelo muestra el spinner. */
+    const pendingIcon = (key: string, Icon: LucideIcon) =>
+        pendingKey === key
+            ? <Loader2 className="w-4 h-4 mr-1 animate-spin" aria-hidden />
+            : <Icon className="w-4 h-4 mr-1" aria-hidden />
+
     const branchSelector = branches.length > 1 ? (
         <Select value={branchId} onValueChange={setBranchId}>
-            <SelectTrigger className="w-full sm:w-56">
+            <SelectTrigger className="w-full sm:w-56" aria-label="Sucursal de la lista de compras">
                 <SelectValue placeholder="Sucursal" />
             </SelectTrigger>
             <SelectContent>
@@ -602,21 +621,58 @@ export function EncargosPanel() {
         </Select>
     ) : null
 
-    if (loading) return <div className="p-8 text-center text-muted-foreground">Cargando encargos…</div>
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center gap-2 p-8 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                Cargando encargos…
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-6 pb-24 lg:pb-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            {/* Toolbar: qué es esta pestaña + sucursal de la lista de compras */}
+            <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm text-muted-foreground">
                     Piezas que encargan clientes y, abajo, la lista de compras del almacén.
                 </p>
-                {branchSelector}
+                {branchSelector && <div className="w-full sm:ml-auto sm:w-auto">{branchSelector}</div>}
             </div>
+
+            {/* Resumen de lo que pide atención — color solo donde hay que
+                actuar; "bajo mínimo" lleva a las sugerencias de Entradas. */}
+            {(needs.partsShortage.length > 0 || needs.lowStock.length > 0 || needs.manual.length > 0) && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    {needs.partsShortage.length > 0 && (
+                        <span>
+                            <span className="font-semibold text-destructive tabular-nums">{needs.partsShortage.length}</span>{" "}
+                            producto{needs.partsShortage.length === 1 ? "" : "s"} faltante{needs.partsShortage.length === 1 ? "" : "s"} en órdenes abiertas
+                        </span>
+                    )}
+                    {needs.lowStock.length > 0 && (
+                        <Link
+                            href="/admin/inventario?tab=entradas"
+                            title="Ver las sugerencias de compra en Entradas"
+                            className="rounded-sm underline-offset-2 hover:underline"
+                        >
+                            <span className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{needs.lowStock.length}</span>{" "}
+                            bajo mínimo
+                        </Link>
+                    )}
+                    {needs.manual.length > 0 && (
+                        <span>
+                            <span className="font-semibold text-foreground tabular-nums">{needs.manual.length}</span>{" "}
+                            insumo{needs.manual.length === 1 ? "" : "s"} por comprar
+                        </span>
+                    )}
+                </div>
+            )}
 
             {/* ============ Encargos de clientes ============ */}
             <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><ClipboardList className="h-5 w-5" /> Encargos de clientes</CardTitle>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2"><ClipboardList className="h-5 w-5 text-muted-foreground" /> Encargos de clientes</CardTitle>
                     <CardDescription>
                         Piezas que un cliente pide y no tenemos en stock: se registran, se piden al
                         proveedor o a un aliado del mercado, y se entregan cuando llegan.
@@ -627,8 +683,9 @@ export function EncargosPanel() {
                     <form onSubmit={e => void submitEncargo(e)} className="space-y-3 rounded-lg border p-3">
                         <div className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem_9rem]">
                             <div className="space-y-2">
-                                <Label>Qué pieza busca *</Label>
+                                <Label htmlFor="enc-desc">Qué pieza busca *</Label>
                                 <Input
+                                    id="enc-desc"
                                     maxLength={300}
                                     placeholder="Ej. Pantalla iPhone 12 original"
                                     value={encDescription}
@@ -636,36 +693,45 @@ export function EncargosPanel() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label>Cantidad</Label>
-                                <Input type="number" min="1" max="9999" step="1" value={encQuantity} onChange={e => setEncQuantity(e.target.value)} />
+                                <Label htmlFor="enc-qty">Cantidad</Label>
+                                <Input id="enc-qty" type="number" min="1" max="9999" step="1" value={encQuantity} onChange={e => setEncQuantity(e.target.value)} />
                             </div>
                             <div className="space-y-2">
-                                <Label>Precio cotizado $</Label>
-                                <Input type="number" min="0" step="0.01" placeholder="Opcional" value={encPrice} onChange={e => setEncPrice(e.target.value)} />
+                                <Label htmlFor="enc-price">Precio cotizado $</Label>
+                                <Input id="enc-price" type="number" min="0" step="0.01" placeholder="Opcional" value={encPrice} onChange={e => setEncPrice(e.target.value)} />
                             </div>
                             <div className="space-y-2">
-                                <Label>Anticipo $</Label>
-                                <Input type="number" min="0" step="0.01" placeholder="0.00" value={encDeposit} onChange={e => setEncDeposit(e.target.value)} />
+                                <Label htmlFor="enc-deposit">Anticipo $</Label>
+                                <Input id="enc-deposit" type="number" min="0" step="0.01" placeholder="0.00" value={encDeposit} onChange={e => setEncDeposit(e.target.value)} />
                             </div>
                         </div>
 
                         {/* Sugerencias del mercado según la descripción capturada */}
-                        <AllySuggestions query={encDescription} busy={busy} onPick={s => void orderFromAlly(null, s)} />
+                        <AllySuggestions query={encDescription} busy={busy} pending={pendingKey === "ally:form"} onPick={s => void orderFromAlly(null, s)} />
 
                         <div className="grid gap-3 sm:grid-cols-2">
                             {/* Cliente opcional con buscador */}
                             <div className="space-y-2 relative">
-                                <Label>Cliente (opcional)</Label>
+                                <Label htmlFor="enc-customer">Cliente (opcional)</Label>
                                 {customer ? (
                                     <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 h-9 text-sm">
                                         <span className="truncate">{customer.name}{customer.phone ? ` · ${customer.phone}` : ""}</span>
-                                        <Button type="button" variant="ghost" size="sm" className="h-6 px-2" onClick={() => { setCustomer(null); setCustomerTerm("") }}>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2"
+                                            title="Quitar cliente"
+                                            aria-label="Quitar cliente"
+                                            onClick={() => { setCustomer(null); setCustomerTerm("") }}
+                                        >
                                             <X className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
                                 ) : (
                                     <>
                                         <Input
+                                            id="enc-customer"
                                             placeholder="Nombre o teléfono del cliente"
                                             value={customerTerm}
                                             onChange={e => setCustomerTerm(e.target.value)}
@@ -694,17 +760,26 @@ export function EncargosPanel() {
 
                             {/* Pieza del catálogo propio (opcional) */}
                             <div className="space-y-2 relative">
-                                <Label>Pieza del catálogo (opcional)</Label>
+                                <Label htmlFor="enc-product">Pieza del catálogo (opcional)</Label>
                                 {productPick ? (
                                     <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 h-9 text-sm">
                                         <span className="truncate">{productPick.name}</span>
-                                        <Button type="button" variant="ghost" size="sm" className="h-6 px-2" onClick={() => { setProductPick(null); setProductTerm("") }}>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2"
+                                            title="Quitar la pieza del catálogo"
+                                            aria-label="Quitar la pieza del catálogo"
+                                            onClick={() => { setProductPick(null); setProductTerm("") }}
+                                        >
                                             <X className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
                                 ) : (
                                     <>
                                         <Input
+                                            id="enc-product"
                                             placeholder="Buscar en el catálogo"
                                             value={productTerm}
                                             onChange={e => setProductTerm(e.target.value)}
@@ -738,14 +813,14 @@ export function EncargosPanel() {
 
                         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                             <div className="space-y-2">
-                                <Label>Sucursal</Label>
+                                <Label id="enc-branch-label">Sucursal</Label>
                                 {isEmployee ? (
                                     <div className="flex h-9 items-center rounded-md border bg-muted/50 px-3 text-sm">
                                         {employeeBranch?.name ?? "Tu sucursal"}
                                     </div>
                                 ) : (
                                     <Select value={encBranchId} onValueChange={setEncBranchId}>
-                                        <SelectTrigger>
+                                        <SelectTrigger aria-labelledby="enc-branch-label">
                                             <SelectValue placeholder="Sucursal que recibe" />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -757,24 +832,25 @@ export function EncargosPanel() {
                                 )}
                             </div>
                             <div className="space-y-2">
-                                <Label>Nota para proveedor (opcional)</Label>
-                                <Input maxLength={500} placeholder="A quién se le pide, referencia…" value={encSupplierNote} onChange={e => setEncSupplierNote(e.target.value)} />
+                                <Label htmlFor="enc-supplier-note">Nota para proveedor (opcional)</Label>
+                                <Input id="enc-supplier-note" maxLength={500} placeholder="A quién se le pide, referencia…" value={encSupplierNote} onChange={e => setEncSupplierNote(e.target.value)} />
                             </div>
                             <Button type="submit" disabled={busy}>
-                                {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                                {pendingKey === "encargo:new" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" aria-hidden /> : null}
                                 Registrar encargo
                             </Button>
                         </div>
                     </form>
 
                     {/* Filtro por estado */}
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar encargos por estado">
                         {ENCARGO_FILTERS.map(f => (
                             <Button
                                 key={f.value}
                                 type="button"
                                 size="sm"
                                 variant={encFilter === f.value ? "default" : "outline"}
+                                aria-pressed={encFilter === f.value}
                                 onClick={() => setEncFilter(f.value)}
                             >
                                 {f.label}
@@ -784,75 +860,93 @@ export function EncargosPanel() {
 
                     {/* Lista de encargos */}
                     {encargos.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-6">
-                            {encFilter ? "No hay encargos con este estado." : "Ningún cliente tiene una pieza encargada."}
-                        </p>
+                        <EmptyState
+                            icon={ClipboardList}
+                            title={encFilter ? "Sin encargos con este estado" : "Sin encargos registrados"}
+                            description={encFilter
+                                ? "Prueba con otro filtro de estado."
+                                : "Cuando un cliente pida una pieza que no hay en stock, regístrala arriba para darle seguimiento."}
+                        />
                     ) : (
                         <div className="space-y-2">
                             {encargos.map(item => {
                                 const chip = ENCARGO_STATUS[item.status] ?? { label: item.status, variant: "outline" as const }
+                                const trail = [
+                                    item.product ? `Catálogo: ${item.product.name}` : null,
+                                    item.supplierNote,
+                                    item.marketplaceRequestId ? `Solicitud al aliado #${item.marketplaceRequestId.slice(-6)}` : null,
+                                ].filter(Boolean).join(" · ")
                                 return (
-                                    <div key={item.id} className="rounded-lg border p-3 text-sm space-y-2">
+                                    <div
+                                        key={item.id}
+                                        className="rounded-lg border p-3 text-sm space-y-2.5"
+                                        aria-busy={pendingKey?.startsWith(`${item.id}:`) || undefined}
+                                    >
                                         <div className="flex flex-wrap items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                                <p className="font-medium">
-                                                    {item.quantity} × {item.description}
+                                            <div className="min-w-0 space-y-0.5">
+                                                <p className="font-medium leading-snug break-words">
+                                                    <span className="tabular-nums">{item.quantity}</span> × {item.description}
                                                 </p>
-                                                <p className="text-xs text-muted-foreground">
+                                                <p className="text-xs text-muted-foreground break-words">
                                                     {item.customer ? `${item.customer.name}${item.customer.phone ? ` · ${item.customer.phone}` : ""}` : "Sin cliente ligado"}
                                                     {item.branch ? ` · ${item.branch.name}` : ""}
-                                                    {item.createdBy ? ` · registró ${item.createdBy.name}` : ""}
-                                                    {" · "}{formatDate(item.createdAt)}
                                                 </p>
                                                 <p className="text-xs text-muted-foreground">
-                                                    {item.priceQuoted != null && <>Precio: <span className="font-medium text-foreground">{formatPrice(item.priceQuoted)}</span> · </>}
-                                                    {item.deposit > 0 && <>Anticipo: <span className="font-medium text-foreground">{formatPrice(item.deposit)}</span> · </>}
-                                                    {item.product && <>Catálogo: {item.product.name} · </>}
-                                                    {item.supplierNote && <>{item.supplierNote} · </>}
-                                                    {item.marketplaceRequestId && <>Solicitud al aliado #{item.marketplaceRequestId.slice(-6)}</>}
+                                                    {formatDate(item.createdAt)}{item.createdBy ? ` · registró ${item.createdBy.name}` : ""}
                                                 </p>
+                                                {(item.priceQuoted != null || item.deposit > 0) && (
+                                                    <p className="text-xs text-muted-foreground pt-0.5">
+                                                        {item.priceQuoted != null && <>Precio <span className="font-semibold text-foreground tabular-nums">{formatPrice(item.priceQuoted)}</span></>}
+                                                        {item.priceQuoted != null && item.deposit > 0 && " · "}
+                                                        {item.deposit > 0 && <>Anticipo <span className="font-semibold text-foreground tabular-nums">{formatPrice(item.deposit)}</span></>}
+                                                    </p>
+                                                )}
+                                                {trail && <p className="text-xs text-muted-foreground break-words">{trail}</p>}
                                             </div>
-                                            <Badge variant={chip.variant}>{chip.label}</Badge>
+                                            <Badge variant={chip.variant} className="shrink-0">{chip.label}</Badge>
                                         </div>
 
                                         {/* Buscador de aliados para este encargo */}
                                         {allyBoxFor === item.id && (
                                             <div className="space-y-2">
                                                 <div className="flex items-center gap-2">
-                                                    <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                    <Search className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
                                                     <Input
                                                         value={allyTerm}
                                                         onChange={e => setAllyTerm(e.target.value)}
                                                         placeholder="Buscar la pieza entre aliados"
+                                                        aria-label="Buscar la pieza entre aliados"
                                                         className="h-8"
                                                     />
                                                 </div>
-                                                <AllySuggestions query={allyTerm} busy={busy} onPick={s => void orderFromAlly(item, s)} />
+                                                <AllySuggestions query={allyTerm} busy={busy} pending={pendingKey === `ally:${item.id}`} onPick={s => void orderFromAlly(item, s)} />
                                             </div>
                                         )}
 
+                                        {/* Siguiente paso del flujo como acción principal; cancelar queda discreto. */}
                                         <div className="flex flex-wrap gap-2">
                                             {item.status === "PENDING" && (
                                                 <>
-                                                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void markEncargo(item, "ORDERED")}>
-                                                        <ShoppingCart className="w-4 h-4 mr-1" /> Pedida al proveedor
+                                                    <Button size="sm" disabled={busy} onClick={() => void markEncargo(item, "ORDERED")}>
+                                                        {pendingIcon(`${item.id}:ORDERED`, ShoppingCart)} Pedida al proveedor
                                                     </Button>
                                                     <Button
                                                         size="sm"
                                                         variant="outline"
                                                         disabled={busy}
+                                                        aria-expanded={allyBoxFor === item.id}
                                                         onClick={() => {
                                                             setAllyBoxFor(prev => prev === item.id ? null : item.id)
                                                             setAllyTerm(item.description)
                                                         }}
                                                     >
-                                                        <Store className="w-4 h-4 mr-1" /> {allyBoxFor === item.id ? "Cerrar aliados" : "Buscar en aliados"}
+                                                        <Store className="w-4 h-4 mr-1" aria-hidden /> {allyBoxFor === item.id ? "Cerrar aliados" : "Buscar en aliados"}
                                                     </Button>
                                                 </>
                                             )}
                                             {item.status === "ORDERED" && (
-                                                <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void markEncargo(item, "READY")}>
-                                                    <Check className="w-4 h-4 mr-1" /> Llegó
+                                                <Button size="sm" disabled={busy} onClick={() => void markEncargo(item, "READY")}>
+                                                    {pendingIcon(`${item.id}:READY`, Check)} Llegó
                                                 </Button>
                                             )}
                                             {item.status === "READY" && (
@@ -863,19 +957,26 @@ export function EncargosPanel() {
                                                             variant="outline"
                                                             disabled={busy}
                                                             title={`Avisar a ${item.customer?.name} por WhatsApp`}
+                                                            aria-label={`Avisar a ${item.customer?.name} por WhatsApp`}
                                                             onClick={() => avisarEncargo(item)}
                                                         >
-                                                            <MessageCircle className="w-4 h-4 mr-1" /> Avisar
+                                                            <MessageCircle className="w-4 h-4 mr-1" aria-hidden /> Avisar
                                                         </Button>
                                                     )}
-                                                    <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void markEncargo(item, "DELIVERED")}>
-                                                        <Check className="w-4 h-4 mr-1" /> Entregada
+                                                    <Button size="sm" disabled={busy} onClick={() => void markEncargo(item, "DELIVERED")}>
+                                                        {pendingIcon(`${item.id}:DELIVERED`, Check)} Entregada
                                                     </Button>
                                                 </>
                                             )}
                                             {["PENDING", "ORDERED", "READY", "DELIVERED"].includes(item.status) && (
-                                                <Button size="sm" variant="destructive" disabled={busy} onClick={() => void markEncargo(item, "CANCELLED")}>
-                                                    <X className="w-4 h-4 mr-1" /> Cancelar
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                    disabled={busy}
+                                                    onClick={() => void markEncargo(item, "CANCELLED")}
+                                                >
+                                                    {pendingIcon(`${item.id}:CANCELLED`, X)} Cancelar
                                                 </Button>
                                             )}
                                         </div>
@@ -888,19 +989,22 @@ export function EncargosPanel() {
             </Card>
 
             {/* ============ Lista de compras del almacén ============ */}
-            <p className="text-sm font-medium text-muted-foreground pt-2">Para comprar (almacén)</p>
+            <h2 className="pt-2 text-sm font-medium text-muted-foreground">Para comprar (almacén)</h2>
 
             {/* Refacciones faltantes en órdenes abiertas */}
             <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Wrench className="h-5 w-5" /> Refacciones faltantes en órdenes</CardTitle>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2"><Wrench className="h-5 w-5 text-muted-foreground" /> Refacciones faltantes en órdenes</CardTitle>
                     <CardDescription>
                         Piezas ligadas a producto pedidas por órdenes de reparación abiertas y que el stock{branchId ? " de esta sucursal" : ""} no alcanza a cubrir.
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
                     {needs.partsShortage.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-6">Ninguna orden abierta está esperando refacciones.</p>
+                        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                            <PackageCheck className="h-4 w-4" aria-hidden />
+                            Ninguna orden abierta está esperando refacciones.
+                        </p>
                     ) : (
                         <div className="overflow-x-auto">
                             <Table>
@@ -925,15 +1029,15 @@ export function EncargosPanel() {
                                                 />
                                             </TableCell>
                                             <TableCell className="font-medium">{row.name}</TableCell>
-                                            <TableCell className="text-right">{row.needed}</TableCell>
-                                            <TableCell className="text-right">{row.available}</TableCell>
+                                            <TableCell className="text-right tabular-nums">{row.needed}</TableCell>
+                                            <TableCell className="text-right tabular-nums">{row.available}</TableCell>
                                             <TableCell className="text-right">
-                                                <Badge variant="destructive">{row.shortage}</Badge>
+                                                <Badge variant="destructive" className="tabular-nums">{row.shortage}</Badge>
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex flex-wrap gap-1">
                                                     {row.orders.map(order => (
-                                                        <Badge key={order.orderId} variant="outline" className="font-normal">
+                                                        <Badge key={order.orderId} variant="outline" className="font-normal tabular-nums">
                                                             {/* La API ya trae el folio con los dígitos del negocio; orderFolio es el respaldo. */}
                                                             {order.folio ?? orderFolio(order.number)} ×{order.qty}
                                                         </Badge>
@@ -949,85 +1053,69 @@ export function EncargosPanel() {
                 </CardContent>
             </Card>
 
-            {/* Stock bajo */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><PackageX className="h-5 w-5" /> Stock bajo</CardTitle>
-                    <CardDescription>Productos activos en su mínimo o por debajo. Lo sugerido reabastece hasta el doble del mínimo.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {needs.lowStock.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-6">Ningún producto por debajo de su stock mínimo.</p>
-                    ) : (
-                        <div className="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead className="w-10"></TableHead>
-                                        <TableHead>Producto</TableHead>
-                                        <TableHead className="text-right">Stock</TableHead>
-                                        <TableHead className="text-right">Mínimo</TableHead>
-                                        <TableHead className="text-right">Sugerido</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {needs.lowStock.map(row => (
-                                        <TableRow key={row.productId}>
-                                            <TableCell>
-                                                <Checkbox
-                                                    checked={Boolean(lowChecked[row.productId])}
-                                                    onCheckedChange={value => setLowChecked(prev => ({ ...prev, [row.productId]: value === true }))}
-                                                    aria-label={`Agregar ${row.name} a la orden de compra`}
-                                                />
-                                            </TableCell>
-                                            <TableCell className="font-medium">{row.name}</TableCell>
-                                            <TableCell className="text-right">{row.stock}</TableCell>
-                                            <TableCell className="text-right">{row.minStock}</TableCell>
-                                            <TableCell className="text-right">
-                                                <Badge variant="warning">{row.suggested}</Badge>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
+            {/* Stock bajo: la tabla duplicaba las "Sugerencias de compra" de
+                Entradas (mismo aviso, allá con rotación y aliados). Aquí solo
+                queda el aviso + el puente; lo que se agregue desde Entradas
+                llega a esta lista como insumo ligado a producto. */}
+            {needs.lowStock.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm">
+                    <PackageX className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                    <p className="min-w-0 flex-1 basis-52 text-muted-foreground">
+                        Hay <span className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{needs.lowStock.length}</span>{" "}
+                        producto{needs.lowStock.length === 1 ? "" : "s"} bajo mínimo{branchId ? " en esta sucursal" : ""}.
+                    </p>
+                    <Button asChild variant="outline" size="sm">
+                        <Link href="/admin/inventario?tab=entradas">
+                            Ver sugerencias de compra
+                            <ArrowRight className="h-4 w-4" aria-hidden />
+                        </Link>
+                    </Button>
+                </div>
+            )}
 
             {/* Insumos y otros */}
             <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><PackageSearch className="h-5 w-5" /> Insumos y otros</CardTitle>
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2"><PackageSearch className="h-5 w-5 text-muted-foreground" /> Insumos y otros</CardTitle>
                     <CardDescription>Cosas que no salen del catálogo: alcohol, cinta, herramientas, consumibles.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
                     <form onSubmit={e => void addManual(e)} className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem_1fr_auto] sm:items-end">
                         <div className="space-y-2">
-                            <Label>Descripción</Label>
-                            <Input maxLength={200} placeholder="Ej. Alcohol isopropílico 1L" value={description} onChange={e => setDescription(e.target.value)} />
+                            <Label htmlFor="man-desc">Descripción</Label>
+                            <Input id="man-desc" maxLength={200} placeholder="Ej. Alcohol isopropílico 1L" value={description} onChange={e => setDescription(e.target.value)} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Cantidad</Label>
-                            <Input type="number" min="1" max="9999" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} />
+                            <Label htmlFor="man-qty">Cantidad</Label>
+                            <Input id="man-qty" type="number" min="1" max="9999" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Costo est.</Label>
-                            <Input type="number" min="0" step="0.01" placeholder="0.00" value={unitCost} onChange={e => setUnitCost(e.target.value)} />
+                            <Label htmlFor="man-cost">Costo est.</Label>
+                            <Input id="man-cost" type="number" min="0" step="0.01" placeholder="0.00" value={unitCost} onChange={e => setUnitCost(e.target.value)} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Notas</Label>
-                            <Input maxLength={500} placeholder="Opcional" value={notes} onChange={e => setNotes(e.target.value)} />
+                            <Label htmlFor="man-notes">Notas</Label>
+                            <Input id="man-notes" maxLength={500} placeholder="Opcional" value={notes} onChange={e => setNotes(e.target.value)} />
                         </div>
-                        <Button type="submit" disabled={busy}>Agregar</Button>
+                        <Button type="submit" disabled={busy}>
+                            {pendingKey === "manual:new" ? <Loader2 className="w-4 h-4 mr-1 animate-spin" aria-hidden /> : null}
+                            Agregar
+                        </Button>
                     </form>
 
                     {needs.manual.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">Sin insumos pendientes de compra.</p>
+                        <p className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                            <PackageCheck className="h-4 w-4" aria-hidden />
+                            Sin insumos pendientes de compra.
+                        </p>
                     ) : (
                         <div className="space-y-2">
                             {needs.manual.map(item => (
-                                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
+                                <div
+                                    key={item.id}
+                                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm"
+                                    aria-busy={pendingKey?.startsWith(`manual:${item.id}:`) || undefined}
+                                >
                                     <div className="flex items-start gap-3 min-w-0">
                                         <Checkbox
                                             className="mt-1"
@@ -1036,11 +1124,11 @@ export function EncargosPanel() {
                                             aria-label={`Ligar ${item.description} a la orden de compra`}
                                         />
                                         <div className="min-w-0">
-                                            <p className="font-medium">
-                                                {item.quantity} × {item.description}
-                                                {item.unitCostCents > 0 && <span className="text-muted-foreground font-normal"> · {formatPrice(item.unitCostCents / 100)} c/u</span>}
+                                            <p className="font-medium break-words">
+                                                <span className="tabular-nums">{item.quantity}</span> × {item.description}
+                                                {item.unitCostCents > 0 && <span className="text-muted-foreground font-normal tabular-nums"> · {formatPrice(item.unitCostCents / 100)} c/u</span>}
                                             </p>
-                                            <p className="text-xs text-muted-foreground">
+                                            <p className="text-xs text-muted-foreground break-words">
                                                 {item.createdBy?.name ?? "—"} · {formatDate(item.createdAt)}
                                                 {item.product ? ` · catálogo: ${item.product.name}` : ""}
                                                 {item.notes ? ` — ${item.notes}` : ""}
@@ -1048,11 +1136,17 @@ export function EncargosPanel() {
                                         </div>
                                     </div>
                                     <div className="flex gap-2">
-                                        <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void resolveManual(item, "PURCHASED")}>
-                                            <Check className="w-4 h-4 mr-1" /> Comprado
+                                        <Button size="sm" disabled={busy} onClick={() => void resolveManual(item, "PURCHASED")}>
+                                            {pendingIcon(`manual:${item.id}:PURCHASED`, Check)} Comprado
                                         </Button>
-                                        <Button size="sm" variant="destructive" disabled={busy} onClick={() => void resolveManual(item, "CANCELLED")}>
-                                            <X className="w-4 h-4 mr-1" /> Cancelar
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                            disabled={busy}
+                                            onClick={() => void resolveManual(item, "CANCELLED")}
+                                        >
+                                            {pendingIcon(`manual:${item.id}:CANCELLED`, X)} Cancelar
                                         </Button>
                                     </div>
                                 </div>
@@ -1066,13 +1160,13 @@ export function EncargosPanel() {
             <div className="sticky bottom-4 z-10">
                 <Card className="border-primary/30 shadow-lg">
                     <CardContent className="p-4 flex flex-col lg:flex-row lg:items-center gap-3">
-                        <p className="text-sm font-medium flex-1">
+                        <p className="text-sm font-medium flex-1 tabular-nums" aria-live="polite">
                             {selectionCount > 0
                                 ? `${selectedItems().length} producto(s) y ${manualIds.length} insumo(s) seleccionados`
                                 : "Tilda productos o insumos para armar la orden de compra"}
                         </p>
                         <Select value={supplierId} onValueChange={setSupplierId}>
-                            <SelectTrigger className="w-full lg:w-56">
+                            <SelectTrigger className="w-full lg:w-56" aria-label="Proveedor para la orden de compra (opcional)">
                                 <SelectValue placeholder="Proveedor (opcional)" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1086,11 +1180,14 @@ export function EncargosPanel() {
                             className="w-full lg:w-64"
                             maxLength={1000}
                             placeholder="Notas para la OC (opcional)"
+                            aria-label="Notas para la orden de compra (opcional)"
                             value={ocNotes}
                             onChange={e => setOcNotes(e.target.value)}
                         />
                         <Button onClick={() => void generatePurchase()} disabled={busy || selectionCount === 0}>
-                            {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShoppingCart className="w-4 h-4 mr-2" />}
+                            {pendingKey === "oc"
+                                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden />
+                                : <ShoppingCart className="w-4 h-4 mr-2" aria-hidden />}
                             Generar orden de compra
                         </Button>
                     </CardContent>
