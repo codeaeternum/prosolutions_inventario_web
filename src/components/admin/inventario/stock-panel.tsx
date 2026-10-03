@@ -207,6 +207,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
     const sinPrecio = searchParams.get("sinPrecio") === "true"
     const sinFoto = searchParams.get("sinFoto") === "true"
     const sinCompat = searchParams.get("sinCompat") === "true"
+    const sinStockF = searchParams.get("sinStock") === "true"
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT))
 
@@ -328,6 +329,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             if (sinPrecio) params.set("sinPrecio", "true")
             if (sinFoto) params.set("sinFoto", "true")
             if (sinCompat) params.set("sinCompat", "true")
+            if (sinStockF) params.set("sinStock", "true")
             params.set("page", String(page))
             params.set("limit", String(limit))
             const res = await fetch(`/api/products?${params}`, { signal })
@@ -350,7 +352,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         } finally {
             if (!signal?.aborted) setLoading(false)
         }
-    }, [search, categoryId, visibilidad, lowStock, sinPrecio, sinFoto, sinCompat, page, limit])
+    }, [search, categoryId, visibilidad, lowStock, sinPrecio, sinFoto, sinCompat, sinStockF, page, limit])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -441,11 +443,20 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             </button>
         ) : null
 
-    const getStockVariant = (product: StockProductItem): "destructive" | "warning" | "success" => {
+    // El color solo grita cuando hay que actuar: 0 = rojo, bajo mínimo =
+    // ámbar, sano = neutro (sin verde, para no sumar ruido en mostrador).
+    const getStockVariant = (product: StockProductItem): "destructive" | "warning" | "secondary" => {
         if (product.stock === 0) return "destructive"
         if (product.stock <= product.minStock) return "warning"
-        return "success"
+        return "secondary"
     }
+
+    const stockTitle = (product: StockProductItem) =>
+        product.stock === 0
+            ? "Agotado"
+            : product.stock <= product.minStock
+                ? `Bajo mínimo — el piso es ${product.minStock}`
+                : `Stock sano (mínimo ${product.minStock})`
 
     // Existencias por sucursal — la sucursal de trabajo resalta en todas las vistas.
     const branchChips = (product: StockProductItem) =>
@@ -456,7 +467,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                         key={s.branchId}
                         className={cn(
                             "inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums",
-                            s.branchId === actionBranchId && "ring-1 ring-primary/50",
+                            s.branchId === actionBranchId && "bg-primary/10 font-semibold text-primary ring-1 ring-primary/40",
                             s.quantity <= 0 && "text-muted-foreground/60"
                         )}
                     >
@@ -670,17 +681,17 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
         }
     }
 
-    const hasSaludFilter = sinPrecio || sinFoto || sinCompat
+    const hasSaludFilter = sinPrecio || sinFoto || sinCompat || sinStockF
     const hasFilters = search !== "" || categoryId !== "" || visibilidad !== "todos" || lowStock || hasSaludFilter
     // En móvil los filtros van colapsados; el badge cuenta los activos
     // (la búsqueda no cuenta — el propio campo ya lo muestra).
     const [filtersOpen, setFiltersOpen] = useState(false)
     const activeFilterCount = (categoryId !== "" ? 1 : 0) + (lowStock ? 1 : 0) + (visibilidad !== "todos" ? 1 : 0)
-        + (sinPrecio ? 1 : 0) + (sinFoto ? 1 : 0) + (sinCompat ? 1 : 0)
+        + (sinPrecio ? 1 : 0) + (sinFoto ? 1 : 0) + (sinCompat ? 1 : 0) + (sinStockF ? 1 : 0)
 
     const limpiarFiltros = () => {
         setSearchInput("")
-        setParams({ search: null, categoryId: null, visibilidad: null, lowStock: null, sinPrecio: null, sinFoto: null, sinCompat: null, page: null })
+        setParams({ search: null, categoryId: null, visibilidad: null, lowStock: null, sinPrecio: null, sinFoto: null, sinCompat: null, sinStock: null, page: null })
     }
 
     return (
@@ -923,13 +934,28 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                 type="button"
                                 onClick={() => setParams({ lowStock: lowStock ? null : "true", page: null })}
                                 title="Ver solo los productos bajo mínimo"
-                                className={cn("rounded-sm underline-offset-2 hover:underline", stats.bajoMinimo > 0 ? "font-medium text-amber-600 dark:text-amber-400" : "")}
+                                aria-pressed={lowStock}
+                                className={cn(
+                                    "rounded-sm underline-offset-2 hover:underline",
+                                    stats.bajoMinimo > 0 && "font-medium text-amber-600 dark:text-amber-400",
+                                    lowStock && "font-semibold underline",
+                                )}
                             >
                                 {stats.bajoMinimo} bajo mínimo
                             </button>
-                            <span className={stats.sinStock > 0 ? "font-medium text-destructive" : ""}>
+                            <button
+                                type="button"
+                                onClick={() => setParams({ sinStock: sinStockF ? null : "true", page: null })}
+                                title="Ver solo los productos agotados"
+                                aria-pressed={sinStockF}
+                                className={cn(
+                                    "rounded-sm underline-offset-2 hover:underline",
+                                    stats.sinStock > 0 && "font-medium text-destructive",
+                                    sinStockF && "font-semibold underline",
+                                )}
+                            >
                                 {stats.sinStock} sin stock
-                            </span>
+                            </button>
                             {/* Salud del catálogo: datos incompletos que conviene
                                 ir limpiando. Cada métrica es un filtro clickeable. */}
                             {(stats.sinPrecio > 0 || stats.sinFoto > 0 || stats.sinCompat > 0) && (
@@ -948,6 +974,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                                     type="button"
                                                     onClick={() => setParams({ [key]: active ? null : "true", page: null })}
                                                     title={`Ver solo productos ${label}`}
+                                                    aria-pressed={active}
                                                     className={cn(
                                                         "rounded-sm underline-offset-2 hover:underline",
                                                         active && "font-semibold text-primary underline",
@@ -1026,7 +1053,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                                     <Badge
                                         variant={getStockVariant(product)}
                                         className="pointer-events-none absolute right-2 top-2"
-                                        title={`Total: ${product.stock}`}
+                                        title={stockTitle(product)}
                                     >
                                         {product.stock}
                                     </Badge>
@@ -1112,7 +1139,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             </div>
                             <div className="col-span-3 md:col-span-2">{branchChips(product)}</div>
                             <div className="col-span-2 text-left md:col-span-1 md:text-center">
-                                <Badge variant={getStockVariant(product)}>{product.stock}</Badge>
+                                <Badge variant={getStockVariant(product)} title={stockTitle(product)}>{product.stock}</Badge>
                                 <StockQtyEditor
                                     productId={product.id}
                                     productName={product.name}
@@ -1205,7 +1232,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
 
                                         {/* Total + ajuste inline sobre la sucursal de trabajo */}
                                         <div className="col-span-4 md:col-span-1 text-left md:text-center">
-                                            <Badge variant={getStockVariant(product)} title="Total en todas las sucursales">
+                                            <Badge variant={getStockVariant(product)} title={stockTitle(product)}>
                                                 {product.stock}
                                             </Badge>
                                             <div className="mt-1 flex md:justify-center">
@@ -1254,6 +1281,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                             ...(sinPrecio && { sinPrecio: "true" }),
                             ...(sinFoto && { sinFoto: "true" }),
                             ...(sinCompat && { sinCompat: "true" }),
+                            ...(sinStockF && { sinStock: "true" }),
                         }}
                     />
                 </div>

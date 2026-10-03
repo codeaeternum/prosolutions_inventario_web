@@ -56,6 +56,7 @@ export async function GET(req: Request) {
     const sinPrecio = searchParams.get("sinPrecio") === "true"
     const sinFoto = searchParams.get("sinFoto") === "true"
     const sinCompat = searchParams.get("sinCompat") === "true"
+    const sinStock = searchParams.get("sinStock") === "true"
     // marketVisibility es un flag interno de gestión: el filtro solo aplica
     // para staff (se ignora silenciosamente para público/clientes).
     const VISIBILIDAD: Record<string, string> = { publicos: "PUBLIC", aliados: "ALLIES", ocultos: "HIDDEN" }
@@ -64,7 +65,7 @@ export async function GET(req: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
-    if ((lowStock || sinPrecio || sinFoto || sinCompat) && !isCatalogStaff(viewer)) return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+    if ((lowStock || sinPrecio || sinFoto || sinCompat || sinStock) && !isCatalogStaff(viewer)) return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
 
     // modelId y search producen cada uno un OR; se acumulan en un AND para no
     // sobrescribirse (un search dentro de un modelo debe conservar el modelo).
@@ -104,6 +105,7 @@ export async function GET(req: Request) {
       ...(andClauses.length > 0 && { AND: andClauses }),
       ...(sinPrecio && { retailPrice: { lte: 1 } }),
       ...(sinFoto && { images: { isEmpty: true } }),
+      ...(sinStock && { stock: 0 }),
     }
 
     const include = {

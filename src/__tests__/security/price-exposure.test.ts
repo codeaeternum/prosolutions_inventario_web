@@ -362,6 +362,15 @@ describe("GET /api/products (auth opcional, DTO por viewer)", () => {
     ])
   })
 
+  it("sinStock=true (staff): el where exige stock total en cero", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seedList()
+    const res = await listProducts(req(`${url}?sinStock=true`))
+    expect(res.status).toBe(200)
+    expect(mocks.prisma.product.findMany.mock.calls[0][0].where.stock).toBe(0)
+    expect(mocks.prisma.product.count.mock.calls[0][0].where.stock).toBe(0)
+  })
+
   it("los filtros de salud se combinan entre sí y con los demás (AND)", async () => {
     mocks.auth.mockResolvedValue(admin)
     seedList()
@@ -377,7 +386,7 @@ describe("GET /api/products (auth opcional, DTO por viewer)", () => {
     })
   })
 
-  it.each([["sinPrecio"], ["sinFoto"], ["sinCompat"]])(
+  it.each([["sinPrecio"], ["sinFoto"], ["sinCompat"], ["sinStock"]])(
     "%s=true exige staff: anónimo, CUSTOMER y WORKSHOP reciben 403 sin tocar la base",
     async (param) => {
       seedList()
