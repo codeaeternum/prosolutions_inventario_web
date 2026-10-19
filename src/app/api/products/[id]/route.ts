@@ -5,7 +5,8 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
-import { releaseStock, takeStock } from "@/lib/domain/operations"
+import { BusinessError, releaseStock, takeStock } from "@/lib/domain/operations"
+import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reservations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
 import { normalizeProductName } from "@/lib/utils"
@@ -424,7 +425,7 @@ export async function DELETE(
       include: {
         reservations: {
           where: {
-            status: { in: ["PENDING", "DEPOSIT_VERIFIED"] },
+            status: { in: [...ACTIVE_RESERVATIONS] },
           },
         },
       },
@@ -437,36 +438,70 @@ export async function DELETE(
       )
     }
 
-    // No eliminar si tiene reservas activas
+    // No eliminar si tiene reservas activas: una reserva viva es dinero o
+    // deuda del cliente (anticipo verificado o cargo a crédito) y borrarla
+    // dejaría el movimiento de crédito apuntando a una fila inexistente.
     if (existingProduct.reservations.length > 0) {
       return NextResponse.json(
-        { error: "No se puede eliminar un producto con reservas activas" },
-        { status: 400 }
+        { error: "No se puede eliminar: tiene reservas activas. Resuélvelas o cancélalas primero, o desactiva el producto." },
+        { status: 409 }
       )
     }
 
     // Eliminar en transacción
-    await prisma.$transaction(async (tx: TransactionClient) => {
-      // Eliminar relaciones de modelos
-      await tx.productModel.deleteMany({
-        where: { productId: id, businessId },
-      })
+    try {
+      await prisma.$transaction(async (tx: TransactionClient) => {
+        // Re-verificación dentro de la tx: una reserva pudo crearse entre el
+        // findUnique y este punto (la FK del producto es Cascade y se la
+        // llevaría silenciosamente).
+        const stillActive = await tx.reservation.count({
+          where: { productId: id, businessId, status: { in: [...ACTIVE_RESERVATIONS] } },
+        })
+        if (stillActive > 0) {
+          throw new BusinessError(
+            "No se puede eliminar: tiene reservas activas. Resuélvelas o cancélalas primero, o desactiva el producto.",
+            409
+          )
+        }
 
-      // Eliminar movimientos de inventario
-      await tx.inventoryMovement.deleteMany({
-        where: { productId: id, businessId },
-      })
+        // Eliminar relaciones de modelos
+        await tx.productModel.deleteMany({
+          where: { productId: id, businessId },
+        })
 
-      // Eliminar reservas (solo las completadas/canceladas)
-      await tx.reservation.deleteMany({
-        where: { productId: id, businessId },
-      })
+        // Eliminar movimientos de inventario
+        await tx.inventoryMovement.deleteMany({
+          where: { productId: id, businessId },
+        })
 
-      // Eliminar producto
-      await tx.product.delete({
-        where: { id, businessId },
+        // Eliminar reservas SOLO en estado terminal: la historia se purga,
+        // nunca una reserva viva con anticipo o deuda a crédito.
+        await tx.reservation.deleteMany({
+          where: { productId: id, businessId, status: { in: [...TERMINAL_RESERVATIONS] } },
+        })
+
+        // Eliminar producto
+        await tx.product.delete({
+          where: { id, businessId },
+        })
       })
-    })
+    } catch (error) {
+      if (error instanceof BusinessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status })
+      }
+      // SaleItem, MarketplaceRequest, PurchaseItem e InventoryCountItem
+      // referencian al producto con Restrict: la FK aborta el delete.
+      const code = error && typeof error === "object" && "code" in error
+        ? (error as { code: unknown }).code
+        : undefined
+      if (code === "P2003" || code === "P2014") {
+        return NextResponse.json(
+          { error: "No se puede eliminar: tiene ventas o solicitudes asociadas. Desactívalo en su lugar." },
+          { status: 409 }
+        )
+      }
+      throw error
+    }
 
     await recordAudit(prisma, {
       businessId,

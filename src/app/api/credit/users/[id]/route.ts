@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { getSession, requireAdmin, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { money, recordAudit } from "@/lib/audit"
 import { z } from "zod"
 
 const patchSchema = z.object({
-  creditLimit: z.number().min(0).nullable(),
+  // Tope razonable: finito, no negativo y ≤ $10,000,000 — un límite absurdo
+  // (Infinity, negativos) deja el fiado sin freno real.
+  creditLimit: z
+    .number()
+    .finite()
+    .min(0, "El límite de crédito no puede ser negativo")
+    .max(10_000_000, "El límite de crédito no puede ser mayor a $10,000,000")
+    .nullable(),
 })
 
 export async function GET(
@@ -41,7 +48,10 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const result = await requireModule("credito")
+  // Mover el límite de crédito es decisión del dueño: un empleado del módulo
+  // podría inflar cuánto puede deber cualquier cliente. El GET sí queda
+  // abierto al módulo (consulta de saldo/movimientos).
+  const result = await requireAdmin()
   if (result.error) return result.error
   const session = getSession(result)!
   const businessId = businessIdOf(session)

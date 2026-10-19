@@ -165,6 +165,93 @@ describe("PATCH /api/settings — validaciones previas a escribir", () => {
     expect(entries).toContainEqual({ key: "quote_terms", value: "Garantía de 30 días en mano de obra.", type: "STRING" })
   })
 
+  it.each([
+    ["tempReservationMinutes", -5],
+    ["tempReservationMinutes", 0],
+    ["tempReservationMinutes", 30.5],
+    ["tempReservationMinutes", 20000],
+    ["depositPercentage", -1],
+    ["depositPercentage", 0],
+    ["depositPercentage", 101],
+    ["depositPercentage", 12.5],
+    ["depositReservationHours", -48],
+    ["depositReservationHours", 0],
+    ["depositReservationHours", 1.5],
+    ["depositReservationHours", 99999],
+    ["pendingVerificationHours", -1],
+    ["pendingVerificationHours", 0],
+    ["pendingVerificationHours", 8.5],
+    ["exchangeRate", -17.5],
+    ["exchangeRate", 0],
+    ["exchangeRate", "abc"],
+    ["exchangeRate", 1000000],
+  ])("rechaza %s=%s (400, sin escrituras)", async (field, value) => {
+    const res = await PATCH(patchReq({ [field]: value }))
+    expect(res.status).toBe(400)
+    expect(mocks.settingsFindFirst).not.toHaveBeenCalled()
+    expect(mocks.settingsUpdate).not.toHaveBeenCalled()
+    expect(mocks.settingsCreate).not.toHaveBeenCalled()
+    expect(mocks.systemUpsert).not.toHaveBeenCalled()
+  })
+
+  it.each(["tempReservationMinutes", "exchangeRate"])(
+    "rechaza %s=Infinity (1e999 en el JSON) con 400",
+    async (field) => {
+      const res = await PATCH(
+        new Request("https://app.invalid/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: `{"${field}": 1e999}`,
+        })
+      )
+      expect(res.status).toBe(400)
+      expect(mocks.settingsUpdate).not.toHaveBeenCalled()
+      expect(mocks.settingsCreate).not.toHaveBeenCalled()
+    }
+  )
+
+  it("guarda numéricos válidos en la fila Settings (create cuando no existe)", async () => {
+    const res = await PATCH(
+      patchReq({
+        tempReservationMinutes: 45,
+        depositPercentage: 60,
+        depositReservationHours: 72,
+        pendingVerificationHours: 12,
+        exchangeRate: 18.75,
+      })
+    )
+    expect(res.status).toBe(200)
+    expect(mocks.settingsCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.settingsCreate.mock.calls[0][0].data).toMatchObject({
+      businessId: "biz-1",
+      tempReservationMinutes: 45,
+      depositPercentage: 60,
+      depositReservationHours: 72,
+      pendingVerificationHours: 12,
+      exchangeRate: 18.75,
+    })
+  })
+
+  it("actualiza la fila existente con los valores parseados", async () => {
+    mocks.settingsFindFirst.mockResolvedValue({ id: "s1", tempReservationMinutes: 30 })
+    const res = await PATCH(patchReq({ tempReservationMinutes: 15, exchangeRate: 19 }))
+    expect(res.status).toBe(200)
+    expect(mocks.settingsUpdate).toHaveBeenCalledTimes(1)
+    expect(mocks.settingsUpdate.mock.calls[0][0]).toEqual({
+      where: { id: "s1" },
+      data: { tempReservationMinutes: 15, exchangeRate: 19 },
+    })
+  })
+
+  it("un body sin numéricos no los toca (defaults en create)", async () => {
+    const res = await PATCH(patchReq({ ticketFooter: "Gracias" }))
+    expect(res.status).toBe(200)
+    const data = mocks.settingsCreate.mock.calls[0][0].data
+    expect(data.tempReservationMinutes).toBe(30)
+    expect(data.depositPercentage).toBe(50)
+    expect(data.exchangeRate).toBe(17.5)
+  })
+
   it("no escribe llaves ausentes del body", async () => {
     const res = await PATCH(patchReq({ ticketFooter: "Gracias" }))
     expect(res.status).toBe(200)

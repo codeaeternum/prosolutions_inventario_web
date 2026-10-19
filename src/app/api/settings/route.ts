@@ -30,6 +30,14 @@ const SIGNATURE_MODES = ["canvas", "ticket", "pin"] as const
 type SignatureMode = (typeof SIGNATURE_MODES)[number]
 const SIGNATURE_MODE_DEFAULT: SignatureMode = "canvas"
 
+// Topes de los numéricos de la fila Settings: el dominio de reservas los
+// revalida al leerlos (zod int + min), así que un valor fuera de rango
+// guardado aquí rompería cada reserva nueva. Minutos: una semana; horas: un
+// año — los mismos límites del dominio. El tipo de cambio es decimal libre.
+const TEMP_RESERVATION_MINUTES_MAX = 10080
+const RESERVATION_HOURS_MAX = 8760
+const EXCHANGE_RATE_MAX = 1_000_000
+
 /** Parsea `repair_signature_mode`; ausente/inválido cae a "canvas". */
 function parseSignatureMode(raw: string | undefined): SignatureMode {
   return (SIGNATURE_MODES as readonly string[]).includes(raw ?? "")
@@ -270,12 +278,75 @@ export async function PATCH(req: Request) {
       }
     }
 
+    // Numéricos de la fila Settings: enteros finitos dentro del rango que el
+    // dominio de reservas exige (min 1 — un 0 guardado lo haría fallar al
+    // leer). Infinity/negativos/decimales se rechazan antes de escribir nada.
+    let tempMinutes: number | undefined
+    if (tempReservationMinutes !== undefined) {
+      const parsed = Number(tempReservationMinutes)
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > TEMP_RESERVATION_MINUTES_MAX) {
+        return NextResponse.json(
+          { error: `Los minutos de reserva temporal deben ser un entero entre 1 y ${TEMP_RESERVATION_MINUTES_MAX}` },
+          { status: 400 }
+        )
+      }
+      tempMinutes = parsed
+    }
+
+    let depositPct: number | undefined
+    if (depositPercentage !== undefined) {
+      const parsed = Number(depositPercentage)
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+        return NextResponse.json(
+          { error: "El porcentaje de anticipo debe ser un entero entre 1 y 100" },
+          { status: 400 }
+        )
+      }
+      depositPct = parsed
+    }
+
+    let depositHours: number | undefined
+    if (depositReservationHours !== undefined) {
+      const parsed = Number(depositReservationHours)
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > RESERVATION_HOURS_MAX) {
+        return NextResponse.json(
+          { error: `Las horas de reserva con anticipo deben ser un entero entre 1 y ${RESERVATION_HOURS_MAX}` },
+          { status: 400 }
+        )
+      }
+      depositHours = parsed
+    }
+
+    let pendingHours: number | undefined
+    if (pendingVerificationHours !== undefined) {
+      const parsed = Number(pendingVerificationHours)
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > RESERVATION_HOURS_MAX) {
+        return NextResponse.json(
+          { error: `Las horas de verificación de pago deben ser un entero entre 1 y ${RESERVATION_HOURS_MAX}` },
+          { status: 400 }
+        )
+      }
+      pendingHours = parsed
+    }
+
+    let rate: number | undefined
+    if (exchangeRate !== undefined) {
+      const parsed = Number(exchangeRate)
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= EXCHANGE_RATE_MAX) {
+        return NextResponse.json(
+          { error: "El tipo de cambio debe ser un número mayor que 0 y menor que 1,000,000" },
+          { status: 400 }
+        )
+      }
+      rate = parsed
+    }
+
     const updateData = {
-      ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
-      ...(depositPercentage !== undefined && { depositPercentage }),
-      ...(depositReservationHours !== undefined && { depositReservationHours }),
-      ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
-      ...(exchangeRate !== undefined && { exchangeRate }),
+      ...(tempMinutes !== undefined && { tempReservationMinutes: tempMinutes }),
+      ...(depositPct !== undefined && { depositPercentage: depositPct }),
+      ...(depositHours !== undefined && { depositReservationHours: depositHours }),
+      ...(pendingHours !== undefined && { pendingVerificationHours: pendingHours }),
+      ...(rate !== undefined && { exchangeRate: rate }),
     }
     // Estado previo para la bitácora: la fila Settings (columnas numéricas)
     // y las llaves SystemSettings que este PATCH puede tocar.
@@ -296,11 +367,11 @@ export async function PATCH(req: Request) {
       : await prisma.settings.create({
           data: {
             businessId,
-            tempReservationMinutes: tempReservationMinutes ?? 30,
-            depositPercentage: depositPercentage ?? 50,
-            depositReservationHours: depositReservationHours ?? 48,
-            pendingVerificationHours: pendingVerificationHours ?? 24,
-            exchangeRate: exchangeRate ?? 17.50,
+            tempReservationMinutes: tempMinutes ?? 30,
+            depositPercentage: depositPct ?? 50,
+            depositReservationHours: depositHours ?? 48,
+            pendingVerificationHours: pendingHours ?? 24,
+            exchangeRate: rate ?? 17.50,
           },
         })
 
@@ -386,11 +457,11 @@ export async function PATCH(req: Request) {
     // EFECTIVO guardado (normalizado: prefijo saneado, booleanos "true"/
     // "false", números como texto tal como quedan en SystemSettings).
     const sentValues: Record<string, unknown> = {
-      ...(tempReservationMinutes !== undefined && { tempReservationMinutes }),
-      ...(depositPercentage !== undefined && { depositPercentage }),
-      ...(depositReservationHours !== undefined && { depositReservationHours }),
-      ...(pendingVerificationHours !== undefined && { pendingVerificationHours }),
-      ...(exchangeRate !== undefined && { exchangeRate }),
+      ...(tempMinutes !== undefined && { tempReservationMinutes: tempMinutes }),
+      ...(depositPct !== undefined && { depositPercentage: depositPct }),
+      ...(depositHours !== undefined && { depositReservationHours: depositHours }),
+      ...(pendingHours !== undefined && { pendingVerificationHours: pendingHours }),
+      ...(rate !== undefined && { exchangeRate: rate }),
       ...(bankTransferInfo !== undefined && { bank_transfer_info: bankTransferInfo ?? DEFAULTS.bankTransferInfo }),
       ...(bankCashInfo !== undefined && { bank_cash_info: bankCashInfo ?? DEFAULTS.bankCashInfo }),
       ...(ticketBusinessName !== undefined && { ticket_business_name: ticketBusinessName }),
