@@ -326,7 +326,7 @@ async function main() {
 
   for (const category of categories) {
     await prisma.category.upsert({
-      where: { slug: category.slug },
+      where: { businessId_slug: { businessId: business.id, slug: category.slug } },
       update: {},
       create: { ...category, businessId: business.id },
     })
@@ -339,7 +339,7 @@ async function main() {
 
   for (const [brandName, models] of Object.entries(deviceData)) {
     const brand = await prisma.brand.upsert({
-      where: { slug: brandName.toLowerCase().replace(/\s+/g, '-') },
+      where: { businessId_slug: { businessId: business.id, slug: brandName.toLowerCase().replace(/\s+/g, '-') } },
       update: {},
       create: {
         businessId: business.id,
@@ -399,11 +399,11 @@ async function main() {
 
   for (const product of sampleProducts) {
     try {
-      const brand = await prisma.brand.findFirst({ where: { name: product.brand } })
+      const brand = await prisma.brand.findFirst({ where: { name: product.brand, businessId: business.id } })
       const model = await prisma.model.findFirst({
         where: { name: product.model, brandId: brand?.id }
       })
-      const category = await prisma.category.findFirst({ where: { name: product.category } })
+      const category = await prisma.category.findFirst({ where: { name: product.category, businessId: business.id } })
 
       if (brand && model && category) {
         const existingProduct = await prisma.product.findFirst({

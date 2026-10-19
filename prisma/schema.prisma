@@ -206,6 +206,7 @@ model InventoryMovement {
   @@index([productId])
   @@index([createdAt])
   @@index([relatedId])
+  @@index([reservationId])
   @@index([branchId, createdAt])
   @@index([saleId])
   @@index([businessId])
@@ -307,8 +308,8 @@ model Brand {
   id         String   @id @default(cuid())
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  name       String   @unique
-  slug       String   @unique
+  name       String
+  slug       String
   logo       String?
 
   models Model[]
@@ -344,8 +345,8 @@ model Category {
   id         String   @id @default(cuid())
   businessId String
   business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  name       String   @unique
-  slug       String   @unique
+  name       String
+  slug       String
   icon       String?
 
   products Product[]
@@ -413,6 +414,7 @@ model Product {
   @@index([isUniversal])
   @@index([marketVisibility])
   @@index([businessId])
+  @@index([businessId, isActive])
 }
 
 // Historial de cambios de precio
@@ -494,6 +496,7 @@ model Reservation {
   @@index([status])
   @@index([expiresAt])
   @@index([businessId])
+  @@index([businessId, status])
 }
 
 // Movimientos de crédito (deuda y abonos)
@@ -527,6 +530,7 @@ model CreditMovement {
   @@index([userId])
   @@index([createdAt])
   @@index([businessId])
+  @@index([businessId, createdAt])
 }
 
 model Settings {
@@ -628,6 +632,7 @@ model CashMovement {
   createdAt DateTime @default(now())
 
   @@index([businessId])
+  @@index([registerId])
 }
 
 // Configuraciones del Sistema (Dólar, Tiempos, Banco)
@@ -820,6 +825,8 @@ model Sale {
   @@index([customerId, createdAt])
   @@index([status, createdAt])
   @@index([businessId])
+  @@index([businessId, createdAt])
+  @@index([sellerId])
 }
 
 model SaleItem {
@@ -988,6 +995,10 @@ model RepairOrder {
   @@index([customerPhone])
   @@index([customerId])
   @@index([businessId])
+  @@index([intakeBranchId])
+  @@index([originBusinessId])
+  @@index([delegatedToBusinessId])
+  @@index([delegatedFromOrderId])
 }
 
 // Refacción o insumo registrado contra una orden de reparación.
@@ -1187,6 +1198,8 @@ model MarketplaceRequest {
   @@index([status])
   @@index([productId])
   @@index([businessId])
+  @@index([requestedById])
+  @@index([decidedById])
 }
 
 // ==================== COMPRAS / PROVEEDORES ====================
