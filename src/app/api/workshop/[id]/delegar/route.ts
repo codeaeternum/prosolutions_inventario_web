@@ -23,6 +23,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    // Delegar copia PII del cliente a OTRO tenant, compromete el precio
+    // convenio (cuenta por pagar real) y congela la orden local sin reversa:
+    // solo ADMIN — el dominio además lo exige antes de crear la espejo
+    // (misma barrera que REFUND/ROTATE_UPLOAD_TOKEN).
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Solo el administrador puede enviar órdenes al taller asociado." }, { status: 403 })
+    }
     const { id } = await params
     const body = delegateSchema.parse(await req.json().catch(() => ({})))
     const result = await delegateRepairToPartner(prisma, session.user.id, businessIdOf(session), id, body)

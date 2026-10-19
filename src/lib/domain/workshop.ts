@@ -107,6 +107,13 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     const branch = await tx.branch.findFirst({ where: { id: input.intakeBranchId, isActive: true, businessId } })
     if (!branch) throw new BusinessError("Selecciona una sucursal activa.")
     if (input.assignedToId && !await tx.user.findFirst({ where: { id: input.assignedToId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId } })) throw new BusinessError("La persona asignada no está habilitada.")
+    // Origen aliado ligado por tenant: debe ser OTRO negocio real. Sin la
+    // validación un id basura rompe la FK originBusinessId (P2003 → 500) y
+    // apuntar al propio negocio crea una auto-referencia sin sentido.
+    if (input.originBusinessId) {
+      if (input.originBusinessId === businessId) throw new BusinessError("El negocio de origen no puede ser el mismo negocio.", 400)
+      if (!await tx.business.findUnique({ where: { id: input.originBusinessId }, select: { id: true } })) throw new BusinessError("El negocio de origen no existe.", 400)
+    }
     // FK al directorio de clientes cuando el teléfono capturado empata con una
     // cuenta CUSTOMER del negocio (primero el principal, luego el alterno).
     // Sin match la orden queda con customerId null y la 360 la cubre por teléfono.
@@ -311,6 +318,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     let detail = input.detail ?? ""
     let eventType: string = input.action
     let eventPublic = false
+    // Cierre STATUS→DELIVERED de una orden delegada: nombre del taller que
+    // recibe, para el asiento privado de constancia (ver el bloque STATUS).
+    let delegatedDeliveryTo: string | null = null
     // Dinero retenido por la orden: cobros CONFIRMED menos reembolsos
     // (filas REFUNDED con amount negativo, misma convención que ventas).
     const heldCents = async () => Math.round(((await tx.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: id, status: { in: ["CONFIRMED", "REFUNDED"] } } }))._sum.amount ?? 0) * 100)
@@ -356,17 +366,31 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     } else if (input.action === "STATUS") {
       // DELIVERED no es destino válido de STATUS: la entrega física solo
       // ocurre por SETTLE_DELIVER, que cobra el saldo y cierra refacciones.
-      // Excepción delegada: la orden local es solo referencia (el trabajo y el
-      // cobro de reparación viven en la espejo del taller asociado), así que
-      // DELIVERED y CANCELLED sí son destinos válidos por STATUS — de otro
-      // modo la orden quedaría abierta para siempre.
-      const delegatedTargets: readonly string[] = order.delegatedOrderId ? ["DELIVERED", "CANCELLED"] : []
-      if (!input.status || !(repairNextStages[order.status].includes(input.status) || delegatedTargets.includes(input.status))) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
+      // Orden delegada (delegatedOrderId): la local es solo referencia — el
+      // trabajo y el cobro de reparación viven en la espejo del taller
+      // asociado — así que sus ÚNICOS destinos por STATUS son los cierres
+      // DELIVERED/CANCELLED (de otro modo quedaría abierta para siempre).
+      // Moverla a etapas de trabajo la dejaría zombie: el status diría
+      // IN_REPAIR/READY mientras las acciones de dinero/stock siguen
+      // bloqueadas por DELEGATED_BLOCKED_ACTIONS.
+      const allowedStatuses: readonly string[] = order.delegatedOrderId
+        ? ["DELIVERED", "CANCELLED"]
+        : repairNextStages[order.status]
+      if (!input.status || !allowedStatuses.includes(input.status)) throw new BusinessError("El cambio de estado no corresponde a la etapa actual.", 409)
       data.status = input.status
       if (order.delegatedOrderId && input.status === "DELIVERED") {
-        // Cierre de una delegada: el QR del sticker muere como en cualquier
-        // entrega y se limpia la vigencia de garantía si quedara una abierta.
-        Object.assign(data, rotatedUploadToken(), { warrantyUntil: null })
+        // Cierre de una delegada CON constancia de entrega — la única vía de
+        // entrega que no pasa por SETTLE_DELIVER. Quien "recoge" el equipo es
+        // el taller asociado (la entrega física al cliente la hace él desde
+        // el portal aliado): se asienta su nombre de negocio como receptor y
+        // al staff local como quien entregó, misma auditoría que la entrega
+        // normal. El QR del sticker muere como en cualquier entrega y se
+        // limpia la vigencia de garantía si quedara una abierta.
+        const partner = order.delegatedToBusinessId
+          ? await tx.business.findUnique({ where: { id: order.delegatedToBusinessId }, select: { name: true } })
+          : null
+        delegatedDeliveryTo = partner?.name?.trim() || "Taller asociado"
+        Object.assign(data, rotatedUploadToken(), { warrantyUntil: null, deliveredTo: delegatedDeliveryTo, deliveredById: actorId })
       }
       if (input.status === "READY") data.qualityCheck = input.detail ?? null
       // El detalle es opcional: sin texto del staff el evento conserva solo
@@ -530,7 +554,11 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       detail = `Cargo por diagnóstico/revisión: ${(input.diagnosticFeeCents / 100).toFixed(2)} MXN.${input.detail ? ` ${input.detail}` : ""}`
     } else if (input.action === "PART_REQUEST" || input.action === "PART_ADD") {
       if (!input.partDescription) throw new BusinessError("Describe la refacción.")
-      if (input.partProductId && !await tx.product.findFirst({ where: { id: input.partProductId, businessId } })) throw new BusinessError("El producto seleccionado no existe.")
+      const partProduct = input.partProductId ? await tx.product.findFirst({ where: { id: input.partProductId, businessId } }) : null
+      if (input.partProductId && !partProduct) throw new BusinessError("El producto seleccionado no existe.")
+      // Un producto dado de baja no se liga a la orden ni descuenta stock —
+      // misma barrera que takeStock del inventario.
+      if (partProduct && !partProduct.isActive) throw new BusinessError("El producto seleccionado ya no está disponible.", 409)
       // Almacén de refacciones: la pieza puede salir de cualquier sucursal
       // activa del negocio. El OUT de inventario se registra contra esa
       // sucursal (syncPartStock) y la devolución lo sigue.
@@ -618,6 +646,13 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // del receptor). Este segundo evento limpio es el que el cliente ve en
       // seguimiento y el que marca "Entregado" en su timeline.
       await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "STATUS", detail: `${repairLabels[order.status]} → ${repairLabels.DELIVERED}. Entrega registrada.`, isPublic: true } })
+    }
+    if (delegatedDeliveryTo) {
+      // Constancia PRIVADA del handoff al taller asociado — el equivalente al
+      // "Entrega a: …" del evento PAYMENT de SETTLE_DELIVER. El nombre del
+      // negocio receptor no se publica en el seguimiento del cliente (el
+      // evento STATUS público ya conserva la transición de etapa).
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "NOTE", detail: `Entrega registrada: recibe ${delegatedDeliveryTo} (taller asociado).`, isPublic: false } })
     }
     const updated = await tx.repairOrder.findUniqueOrThrow({ where: { id } })
     // Orden espejo: cualquier cambio de etapa se propaga al captador tras el

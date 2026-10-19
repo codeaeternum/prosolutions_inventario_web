@@ -15,6 +15,7 @@ const tx = {
   repairOrder: { create: vi.fn() },
   repairEvent: { create: vi.fn() },
   branch: { findFirst: vi.fn() },
+  business: { findUnique: vi.fn() },
 }
 const db = { $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
@@ -38,6 +39,9 @@ beforeEach(() => {
   tx.businessOperation.create.mockResolvedValue({ id: "op-1" })
   tx.businessOperation.update.mockResolvedValue({})
   tx.branch.findFirst.mockResolvedValue({ id: "b1", name: "Centro" })
+  // El origen ligado se valida contra Business: cualquier id distinto del
+  // propio tenant resuelve una fila (los tests de rechazo lo sobrescriben).
+  tx.business.findUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve({ id: where.id }))
   // Eco del data recibido: lo que el dominio escribió es lo que regresa la fila.
   tx.repairOrder.create.mockImplementation(({ data }) => Promise.resolve({ id: "o1", number: 9, quoteCents: null, approvedQuoteCents: null, partnerPriceCents: null, ...data }))
   tx.repairEvent.create.mockResolvedValue({})
@@ -94,6 +98,23 @@ describe("origen de taller aliado", () => {
     })
     const data = (tx.repairOrder.create.mock.calls[0][0] as { data: Record<string, unknown> }).data
     expect(data.originBusinessId).toBe("biz-aliado")
+  })
+
+  it("originBusinessId igual al negocio receptor se rechaza (400)", async () => {
+    // Auto-referencia sin sentido: el captador y el reparador no pueden ser
+    // el mismo tenant.
+    await expect(createRepair(db, "u-staff", "biz-repairer", { ...baseInput, originBusinessId: "biz-repairer" }))
+      .rejects.toMatchObject({ status: 400, message: "El negocio de origen no puede ser el mismo negocio." })
+    expect(tx.repairOrder.create).not.toHaveBeenCalled()
+  })
+
+  it("originBusinessId inexistente se rechaza (400) en vez de reventar la FK", async () => {
+    // Sin la validación el id basura llegaba al create y Prisma respondía
+    // P2003 → 500.
+    tx.business.findUnique.mockResolvedValue(null)
+    await expect(createRepair(db, "u-staff", "biz-repairer", { ...baseInput, originBusinessId: "biz-fantasma" }))
+      .rejects.toMatchObject({ status: 400, message: "El negocio de origen no existe." })
+    expect(tx.repairOrder.create).not.toHaveBeenCalled()
   })
 })
 

@@ -165,6 +165,21 @@ describe("delegar orden propia al taller asociado", () => {
     await expect(delegateRepairToPartner(db, "admin-1", CAPTOR, "o1", {})).rejects.toMatchObject({ status: 404 })
     expect(tx.repairOrder.create).not.toHaveBeenCalled()
   })
+
+  it("un EMPLOYEE no puede delegar (403) y la espejo —con el PII— jamás se crea", async () => {
+    // La delegación copia datos del cliente a otro tenant, fija un precio
+    // convenio pagadero y congela la orden: mismo nivel que REFUND (admin).
+    const employee = { ...localAdmin, id: "emp-1", role: "EMPLOYEE" }
+    tx.user.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+      Promise.resolve(where.id === "emp-1" ? employee : where.id === repairerStaff.id ? repairerStaff : localAdmin))
+    await expect(delegateRepairToPartner(db, "emp-1", CAPTOR, "o1", {}))
+      .rejects.toMatchObject({ status: 403, message: "Se requiere administrador." })
+    // La barrera corre ANTES de cualquier lectura/escritura de la orden:
+    // un 403 tardío dejaría la espejo huérfana con el PII ya copiado.
+    expect(tx.repairOrder.findFirst).not.toHaveBeenCalled()
+    expect(tx.repairOrder.create).not.toHaveBeenCalled()
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
 })
 
 describe("guard de delegada en updateRepair", () => {
@@ -184,12 +199,50 @@ describe("guard de delegada en updateRepair", () => {
       expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
     })
 
-  it("las transiciones STATUS siguen permitidas sobre la delegada", async () => {
+  it("las etapas de trabajo se rechazan sobre la delegada (evita el estado zombie)", async () => {
+    // EXTERNAL_LAB→IN_REPAIR dejaría la orden marcada "en reparación" con
+    // TODAS las acciones de dinero/stock bloqueadas: una cascara sin salida.
+    // La delegada solo admite los cierres por STATUS.
     tx.repairOrder.findUnique.mockResolvedValue(delegated())
-    tx.repairOrder.findUniqueOrThrow.mockResolvedValue(delegated({ status: "IN_REPAIR", version: 4 }))
-    await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "STATUS", status: "IN_REPAIR" }))
+    for (const status of ["IN_REPAIR", "QUALITY_CHECK", "NOT_REPAIRED", "WARRANTY"] as const) {
+      await expect(updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "STATUS", status })))
+        .rejects.toMatchObject({ status: 409, message: "El cambio de estado no corresponde a la etapa actual." })
+    }
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("STATUS→DELIVERED cierra la delegada con constancia de entrega al taller asociado", async () => {
+    // Única entrega sin SETTLE_DELIVER: quien recibe el equipo es el taller
+    // asociado — se asienta su nombre como receptor, al staff local como
+    // quien entregó, y queda el evento privado de constancia.
+    tx.repairOrder.findUnique.mockResolvedValue(delegated())
+    tx.repairOrder.findUniqueOrThrow.mockResolvedValue(delegated({ status: "DELIVERED", version: 4 }))
+    await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "STATUS", status: "DELIVERED" }))
     expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "IN_REPAIR" }),
+      data: expect.objectContaining({
+        status: "DELIVERED",
+        deliveredTo: "Reparador SA",
+        deliveredById: "admin-1",
+        uploadToken: expect.any(String), // el QR del sticker muere igual que en una entrega normal
+      }),
+    }))
+    const handoff = events().find(e => e.detail.includes("Entrega registrada: recibe"))
+    expect(handoff).toMatchObject({ businessId: CAPTOR, actorId: "admin-1", type: "NOTE", isPublic: false })
+    expect(handoff?.detail).toContain("Reparador SA")
+    // El evento público conserva solo la transición (sin el nombre del taller).
+    const publicEvent = events().find(e => e.type === "STATUS")
+    expect(publicEvent?.isPublic).toBe(true)
+    expect(publicEvent?.detail).not.toContain("Reparador SA")
+  })
+
+  it("STATUS→CANCELLED sigue cerrando la delegada desde cualquier etapa", async () => {
+    // Con las transiciones de trabajo bloqueadas, la cancelación es la otra
+    // salida — y no depende de la etapa en que quedó la referencia local.
+    tx.repairOrder.findUnique.mockResolvedValue(delegated())
+    tx.repairOrder.findUniqueOrThrow.mockResolvedValue(delegated({ status: "CANCELLED", version: 4 }))
+    await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "STATUS", status: "CANCELLED" }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "CANCELLED" }),
     }))
   })
 

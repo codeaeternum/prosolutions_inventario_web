@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import type { Prisma } from "@prisma/client"
+import type { Prisma, RepairStatus } from "@prisma/client"
 import { z, ZodError } from "zod"
 import { prisma } from "@/lib/prisma"
 import { transaction, BusinessError } from "@/lib/domain/operations"
@@ -71,6 +71,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
             select: { createdAt: true },
           },
           createdById: true, equipmentType: true, brand: true, model: true,
+          // Orden espejo de una delegación: si la decisión mueve su etapa,
+          // el tenant captador se avisa post-commit (mismo hook que
+          // updateRepair — notifyOriginOfMirrorUpdate en domain/delegation).
+          delegatedFromOrderId: true,
           // Tenant suspendido: el enlace muere igual que un token inválido
           // (sin mutar nada — el cliente no decide sobre un negocio inactivo).
           business: { select: { isActive: true } },
@@ -174,6 +178,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       })
       return { order, newStatus, approvedAt: approving ? now : null }
     })
+
+    // Espejo de una delegación: la decisión del cliente movió su etapa
+    // (WAITING_APPROVAL → IN_REPAIR/NOT_AUTHORIZED) sin pasar por
+    // updateRepair, así que la sincronización espejo → origen se dispara
+    // aquí con el mismo hook post-commit. El helper es best-effort total:
+    // jamás revierte ni reporta la decisión ya confirmada. Import perezoso
+    // como en updateRepair (delegation tira de canales de aviso pesados).
+    if (decided.order.delegatedFromOrderId && decided.newStatus !== decided.order.status) {
+      const { notifyOriginOfMirrorUpdate } = await import("@/lib/domain/delegation")
+      await notifyOriginOfMirrorUpdate(prisma, {
+        mirrorBusinessId: decided.order.businessId,
+        mirrorNumber: decided.order.number,
+        originOrderId: decided.order.delegatedFromOrderId,
+        fromStatus: decided.order.status,
+        toStatus: decided.newStatus as RepairStatus,
+      })
+    }
 
     // Aviso al staff conectado (SSE). Un fallo del aviso no debe reportarse
     // como error: la decisión ya quedó comprometida en la transacción.

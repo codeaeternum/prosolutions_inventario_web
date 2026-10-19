@@ -211,7 +211,7 @@ describe("reposición de stock al cerrar", () => {
 describe("refacciones surtidas desde otra sucursal (almacén)", () => {
   // Stock disponible en la sucursal origen y en el total cacheado del producto.
   const stockMocks = (branchQty = 4, totalStock = 10) => {
-    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: "biz" })
+    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: "biz", isActive: true })
     tx.branchStock.findUnique.mockResolvedValue({ quantity: branchQty })
     tx.product.findUnique.mockResolvedValue({ stock: totalStock })
     tx.branchStock.updateMany.mockResolvedValue({ count: 1 })
@@ -292,6 +292,27 @@ describe("refacciones surtidas desde otra sucursal (almacén)", () => {
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ type: "RETURN", productId: "p1", branchId: "b2", quantity: 1 }),
     }))
+  })
+})
+
+describe("producto inactivo en refacciones", () => {
+  it.each(["PART_ADD", "PART_REQUEST"] as const)("%s con producto dado de baja se rechaza (409) sin crear la pieza ni mover stock", async action => {
+    // Misma barrera que takeStock del inventario: un producto inactivo no se
+    // liga a la orden ni descuenta existencias.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: "biz", isActive: false })
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action, partDescription: "Pantalla", partQty: 1, partPriceCents: 10000, partProductId: "p1" })))
+      .rejects.toMatchObject({ status: 409, message: "El producto seleccionado ya no está disponible." })
+    expect(tx.repairPart.create).not.toHaveBeenCalled()
+    expect(tx.branchStock.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("producto inexistente sigue respondiendo que no existe", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
+    tx.product.findFirst.mockResolvedValue(null)
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PART_ADD", partDescription: "Pantalla", partProductId: "p-x" })))
+      .rejects.toMatchObject({ message: "El producto seleccionado no existe." })
+    expect(tx.repairPart.create).not.toHaveBeenCalled()
   })
 })
 

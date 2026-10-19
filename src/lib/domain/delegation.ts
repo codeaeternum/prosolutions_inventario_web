@@ -185,6 +185,12 @@ const delegateSchema = z.object({
 
 export async function delegateRepairToPartner(db: PrismaClient, actorId: string, businessId: string, orderId: string, raw?: unknown) {
   const input = delegateSchema.parse(raw ?? {})
+  // Solo ADMIN delega: copia PII del cliente a OTRO tenant, compromete el
+  // precio convenio (cuenta por pagar real) y congela la orden local sin
+  // reversa — mismo nivel que REFUND/ROTATE_UPLOAD_TOKEN. La verificación va
+  // ANTES de cualquier escritura: la espejo commitea en el tenant reparador
+  // por separado y un 403 tardío la dejaría huérfana (con el PII ya copiado).
+  await actor(db, actorId, "admin", businessId)
   const order = await db.repairOrder.findFirst({ where: { id: orderId, businessId } })
   if (!order) throw new BusinessError("Orden no encontrada.", 404)
 
@@ -255,7 +261,7 @@ export async function delegateRepairToPartner(db: PrismaClient, actorId: string,
   // delegación ganó la carrera (o la orden se cerró entretanto) count = 0 y
   // se resuelve abajo como éxito idempotente o conflicto.
   const marked = await transaction(db, async tx => {
-    await actor(tx, actorId, "staff", businessId)
+    await actor(tx, actorId, "admin", businessId)
     const updated = await tx.repairOrder.updateMany({
       where: { id: order.id, businessId, delegatedOrderId: null, status: { notIn: [...DELEGATION_CLOSED_STATUSES] } },
       data: {

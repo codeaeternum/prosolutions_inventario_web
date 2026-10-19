@@ -326,7 +326,12 @@ export function OrderResult({ order, business }: { order: PublicOrder; business:
             <dl className="space-y-2 text-sm">
               {order.authorizedCents !== null && (
                 <div className="flex items-baseline justify-between gap-4">
-                  <dt className="text-muted-foreground">Presupuesto autorizado</dt>
+                  {/* En WAITING_APPROVAL el monto aún es propuesto (p. ej. una
+                      re-autorización por refacción nueva conserva
+                      approvedQuoteCents): llamarlo "autorizado" mentiría. */}
+                  <dt className="text-muted-foreground">
+                    {order.status === "WAITING_APPROVAL" ? "Cotización por autorizar" : "Presupuesto autorizado"}
+                  </dt>
                   <dd className="font-semibold">{formatPrice(order.authorizedCents / 100)}</dd>
                 </div>
               )}
