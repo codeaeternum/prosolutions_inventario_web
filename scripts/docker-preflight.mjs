@@ -46,6 +46,15 @@ const REQUIRED_TABLES = [
   "WorkshopBranch", // 20260911020000_workshop_pilot
   "RepairOrder", // 20260911020000_workshop_pilot
   "RepairEvent", // 20260911020000_workshop_pilot
+  "RepairPart", // 20260912190000_multi_tenant_foundation
+  "Payment", // 20260913090000_workshop_money_cycle
+  "Notification", // 20261227090000_persistent_notifications
+  "Encargo", // 20261228160000_encargos
+  "Purchase", // 20261226090000_purchase_partial_receive
+  "PurchaseItem",
+  "Supplier",
+  "MarketplaceRequest", // 20260916100000_marketplace_request
+  "PlatformEvent", // 20261001210000_platform_events
 ]
 
 const REQUIRED_COLUMNS = [
@@ -101,7 +110,7 @@ async function main() {
     let failedRows = null
     try {
       const res = await client.query(
-        'SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NULL'
+        'SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NULL AND "rolled_back_at" IS NULL'
       )
       failedRows = res.rows
     } catch {
