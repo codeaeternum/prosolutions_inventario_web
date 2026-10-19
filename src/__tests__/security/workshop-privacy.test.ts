@@ -205,7 +205,7 @@ describe("GET /api/workshop/[id] (detalle)", () => {
     expect(mocks.eventCreate).not.toHaveBeenCalled()
   })
 
-  it("las firmas solo viajan al ADMIN; el empleado conserva los tokens operativos", async () => {
+  it("la ficha no lee ni devuelve firmas — ni siquiera al ADMIN; los tokens siguen saliendo", async () => {
     mocks.auth.mockResolvedValue(session("EMPLOYEE"))
     mocks.orderFindUnique.mockResolvedValue(detailOrder)
     const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
@@ -218,13 +218,43 @@ describe("GET /api/workshop/[id] (detalle)", () => {
     expect(json.order.deviceAccessValue).toBeNull()
     expect(json.order.quoteToken).toBe("qt-detalle")
     expect(json.order.uploadToken).toBe("ut-detalle")
+    // La consulta base ni siquiera lee las columnas (~300 KB c/u): omit real,
+    // no un null cosmético sobre el campo ya traído.
+    const detailArgs = mocks.orderFindUnique.mock.calls[0][0] as { omit?: Record<string, boolean> }
+    expect(detailArgs.omit).toMatchObject({ signatureData: true, deliverySignatureData: true })
 
+    // El ADMIN tampoco recibe las firmas en la ficha normal: las pide aparte
+    // con ?signatures=1 (la UI solo lo hace si hay constancia de entrega).
     mocks.auth.mockResolvedValue(session("ADMIN"))
     const adminRes = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
     expect(adminRes.status).toBe(200)
     const adminJson = await adminRes.json()
-    expect(adminJson.order.signatureData).toBe("data:image/png;base64,firma-recepcion")
-    expect(adminJson.order.deliverySignatureData).toBe("data:image/png;base64,firma-entrega")
+    expect(adminJson.order.signatureData).toBeNull()
+    expect(adminJson.order.deliverySignatureData).toBeNull()
+    expect(adminJson.order.quoteToken).toBe("qt-detalle")
+  })
+
+  it("?signatures=1 devuelve ambas firmas al ADMIN con una lectura proyectada", async () => {
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    mocks.orderFindUnique.mockResolvedValue(detailOrder)
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1?signatures=1"), idParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.order.signatureData).toBe("data:image/png;base64,firma-recepcion")
+    expect(json.order.deliverySignatureData).toBe("data:image/png;base64,firma-entrega")
+    // La segunda lectura fue solo la proyección de firmas, no otra ficha pesada.
+    const sigCall = mocks.orderFindUnique.mock.calls.at(-1)?.[0] as { select?: Record<string, boolean> }
+    expect(sigCall.select).toMatchObject({ signatureData: true, deliverySignatureData: true })
+  })
+
+  it("?signatures=1 exige ADMIN: el empleado recibe 403", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.orderFindUnique.mockResolvedValue(detailOrder)
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1?signatures=1"), idParams)
+    expect(res.status).toBe(403)
+    // La proyección de firmas nunca se ejecutó para un empleado.
+    const sigCalls = mocks.orderFindUnique.mock.calls.filter(call => (call[0] as { select?: unknown }).select)
+    expect(sigCalls).toHaveLength(0)
   })
 })
 

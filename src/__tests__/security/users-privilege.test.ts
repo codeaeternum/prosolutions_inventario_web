@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
   branchCount: vi.fn(),
   branchFindUnique: vi.fn(),
   businessFindFirst: vi.fn(),
+  reservationFindMany: vi.fn(),
+  reservationCount: vi.fn(),
+  paymentCount: vi.fn(),
   auditCreate: vi.fn(),
 }))
 
@@ -36,6 +39,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     branch: { count: mocks.branchCount, findUnique: mocks.branchFindUnique },
     business: { findFirst: mocks.businessFindFirst },
+    reservation: { findMany: mocks.reservationFindMany, count: mocks.reservationCount },
+    payment: { count: mocks.paymentCount },
     auditEvent: { create: mocks.auditCreate },
   },
 }))
@@ -89,6 +94,9 @@ beforeEach(() => {
   mocks.userUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...updatedRow(), ...data }))
   mocks.userCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "new-1", createdAt: new Date(), ...data }))
   mocks.userDelete.mockResolvedValue({})
+  mocks.reservationFindMany.mockResolvedValue([])
+  mocks.reservationCount.mockResolvedValue(0)
+  mocks.paymentCount.mockResolvedValue(0)
   mocks.auditCreate.mockResolvedValue({})
 })
 

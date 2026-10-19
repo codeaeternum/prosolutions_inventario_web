@@ -54,12 +54,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!evidenceImageFormat(bytes)) throw new BusinessError("Solo se aceptan imágenes JPG, PNG o WebP.")
 
     // Se crea el registro primero para usar su cuid como nombre de archivo;
-    // si el disco falla, el registro se revierte.
+    // si el disco falla, el registro se revierte — y si el archivo ya quedó
+    // escrito pero falla el update o el evento, el archivo también se borra
+    // para no dejarlo huérfano.
     const photo = await prisma.repairPhoto.create({
       data: { businessId, orderId: id, filePath: "pending", label: label || null, uploadedById: actorId },
     })
+    let writtenPath: string | null = null
     try {
       const filePath = await writeRepairPhoto(id, photo.id, bytes)
+      writtenPath = filePath
       const saved = await prisma.repairPhoto.update({ where: { id: photo.id }, data: { filePath } })
       await prisma.repairEvent.create({
         data: { businessId, actorId, orderId: id, type: "PHOTO", detail: `Evidencia agregada${label ? `: ${label}` : ""}` },
@@ -67,6 +71,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ photo: saved }, { status: 201, headers: { "Cache-Control": "private, no-store" } })
     } catch (error) {
       await prisma.repairPhoto.delete({ where: { id: photo.id } }).catch(() => {})
+      if (writtenPath) await deleteRepairPhotoFile(writtenPath).catch(() => {})
       throw error
     }
   } catch (error) { return businessFailure(error) }

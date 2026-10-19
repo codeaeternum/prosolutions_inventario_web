@@ -44,8 +44,10 @@ type Order = {
   events?: WorkshopEvent[];
   parts?: OrderPart[];
   // Constancia de entrega estructurada (quién recoge, su ID, firma y quién del
-  // staff entregó). deliverySignatureData solo llega en el detalle, no en listas.
-  deliveredTo?: string | null; deliveredToDoc?: string | null; deliverySignatureData?: string | null;
+  // staff entregó). Las firmas (~300 KB en base64) ya no viajan ni en listas
+  // ni en el detalle normal: llegan solo con ?signatures=1 para ADMIN.
+  deliveredTo?: string | null; deliveredToDoc?: string | null;
+  signatureData?: string | null; deliverySignatureData?: string | null;
   deliveredBy?: { id: string; name: string } | null;
   // Quién registró la recepción (solo llega en el detalle, no en listas).
   createdBy?: { id: string; name: string } | null;
@@ -399,6 +401,20 @@ export default function WorkshopPage() {
       setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
       setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null })
       setPartnerConfigured(Boolean(data.partnerConfigured))
+      // Firma de entrega (~300 KB en base64): ya no viaja en la ficha — la
+      // pide aparte el ADMIN y solo cuando hay constancia de entrega (sin
+      // deliveredTo la firma no puede existir). Fire-and-forget: se fusiona
+      // al detalle ya abierto; un fallo solo oculta la imagen, no la ficha.
+      if (isAdmin && order.deliveredTo) {
+        fetch(`/api/workshop/${order.id}?signatures=1`, { signal: controller.signal })
+          .then(response => (response.ok ? response.json() : null))
+          .then(payload => {
+            if (!payload || controller.signal.aborted || version !== detailVersion.current) return
+            const signatures = payload.order as Pick<Order, "signatureData" | "deliverySignatureData"> | undefined
+            setSelected(previous => (previous?.id === order.id ? { ...previous, signatureData: signatures?.signatureData ?? null, deliverySignatureData: signatures?.deliverySignatureData ?? null } : previous))
+          })
+          .catch(() => {})
+      }
       // Estado en vivo de la espejo delegada: /api/workshop/partner lista las
       // órdenes que este negocio originó en el tenant reparador — se empata
       // por el id que el servidor guardó en delegatedOrderId.

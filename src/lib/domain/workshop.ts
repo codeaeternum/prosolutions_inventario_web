@@ -124,7 +124,12 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // El dato de desbloqueo se guarda cifrado en reposo (AES-256-GCM, ver
     // lib/device-secret): llega en claro desde recepción y solo se descifra
     // con auditoría (reveal=1 de la ficha, hoja de taller impresa).
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null } })
+    // El resultado de la operación se persiste como recibo idempotente
+    // (BusinessOperation.response) y además vuelve en la respuesta POST:
+    // omitir las firmas (~300 KB en base64) y el desbloqueo cifrado evita
+    // duplicar datos pesados/sensibles que nadie consume de esta respuesta —
+    // la ficha los sirve aparte con ?signatures=1 / ?reveal=1.
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Sin firma digital capturada, el evento asienta la forma alternativa de
     // confirmación configurada: "pin" = terminación telefónica (el pin nunca
     // se persiste); "ticket" = firma en el comprobante impreso.
@@ -304,7 +309,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
   // callback no conserva el estrechamiento de tipos tras el await.
   const mirrorStatusSync: { originOrderId: string; fromStatus: RepairStatus; toStatus: RepairStatus; mirrorNumber: number }[] = []
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "REPAIR_UPDATE", permission: adminOnlyActions.includes(input.action) ? "admin" : "staff", payload: { id, ...input } }, async tx => {
-    const order = await tx.repairOrder.findUnique({ where: { id } })
+    // La lectura de trabajo tampoco arrastra las firmas (~300 KB c/u): ninguna
+    // regla del update las consulta — solo se reescriben (SETTLE_DELIVER).
+    const order = await tx.repairOrder.findUnique({ where: { id }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     if (!order || order.businessId !== businessId) throw new BusinessError("Orden no encontrada.", 404)
     if (order.version !== input.expectedVersion) throw new BusinessError("Otra persona actualizó esta orden. Recarga para ver el cambio antes de continuar.", 409)
     const reopeningToWarranty = order.status === "DELIVERED" && input.action === "STATUS" && input.status === "WARRANTY"
@@ -654,7 +661,9 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // evento STATUS público ya conserva la transición de etapa).
       await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "NOTE", detail: `Entrega registrada: recibe ${delegatedDeliveryTo} (taller asociado).`, isPublic: false } })
     }
-    const updated = await tx.repairOrder.findUniqueOrThrow({ where: { id } })
+    // Igual que en createRepair: la orden devuelta es el recibo idempotente y
+    // la respuesta POST/PATCH — sin firmas ni el desbloqueo cifrado.
+    const updated = await tx.repairOrder.findUniqueOrThrow({ where: { id }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Orden espejo: cualquier cambio de etapa se propaga al captador tras el
     // commit. Se captura aquí (dentro de la tx) para que un replay idempotente
     // de la operación —que no ejecuta este callback— no duplique el aviso.

@@ -60,6 +60,55 @@ export async function paymentProofUploaderId(filename: string): Promise<string |
     return metadata.uploaderId ?? null
   } catch { return null }
 }
+/** Borra el comprobante (y su sidecar .json) del storage privado y del dir
+ *  legado public/uploads/payments. La ruta siempre sale de un nombre validado
+ *  resuelto con realpath dentro del root — sin traversal; ENOENT se tolera. */
+export async function deletePaymentProof(url: string): Promise<void> {
+  const filename = paymentProofFilename(url)
+  if (!filename) return
+  const roots = [paymentProofDirectory(), path.join(process.cwd(), "public", "uploads", "payments")]
+  for (const root of roots) {
+    for (const name of [filename, `${filename}.json`]) {
+      try {
+        await fs.unlink(await confinedPath(root, name))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      }
+    }
+  }
+}
+/** Filas que aún pueden referenciar un comprobante (Reservation.paymentProofUrl
+ *  o Payment.proofUrl): solo cuenta, así el mock de las pruebas es mínimo. */
+type ProofReferenceCounter = {
+  reservation: { count(args: { where: { paymentProofUrl: { in: string[] } } }): Promise<number> }
+  payment: { count(args: { where: { proofUrl: { in: string[] } } }): Promise<number> }
+}
+/** Tras borrar reservas que traían comprobante (purge de producto o cascada al
+ *  eliminar cliente), borra el archivo solo si ya ninguna fila lo usa: un
+ *  comprobante puede cubrir varias reservas del mismo carrito y además quedar
+ *  copiado en Payment.proofUrl al convertirse la reserva en venta. Las URLs
+ *  se normalizan a filename y se comparan también contra el formato legado
+ *  /uploads/payments/<archivo>. Best-effort post-commit: nunca lanza. */
+export async function deleteOrphanedPaymentProofs(db: ProofReferenceCounter, urls: Iterable<string | null | undefined>): Promise<void> {
+  const seen = new Set<string>()
+  for (const url of urls) {
+    if (!url) continue
+    const filename = paymentProofFilename(url)
+    if (!filename || seen.has(filename)) continue
+    seen.add(filename)
+    try {
+      const variants = [paymentProofUrl(filename), `/uploads/payments/${filename}`]
+      const [reservations, payments] = await Promise.all([
+        db.reservation.count({ where: { paymentProofUrl: { in: variants } } }),
+        db.payment.count({ where: { proofUrl: { in: variants } } }),
+      ])
+      if (reservations + payments === 0) await deletePaymentProof(url)
+    } catch {
+      // Limpieza best-effort post-commit: un comprobante huérfano es preferible
+      // a tumbar una operación que ya quedó confirmada.
+    }
+  }
+}
 export async function readPaymentProof(filename: string): Promise<{ bytes: Buffer; mime: string } | null> {
   if (!validProofFilename(filename)) return null
   const roots = [paymentProofDirectory(), path.join(process.cwd(), "public", "uploads", "payments")]

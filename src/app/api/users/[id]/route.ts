@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "../slug-utils"
 import { MODULES } from "@/lib/access"
 import { diffChanges, listText, recordAudit } from "@/lib/audit"
+import { deleteOrphanedPaymentProofs } from "@/lib/payment-proofs"
 import bcrypt from "bcryptjs"
 
 // Restricciones de acceso del staff: lista vacía = sin restricción.
@@ -264,9 +265,19 @@ export async function DELETE(
     const businessId = businessIdOf(session)
     const target = await prisma.user.findUnique({ where: { id, businessId }, select: { role: true, name: true } })
 
+    // La FK Reservation.userId es Cascade: borrar la cuenta se lleva también
+    // sus reservas — se recolectan sus comprobantes para limpiar archivos
+    // post-commit (solo si ya ninguna otra fila los referencia).
+    const proofUrls = (await prisma.reservation.findMany({
+      where: { userId: id, businessId, paymentProofUrl: { not: null } },
+      select: { paymentProofUrl: true },
+    })).map(row => row.paymentProofUrl)
+
     await prisma.user.delete({
       where: { id, businessId },
     })
+
+    await deleteOrphanedPaymentProofs(prisma, proofUrls)
 
     await recordAudit(prisma, {
       businessId,

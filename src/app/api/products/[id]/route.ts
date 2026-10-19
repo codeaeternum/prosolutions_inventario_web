@@ -10,6 +10,7 @@ import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reserva
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
 import { normalizeProductName } from "@/lib/utils"
+import { deleteOrphanedPaymentProofs } from "@/lib/payment-proofs"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 import type { Prisma } from "@prisma/client"
@@ -419,6 +420,14 @@ export async function PUT(
     // Post-commit: revisa stock bajo tanto por el ajuste de existencias como
     // por un cambio de minStock (subir el mínimo puede cruzar el umbral solo).
     await syncLowStockAlerts(prisma, businessId, [id])
+    // Las fotos que el update dejó fuera del arreglo quedaron huérfanas en
+    // disco (reemplazo o borrado desde la edición): mismo borrado confinado
+    // y best-effort que en el DELETE.
+    const keptImages = Array.isArray(images) ? images : []
+    const removedImages = Array.isArray(existingProduct.images)
+      ? existingProduct.images.filter(img => !keptImages.includes(img))
+      : []
+    await unlinkProductImages(removedImages)
     // El update devuelve la fila cruda con TODO (costPrice, businessId…); se
     // serializa por el mismo DTO del GET: el costo es solo del dueño (ADMIN)
     // y sin él un EMPLOYEE recibía el costo real esquivando productDto.
@@ -474,9 +483,11 @@ export async function DELETE(
       )
     }
 
-    // Eliminar en transacción
+    // Eliminar en transacción — devuelve las URLs de comprobantes de las
+    // reservas purgadas para limpiar sus archivos tras el commit.
+    let proofUrls: (string | null)[]
     try {
-      await prisma.$transaction(async (tx: TransactionClient) => {
+      proofUrls = await prisma.$transaction(async (tx: TransactionClient) => {
         // Re-verificación dentro de la tx: una reserva pudo crearse entre el
         // findUnique y este punto (la FK del producto es Cascade y se la
         // llevaría silenciosamente).
@@ -501,7 +512,12 @@ export async function DELETE(
         })
 
         // Eliminar reservas SOLO en estado terminal: la historia se purga,
-        // nunca una reserva viva con anticipo o deuda a crédito.
+        // nunca una reserva viva con anticipo o deuda a crédito. Antes se
+        // recolectan sus comprobantes para limpiar el archivo post-commit.
+        const proofUrls = (await tx.reservation.findMany({
+          where: { productId: id, businessId, status: { in: [...TERMINAL_RESERVATIONS] } },
+          select: { paymentProofUrl: true },
+        })).map(row => row.paymentProofUrl)
         await tx.reservation.deleteMany({
           where: { productId: id, businessId, status: { in: [...TERMINAL_RESERVATIONS] } },
         })
@@ -510,6 +526,8 @@ export async function DELETE(
         await tx.product.delete({
           where: { id, businessId },
         })
+
+        return proofUrls
       })
     } catch (error) {
       if (error instanceof BusinessError) {
@@ -542,6 +560,10 @@ export async function DELETE(
     // Post-delete: las fotos /uploads/products/* quedaban huérfanas en disco.
     // Fuera de la tx — si el borrado de un archivo falla el delete ya pasó.
     await unlinkProductImages(existingProduct.images)
+    // Lo mismo con los comprobantes de anticipo de las reservas purgadas: el
+    // archivo solo se borra si ya ninguna reserva ni pago lo referencia (un
+    // comprobante de carrito puede cubrir otras reservas que siguen vivas).
+    await deleteOrphanedPaymentProofs(prisma, proofUrls)
 
     return NextResponse.json({ success: true })
   } catch (error) {

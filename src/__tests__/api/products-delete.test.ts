@@ -22,11 +22,17 @@ const mocks = vi.hoisted(() => ({
   productModelDeleteMany: vi.fn(),
   inventoryMovementDeleteMany: vi.fn(),
   reservationCount: vi.fn(),
+  reservationFindMany: vi.fn(),
   reservationDeleteMany: vi.fn(),
+  // Referencias restantes fuera de la tx (barrido de comprobantes huérfanos):
+  // reservation.count del prisma global y payment.count.
+  reservationCountOuter: vi.fn(),
+  paymentCount: vi.fn(),
   auditCreate: vi.fn(),
   userFindUnique: vi.fn(),
   transaction: vi.fn(),
   unlink: vi.fn(),
+  realpath: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -40,6 +46,8 @@ vi.mock("@/lib/audit-alerts", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     product: { findUnique: mocks.productFindUnique },
+    reservation: { count: mocks.reservationCountOuter },
+    payment: { count: mocks.paymentCount },
     auditEvent: { create: mocks.auditCreate },
     user: { findUnique: mocks.userFindUnique },
     $transaction: mocks.transaction,
@@ -47,9 +55,11 @@ vi.mock("@/lib/prisma", () => ({
 }))
 // El DELETE desvincula las fotos /uploads/products/* del disco: unlink queda
 // mockeado para verificar qué rutas se borran (y cuáles jamás se tocan).
+// realpath se simula identidad para que el confinamiento de payment-proofs
+// resuelva dentro del root sin exigir que el directorio exista en disco.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>()
-  return { ...actual, promises: { ...actual.promises, unlink: mocks.unlink } }
+  return { ...actual, promises: { ...actual.promises, unlink: mocks.unlink, realpath: mocks.realpath } }
 })
 
 import { DELETE } from "@/app/api/products/[id]/route"
@@ -58,7 +68,7 @@ import { DELETE } from "@/app/api/products/[id]/route"
 const tx = {
   productModel: { deleteMany: mocks.productModelDeleteMany },
   inventoryMovement: { deleteMany: mocks.inventoryMovementDeleteMany },
-  reservation: { count: mocks.reservationCount, deleteMany: mocks.reservationDeleteMany },
+  reservation: { count: mocks.reservationCount, findMany: mocks.reservationFindMany, deleteMany: mocks.reservationDeleteMany },
   product: { delete: mocks.productDelete },
 }
 
@@ -84,12 +94,16 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue(session())
   mocks.productFindUnique.mockResolvedValue(productRow())
   mocks.reservationCount.mockResolvedValue(0)
+  mocks.reservationFindMany.mockResolvedValue([])
+  mocks.reservationCountOuter.mockResolvedValue(0)
+  mocks.paymentCount.mockResolvedValue(0)
   mocks.reservationDeleteMany.mockResolvedValue({ count: 0 })
   mocks.productModelDeleteMany.mockResolvedValue({ count: 0 })
   mocks.inventoryMovementDeleteMany.mockResolvedValue({ count: 0 })
   mocks.productDelete.mockResolvedValue({})
   mocks.auditCreate.mockResolvedValue({})
   mocks.unlink.mockResolvedValue(undefined)
+  mocks.realpath.mockImplementation(async (p: string) => p)
   mocks.transaction.mockImplementation((work: (t: unknown) => unknown) => work(tx))
 })
 
@@ -224,6 +238,49 @@ describe("limpieza de archivos de imagen", () => {
     const res = await del()
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ success: true })
+  })
+})
+
+describe("limpieza de comprobantes de reservas purgadas", () => {
+  it("borra el comprobante y su sidecar cuando ya ninguna fila los referencia", async () => {
+    mocks.reservationFindMany.mockResolvedValue([{ paymentProofUrl: "/api/payment-proofs/prueba.png" }])
+    const res = await del()
+    expect(res.status).toBe(200)
+
+    // La tx recolectó las URLs de las reservas terminales antes de purgarlas.
+    expect(mocks.reservationFindMany).toHaveBeenCalledTimes(1)
+    expect(mocks.reservationFindMany.mock.calls[0][0].select).toEqual({ paymentProofUrl: true })
+    // La verificación de referencias vivas consultó AMBAS tablas post-commit.
+    expect(mocks.reservationCountOuter).toHaveBeenCalled()
+    expect(mocks.paymentCount).toHaveBeenCalled()
+
+    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
+    expect(paths.some(p => p.endsWith("payment-proofs/prueba.png"))).toBe(true)
+    expect(paths.some(p => p.endsWith("payment-proofs/prueba.png.json"))).toBe(true)
+  })
+
+  it("conserva el archivo cuando otra reserva o un Payment aún lo referencian", async () => {
+    mocks.reservationFindMany.mockResolvedValue([{ paymentProofUrl: "/api/payment-proofs/compartido.png" }])
+    // El anticipo verificado copió el comprobante a Payment.proofUrl: el
+    // archivo sigue vivo aunque la reserva terminal se purgó.
+    mocks.paymentCount.mockResolvedValue(1)
+    const res = await del()
+    expect(res.status).toBe(200)
+    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
+    expect(paths.some(p => p.includes("compartido.png"))).toBe(false)
+  })
+
+  it("acepta el formato legado /uploads/payments/<archivo> y no toca URLs ajenas", async () => {
+    mocks.reservationFindMany.mockResolvedValue([
+      { paymentProofUrl: "/uploads/payments/legado.webp" },
+      { paymentProofUrl: "https://cdn.example.com/proof.png" },
+      { paymentProofUrl: null },
+    ])
+    const res = await del()
+    expect(res.status).toBe(200)
+    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
+    expect(paths.some(p => p.endsWith("legado.webp"))).toBe(true)
+    expect(paths.some(p => p.includes("cdn.example.com"))).toBe(false)
   })
 })
 

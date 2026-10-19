@@ -23,15 +23,14 @@ const MAX_ADDRESS = 200
 // Solo paths generados por /api/upload/logo: /uploads/logo-<ts>-<rand>.<ext>
 const LOGO_PATH_RE = /^\/uploads\/logo-[\w-]+\.(?:png|jpe?g|webp)$/i
 
-/** Borra el archivo de un logo reemplazado/eliminado (best effort). */
+/** Borra el archivo de un logo reemplazado/eliminado (best effort, post-commit).
+ *  Confinado por LOGO_PATH_RE a /uploads/logo-<ts>-<rand>.<ext> bajo public/ —
+ *  basename plano sin subdirectorios ni traversal; ENOENT y demás fallos se
+ *  toleran: el guardado del perfil ya quedó confirmado. */
 function removeLogoFile(logoPath: string) {
-  try {
-    if (!LOGO_PATH_RE.test(logoPath)) return
-    const abs = path.join(process.cwd(), "public", logoPath.replace(/^\/+/, ""))
-    fs.unlink(abs, () => {})
-  } catch {
-    // El archivo puede no existir ya; no bloquea el guardado.
-  }
+  if (!LOGO_PATH_RE.test(logoPath)) return
+  const abs = path.join(process.cwd(), "public", logoPath.replace(/^\/+/, ""))
+  void fs.promises.unlink(abs).catch(() => {})
 }
 
 /** URLs públicas relativas del negocio; null mientras no haya slug. */

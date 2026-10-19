@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { formatFolio } from "@/lib/workshop-labels"
-import { evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
+import { deleteRepairPhotoFile, evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
 
 // Subida pública de evidencias por QR (técnico en celular, sin login). El
 // token es el uploadToken (cuid) de la orden: quien lo tiene puede subir.
@@ -99,8 +99,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     const photo = await prisma.repairPhoto.create({
       data: { businessId: order.businessId, orderId: order.id, filePath: "pending", label: label || null, uploadedById: null },
     })
+    // Si el archivo ya quedó escrito pero el update del registro o el evento
+    // fallan, el archivo también se borra para no dejarlo huérfano en disco.
+    let writtenPath: string | null = null
     try {
       const filePath = await writeRepairPhoto(order.id, photo.id, bytes)
+      writtenPath = filePath
       const saved = await prisma.repairPhoto.update({ where: { id: photo.id }, data: { filePath } })
       // El evento usa como actor a quien recibió la orden: actorId es requerido
       // y no hay sesión en el enlace público.
@@ -113,6 +117,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       )
     } catch (error) {
       await prisma.repairPhoto.delete({ where: { id: photo.id } }).catch(() => {})
+      if (writtenPath) await deleteRepairPhotoFile(writtenPath).catch(() => {})
       throw error
     }
   } catch (error) {
