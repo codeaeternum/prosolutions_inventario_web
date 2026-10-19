@@ -28,6 +28,10 @@ export async function GET(req: Request) {
     // un empleado restringido podía listar órdenes de sucursales ajenas.
     const deniedBranch = assertBranchAllowed(session, branchId)
     if (deniedBranch) return deniedBranch
+    // Sin filtro explícito, el empleado con sucursales asignadas solo ve las
+    // órdenes ubicadas en las suyas (la orden vive en currentBranchId).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const branchScope = branchId ?? (allowed?.length ? { in: allowed } : undefined)
     const status = query.get("status")
     const view = query.get("view")
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
@@ -47,7 +51,7 @@ export async function GET(req: Request) {
     ].filter(scope => scope !== null)
     const where = {
       businessId,
-      ...(branchId ? { currentBranchId: branchId } : {}),
+      ...(branchScope ? { currentBranchId: branchScope } : {}),
       ...(status ? { status: status as keyof typeof repairLabels } : {}),
       ...(view === "today" ? { promisedAt: { gte: dayStart, lt: dayEnd }, status: { in: openStages as never } } : {}),
       ...(view === "overdue" ? { promisedAt: { lt: dayStart }, status: { in: openStages as never } } : {}),

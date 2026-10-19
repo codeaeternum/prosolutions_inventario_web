@@ -934,10 +934,19 @@ describe("GET /api/settings", () => {
     ])
   })
 
+  it("staff EMPLOYEE aprobado sin módulo configuración: payload staff pero JAMÁS datos bancarios", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seedSettings()
+    const json = await (await settingsGet()).json()
+    expect(json).not.toHaveProperty("bankTransferInfo")
+    expect(json).not.toHaveProperty("bankCashInfo")
+    expect(json.repairPartnerBusinessId).toBe("biz-taller-aliado")
+  })
+
   it.each([
-    ["EMPLOYEE", employee],
+    ["EMPLOYEE con configuración", { user: { ...employee.user, allowedModules: ["configuracion"] } }],
     ["ADMIN", admin],
-  ])("staff %s aprobado: recibe la configuración completa", async (_label, session) => {
+  ])("staff %s aprobado: recibe la configuración completa con datos bancarios", async (_label, session) => {
     mocks.auth.mockResolvedValue(session)
     seedSettings()
     const json = await (await settingsGet()).json()

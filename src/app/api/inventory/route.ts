@@ -31,15 +31,25 @@ function toPrismaMovementType(uiType: string | null): MovementType | null {
 
 export async function GET(request: NextRequest) {
     try {
-        // El historial incluye product.costPrice: módulo inventario, no staff general.
+        // El historial es del módulo inventario; product.costPrice solo llega
+        // al ADMIN (abajo, en el select del movimiento).
         const result = await requireModule("inventario")
         if (result.error) return result.error
-        const businessId = businessIdOf(getSession(result)!)
+        const session = getSession(result)!
+        const businessId = businessIdOf(session)
 
         const { searchParams } = new URL(request.url)
         const productId = searchParams.get("productId")
         const typeParam = searchParams.get("type")
         const branchId = searchParams.get("branchId")
+        // El filtro de sucursal se valida contra allowedBranchIds: sin el
+        // assert un empleado restringido podía ver movimientos ajenos.
+        const deniedBranch = assertBranchAllowed(session, branchId)
+        if (deniedBranch) return deniedBranch
+        // Sin filtro explícito, el empleado con sucursales asignadas solo ve
+        // los movimientos y reservas de las suyas.
+        const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+        const branchScope = branchId ?? (allowed?.length ? { in: allowed } : undefined)
         const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50") || 50))
         const offset = Math.min(20000, Math.max(0, parseInt(searchParams.get("offset") || "0") || 0))
 
@@ -64,7 +74,7 @@ export async function GET(request: NextRequest) {
 
         const movementWhere: Record<string, unknown> = { businessId }
         if (productId) movementWhere.productId = productId
-        if (branchId) movementWhere.branchId = branchId
+        if (branchScope) movementWhere.branchId = branchScope
         if (from || to) movementWhere.createdAt = dateRange
         if (q) {
             const contains = { contains: q, mode: "insensitive" as const }
@@ -121,6 +131,9 @@ export async function GET(request: NextRequest) {
         // así que el rango y la búsqueda se aplican sobre esa columna.
         const reservationFilters: Record<string, unknown> = { ...reservationWhere }
         if (productId) reservationFilters.productId = productId
+        // Las filas fusionadas de reservas siguen el mismo recorte de sucursal
+        // del empleado restringido (param explícito ya validado o { in: … }).
+        if (allowed?.length) reservationFilters.branchId = branchId ?? { in: allowed }
         if (from || to) reservationFilters.updatedAt = dateRange
         if (q) {
             const contains = { contains: q, mode: "insensitive" as const }
@@ -137,7 +150,9 @@ export async function GET(request: NextRequest) {
             onlyReservations ? Promise.resolve([]) : prisma.inventoryMovement.findMany({
                 where: movementWhere,
                 include: {
-                    product: { select: { id: true, name: true, barcode: true, costPrice: true } },
+                    // El costo revela el margen real: solo lo recibe ADMIN (el
+                    // panel muestra "Costo" únicamente cuando el campo llega).
+                    product: { select: { id: true, name: true, barcode: true, ...(session.user.role === "ADMIN" ? { costPrice: true } : {}) } },
                     user: { select: { id: true, name: true, role: true } },
                     branch: { select: { id: true, name: true } },
                     toBranch: { select: { id: true, name: true } },

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireAuth, assertModuleAllowed } from "@/lib/api-auth"
+import { getSession, requireAuth, assertBranchAllowed, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { hasModule } from "@/lib/access"
@@ -17,6 +17,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!reservation || reservation.businessId !== businessIdOf(session)) return NextResponse.json({ error: "Reserva no encontrada" }, { status: 404 })
     const staff = ["ADMIN", "EMPLOYEE"].includes(session.user.role) && hasModule(session.user, "reservas")
     if (!staff && reservation.userId !== session.user.id) return NextResponse.json({ error: "No autorizado" }, { status: 403 })
+    // El detalle también se acota a las sucursales asignadas del empleado.
+    const deniedBranch = assertBranchAllowed(session, reservation.branchId)
+    if (deniedBranch) return deniedBranch
     return NextResponse.json(reservation)
   } catch (error) { return businessFailure(error) }
 }

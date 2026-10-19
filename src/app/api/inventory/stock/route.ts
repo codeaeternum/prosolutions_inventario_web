@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { assertModuleAllowed, getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -18,13 +19,29 @@ export async function GET(request: NextRequest) {
     try {
         const auth = await requireAdminOrEmployee()
         if (auth.error) return auth.error
-        const businessId = businessIdOf(getSession(auth)!)
+        const session = getSession(auth)!
+        const businessId = businessIdOf(session)
 
         const { searchParams } = new URL(request.url)
         const search = searchParams.get("search")?.trim()
         const categoryId = searchParams.get("categoryId")
         const lowStock = searchParams.get("lowStock") === "true"
         const productId = searchParams.get("productId")?.trim()
+
+        // La matriz completa es del módulo inventario. El detalle ?productId=
+        // (una sola ficha con existencias por sucursal) también lo consulta el
+        // taller para el selector "Surtir desde".
+        const deniedModule = productId
+            ? (hasModule(session.user, "taller") || hasModule(session.user, "inventario"))
+                ? null
+                : NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
+            : assertModuleAllowed(session, "inventario")
+        if (deniedModule) return deniedModule
+
+        // Empleado con sucursales asignadas: el desglose por sucursal se
+        // recorta a las suyas (en ambos modos).
+        const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+        const branchScope = allowed?.length ? { in: allowed } : undefined
 
         if (productId) {
             const product = await prisma.product.findFirst({
@@ -33,14 +50,17 @@ export async function GET(request: NextRequest) {
                     id: true,
                     name: true,
                     barcode: true,
-                    stocks: { where: { businessId }, select: { branchId: true, quantity: true } },
+                    stocks: {
+                        where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
+                        select: { branchId: true, quantity: true },
+                    },
                 },
             })
             if (!product) {
                 return NextResponse.json({ error: "Producto no encontrado" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
             }
             const productBranches = await prisma.branch.findMany({
-                where: { businessId, isActive: true },
+                where: { businessId, isActive: true, ...(branchScope ? { id: branchScope } : {}) },
                 orderBy: { name: "asc" },
                 select: { id: true, name: true },
             })
@@ -79,7 +99,7 @@ export async function GET(request: NextRequest) {
                     minStock: true,
                     category: { select: { id: true, name: true } },
                     stocks: {
-                        where: { businessId },
+                        where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
                         select: {
                             branchId: true,
                             quantity: true,
@@ -89,7 +109,7 @@ export async function GET(request: NextRequest) {
                 },
             }),
             prisma.branch.findMany({
-                where: { businessId, isActive: true },
+                where: { businessId, isActive: true, ...(branchScope ? { id: branchScope } : {}) },
                 orderBy: { createdAt: "asc" },
                 select: { id: true, name: true },
             }),
@@ -103,7 +123,9 @@ export async function GET(request: NextRequest) {
         const rows = products.map((p) => {
             // Mapa branchId -> cantidad para rellenar las columnas activas.
             const byBranch = new Map(p.stocks.map((s) => [s.branchId, s.quantity]))
-            // El total considera TODAS las sucursales (incl. inactivas), como Product.stock.
+            // El total suma las sucursales visibles: sin restricción son TODAS
+            // (incl. inactivas), como Product.stock; al empleado restringido le
+            // corresponde solo lo que ve en sus sucursales asignadas.
             const total = p.stocks.reduce((acc, s) => acc + s.quantity, 0)
             return {
                 id: p.id,

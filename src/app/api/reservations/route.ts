@@ -30,11 +30,15 @@ export async function GET(req: Request) {
     if (status && !allowed.includes(status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     const type = query.get("type")
     if (type && !["TEMPORARY", "DEPOSIT"].includes(type)) return NextResponse.json({ error: "Tipo inválido" }, { status: 400 })
+    const isStaff = ["ADMIN", "EMPLOYEE"].includes(session.user.role)
+    // Empleado con sucursales asignadas: el listado se recorta a las suyas.
+    const allowedBranches = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
     const where: Prisma.ReservationWhereInput = {
       businessId: businessIdOf(session),
       // Staff (admin|empleado) opera el mostrador y ve todas las reservas del
       // negocio; los clientes solo ven las propias.
-      ...(!["ADMIN", "EMPLOYEE"].includes(session.user.role) ? { userId: session.user.id } : {}),
+      ...(!isStaff ? { userId: session.user.id } : {}),
+      ...(isStaff && allowedBranches?.length ? { branchId: { in: allowedBranches } } : {}),
       ...(status ? { status: status as ReservationStatus } : view === "active" ? { status: { in: [...ACTIVE_RESERVATIONS] } } : view === "history" ? { status: { in: [...TERMINAL_RESERVATIONS] } } : {}),
       ...(type ? { type: type as "TEMPORARY" | "DEPOSIT" } : {}),
     }

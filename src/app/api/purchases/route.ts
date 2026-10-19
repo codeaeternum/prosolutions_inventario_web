@@ -12,12 +12,23 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
-    const statusParam = new URL(request.url).searchParams.get("status")
+    const query = new URL(request.url).searchParams
+    // El filtro de sucursal se valida contra allowedBranchIds: sin el assert
+    // un empleado restringido podía listar compras de sucursales ajenas.
+    const branchId = query.get("branchId") || undefined
+    const deniedBranch = assertBranchAllowed(session, branchId)
+    if (deniedBranch) return deniedBranch
+    const statusParam = query.get("status")
     const status = STATUSES.includes(statusParam as PurchaseStatus) ? (statusParam as PurchaseStatus) : undefined
 
-    const purchases = await listPurchases(prisma, businessId, status)
+    // Sin filtro explícito, el empleado con sucursales asignadas solo ve las
+    // compras de las suyas (listPurchases no recibe sucursal: se recorta aquí).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const purchases = (await listPurchases(prisma, businessId, status))
+      .filter(p => (branchId ? p.branchId === branchId : !allowed?.length || allowed.includes(p.branchId)))
     return NextResponse.json({ purchases }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return businessFailure(error)

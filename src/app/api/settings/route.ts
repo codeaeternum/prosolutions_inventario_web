@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { getSession, requireModule } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, getDefaultBusinessId, setBusinessSetting } from "@/lib/settings"
@@ -91,6 +92,10 @@ export async function GET() {
       })
     }
 
+    // Datos bancarios (CLABE/cuentas): solo el dueño o quien opera el módulo
+    // configuración los recibe; el resto del staff obtiene el payload sin ellos.
+    const canSeeBankInfo = session!.user.role === "ADMIN" || hasModule(session!.user, "configuracion")
+
     const systemSettings = await getBusinessSettingsMap(businessId, [
       "bank_transfer_info", "bank_cash_info",
       "ticket_business_name", "ticket_subtitle", "ticket_footer",
@@ -113,8 +118,10 @@ export async function GET() {
         createdAt: null,
         updatedAt: null,
       }),
-      bankTransferInfo: systemSettings.get("bank_transfer_info") || DEFAULTS.bankTransferInfo,
-      bankCashInfo: systemSettings.get("bank_cash_info") || DEFAULTS.bankCashInfo,
+      ...(canSeeBankInfo ? {
+        bankTransferInfo: systemSettings.get("bank_transfer_info") || DEFAULTS.bankTransferInfo,
+        bankCashInfo: systemSettings.get("bank_cash_info") || DEFAULTS.bankCashInfo,
+      } : {}),
       ticketBusinessName: systemSettings.get("ticket_business_name") || "PROSOLUTIONS",
       ticketSubtitle: systemSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional",
       ticketFooter: systemSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",

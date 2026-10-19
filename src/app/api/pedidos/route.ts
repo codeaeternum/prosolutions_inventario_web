@@ -58,6 +58,10 @@ export async function GET(request: NextRequest) {
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)
+    // Empleado con sucursales asignadas: las tres fuentes del feed se recortan
+    // a las suyas (encargos, apartados web y apartados de mostrador).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const branchScope = allowed?.length ? { branchId: { in: allowed } } : {}
 
     const params = new URL(request.url).searchParams
     const tipo = params.get("tipo")
@@ -80,7 +84,7 @@ export async function GET(request: NextRequest) {
     const [encargos, reservas, layaways, encargoCount, reservaCount, layawayCount] = await Promise.all([
       wantEncargos
         ? prisma.encargo.findMany({
-            where: { businessId, ...(status ? { status } : {}) },
+            where: { businessId, ...branchScope, ...(status ? { status } : {}) },
             select: {
               id: true,
               description: true,
@@ -98,7 +102,7 @@ export async function GET(request: NextRequest) {
         : Promise.resolve([]),
       wantReservas
         ? prisma.reservation.findMany({
-            where: { businessId, ...(status ? { status: status as ReservationStatus } : {}) },
+            where: { businessId, ...branchScope, ...(status ? { status: status as ReservationStatus } : {}) },
             select: {
               id: true,
               qrCode: true,
@@ -118,7 +122,7 @@ export async function GET(request: NextRequest) {
         : Promise.resolve([]),
       wantLayaways
         ? prisma.sale.findMany({
-            where: { businessId, kind: "LAYAWAY", ...(status ? { status: status as SaleStatus } : {}) },
+            where: { businessId, kind: "LAYAWAY", ...branchScope, ...(status ? { status: status as SaleStatus } : {}) },
             select: {
               id: true,
               number: true,
@@ -134,12 +138,12 @@ export async function GET(request: NextRequest) {
             take,
           })
         : Promise.resolve([]),
-      wantEncargos ? prisma.encargo.count({ where: { businessId, ...(status ? { status } : {}) } }) : Promise.resolve(0),
+      wantEncargos ? prisma.encargo.count({ where: { businessId, ...branchScope, ...(status ? { status } : {}) } }) : Promise.resolve(0),
       wantReservas
-        ? prisma.reservation.count({ where: { businessId, ...(status ? { status: status as ReservationStatus } : {}) } })
+        ? prisma.reservation.count({ where: { businessId, ...branchScope, ...(status ? { status: status as ReservationStatus } : {}) } })
         : Promise.resolve(0),
       wantLayaways
-        ? prisma.sale.count({ where: { businessId, kind: "LAYAWAY", ...(status ? { status: status as SaleStatus } : {}) } })
+        ? prisma.sale.count({ where: { businessId, kind: "LAYAWAY", ...branchScope, ...(status ? { status: status as SaleStatus } : {}) } })
         : Promise.resolve(0),
     ])
 

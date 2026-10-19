@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth"
 import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
+import { hasBranchAccess } from "@/lib/access"
 import { NextResponse } from "next/server"
 import { businessIdOf } from "@/lib/tenant"
 import { getDefaultBusinessId } from "@/lib/settings"
@@ -148,14 +149,26 @@ export async function GET(req: Request) {
         }
 
         // Con sucursal, el stock mostrado es el de ESE local (fuente: BranchStock).
+        // Empleado restringido: la sucursal pedida debe ser una de las suyas y,
+        // sin parámetro, el stock se limita a la suma de sus sucursales
+        // asignadas (anónimo/cliente: sigue viendo el stock total).
         let result = products.slice(0, 20)
-        if (branchId && isCatalogStaff(viewer)) {
-            const stocks = await prisma.branchStock.findMany({
-                where: { branchId, businessId, productId: { in: result.map(p => p.id) } },
-                select: { productId: true, quantity: true },
-            })
-            const byProduct = new Map(stocks.map(s => [s.productId, s.quantity]))
-            result = result.map(p => ({ ...p, stock: byProduct.get(p.id) ?? 0 }))
+        if (isCatalogStaff(viewer)) {
+            const staffViewer = viewer!
+            if (branchId && !hasBranchAccess(staffViewer, branchId)) {
+                return NextResponse.json({ error: "No tienes acceso a esta sucursal." }, { status: 403 })
+            }
+            const allowed = staffViewer.role === "ADMIN" ? null : staffViewer.allowedBranchIds
+            const overlayBranchIds = branchId ? [branchId] : (allowed?.length ? allowed : null)
+            if (overlayBranchIds) {
+                const stocks = await prisma.branchStock.findMany({
+                    where: { branchId: { in: overlayBranchIds }, businessId, productId: { in: result.map(p => p.id) } },
+                    select: { productId: true, quantity: true },
+                })
+                const byProduct = new Map<string, number>()
+                for (const s of stocks) byProduct.set(s.productId, (byProduct.get(s.productId) ?? 0) + s.quantity)
+                result = result.map(p => ({ ...p, stock: byProduct.get(p.id) ?? 0 }))
+            }
         }
         return NextResponse.json({ products: result.map(p => productDto(p, viewer)) }, { headers: catalogResponseHeaders })
     } catch (error) {
