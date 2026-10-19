@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 /**
  * Dato de desbloqueo cifrado en reposo: helpers AES-256-GCM de
  * src/lib/device-secret y el reveal auditado de GET /api/workshop/[id]
- * (?reveal=1 devuelve el valor y deja un RepairEvent interno; sin él la
- * ficha viaja con deviceAccessValue null).
+ * (?reveal=1 — solo ADMIN — devuelve el valor y deja un RepairEvent interno;
+ * sin él la ficha viaja con deviceAccessValue null).
  */
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -103,7 +103,7 @@ describe("GET /api/workshop/[id] — reveal auditado", () => {
   })
 
   it("?reveal=1 devuelve el PIN en claro y registra quién lo consultó", async () => {
-    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.auth.mockResolvedValue(session("ADMIN"))
     mocks.orderFindUnique.mockResolvedValue({ ...order, deviceAccessValue: encryptAccessValue("2468") })
     const res = await workshopDetail(detailReq("?reveal=1"), idParams)
     expect(res.status).toBe(200)
@@ -112,9 +112,17 @@ describe("GET /api/workshop/[id] — reveal auditado", () => {
     expect(mocks.eventCreate).toHaveBeenCalledTimes(1)
     const { data } = mocks.eventCreate.mock.calls[0][0] as { data: Record<string, unknown> }
     expect(data).toMatchObject({
-      businessId: "biz-1", actorId: "u-EMPLOYEE", orderId: "order-1",
+      businessId: "biz-1", actorId: "u-ADMIN", orderId: "order-1",
       type: "NOTE", detail: "Consultó el dato de desbloqueo del equipo", isPublic: false,
     })
+  })
+
+  it("?reveal=1 es solo ADMIN: un empleado recibe 403 sin descifrar ni auditar", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.orderFindUnique.mockResolvedValue({ ...order, deviceAccessValue: encryptAccessValue("2468") })
+    const res = await workshopDetail(detailReq("?reveal=1"), idParams)
+    expect(res.status).toBe(403)
+    expect(mocks.eventCreate).not.toHaveBeenCalled()
   })
 
   it("?reveal=1 también revela texto plano heredado (órdenes previas al cifrado)", async () => {
@@ -127,7 +135,7 @@ describe("GET /api/workshop/[id] — reveal auditado", () => {
   })
 
   it("?reveal=1 en orden sin credencial no audita ni devuelve nada", async () => {
-    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.auth.mockResolvedValue(session("ADMIN"))
     mocks.orderFindUnique.mockResolvedValue({ ...order, deviceAccessType: "NONE", deviceAccessValue: null })
     const res = await workshopDetail(detailReq("?reveal=1"), idParams)
     expect(res.status).toBe(200)
@@ -137,7 +145,7 @@ describe("GET /api/workshop/[id] — reveal auditado", () => {
   })
 
   it("valor ilegible por clave rotada: la ficha se sirve sin código y el intento queda auditado", async () => {
-    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.auth.mockResolvedValue(session("ADMIN"))
     mocks.orderFindUnique.mockResolvedValue({ ...order, deviceAccessValue: encryptAccessValue("2468") })
     vi.stubEnv("DEVICE_SECRET_KEY", OTHER_KEY)
     const res = await workshopDetail(detailReq("?reveal=1"), idParams)

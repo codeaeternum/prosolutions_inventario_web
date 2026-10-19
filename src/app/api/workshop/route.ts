@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createRepair } from "@/lib/domain/workshop"
@@ -13,7 +13,7 @@ import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels } f
 // Internal pilot. Open staff access only after branch/technician permissions are implemented.
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)
@@ -24,6 +24,10 @@ export async function GET(req: Request) {
     const folio = /^(?:[A-Z0-9]{1,8}-)?0*(\d+)$/i.exec(search)?.[1]
     const orderNumber = folio && Number.isSafeInteger(Number(folio)) && Number(folio) <= 2147483647 ? Number(folio) : undefined
     const branchId = query.get("branchId") || undefined
+    // El filtro de sucursal se valida contra allowedBranchIds: sin el assert
+    // un empleado restringido podía listar órdenes de sucursales ajenas.
+    const deniedBranch = assertBranchAllowed(session, branchId)
+    if (deniedBranch) return deniedBranch
     const status = query.get("status")
     const view = query.get("view")
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })

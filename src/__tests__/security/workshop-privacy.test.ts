@@ -52,9 +52,10 @@ vi.mock("@/lib/prisma", () => {
 })
 vi.mock("@/lib/domain/workshop", () => ({ createRepair: vi.fn(), updateRepair: vi.fn() }))
 vi.mock("@/app/api/notifications/stream/route", () => ({ sendNotificationToStaff: vi.fn(async () => {}) }))
-vi.mock("@/lib/settings", () => ({ getBusinessSetting: vi.fn(async () => "Taller Test") }))
+vi.mock("@/lib/settings", () => ({ getBusinessSetting: vi.fn(async () => "Taller Test"), getOrderFolioDigits: vi.fn(async () => 6) }))
 
 import { GET as workshopList } from "@/app/api/workshop/route"
+import { GET as workshopDetail } from "@/app/api/workshop/[id]/route"
 import { GET as seguimiento } from "@/app/api/seguimiento/route"
 import { POST as decideQuote } from "@/app/api/cotizacion/[token]/approve/route"
 import { GET as quoteDoc } from "@/app/api/cotizacion/[token]/route"
@@ -100,6 +101,20 @@ beforeEach(() => {
 })
 
 describe("GET /api/workshop (listado)", () => {
+  it("exige el módulo taller: empleado restringido a caja recibe 403", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "u-e", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-1", allowedModules: ["caja"] } })
+    const res = await workshopList(new Request("https://app.invalid/api/workshop"))
+    expect(res.status).toBe(403)
+    expect(mocks.orderFindMany).not.toHaveBeenCalled()
+  })
+
+  it("rechaza un filtro branchId fuera de las sucursales del empleado", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "u-e", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-1", allowedBranchIds: ["b1"] } })
+    const res = await workshopList(new Request("https://app.invalid/api/workshop?branchId=b-ajena"))
+    expect(res.status).toBe(403)
+    expect(mocks.orderFindMany).not.toHaveBeenCalled()
+  })
+
   it("pide a Prisma omitir secretos: deviceAccessValue, signatureData y tokens", async () => {
     mocks.auth.mockResolvedValue(session("EMPLOYEE"))
     const res = await workshopList(new Request("https://app.invalid/api/workshop"))
@@ -158,6 +173,61 @@ describe("GET /api/workshop (listado)", () => {
   })
 })
 
+describe("GET /api/workshop/[id] (detalle)", () => {
+  const detailOrder = {
+    id: "order-1", businessId: "biz-1", number: 7, version: 1, status: "IN_REPAIR",
+    currentBranchId: "b1", serviceName: null,
+    signatureData: "data:image/png;base64,firma-recepcion",
+    deliverySignatureData: "data:image/png;base64,firma-entrega",
+    deviceAccessValue: "valor-cifrado", deviceAccessType: "PIN",
+    quoteToken: "qt-detalle", uploadToken: "ut-detalle",
+  }
+
+  it("exige el módulo taller: empleado restringido a caja recibe 403", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "u-e", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-1", allowedModules: ["caja"] } })
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
+    expect(res.status).toBe(403)
+    expect(mocks.orderFindUnique).not.toHaveBeenCalled()
+  })
+
+  it("rechaza la orden de una sucursal ajena al empleado restringido", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "u-e", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-1", allowedBranchIds: ["b9"] } })
+    mocks.orderFindUnique.mockResolvedValue(detailOrder)
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
+    expect(res.status).toBe(403)
+  })
+
+  it("reveal=1 exige ADMIN: el empleado recibe 403 sin auditar el acceso", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.orderFindUnique.mockResolvedValue(detailOrder)
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1?reveal=1"), idParams)
+    expect(res.status).toBe(403)
+    expect(mocks.eventCreate).not.toHaveBeenCalled()
+  })
+
+  it("las firmas solo viajan al ADMIN; el empleado conserva los tokens operativos", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    mocks.orderFindUnique.mockResolvedValue(detailOrder)
+    const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.order.signatureData).toBeNull()
+    expect(json.order.deliverySignatureData).toBeNull()
+    // Sin ?reveal=1 el desbloqueo nunca sale; los tokens sí: la UI del staff
+    // arma el link de cotización por WhatsApp y el de evidencias del técnico.
+    expect(json.order.deviceAccessValue).toBeNull()
+    expect(json.order.quoteToken).toBe("qt-detalle")
+    expect(json.order.uploadToken).toBe("ut-detalle")
+
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    const adminRes = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
+    expect(adminRes.status).toBe(200)
+    const adminJson = await adminRes.json()
+    expect(adminJson.order.signatureData).toBe("data:image/png;base64,firma-recepcion")
+    expect(adminJson.order.deliverySignatureData).toBe("data:image/png;base64,firma-entrega")
+  })
+})
+
 describe("GET /api/seguimiento (timeline público)", () => {
   const order = {
     number: 7, status: "IN_REPAIR", customerPhone: "5512341234",
@@ -188,6 +258,18 @@ describe("GET /api/seguimiento (timeline público)", () => {
     expect(body).not.toContain("María García")
     expect(body).not.toContain("Responsable")
     expect(body).not.toContain("500.00")
+  })
+
+  it("nunca expone quoteToken aunque la orden espere la autorización del cliente", async () => {
+    // quoteToken autoriza /api/cotizacion/[token] por sí solo; con la
+    // credencial débil de seguimiento (folio + 4 dígitos) cualquiera que
+    // la obtuviera podría aprobar/rechazar la cotización del cliente.
+    mocks.orderFindUnique.mockResolvedValue({ ...order, status: "WAITING_APPROVAL", quoteToken: "token-secreto-cotizacion" })
+    const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?folio=OT-000007&phone=1234", { headers: { "x-real-ip": nextIp() } }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.order).not.toHaveProperty("quoteToken")
+    expect(JSON.stringify(json)).not.toContain("token-secreto-cotizacion")
   })
 })
 

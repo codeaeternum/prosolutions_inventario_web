@@ -241,8 +241,10 @@ const PART_CLOSED_STATUSES: readonly string[] = ["NOT_AUTHORIZED", "NOT_REPAIRED
 // vuelve a WAITING_APPROVAL para re-autorización. No aplica en RECEIVED /
 // DIAGNOSIS / WAITING_APPROVAL (la cotización aún no se autoriza: el cliente
 // verá el total con la pieza al decidir) ni en terminales (PART_CLOSED_STATUSES
-// ya bloquea el ciclo de refacciones antes).
-const PART_REAUTH_STAGES: readonly string[] = ["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY"]
+// ya bloquea el ciclo de refacciones antes). WARRANTY cuenta como "en curso":
+// el reingreso puede necesitar piezas nuevas y el público las anuncia como
+// con costo — "garantía sin costo" solo cubre la misma reparación.
+const PART_REAUTH_STAGES: readonly string[] = ["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY", "WARRANTY"]
 // Orden delegada al taller asociado (delegatedOrderId, ver domain/delegation):
 // el trabajo vive en la orden espejo del tenant reparador y el cobro al
 // cliente se hace por POS — la orden local ya no admite movimientos de dinero
@@ -383,7 +385,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         const configured = Number.parseInt(setting?.value ?? "", 10)
         const warrantyDays = configured >= 1 && configured <= MAX_WARRANTY_DAYS ? configured : DEFAULT_WARRANTY_DAYS
         const until = new Date(Date.now() + warrantyDays * 24 * 60 * 60 * 1000)
-        Object.assign(data, { warrantyUntil: until, warrantyCount: { increment: 1 } })
+        // closedWithoutRepair se limpia al reabrir: con la marca en true
+        // orderTotalCents seguiría cobrando solo el diagnóstico en la segunda
+        // entrega y las refacciones del ciclo de garantía saldrían gratis.
+        // Si la garantía también cierra sin reparación (WARRANTY→NOT_REPAIRED
+        // →SETTLE_DELIVER), la marca vuelve a true y se liberan las piezas.
+        Object.assign(data, { warrantyUntil: until, warrantyCount: { increment: 1 }, closedWithoutRepair: false })
         detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}. Garantía ${order.warrantyCount + 1} — válida hasta ${until.toLocaleDateString("es-MX", { dateStyle: "medium" })}.${input.detail ? ` ${input.detail}` : ""}`
       }
       if (input.status === "CANCELLED" || input.status === "NOT_REPAIRED") {

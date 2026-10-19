@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
 import { parseQuoteValidityDays, DEFAULT_QUOTE_TERMS } from "@/app/api/cotizacion/quote-config"
@@ -249,6 +250,9 @@ export default async function TicketPage({
       }
     }
   } else if (tipo === "reparacion" || tipo === "taller" || tipo === "cotizacion") {
+    // Documentos del taller: mismo gate que /api/workshop — el staff necesita
+    // el módulo asignado (venta/reserva/abono quedan para todo el staff).
+    if (!hasModule(session.user, "taller")) notFound()
     // reparacion = comprobante del cliente: NUNCA imprime deviceAccessType ni
     // deviceAccessValue (datos de desbloqueo del cliente).
     // taller = hoja de servicio interna: sí los imprime, junto con costos,
@@ -418,10 +422,11 @@ export default async function TicketPage({
       } else {
         // La hoja interna es el único documento que imprime el desbloqueo:
         // verlo deja rastro en la bitácora, igual que el ?reveal=1 de la
-        // ficha en línea (evento interno, nunca público). Valor ilegible por
-        // clave rotada o corrupción: la hoja se imprime sin el código.
+        // ficha en línea (evento interno, nunca público). Solo ADMIN lo ve —
+        // la hoja del empleado sale sin el código. Valor ilegible por clave
+        // rotada o corrupción: igual se omite.
         let accessValue: string | undefined
-        if (order.deviceAccessValue) {
+        if (order.deviceAccessValue && session.user.role === "ADMIN") {
           try { accessValue = decryptAccessValue(order.deviceAccessValue) } catch { accessValue = undefined }
           await prisma.repairEvent.create({ data: { businessId, actorId: session.user.id, orderId: order.id, type: "NOTE", detail: "Vio el desbloqueo en la hoja de taller", isPublic: false } })
         }

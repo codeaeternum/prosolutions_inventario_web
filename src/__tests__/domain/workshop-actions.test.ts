@@ -372,7 +372,7 @@ describe("re-autorización del cliente al cambiar refacciones", () => {
   const eventDetails = () => tx.repairEvent.create.mock.calls.map(call => (call[0] as { data: { detail: string; isPublic: boolean; type: string } }).data)
   const orderUpdateData = () => (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
 
-  it.each(["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY"] as const)(
+  it.each(["IN_REPAIR", "WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "READY", "WARRANTY"] as const)(
     "PART_DECIDE autorizando en %s con cotización aprobada devuelve a WAITING_APPROVAL",
     async status => {
       tx.repairOrder.findUnique.mockResolvedValue(order({ status, quoteCents: 150000, approvedQuoteCents: 150000, quoteApprovedAt: new Date() }))
@@ -564,5 +564,69 @@ describe("ciclo de garantía con vigencia", () => {
     }))
     await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente" }))
     expect(updateData().warrantyUntil).toBeNull()
+  })
+
+  it("STATUS→WARRANTY limpia closedWithoutRepair: el ciclo reabierto vuelve a cobrar normal", async () => {
+    // Orden entregada sin reparación (solo cobró el diagnóstico): sin esta
+    // limpieza la segunda entrega cobraría solo el diagnóstico aunque el
+    // ciclo de garantía consumiera refacciones — saldrían gratis.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "El cliente lo trae de vuelta" }))
+    expect(updateData().closedWithoutRepair).toBe(false)
+  })
+
+  it("SETTLE_DELIVER desde WARRANTY cobra mano de obra + refacciones aprobadas, no solo el diagnóstico", async () => {
+    // Estado tras el reingreso de una orden entregada sin reparación:
+    // closedWithoutRepair ya en false — la entrega factura lo consumido.
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "WARRANTY", closedWithoutRepair: false, diagnosticFeeCents: 20000,
+      quoteCents: null, approvedQuoteCents: 50000,
+      warrantyUntil: new Date(Date.now() + 10 * DAY_MS), warrantyCount: 1,
+    }))
+    tx.repairPart.findMany.mockResolvedValue([
+      { id: "pt1", productId: "p1", description: "Pantalla", qty: 1, unitCostCents: 5000, unitPriceCents: 30000, status: "APPROVED" },
+    ])
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    // $500 mano de obra + $300 refacción autorizada = $800 liquidados.
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ purpose: "SETTLEMENT", method: "TRANSFER", amount: 800 }),
+    }))
+    // La refacción se cobra: no se rechaza ni repone su stock.
+    expect(tx.repairPart.updateMany).not.toHaveBeenCalled()
+    expect(tx.inventoryMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("WARRANTY→NOT_REPAIRED libera las refacciones del ciclo como cualquier cierre sin reparación", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WARRANTY", closedWithoutRepair: false, warrantyCount: 1 }))
+    tx.repairPart.findMany.mockResolvedValue([
+      { id: "pt1", productId: "p1", description: "Pantalla", qty: 1, unitCostCents: 0, unitPriceCents: 10000, status: "APPROVED" },
+      { id: "pt2", productId: null, description: "Mica", qty: 1, unitCostCents: 0, unitPriceCents: 5000, status: "REQUESTED" },
+    ])
+    // La pantalla llegó a descontar stock (OUT previo de 1 pieza en b1).
+    tx.inventoryMovement.findMany.mockResolvedValue([{ quantity: 1, branchId: "b1" }])
+    tx.inventoryMovement.aggregate.mockResolvedValue({ _sum: { quantity: null } })
+    tx.product.update.mockResolvedValue({ id: "p1", stock: 7 })
+    tx.repairPart.updateMany.mockResolvedValue({ count: 2 })
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "NOT_REPAIRED", detail: "Tampoco quedó" }))
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "RETURN", quantity: 1, productId: "p1" }),
+    }))
+    expect(tx.repairPart.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { orderId: "o1", status: { in: ["APPROVED", "REQUESTED"] } },
+      data: expect.objectContaining({ status: "REJECTED" }),
+    }))
+  })
+
+  it("SETTLE_DELIVER tras cerrar el ciclo de garantía sin reparación re-fija closedWithoutRepair y cobra el diagnóstico", async () => {
+    // La garantía tampoco pudo reparar (WARRANTY→NOT_REPAIRED): la entrega
+    // cobra solo el cargo de diagnóstico y la marca queda otra vez en true.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "NOT_REPAIRED", diagnosticFeeCents: 20000, warrantyCount: 1 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "DELIVERED", closedWithoutRepair: true, warrantyUntil: null }),
+    }))
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ purpose: "SETTLEMENT", amount: 200 }),
+    }))
   })
 })

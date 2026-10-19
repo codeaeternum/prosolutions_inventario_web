@@ -4,12 +4,11 @@
  * Resultado del rastreo público de una orden — compartido por /seguimiento y
  * /<slug>/order-status. Solo renderiza campos que la API ya saneó para público.
  */
-import Link from "next/link"
 import {
   Wrench, Check, MapPin, CalendarClock, History, MessageSquare,
   Images, Inbox, Stethoscope, FileCheck, ClipboardCheck, PackageCheck,
   CheckCheck, Hourglass, FlaskConical, ShieldCheck, Ban, XCircle, FileX, FileText,
-  Store, Wallet, ArrowRight, type LucideIcon,
+  Store, Wallet, type LucideIcon,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -48,8 +47,6 @@ export interface PublicOrder {
   paidCents: number
   // Vigencia de la garantía: solo presente mientras la orden está en WARRANTY.
   warrantyUntil: string | null
-  // Solo presente mientras la orden espera la autorización del cliente.
-  quoteToken: string | null
   photos: PublicPhoto[]
   events: PublicEvent[]
 }
@@ -305,22 +302,17 @@ export function OrderResult({ order, business }: { order: PublicOrder; business:
         {/* Estado especial: fuera del pipeline lineal */}
         {special && <SpecialCard special={special} />}
 
-        {/* Autorización pendiente: el momento exacto del CTA a cotización */}
-        {order.status === "WAITING_APPROVAL" && order.quoteToken && (
+        {/* Autorización pendiente: el enlace de cotización ya no viaja por
+            seguimiento (es la credencial que autoriza) — llega por WhatsApp/SMS. */}
+        {order.status === "WAITING_APPROVAL" && (
           <div className="rounded-xl border border-warning/50 bg-warning/10 p-5 text-center space-y-3">
             <FileCheck className="mx-auto h-8 w-8 text-warning-strong" aria-hidden />
             <div className="space-y-1">
               <h3 className="font-bold">Tu cotización está lista</h3>
               <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-                Revisa el desglose y autorízala desde el enlace para que continuemos con tu equipo.
+                Te la enviamos por WhatsApp o SMS — revísala y autorízala desde ese enlace para que continuemos con tu equipo.
               </p>
             </div>
-            <Button asChild size="lg" className="w-full sm:w-auto gap-2">
-              <Link href={`/cotizacion/${order.quoteToken}`}>
-                Revisar y autorizar mi cotización
-                <ArrowRight className="h-4 w-4" aria-hidden />
-              </Link>
-            </Button>
           </div>
         )}
 

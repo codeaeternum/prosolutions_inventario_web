@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { updateRepair } from "@/lib/domain/workshop"
@@ -73,18 +73,25 @@ async function readySideEffects(order: { id: string; number: number; status: str
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const { id } = await params
     const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, originBusiness: { select: { id: true, name: true } }, delegatedToBusiness: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } }, sourceBranch: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
     if (!order) return NextResponse.json({ error: "Orden no encontrada" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
+    // La sucursal actual de la orden también se valida: un empleado con
+    // sucursales restringidas no lee el detalle de órdenes ajenas.
+    const deniedBranch = assertBranchAllowed(session, order.currentBranchId)
+    if (deniedBranch) return deniedBranch
+    const isAdmin = session.user.role === "ADMIN"
     // El PIN/patrón viaja cifrado en BD y solo sale con ?reveal=1; sin el
     // parámetro la ficha recibe null (deviceAccessType sigue indicando que
-    // hay credencial). Staff admin y empleado pueden revelarlo — los
-    // técnicos lo necesitan — pero cada reveal queda en la bitácora interna.
+    // hay credencial). Solo ADMIN lo revela — es el dato más sensible de la
+    // orden — y cada reveal queda en la bitácora interna.
+    const wantsReveal = new URL(req.url).searchParams.get("reveal") === "1"
+    if (wantsReveal && !isAdmin) return NextResponse.json({ error: "Solo el administrador puede ver el dato de desbloqueo." }, { status: 403, headers: { "Cache-Control": "private, no-store" } })
     let deviceAccessValue: string | null = null
-    if (new URL(req.url).searchParams.get("reveal") === "1" && order.deviceAccessValue) {
+    if (wantsReveal && order.deviceAccessValue) {
       // Clave rotada o dato ilegible: la ficha se sirve igual, sin el código.
       try { deviceAccessValue = decryptAccessValue(order.deviceAccessValue) } catch { deviceAccessValue = null }
       await prisma.repairEvent.create({ data: { businessId: order.businessId, actorId: session.user.id, orderId: order.id, type: "NOTE", detail: "Consultó el dato de desbloqueo del equipo", isPublic: false } })
@@ -102,7 +109,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // prellena cuando aún no hay importe capturado. null si algún servicio
     // no resuelve — "se cotiza al recibir" — o el lookup falla.
     const suggestedQuoteCents = suggestedServiceLinesTotal(await loadQuoteServiceLines(order).catch(() => []))
-    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
+    // Las firmas (PNG base64, ~300KB c/u) son constancia legal de recepción y
+    // entrega: solo viajan para ADMIN — la ficha las pinta de forma condicional
+    // y para empleados el bloque simplemente no aparece. quoteToken/uploadToken
+    // sí los necesita todo el staff del taller (links de cotización por
+    // WhatsApp y de evidencias para el técnico).
+    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents, signatureData: isAdmin ? order.signatureData : null, deliverySignatureData: isAdmin ? order.deliverySignatureData : null }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {

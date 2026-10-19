@@ -126,8 +126,9 @@ export async function GET(req: Request) {
     // IDs internos, location, aesthetics ni functionalConditions (custodia
     // interna). Solo salen eventos isPublic: notas que el taller marcó para
     // el cliente y mensajes públicos del flujo (listo, aprobada, rechazada);
-    // el resto es bitácora interna. quoteToken solo se expone mientras la
-    // orden espera la autorización del cliente — es justo cuando el enlace le sirve.
+    // el resto es bitácora interna. quoteToken NUNCA sale por aquí: autoriza
+    // la cotización por sí solo y esta credencial es débil (folio + 4 dígitos)
+    // — el link de autorización llega al cliente por el WhatsApp del staff.
     return NextResponse.json(
       {
         order: {
@@ -151,7 +152,6 @@ export async function GET(req: Request) {
           // cubre la reparación anterior); solo viaja mientras la orden está
           // reingresada por garantía — entregada/cerrada no lo expone.
           warrantyUntil: order.status === "WARRANTY" ? order.warrantyUntil : null,
-          quoteToken: order.status === "WAITING_APPROVAL" ? order.quoteToken : null,
           photos: order.photos,
           // Whitelist estricta: SOLO eventos marcados isPublic por el dominio.
           // El filtro anterior (type ≠ NOTE) filtraba por tipo y publicaba
