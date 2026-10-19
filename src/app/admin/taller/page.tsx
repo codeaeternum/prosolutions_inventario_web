@@ -243,7 +243,7 @@ export default function WorkshopPage() {
   const quickStages = selected ? repairNextStages[selected.status].filter(next => !(["CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] as RepairStage[]).includes(next)) : []
   // El botón "Mostrar" del bloqueo aplica cuando el tipo sugiere secreto — el
   // valor en sí llega null hasta revelarlo (ver toggleAccessSecret).
-  const canRevealAccess = Boolean(selected?.deviceAccessValue || (selected?.deviceAccessType && selected.deviceAccessType !== "NONE"))
+  const canRevealAccess = isAdmin && Boolean(selected?.deviceAccessValue || (selected?.deviceAccessType && selected.deviceAccessType !== "NONE"))
   // No hay deliveredAt dedicado: la fecha exacta la conserva el evento público
   // de entrega (updatedAt cambiaría con una garantía o reembolso posterior).
   const deliveredAt = selected?.events?.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt

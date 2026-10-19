@@ -162,6 +162,10 @@ function CheckoutForm({
     const pendingPark = useRef<ClientOperationKey | null>(null)
     const { data: session } = useSession()
     const isEmployee = session?.user?.role === "EMPLOYEE"
+    // La lista de taller la cobra un cliente taller/negocio (automático) o la
+    // autoriza un ADMIN — el servidor rechaza "A taller" de staff a walk-ins.
+    const isAdmin = session?.user?.role === "ADMIN"
+    const workshopAllowed = workshopCustomer || isAdmin
 
     const setBusy = (busy: boolean) => {
         submitting.current = busy
@@ -418,7 +422,7 @@ function CheckoutForm({
         || (isSale && discountCents > 0 && (discountCents >= cartTotalCents || discountReason.trim().length < 3))
         || (docType === "LAYAWAY" && !customer)
 
-    const docTypes: DocType[] = workshopCustomer ? ["WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"]
+    const docTypes: DocType[] = workshopCustomer ? ["WORKSHOP"] : workshopAllowed ? ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE"]
 
     return (
             <DialogContent>
@@ -477,7 +481,13 @@ function CheckoutForm({
                             </Label>
                             <CustomerPicker
                                 value={customer}
-                                onChange={onCustomerChange}
+                                onChange={(c) => {
+                                    onCustomerChange(c)
+                                    // Si el nuevo cliente no es taller y el cajero no es admin,
+                                    // "A taller" deja de ser opción: vuelve a venta normal.
+                                    const qualified = c?.customerType === "STORE" || c?.customerType === "TECHNICIAN"
+                                    if (docType === "WORKSHOP" && !qualified && !isAdmin) changeDocType("VENTA")
+                                }}
                                 disabled={processing}
                                 requiresCredit={usesCredit}
                             />
