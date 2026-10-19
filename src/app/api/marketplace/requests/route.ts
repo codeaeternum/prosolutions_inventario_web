@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server"
-import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { getSession, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { ALLY_CATALOG_LEVELS } from "@/lib/market-visibility"
 import { prisma } from "@/lib/prisma"
+import { operationKeySchema } from "@/lib/domain/operations"
+import { businessFailure } from "@/lib/domain/http"
+import { createMarketplaceRequest, marketplaceRequestInclude } from "@/lib/domain/marketplace"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
 const statuses = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"] as const
 
 const createSchema = z.object({
+  // Llave de idempotencia: el recibo en BusinessOperation hace que un retry
+  // de red devuelva la MISMA solicitud en vez de duplicarla. Opcional para
+  // clientes viejos — el dominio además deduplica por (solicitante,
+  // producto, PENDING), aquí solo garantizamos que la operación tenga llave.
+  idempotencyKey: operationKeySchema.optional(),
   productId: z.string().min(1),
   qty: z.coerce.number().int().min(1, "La cantidad debe ser al menos 1").max(100000),
   // Opcional: para cuentas WORKSHOP el nombre del taller se deriva de su perfil
@@ -21,18 +28,14 @@ const createSchema = z.object({
   contactName: z.string().trim().max(120).optional(),
   contactPhone: z.string().trim().max(30).optional(),
   note: z.string().trim().max(500).optional(),
+  // Encargo de cliente que surte este pedido: la solicitud y el encargo →
+  // ORDERED confirman en la MISMA operación (antes eran dos llamadas y un
+  // fallo a la mitad dejaba estados inconsistentes).
+  encargoId: z.string().min(1).nullish(),
+  supplierNote: z.string().trim().max(500).optional(),
 })
 
-const requestInclude = {
-  product: {
-    select: { name: true, barcode: true, wholesalePrice: true, retailPrice: true },
-  },
-  // Negocio proveedor (dueño del producto): alimenta "Pedidos que hago".
-  business: { select: { id: true, name: true, slug: true } },
-  requestedBy: { select: { id: true, name: true, role: true } },
-  decidedBy: { select: { name: true } },
-  sale: { select: { id: true, number: true } },
-} satisfies Prisma.MarketplaceRequestInclude
+const requestInclude = marketplaceRequestInclude
 
 // GET /api/marketplace/requests?status=&direction=
 // Solicitudes de piezas de talleres aliados. PENDING primero, luego recientes.
@@ -95,7 +98,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/marketplace/requests  { productId, qty, tallerName?, contactName?, contactPhone?, note? }
+// POST /api/marketplace/requests  { productId, qty, tallerName?, contactName?, contactPhone?, note?, encargoId?, supplierNote?, idempotencyKey? }
 // Staff: registra a mano la solicitud de un taller aliado (tallerName
 //   requerido) o hace un PEDIDO A OTRO NEGOCIO — el producto puede ser de
 //   cualquier negocio activo que lo publique a aliados/público; la solicitud
@@ -103,6 +106,11 @@ export async function GET(req: Request) {
 //   comprador (se identifica por requestedBy.businessId).
 // WORKSHOP: el taller pide directamente; tallerName sale de su cuenta
 //   (businessName ?? name) y requestedById queda ligado a su usuario.
+// Con `encargoId` el dominio además pasa el encargo a ORDERED en la MISMA
+//   transacción — la solicitud y el avance del encargo confirman o fallan
+//   juntos (flujo "Pedirla" del panel de encargos).
+// Idempotente: `idempotencyKey` guarda el recibo (replay = misma respuesta);
+//   sin llave, el dominio deduplica por solicitante + producto PENDING.
 export async function POST(req: Request) {
   try {
     const auth = await requireMarketplaceViewer()
@@ -118,7 +126,6 @@ export async function POST(req: Request) {
       const denied = assertModuleAllowed(session, "mercado") && assertModuleAllowed(session, "inventario")
       if (denied) return denied
     }
-
     const parseResult = createSchema.safeParse(await req.json().catch(() => null))
     if (!parseResult.success) {
       const first = parseResult.error.issues[0]
@@ -128,9 +135,16 @@ export async function POST(req: Request) {
       )
     }
     const input = parseResult.data
+    // Un encargo solo lo toca el mostrador: una cuenta WORKSHOP no opera el
+    // panel de encargos (el dominio además lo refuerza con permission staff).
+    if (isWorkshop && input.encargoId) {
+      return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+    }
 
     // Producto ordenable: activo y publicado para aliados (ALLIES o PUBLIC)
     // en un negocio activo — propio o de otro negocio del directorio B2B.
+    // El dominio lo revalida dentro de la transacción; aquí solo se usa para
+    // derivar tallerName en pedidos cross-business y responder 404 temprano.
     const product = await prisma.product.findFirst({
       where: {
         id: input.productId,
@@ -176,35 +190,41 @@ export async function POST(req: Request) {
       )
     }
 
-    // La solicitud siempre vive en el tenant del PROVEEDOR (businessId de la
-    // solicitud = negocio dueño del producto): él la ve en Solicitudes y la
-    // decide. El lado comprador la recupera con direction=out.
-    const request = await prisma.marketplaceRequest.create({
-      data: {
-        businessId: sellerBusinessId,
-        productId: product.id,
-        qty: input.qty,
-        tallerName,
-        contactName: input.contactName || null,
-        contactPhone: input.contactPhone || null,
-        note: input.note || null,
-        requestedById: actorId,
-      },
-      include: requestInclude,
+    // Si la llave ya tenía recibo, esta llamada es un replay de red: el
+    // dominio devolverá la respuesta guardada y el staff no debe recibir un
+    // segundo aviso por la MISMA solicitud (la verificación es best-effort
+    // —un reintento concurrente puede duplicar el toast, nunca la fila—).
+    const alreadyRecorded = input.idempotencyKey
+      ? Boolean(await prisma.businessOperation.findUnique({ where: { key: input.idempotencyKey }, select: { id: true } }))
+      : false
+
+    const result = await createMarketplaceRequest(prisma, actorId, businessId, {
+      ...input,
+      encargoId: input.encargoId ?? undefined,
+      // Cliente viejo sin llave: una aleatoria satisface operation(); la
+      // deduplicación por contenido queda a cargo del dominio.
+      idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
+      tallerName,
     })
 
-    // Aviso en vivo al staff del PROVEEDOR; un fallo aquí no debe tumbar el
-    // registro.
-    void sendNotificationToStaff({
-      type: "marketplace_request",
-      title: "Nueva solicitud de refacción",
-      message: `${request.tallerName} solicita ${request.qty}× ${product.name}`,
-      data: { requestId: request.id },
-    }, sellerBusinessId).catch(() => {})
+    // Aviso en vivo al staff del PROVEEDOR solo cuando se asentó una
+    // solicitud NUEVA — una deduplicada/repetida ya avisó al crearse; un
+    // fallo aquí nunca debe tumbar el registro.
+    if (!result.deduplicated && !alreadyRecorded) {
+      void sendNotificationToStaff({
+        type: "marketplace_request",
+        title: "Nueva solicitud de refacción",
+        message: `${result.request.tallerName} solicita ${result.request.qty}× ${product.name}`,
+        data: { requestId: result.request.id },
+      }, sellerBusinessId).catch(() => {})
+    }
 
-    return NextResponse.json({ request }, { status: 201 })
+    return NextResponse.json(
+      { request: result.request, deduplicated: result.deduplicated, encargo: result.encargo },
+      // 200 en dedupe o replay de recibo (recurso existente); 201 en alta real.
+      { status: result.deduplicated || alreadyRecorded ? 200 : 201 }
+    )
   } catch (error) {
-    console.error("Error creating marketplace request:", error)
-    return NextResponse.json({ error: "Error al registrar la solicitud" }, { status: 500 })
+    return businessFailure(error)
   }
 }

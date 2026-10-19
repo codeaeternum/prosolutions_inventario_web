@@ -183,6 +183,8 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
   })
 }
 
+export type EncargoAction = "ORDERED" | "READY" | "DELIVERED" | "CANCELLED"
+
 const transitionSchema = z.object({
   idempotencyKey: operationKeySchema,
   action: z.enum(["ORDERED", "READY", "DELIVERED", "CANCELLED"]),
@@ -191,52 +193,75 @@ const transitionSchema = z.object({
 })
 
 /**
+ * Núcleo de la transición DENTRO de un tx ya abierto: valida que el encargo
+ * pertenezca al negocio y que el salto de estado esté permitido, asienta el
+ * cambio con guard de concurrencia (updateMany por estado previo) y deja el
+ * rastro en la bitácora.
+ *
+ * Lo comparten transitionEncargo() —que lo envuelve en operation() con
+ * recibo propio— y el pedido atómico al aliado de marketplace.ts, donde la
+ * solicitud al mercado y el pase a ORDERED confirman o revierten juntos.
+ */
+export async function transitionEncargoTx(
+  tx: Transaction,
+  input: {
+    actorId: string
+    businessId: string
+    id: string
+    action: EncargoAction
+    marketplaceRequestId?: string | null
+    supplierNote?: string
+  },
+) {
+  const encargo = await tx.encargo.findFirst({ where: { id: input.id, businessId: input.businessId }, include: encargoInclude })
+  if (!encargo) throw new BusinessError("Encargo no encontrado.", 404)
+  assertEncargoTransition(encargo.status, input.action)
+
+  const terminal = input.action === "DELIVERED" || input.action === "CANCELLED"
+  const changed = await tx.encargo.updateMany({
+    where: { id: encargo.id, status: encargo.status },
+    data: {
+      status: input.action,
+      ...(terminal ? { resolvedById: input.actorId } : {}),
+      ...(input.action === "ORDERED" && input.marketplaceRequestId ? { marketplaceRequestId: input.marketplaceRequestId } : {}),
+      ...(input.supplierNote !== undefined ? { supplierNote: input.supplierNote || null } : {}),
+    },
+  })
+  if (changed.count !== 1) throw new BusinessError("El encargo cambió durante la operación; reintenta.", 409)
+
+  await recordAudit(tx, {
+    businessId: input.businessId,
+    actorId: input.actorId,
+    action: "ENCARGO_STATUS",
+    entity: "encargo",
+    entityId: encargo.id,
+    entityName: encargo.description,
+    summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}`,
+    changes: { status: { before: encargo.status, after: input.action } },
+  })
+
+  return {
+    encargoId: encargo.id,
+    status: input.action,
+    previousStatus: encargo.status,
+    description: encargo.description,
+    branchId: encargo.branchId,
+    branchName: encargo.branch?.name ?? null,
+    customerName: encargo.customer?.name ?? null,
+    // El aviso al cliente (Telegram) lo dispara la ruta post-commit con
+    // este id; null = encargo sin cuenta, no hay a quién escribir.
+    customerId: encargo.customerId,
+    marketplaceRequestId: input.action === "ORDERED" ? (input.marketplaceRequestId ?? encargo.marketplaceRequestId) : encargo.marketplaceRequestId,
+  }
+}
+
+/**
  * Transición de estado del encargo. Devuelve lo necesario para que la ruta
  * avise al staff cuando la pieza llega (READY): descripción, sucursal y folio
  * de la solicitud al aliado si aplica.
  */
 export async function transitionEncargo(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = transitionSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_STATUS", permission: "staff", payload: { id, ...input } }, async tx => {
-    const encargo = await tx.encargo.findFirst({ where: { id, businessId }, include: encargoInclude })
-    if (!encargo) throw new BusinessError("Encargo no encontrado.", 404)
-    assertEncargoTransition(encargo.status, input.action)
-
-    const terminal = input.action === "DELIVERED" || input.action === "CANCELLED"
-    const changed = await tx.encargo.updateMany({
-      where: { id: encargo.id, status: encargo.status },
-      data: {
-        status: input.action,
-        ...(terminal ? { resolvedById: actorId } : {}),
-        ...(input.action === "ORDERED" && input.marketplaceRequestId ? { marketplaceRequestId: input.marketplaceRequestId } : {}),
-        ...(input.supplierNote !== undefined ? { supplierNote: input.supplierNote || null } : {}),
-      },
-    })
-    if (changed.count !== 1) throw new BusinessError("El encargo cambió durante la operación; reintenta.", 409)
-
-    await recordAudit(tx, {
-      businessId,
-      actorId,
-      action: "ENCARGO_STATUS",
-      entity: "encargo",
-      entityId: encargo.id,
-      entityName: encargo.description,
-      summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}`,
-      changes: { status: { before: encargo.status, after: input.action } },
-    })
-
-    return {
-      encargoId: encargo.id,
-      status: input.action,
-      previousStatus: encargo.status,
-      description: encargo.description,
-      branchId: encargo.branchId,
-      branchName: encargo.branch?.name ?? null,
-      customerName: encargo.customer?.name ?? null,
-      // El aviso al cliente (Telegram) lo dispara la ruta post-commit con
-      // este id; null = encargo sin cuenta, no hay a quién escribir.
-      customerId: encargo.customerId,
-      marketplaceRequestId: input.action === "ORDERED" ? (input.marketplaceRequestId ?? encargo.marketplaceRequestId) : encargo.marketplaceRequestId,
-    }
-  })
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_STATUS", permission: "staff", payload: { id, ...input } },
+    tx => transitionEncargoTx(tx, { actorId, businessId, id, action: input.action, marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote }))
 }

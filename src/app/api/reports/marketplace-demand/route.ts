@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
+import { businessDayKey } from "@/lib/business-time"
 
 // Reporte de demanda del marketplace B2B: qué refacciones piden los talleres
 // aliados. La "demanda" = solicitudes NO rechazadas (PENDING/APPROVED/FULFILLED);
@@ -14,14 +15,16 @@ import { businessIdOf } from "@/lib/tenant"
 const normalizeTaller = (name: string) =>
   name.trim().toLowerCase().replace(/\s+/g, " ")
 
-// Lunes 00:00 (hora local del servidor) de la semana a la que pertenece `d`.
-const startOfWeek = (d: Date) => {
-  const date = new Date(d)
-  const day = date.getDay() // 0 = domingo
-  const diff = (day + 6) % 7 // días transcurridos desde el lunes
-  date.setHours(0, 0, 0, 0)
-  date.setDate(date.getDate() - diff)
-  return date
+// Lunes de la semana a la que pertenece `d` en el HORARIO DEL NEGOCIO
+// (businessDayKey), devuelto como clave "YYYY-MM-DD". Antes usaba
+// getDay()/setHours() del servidor: en un host UTC la semana se desplazaba
+// ~6 h y una solicitud del domingo por la noche caía en la semana siguiente.
+const weekStartKey = (d: Date): string => {
+  const [year, month, day] = businessDayKey(d).split("-").map(Number)
+  const dayUtc = Date.UTC(year, month - 1, day)
+  const dayOfWeek = new Date(dayUtc).getUTCDay() // 0 = domingo
+  const mondayUtc = dayUtc - ((dayOfWeek + 6) % 7) * 86_400_000
+  return new Date(mondayUtc).toISOString().slice(0, 10)
 }
 
 export async function GET() {
@@ -85,17 +88,12 @@ export async function GET() {
       fulfilled: 0,
     }
 
-    // Tendencia: últimas 8 semanas calendario (lunes-domingo), incluida la actual.
-    const weekBuckets = new Map<
-      string,
-      { weekStart: Date; requests: number; qty: number }
-    >()
-    const currentWeekStart = startOfWeek(new Date())
+    // Tendencia: últimas 8 semanas calendario (lunes-domingo del horario del
+    // negocio), incluida la actual. La llave es la fecha MX del lunes.
+    const weekBuckets = new Map<string, { requests: number; qty: number }>()
+    const currentMondayUtc = Date.parse(`${weekStartKey(new Date())}T00:00:00.000Z`)
     for (let i = 7; i >= 0; i--) {
-      const ws = new Date(currentWeekStart)
-      ws.setDate(ws.getDate() - i * 7)
-      weekBuckets.set(ws.toISOString().slice(0, 10), {
-        weekStart: ws,
+      weekBuckets.set(new Date(currentMondayUtc - i * 7 * 86_400_000).toISOString().slice(0, 10), {
         requests: 0,
         qty: 0,
       })
@@ -155,7 +153,7 @@ export async function GET() {
         pa.requestCount++
         pa.talleres.add(tallerKey)
 
-        const weekKey = startOfWeek(r.createdAt).toISOString().slice(0, 10)
+        const weekKey = weekStartKey(r.createdAt)
         const bucket = weekBuckets.get(weekKey)
         if (bucket) {
           bucket.requests++
@@ -190,8 +188,8 @@ export async function GET() {
       (a, b) => b.totalQty - a.totalQty || b.requestCount - a.requestCount
     )
 
-    const weekly = [...weekBuckets.values()].map((w) => ({
-      weekStart: w.weekStart.toISOString().slice(0, 10),
+    const weekly = [...weekBuckets.entries()].map(([weekStart, w]) => ({
+      weekStart,
       requests: w.requests,
       qty: w.qty,
     }))

@@ -359,21 +359,26 @@ async function buildReportSeries(businessId: string) {
   ] = await Promise.all([
     // Ventas de los últimos 30 días: solo COMPLETED cuenta como ingreso
     // (DRAFT/OPEN son documentos vivos sin comprometer; VOIDED se excluye).
+    // Sale.total es el importe de CATÁLOGO; lo cobrado de verdad es
+    // total − discountCents (descuento autorizado al cobrar).
     prisma.sale.findMany({
       where: { businessId, status: "COMPLETED", createdAt: { gte: since30 } },
-      select: { createdAt: true, total: true },
+      select: { createdAt: true, total: true, discountCents: true },
     }),
     // Movimientos de caja: IN suma efectivo, OUT lo retira.
     prisma.cashMovement.findMany({
       where: { businessId, createdAt: { gte: since30 } },
       select: { createdAt: true, amount: true, type: true },
     }),
-    // Cobros de taller confirmados (anticipos, abonos y liquidaciones).
+    // Cobros de taller netos: CONFIRMED suma anticipos/abonos/liquidaciones
+    // y REFUNDED resta las devoluciones (su amount ya es negativo) — sin las
+    // refundidas el reporte inflaba el ingreso. PENDING_REVIEW no es dinero
+    // confirmado y VOIDED describe pagos anulados junto con su venta.
     prisma.payment.findMany({
       where: {
         businessId,
         repairOrderId: { not: null },
-        status: "CONFIRMED",
+        status: { in: ["CONFIRMED", "REFUNDED"] },
         createdAt: { gte: since30 },
       },
       select: { createdAt: true, amount: true },
@@ -409,12 +414,12 @@ async function buildReportSeries(businessId: string) {
     }),
   ])
 
-  // Ventas por día
+  // Ventas por día: lo cobrado = catálogo (total) − descuento autorizado.
   const salesAgg = new Map<string, { salesCents: number; count: number }>()
   for (const s of sales) {
     const k = dayKey(s.createdAt)
     const a = salesAgg.get(k) ?? { salesCents: 0, count: 0 }
-    a.salesCents += toCents(s.total)
+    a.salesCents += toCents(s.total) - s.discountCents
     a.count++
     salesAgg.set(k, a)
   }

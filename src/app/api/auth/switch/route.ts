@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs"
 import { createHash } from "node:crypto"
 import { prisma } from "@/lib/prisma"
 import { auth } from "@/lib/auth"
+import { recordAudit } from "@/lib/audit"
 import { checkAndRecord } from "@/lib/rate-limit"
 
 // Cambio rápido de usuario estilo POS: en una PC compartida el staff cambia de
@@ -68,15 +69,19 @@ export async function POST(req: NextRequest) {
   let targetId = body?.userId
   let impersonator: string | null = caller.id
 
+  // Claim impersonator vigente (si la sesión actual YA era impersonada): se
+  // necesita para el restore y queda en la bitácora como estado anterior.
+  const decoded = rawCookie && secret
+    ? await decode({ token: rawCookie, secret, salt: cookieName }).catch(() => null)
+    : null
+  const previousImpersonator = typeof decoded?.impersonator === "string" ? decoded.impersonator : null
+
   // Restaurar: vuelve a la cuenta que originó el cambio, sin PIN.
   if (body?.restore) {
-    const decoded = rawCookie && secret
-      ? await decode({ token: rawCookie, secret, salt: cookieName }).catch(() => null)
-      : null
-    if (!decoded?.impersonator || typeof decoded.impersonator !== "string") {
+    if (!previousImpersonator) {
       return NextResponse.json({ error: "No hay cuenta original a la que volver" }, { status: 400 })
     }
-    targetId = decoded.impersonator
+    targetId = previousImpersonator
     impersonator = null
   }
 
@@ -100,6 +105,27 @@ export async function POST(req: NextRequest) {
   }
 
   const { token } = await mintSession(req, target, impersonator)
+
+  // Bitácora: el cambio de cuenta es un evento de acceso — quién operó como
+  // quién. En el restore el actor real es la cuenta impersonadora (target):
+  // la sesión venía trabajando como `caller` solo de forma prestada. NUNCA
+  // se registra el PIN.
+  await recordAudit(prisma, {
+    businessId: caller.businessId,
+    actorId: body?.restore ? target.id : caller.id,
+    action: body?.restore ? "AUTH_SWITCH_RESTORE" : "AUTH_SWITCH",
+    entity: "user",
+    entityId: target.id,
+    entityName: target.name,
+    summary: body?.restore
+      ? `"${target.name}" volvió a su cuenta (la sesión operaba como "${caller.name}")`
+      : `"${caller.name}" cambió a la cuenta "${target.name}"`,
+    changes: {
+      cuenta: { before: caller.id, after: target.id },
+      impersonador: { before: previousImpersonator, after: impersonator },
+    },
+  })
+
   const res = NextResponse.json({ ok: true, user: { id: target.id, name: target.name, role: target.role, jobTitle: target.jobTitle } })
   res.cookies.set(cookieName, token, {
     httpOnly: true,

@@ -28,7 +28,7 @@ export interface PlatformBusinessSummary {
   isActive: boolean
   createdAt: Date
   counts: PlatformBusinessCounts
-  /** Suma de Sale.total de ventas COMPLETED (las anuladas no suman). */
+  /** Cobrado neto acumulado: Σ(Sale.total − discountCents/100) de ventas COMPLETED (las anuladas no suman). */
   salesTotal: number
   /** Última actividad operativa: max(createdAt) entre órdenes y ventas. */
   lastActivityAt: Date | null
@@ -92,18 +92,19 @@ const BUSINESS_SELECT = {
 export async function listPlatformBusinesses(): Promise<PlatformBusinessSummary[]> {
   const [businesses, salesTotals, salesActivity, ordersActivity] = await Promise.all([
     prisma.business.findMany({ orderBy: { createdAt: "desc" }, select: BUSINESS_SELECT }),
-    // Ventas acumuladas: solo COMPLETED suma ingresos reales.
+    // Ventas acumuladas: solo COMPLETED suma ingresos reales, y lo cobrado
+    // es el catálogo menos el descuento (discountCents viene en centavos).
     prisma.sale.groupBy({
       by: ["businessId"],
       where: { status: "COMPLETED" },
-      _sum: { total: true },
+      _sum: { total: true, discountCents: true },
     }),
     // Última actividad: cualquier venta cuenta (incluidas las anuladas).
     prisma.sale.groupBy({ by: ["businessId"], _max: { createdAt: true } }),
     prisma.repairOrder.groupBy({ by: ["businessId"], _max: { createdAt: true } }),
   ])
 
-  const totalMap = new Map(salesTotals.map(r => [r.businessId, r._sum.total ?? 0]))
+  const totalMap = new Map(salesTotals.map(r => [r.businessId, (r._sum.total ?? 0) - (r._sum.discountCents ?? 0) / 100]))
   const saleAtMap = new Map(salesActivity.map(r => [r.businessId, r._max.createdAt]))
   const orderAtMap = new Map(ordersActivity.map(r => [r.businessId, r._max.createdAt]))
 
@@ -218,7 +219,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     }),
     prisma.sale.aggregate({
       where: { businessId: id, status: "COMPLETED" },
-      _sum: { total: true },
+      _sum: { total: true, discountCents: true },
     }),
     prisma.repairOrder.findFirst({
       where: { businessId: id },
@@ -240,7 +241,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
   ])
 
   return {
-    ...toSummary(business, salesTotal._sum.total ?? 0, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
+    ...toSummary(business, (salesTotal._sum.total ?? 0) - (salesTotal._sum.discountCents ?? 0) / 100, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
     updatedAt: business.updatedAt,
     phone: business.phone,
     address: business.address,

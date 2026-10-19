@@ -9,7 +9,7 @@ interface UsuarioDesempeno {
   name: string
   role: string
   jobTitle: string | null
-  /** Importe vendido en pesos (Sale.total, solo status COMPLETED). */
+  /** Importe neto cobrado en pesos (Sale.total − discountCents, solo COMPLETED). */
   ventas: number
   /** Número de documentos de venta cobrados. */
   ventasCount: number
@@ -32,7 +32,8 @@ interface UsuarioDesempeno {
  *
  * Atribución:
  * - Ventas → Sale.sellerId (relación "SaleSeller"); solo COMPLETED cuenta,
- *   igual que /api/reports (DRAFT/OPEN/VOIDED no son ingreso).
+ *   igual que /api/reports (DRAFT/OPEN/VOIDED no son ingreso), y el importe
+ *   es el cobrado neto: total de catálogo − descuento autorizado.
  * - OTs → cada orden acredita a TODOS sus responsables: "creadas" suma a
  *   createdById (recepción que capturó) y assignedToId (técnico que la
  *   recibió); "entregadas" (status DELIVERED con updatedAt en el periodo —
@@ -68,6 +69,9 @@ export async function GET(request: NextRequest) {
         select: {
           sellerId: true,
           total: true,
+          // total es el catálogo; lo cobrado descuenta discountCents (está en
+          // centavos, el total en pesos).
+          discountCents: true,
           items: { select: { quantity: true, returnedQuantity: true } },
         },
       }),
@@ -120,7 +124,8 @@ export async function GET(request: NextRequest) {
 
     for (const s of sales) {
       const st = of(s.sellerId)
-      st.ventas += s.total
+      // Cobrado neto: el total de catálogo menos el descuento autorizado.
+      st.ventas += s.total - s.discountCents / 100
       st.ventasCount++
       st.piezasVendidas += s.items.reduce((n, i) => n + Math.max(0, i.quantity - i.returnedQuantity), 0)
     }

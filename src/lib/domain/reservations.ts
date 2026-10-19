@@ -47,7 +47,12 @@ export async function createReservations(db: PrismaClient, userId: string, busin
     let totalCents = 0
     for (const item of items) {
       const { product, branch } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: input.branchId, businessId })
-      const lineCents = cents(user.customerType === "STORE" ? product.wholesalePrice : product.retailPrice) * item.quantity
+      // Lista de taller para clientes taller/negocio: la misma regla que el
+      // POS (sell: kind WORKSHOP → precio wholesale para STORE y TECHNICIAN)
+      // y los snapshots de documents.ts. Antes el técnico pagaba retail solo
+      // en reserva web y mayoreo en mostrador — inconsistente.
+      const wholesale = user.customerType === "STORE" || user.customerType === "TECHNICIAN"
+      const lineCents = cents(wholesale ? product.wholesalePrice : product.retailPrice) * item.quantity
       cents(amount(lineCents))
       const reservation = await tx.reservation.create({ data: {
         businessId, userId, productId: item.productId, quantity: item.quantity, totalPrice: amount(lineCents),

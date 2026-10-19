@@ -433,10 +433,12 @@ export function EncargosPanel() {
     }
 
     /**
-     * "Pedirla" a un aliado del mercado: registra la solicitud en
-     * /api/marketplace/requests y luego pasa el encargo a ORDERED ligando el
-     * marketplaceRequestId que devuelve. Si `item` es null, primero crea el
-     * encargo con lo capturado en el formulario.
+     * "Pedirla" a un aliado del mercado: UNA sola llamada atómica — POST
+     * /api/marketplace/requests con `encargoId` crea la solicitud Y pasa el
+     * encargo a ORDERED ligando marketplaceRequestId en la misma operación
+     * (antes eran POST + PATCH y un fallo a la mitad dejaba la solicitud
+     * registrada con el encargo pendiente). Si `item` es null, primero crea
+     * el encargo con lo capturado en el formulario.
      */
     const orderFromAlly = async (item: EncargoRow | null, suggestion: AllySuggestion) => {
         if (busy) return
@@ -448,23 +450,26 @@ export function EncargosPanel() {
                 target = await createEncargo()
                 if (!target) return
             }
+            const payload = {
+                productId: suggestion.id,
+                qty: target.quantity,
+                encargoId: target.id,
+                // Sin tallerName: en pedidos a OTRO negocio el servidor lo
+                // deriva del nombre de nuestro negocio (somos quien pide).
+                note: `Encargo de cliente${target.customer ? ` (${target.customer.name})` : ""}: ${target.description}`,
+                supplierNote: `Pedida a ${suggestion.business.name}`,
+            }
+            // Llave por encargo: reintentar tras un fallo de red devuelve el
+            // recibo guardado en vez de abrir una segunda solicitud.
+            const keySlot = `ally:${target.id}`
+            transitionKeys.current[keySlot] = getClientOperationKey(transitionKeys.current[keySlot] ?? null, payload)
             const res = await fetch("/api/marketplace/requests", {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    productId: suggestion.id,
-                    qty: target.quantity,
-                    // Sin tallerName: en pedidos a OTRO negocio el servidor lo
-                    // deriva del nombre de nuestro negocio (somos quien pide).
-                    note: `Encargo de cliente${target.customer ? ` (${target.customer.name})` : ""}: ${target.description}`,
-                }),
+                body: JSON.stringify({ ...payload, idempotencyKey: transitionKeys.current[keySlot]!.key }),
             })
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data.error || "El aliado no recibió la solicitud")
-            const requestId: string | undefined = data.request?.id
-            await transitionEncargo(target, "ORDERED", {
-                ...(requestId ? { marketplaceRequestId: requestId } : {}),
-                supplierNote: `Pedida a ${suggestion.business.name}`,
-            })
+            transitionKeys.current[keySlot] = null
             toast.success(`Solicitud enviada a ${suggestion.business.name}`, { description: "El encargo quedó como pedida." })
             if (!item) resetEncargoForm()
             setAllyBoxFor(null)

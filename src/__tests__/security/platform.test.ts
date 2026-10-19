@@ -103,8 +103,9 @@ describe("platform console API", () => {
       _count: { users: 3, products: 10, repairOrders: 4, sales: 2, branches: 1 },
     }])
     // sale.groupBy se llama dos veces: totales COMPLETED y última actividad.
+    // salesTotal es lo cobrado de verdad: catálogo (total) − descuento.
     mocks.saleGroup
-      .mockResolvedValueOnce([{ businessId: "b1", _sum: { total: 5000 } }])
+      .mockResolvedValueOnce([{ businessId: "b1", _sum: { total: 5000, discountCents: 10000 } }])
       .mockResolvedValueOnce([{ businessId: "b1", _max: { createdAt: new Date("2026-02-01T00:00:00Z") } }])
     mocks.orderGroup.mockResolvedValue([{ businessId: "b1", _max: { createdAt: new Date("2026-02-10T00:00:00Z") } }])
 
@@ -114,7 +115,8 @@ describe("platform console API", () => {
     const { businesses } = await res.json()
     expect(businesses).toHaveLength(1)
     expect(businesses[0].counts).toEqual({ users: 3, products: 10, repairOrders: 4, sales: 2, branches: 1 })
-    expect(businesses[0].salesTotal).toBe(5000)
+    // $5,000 de catálogo − $100 de descuentos = $4,900 netos.
+    expect(businesses[0].salesTotal).toBe(4900)
     // La última actividad es el máximo entre venta y orden.
     expect(businesses[0].lastActivityAt).toBe("2026-02-10T00:00:00.000Z")
     expect(businesses[0]).not.toHaveProperty("password")
@@ -135,7 +137,7 @@ describe("platform console API", () => {
     mocks.findUsers.mockResolvedValue([{ id: "u1", name: "Dueño", email: "d@t.invalid", role: "ADMIN", status: "APPROVED", jobTitle: null, isSuperAdmin: false, createdAt: now }])
     mocks.findOrders.mockResolvedValue([{ id: "o1", number: 7, status: "READY", createdAt: now, quoteCents: 150000, approvedQuoteCents: null }])
     mocks.findSales.mockResolvedValue([{ id: "s1", number: 3, status: "COMPLETED", createdAt: now, total: 999 }])
-    mocks.saleAggregate.mockResolvedValue({ _sum: { total: 999 } })
+    mocks.saleAggregate.mockResolvedValue({ _sum: { total: 999, discountCents: 9900 } })
     mocks.findOrderFirst.mockResolvedValue({ createdAt: now })
     mocks.findSaleFirst.mockResolvedValue({ createdAt: now })
 
@@ -143,7 +145,8 @@ describe("platform console API", () => {
     expect(res.status).toBe(200)
     const { business } = await res.json()
     expect(business.counts.users).toBe(5)
-    expect(business.salesTotal).toBe(999)
+    // $999 de catálogo − $99 de descuento = $900 netos cobrados.
+    expect(business.salesTotal).toBe(900)
     expect(business.recentRepairOrders[0].folio).toBe("OT-000007")
     // Sin cotización aprobada, cae a la propuesta.
     expect(business.recentRepairOrders[0].totalCents).toBe(150000)
