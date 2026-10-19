@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { listDocuments, parkDocument } from "@/lib/domain/documents"
@@ -15,6 +15,7 @@ export async function GET(req: Request) {
   try {
     const auth = await requireModule("ventas")
     if (auth.error) return auth.error
+    const session = getSession(auth)!
     const query = new URL(req.url).searchParams
     const status = query.get("status") || undefined
     const kind = query.get("kind") || undefined
@@ -22,12 +23,19 @@ export async function GET(req: Request) {
     const customerId = query.get("customerId") || undefined
     if (status && !STATUSES.includes(status as (typeof STATUSES)[number])) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     if (kind && !KINDS.includes(kind as (typeof KINDS)[number])) return NextResponse.json({ error: "Tipo inválido" }, { status: 400 })
-    const documents = await listDocuments(prisma, businessIdOf(getSession(auth)!), {
+    // El filtro de sucursal se valida contra allowedBranchIds.
+    const deniedBranch = assertBranchAllowed(session, branchId)
+    if (deniedBranch) return deniedBranch
+    const documents = await listDocuments(prisma, businessIdOf(session), {
       status: status as (typeof STATUSES)[number] | undefined,
       kind: kind as (typeof KINDS)[number] | undefined,
       branchId, customerId, limit: 50,
     })
-    return NextResponse.json({ documents }, { headers: { "Cache-Control": "private, no-store" } })
+    // Empleado con sucursales asignadas: solo los documentos vivos de las suyas
+    // (listDocuments acota por UNA sucursal; el recorte multi-sucursal va aquí).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const visible = allowed?.length ? documents.filter(d => allowed.includes(d.branchId)) : documents
+    return NextResponse.json({ documents: visible }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 

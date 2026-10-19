@@ -1,7 +1,7 @@
 import { changeCash, expectedCashCents, type CashMovementLike } from "@/lib/domain/cash"
 import { businessFailure } from "@/lib/domain/http"
 import { NextResponse } from "next/server"
-import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import prisma from "@/lib/prisma"
 
@@ -13,11 +13,14 @@ async function methodTotals(businessId: string, register: { branchId: string | n
   // la sucursal de la caja vía su venta u orden de taller. Un pago de tarjeta o
   // transferencia no genera CashMovement, así que este total no sale de los
   // movimientos sino directo de Payment.
+  // VOIDED entra en la suma: al anular una venta del mismo turno el cobro
+  // positivo queda VOIDED y su reembolso REFUNDED (−X) — contar solo el
+  // negativo inflaba "Cobrado por método" en rojo; juntos cancelan a 0.
   const rows = await prisma.payment.groupBy({
     by: ["method"],
     where: {
       businessId,
-      status: { in: ["CONFIRMED", "REFUNDED"] },
+      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
       createdAt: { gte: register.openedAt, ...(register.closedAt ? { lte: register.closedAt } : {}) },
       ...(register.branchId
         ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }] }
@@ -43,16 +46,24 @@ export async function GET(req: Request) {
   try {
     const result = await requireModule("caja")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
 
     const url = new URL(req.url)
     const branchId = url.searchParams.get("branchId") || undefined
+    // El filtro de sucursal se valida contra allowedBranchIds.
+    const deniedBranch = assertBranchAllowed(session, branchId)
+    if (deniedBranch) return deniedBranch
+    // Sin filtro explícito, el empleado con sucursales asignadas solo ve las
+    // cajas de las suyas (abierta y cortes de la semana).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const branchScope = branchId ?? (allowed?.length ? { in: allowed } : undefined)
 
     // Vista semanal: cierres de los últimos 7 días con esperado y diferencia.
     if (url.searchParams.get("view") === "week") {
       const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
       const registers = await prisma.cashRegister.findMany({
-        where: { businessId, status: "CLOSED", closedAt: { gte: since }, ...(branchId ? { branchId } : {}) },
+        where: { businessId, status: "CLOSED", closedAt: { gte: since }, ...(branchScope ? { branchId: branchScope } : {}) },
         orderBy: { closedAt: "desc" },
         take: 50,
         include: {
@@ -85,7 +96,7 @@ export async function GET(req: Request) {
     }
 
     const activeRegister = await prisma.cashRegister.findFirst({
-      where: { businessId, status: "OPEN", ...(branchId ? { branchId } : {}) },
+      where: { businessId, status: "OPEN", ...(branchScope ? { branchId: branchScope } : {}) },
       orderBy: { openedAt: "desc" },
       include: {
         branch: { select: { id: true, name: true } },

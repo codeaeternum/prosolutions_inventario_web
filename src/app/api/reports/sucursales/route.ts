@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { RepairStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
 import { lastDayKeys } from "@/lib/chart-utils"
@@ -44,12 +44,17 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requireModule("reportes")
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
     const { searchParams } = new URL(req.url)
     const parsed = parseInt(searchParams.get("dias") || "30")
     const dias = DIAS_VALIDOS.has(parsed) ? parsed : 30
     const branchIdParam = searchParams.get("branchId")
+    // El filtro de sucursal se valida contra allowedBranchIds: sin el assert un
+    // empleado restringido con reportes comparaba cualquier sucursal.
+    const deniedBranch = assertBranchAllowed(session, branchIdParam)
+    if (deniedBranch) return deniedBranch
 
     // Inicio del periodo: 00:00 del día del negocio hace `dias` días (incluye
     // hoy), en la zona del negocio — igual que las series del reporte.
@@ -62,9 +67,13 @@ export async function GET(req: NextRequest) {
       select: { id: true, name: true },
     })
 
-    const branches = branchIdParam
+    // Empleado con sucursales asignadas: la comparación se limita a las suyas
+    // aunque no pida una sucursal en concreto.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    let branches = branchIdParam
       ? activeBranches.filter((b) => b.id === branchIdParam)
       : activeBranches
+    if (allowed?.length) branches = branches.filter((b) => allowed.includes(b.id))
     const ids = branches.map((b) => b.id)
 
     // Los movimientos viejos sin branchId cayeron en la principal (misma

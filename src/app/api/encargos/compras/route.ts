@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { addShoppingItem, listShoppingNeeds } from "@/lib/domain/shopping"
@@ -18,12 +18,29 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
     const branchId = new URL(request.url).searchParams.get("branchId") || undefined
+    // El filtro de sucursal se valida contra allowedBranchIds: sin el assert un
+    // empleado restringido consultaba faltantes y stock de sucursales ajenas.
+    const denied = assertBranchAllowed(session, branchId)
+    if (denied) return denied
     // El folio de cada orden sale con los dígitos del negocio (order_folio_digits).
     const needs = await listShoppingNeeds(prisma, businessId, branchId, await getOrderFolioDigits(businessId))
-    return NextResponse.json(needs, { headers: { "Cache-Control": "private, no-store" } })
+    // El costo revela el margen real: solo el ADMIN lo ve (misma regla que
+    // productDto); el empleado conserva cantidades y sugeridos para surtir.
+    const stripCost = <T extends { costPrice: number | null }>(row: T) => {
+      const clone = { ...row } as Partial<T>
+      delete clone.costPrice
+      return clone
+    }
+    const payload = session.user.role === "ADMIN" ? needs : {
+      ...needs,
+      partsShortage: needs.partsShortage.map(stripCost),
+      lowStock: needs.lowStock.map(stripCost),
+    }
+    return NextResponse.json(payload, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return businessFailure(error)
   }

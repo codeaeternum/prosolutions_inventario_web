@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { productDto } from "@/lib/product-dto"
@@ -16,6 +16,9 @@ export async function GET(req: Request) {
     const query = new URL(req.url).searchParams
     const categoryId = query.get("categoryId") || undefined
     const branchId = query.get("branchId") || undefined
+    // El stock por sucursal solo se expone si el empleado la tiene asignada.
+    const deniedBranch = assertBranchAllowed(session, branchId)
+    if (deniedBranch) return deniedBranch
     const cursor = query.get("cursor") || undefined
     const limit = Math.max(1, Math.min(60, Number(query.get("limit")) || 24))
 

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { transitionEncargo } from "@/lib/domain/encargos"
@@ -42,6 +42,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const businessId = businessIdOf(session)
     const { id } = await params
     const body = await request.json()
+    // La transición opera sobre la sucursal DEL encargo: un empleado restringido
+    // no puede mover encargos de sucursales que no tiene asignadas.
+    const encargo = await prisma.encargo.findUnique({ where: { id }, select: { branchId: true, businessId: true } })
+    const denied = assertBranchAllowed(session, encargo?.businessId === businessId ? encargo.branchId : null)
+    if (denied) return denied
     const result = await transitionEncargo(prisma, session.user.id, businessId, id, {
       ...body,
       // La transición es una sola por estado; la llave protege reintentos de red.

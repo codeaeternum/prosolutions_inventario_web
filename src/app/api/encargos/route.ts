@@ -33,7 +33,12 @@ export async function GET(request: NextRequest) {
       ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
       : null
 
-    const encargos = await listEncargos(prisma, businessId, { status, branchId })
+    // Empleado con sucursales asignadas: sin filtro explícito solo ve los
+    // encargos de las suyas (listEncargos acota por UNA sucursal; el recorte
+    // multi-sucursal va aquí).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const encargos = (await listEncargos(prisma, businessId, { status, branchId }))
+      .filter(e => !allowed?.length || (e.branchId != null && allowed.includes(e.branchId)))
     return NextResponse.json(
       { encargos, viewer: { role: session.user.role, homeBranchId: me?.homeBranchId ?? null } },
       { headers: { "Cache-Control": "private, no-store" } },
