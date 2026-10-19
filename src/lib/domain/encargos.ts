@@ -131,6 +131,11 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
   if (input.priceQuoted !== undefined && Math.abs(input.priceQuoted * 100 - Math.round(input.priceQuoted * 100)) > 0.000001) {
     throw new BusinessError("El precio cotizado admite como máximo dos decimales.", 400)
   }
+  // El anticipo nunca supera lo cotizado: /api/pedidos muestra ambos montos
+  // y un anticipo mayor sería un cargo fantasma para el cliente.
+  if (input.priceQuoted !== undefined && input.deposit > input.priceQuoted) {
+    throw new BusinessError("El anticipo no puede ser mayor que el precio cotizado.", 400)
+  }
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_CREATE", permission: "staff", payload: input }, async tx => {
     const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true, homeBranchId: true } })
     // operation() ya validó al actor; si aquí no aparece, algo va mal — no

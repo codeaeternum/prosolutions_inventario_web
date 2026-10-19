@@ -604,7 +604,16 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                             <TableRow
                                                 key={c.id}
                                                 className="cursor-pointer hover:bg-muted/50"
+                                                role="button"
+                                                tabIndex={0}
+                                                aria-label={`Ver detalle del conteo ${c.folio}`}
                                                 onClick={() => void openHistoryDetail(c.id)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" || e.key === " ") {
+                                                        e.preventDefault()
+                                                        void openHistoryDetail(c.id)
+                                                    }
+                                                }}
                                             >
                                                 <TableCell className="font-medium whitespace-nowrap">
                                                     <span className="inline-flex items-center gap-2">

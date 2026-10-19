@@ -179,12 +179,15 @@ export async function POST(req: Request) {
 
     const hashedPassword = await bcrypt.hash(password, 12)
 
-    // La cuenta nace PENDING solo si hay un canal por donde entregar la
-    // verificación: correo vía Resend, o teléfono vía bot de Telegram. Un
-    // PENDING sin canal posible quedaría atascado para siempre. Con canal,
-    // el dueño se activa (APPROVED) al verificar — markVerified lo promueve.
-    const telegramReady = Boolean(process.env.TELEGRAM_BOT_USERNAME || process.env.TELEGRAM_BOT_TOKEN)
-    const canVerify = Boolean(process.env.RESEND_API_KEY) || (Boolean(phoneOrNull) && telegramReady)
+    // La cuenta nace PENDING solo si existe el canal que puede ACTIVARLA.
+    // El alta siempre reclama un correo (contacto primario), así que solo
+    // verificar ese correo promueve a APPROVED — markVerified no promueve
+    // con el teléfono cuando hay correo reclamado: un teléfono propio no
+    // prueba la titularidad de un correo ajeno. Sin Resend el correo jamás
+    // se puede comprobar y un PENDING quedaría atascado hasta la purga,
+    // así que el alta entra directa; el teléfono sigue verificándose para
+    // habilitar avisos por Telegram.
+    const canVerify = Boolean(process.env.RESEND_API_KEY)
 
     // Ids del alta para emitir los códigos de verificación fuera de la tx.
     let createdBusinessId: string | null = null

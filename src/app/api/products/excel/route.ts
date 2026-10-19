@@ -59,9 +59,16 @@ export async function GET() {
         const result = await requireModule("inventario")
         if (result.error) return result.error
 
-        // Get all products with related data
+        const businessId = businessIdOf(getSession(result)!)
+        // Exportación acotada al mismo tope que la importación (MAX_ROWS):
+        // el .xlsx se arma completo en memoria. Si el catálogo excede el
+        // tope se devuelven los primeros N y el corte se avisa con headers
+        // y una hoja "Aviso" — nunca como fila extra de Productos, que la
+        // reimportación interpretaría como un producto más.
+        const total = await prisma.product.count({ where: { businessId } })
         const products = await prisma.product.findMany({
-            where: { businessId: businessIdOf(getSession(result)!) },
+            where: { businessId },
+            take: MAX_ROWS,
             include: {
                 category: { select: { name: true } },
                 models: {
@@ -121,6 +128,15 @@ export async function GET() {
 
         XLSX.utils.book_append_sheet(wb, ws, "Productos")
 
+        const truncated = total > products.length
+        if (truncated) {
+            // Hoja informativa al final: la importación solo lee la primera.
+            const note = XLSX.utils.json_to_sheet([{
+                Aviso: `Exportación parcial: se incluyen los primeros ${MAX_ROWS.toLocaleString("es-MX")} productos de ${total.toLocaleString("es-MX")}. Divide el catálogo para exportar el resto.`,
+            }])
+            XLSX.utils.book_append_sheet(wb, note, "Aviso")
+        }
+
         // Generate buffer
         const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" })
 
@@ -130,6 +146,9 @@ export async function GET() {
             headers: {
                 "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "Content-Disposition": `attachment; filename="productos_${new Date().toISOString().split("T")[0]}.xlsx"`,
+                ...(truncated
+                    ? { "X-Export-Truncated": "true", "X-Export-Total": String(total) }
+                    : {}),
             },
         })
     } catch (error) {

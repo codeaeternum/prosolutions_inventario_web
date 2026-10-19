@@ -302,7 +302,16 @@ export function ClientesPanel() {
                       <TableRow
                         key={cliente.id}
                         className="cursor-pointer"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Ver detalle de ${cliente.name}`}
                         onClick={() => openDetail(cliente)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault()
+                            openDetail(cliente)
+                          }
+                        }}
                       >
                         <TableCell>
                           <div className="min-w-0">

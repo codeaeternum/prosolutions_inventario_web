@@ -63,6 +63,7 @@ const userStatusLabels: Record<string, string> = {
 }
 
 const platformEventLabels: Record<string, string> = {
+  TENANT_CREATED: "Empresa registrada",
   TENANT_SUSPENDED: "Empresa suspendida",
   TENANT_REACTIVATED: "Empresa reactivada",
   TENANT_DELETED: "Empresa eliminada",

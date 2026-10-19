@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   categoryFindMany: vi.fn(),
   productFindMany: vi.fn(),
+  productCount: vi.fn(),
   userFindUnique: vi.fn(),
   txProductUpdate: vi.fn(),
   txProductCreate: vi.fn(),
@@ -31,7 +32,7 @@ vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST:
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     category: { findMany: mocks.categoryFindMany },
-    product: { findMany: mocks.productFindMany },
+    product: { findMany: mocks.productFindMany, count: mocks.productCount },
     user: { findUnique: mocks.userFindUnique },
   },
 }))
@@ -47,14 +48,14 @@ vi.mock("xlsx", () => ({
   read: vi.fn(() => ({ SheetNames: ["Hoja1"], Sheets: { Hoja1: {} } })),
   utils: {
     sheet_to_json: mocks.sheetToJson,
-    json_to_sheet: vi.fn(),
-    book_new: vi.fn(),
+    json_to_sheet: vi.fn(() => ({})),
+    book_new: vi.fn(() => ({})),
     book_append_sheet: vi.fn(),
   },
-  write: vi.fn(),
+  write: vi.fn(() => Buffer.from("xlsx")),
 }))
 
-import { POST } from "@/app/api/products/excel/route"
+import { GET, POST } from "@/app/api/products/excel/route"
 
 const tx = {
   product: {
@@ -83,6 +84,7 @@ beforeEach(() => {
     { id: "c-pantallas", name: "Pantallas" },
   ])
   mocks.productFindMany.mockResolvedValue([])
+  mocks.productCount.mockResolvedValue(0)
   mocks.transaction.mockImplementation((_db: unknown, work: (t: unknown) => unknown) => work(tx))
   mocks.txProductCreate.mockResolvedValue({ id: "p-new" })
   mocks.txProductUpdate.mockResolvedValue({})
@@ -91,6 +93,33 @@ beforeEach(() => {
   mocks.takeStock.mockResolvedValue({ product: {}, branch: { id: "branch-1" } })
   mocks.syncLowStock.mockResolvedValue(undefined)
   mocks.recordAudit.mockResolvedValue(undefined)
+})
+
+describe("GET exportación", () => {
+  it("acota el listado a MAX_ROWS y no marca truncado cuando cabe completo", async () => {
+    mocks.productCount.mockResolvedValue(2)
+    mocks.productFindMany.mockResolvedValue([
+      { id: "p1", name: "A", models: [], category: null },
+      { id: "p2", name: "B", models: [], category: null },
+    ])
+    const res = await GET()
+    expect(res.status).toBe(200)
+    expect(mocks.productFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      take: 5000,
+      where: { businessId: "biz-1" },
+    }))
+    expect(res.headers.get("x-export-truncated")).toBeNull()
+    expect(res.headers.get("x-export-total")).toBeNull()
+  })
+
+  it("marca la exportación truncada cuando el catálogo excede el tope", async () => {
+    mocks.productCount.mockResolvedValue(6000)
+    mocks.productFindMany.mockResolvedValue([])
+    const res = await GET()
+    expect(res.status).toBe(200)
+    expect(res.headers.get("x-export-truncated")).toBe("true")
+    expect(res.headers.get("x-export-total")).toBe("6000")
+  })
 })
 
 describe("límites del archivo", () => {

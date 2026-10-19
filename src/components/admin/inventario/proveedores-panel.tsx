@@ -296,7 +296,15 @@ export function ProveedoresPanel() {
                                         {aging.suppliers.map(row => (
                                             <tr
                                                 key={row.supplierId}
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => setFocusSupplierId(cur => (cur === row.supplierId ? null : row.supplierId))}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" || e.key === " ") {
+                                                        e.preventDefault()
+                                                        setFocusSupplierId(cur => (cur === row.supplierId ? null : row.supplierId))
+                                                    }
+                                                }}
                                                 className={`border-b last:border-0 cursor-pointer transition-colors hover:bg-muted/50 ${focusSupplierId === row.supplierId ? "bg-muted/60" : ""}`}
                                                 title={focusSupplierId === row.supplierId ? "Mostrar todos los proveedores" : `Ver solo ${row.name}`}
                                             >

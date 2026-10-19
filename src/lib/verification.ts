@@ -1,5 +1,6 @@
 import { createHash, randomInt } from "node:crypto"
 import type { PrismaClient, VerificationChannel, VerificationCode } from "@prisma/client"
+import { normalizePhone } from "./utils"
 
 /**
  * Verificación de contacto post-registro (correo/teléfono/Telegram).
@@ -148,22 +149,44 @@ export type MarkVerifiedResult = {
  * PHONE y TELEGRAM → phoneVerifiedAt (el deep-link de Telegram verifica el
  * teléfono registrado y de paso liga el telegramId desde el bot).
  * Devuelve { promotedOwner, ... } para que el caller dispare el correo de
- * bienvenida solo cuando esta verificación activó la cuenta de un dueño.
+ * bienvenida solo cuando esta verificación activó la cuenta de un dueño —
+ * es decir, cuando el canal verificado es el contacto primario que se
+ * reclamó en el alta (correo reclamado → EMAIL; sin correo → teléfono).
  */
 export async function markVerified(
   db: VerificationDb,
   userId: string,
   channel: VerificationChannel,
+  // Identifier del código consumido (correo/teléfono al que se emitió); si
+  // llega, la promoción también exige que siga siendo el contacto reclamado.
+  identifier?: string | null,
 ): Promise<MarkVerifiedResult> {
   const field = channel === "EMAIL" ? "emailVerifiedAt" : "phoneVerifiedAt"
   const updated = await db.user.update({
     where: { id: userId },
     data: { [field]: new Date() },
-    select: { email: true, business: { select: { name: true, slug: true } } },
+    select: { email: true, phone: true, business: { select: { name: true, slug: true } } },
   })
-  // Dueño auto-registrado (/api/signup): demostrar un canal de contacto real
-  // activa su negocio. PENDING+ADMIN solo existe por ese alta; los clientes
-  // PENDING siguen esperando aprobación del admin de su negocio.
+  // Dueño auto-registrado (/api/signup): la promoción exige que el canal
+  // verificado SEA el contacto primario reclamado en el alta. El alta web
+  // siempre reclama un correo, así que solo verificar ESE correo la activa —
+  // probar un teléfono propio no demuestra la titularidad de un correo que
+  // podría ser de otra persona; la cuenta sigue PENDING y el cron de purga
+  // libera el correo si nadie lo confirma. Una cuenta registrada solo con
+  // teléfono (sin correo reclamado) sí se activa al verificarlo.
+  const claimedEmail = updated.email?.trim().toLowerCase() ?? null
+  const claimedPhone = normalizePhone(updated.phone) || null
+  const verifiedId = identifier?.trim().toLowerCase() ?? null
+  const provesPrimaryContact =
+    channel === "EMAIL"
+      ? claimedEmail !== null && (verifiedId === null || verifiedId === claimedEmail)
+      : claimedEmail === null &&
+        claimedPhone !== null &&
+        (verifiedId === null || normalizePhone(verifiedId) === claimedPhone)
+  if (!provesPrimaryContact) return { promotedOwner: false }
+
+  // PENDING+ADMIN solo existe por el auto-alta; los clientes PENDING siguen
+  // esperando aprobación del admin de su negocio.
   const promoted = await db.user.updateMany({
     where: { id: userId, status: "PENDING", role: "ADMIN" },
     data: { status: "APPROVED" },

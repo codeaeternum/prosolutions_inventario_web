@@ -243,12 +243,63 @@ describe("markVerified", () => {
     expect(users.u1.emailVerifiedAt).toBeUndefined()
   })
 
-  it("promueve APPROVED al dueño auto-registrado (PENDING + ADMIN)", async () => {
+  it("promueve APPROVED al dueño auto-registrado que verifica su correo (PENDING + ADMIN)", async () => {
     const { db, users } = fakeDb()
-    users.owner = { id: "owner", status: "PENDING", role: "ADMIN" }
+    users.owner = { id: "owner", status: "PENDING", role: "ADMIN", email: "dueno@taller.com" }
     await markVerified(db, "owner", "EMAIL")
     expect(users.owner.status).toBe("APPROVED")
     expect(users.owner.emailVerifiedAt).toBeInstanceOf(Date)
+  })
+
+  it("NO promueve al dueño que reclamó correo y solo verificó el teléfono", async () => {
+    const { db, users } = fakeDb()
+    // Alta con correo ajeno + teléfono propio: el teléfono verificado no
+    // prueba la titularidad del correo reclamado — sigue PENDING (el cron
+    // de purga liberará el correo de la víctima si nadie lo confirma).
+    users.owner = {
+      id: "owner",
+      status: "PENDING",
+      role: "ADMIN",
+      email: "victima@taller.com",
+      phone: "5512345678",
+    }
+    const result = await markVerified(db, "owner", "TELEGRAM", "5512345678")
+    expect(result.promotedOwner).toBe(false)
+    expect(users.owner.status).toBe("PENDING")
+    // El teléfono sí quedó marcado como verificado (es un dato real).
+    expect(users.owner.phoneVerifiedAt).toBeInstanceOf(Date)
+  })
+
+  it("tras quedar PENDING por teléfono, verificar el correo sí activa la cuenta", async () => {
+    const { db, users } = fakeDb()
+    users.owner = {
+      id: "owner",
+      status: "PENDING",
+      role: "ADMIN",
+      email: "dueno@taller.com",
+      phone: "5512345678",
+    }
+    await markVerified(db, "owner", "TELEGRAM", "5512345678")
+    expect(users.owner.status).toBe("PENDING")
+    const result = await markVerified(db, "owner", "EMAIL", "dueno@taller.com")
+    expect(result.promotedOwner).toBe(true)
+    expect(users.owner.status).toBe("APPROVED")
+  })
+
+  it("una cuenta solo-teléfono (sin correo reclamado) sí se activa verificando su teléfono", async () => {
+    const { db, users } = fakeDb()
+    users.owner = { id: "owner", status: "PENDING", role: "ADMIN", email: null, phone: "5512345678" }
+    const result = await markVerified(db, "owner", "TELEGRAM", "5512345678")
+    expect(result.promotedOwner).toBe(true)
+    expect(users.owner.status).toBe("APPROVED")
+  })
+
+  it("con identifier, el correo verificado debe coincidir con el reclamado", async () => {
+    const { db, users } = fakeDb()
+    users.owner = { id: "owner", status: "PENDING", role: "ADMIN", email: "dueno@taller.com" }
+    const result = await markVerified(db, "owner", "EMAIL", "otro@buzon.com")
+    expect(result.promotedOwner).toBe(false)
+    expect(users.owner.status).toBe("PENDING")
   })
 
   it("NO promueve clientes pendientes (esperan aprobación del negocio)", async () => {
@@ -293,15 +344,18 @@ describe("markVerified", () => {
   it("reporta promotedOwner=false si el dueño ya estaba APPROVED", async () => {
     const { db, users } = fakeDb()
     users.owner = { id: "owner", status: "APPROVED", role: "ADMIN", email: "d@x.com" }
-    const result = await markVerified(db, "owner", "PHONE")
+    const result = await markVerified(db, "owner", "EMAIL")
     expect(result.promotedOwner).toBe(false)
   })
 
-  it("reporta promotedOwner=false para staff EMPLOYEE pendiente", async () => {
+  it("reporta promotedOwner=false para staff EMPLOYEE pendiente (aunque el canal sea el primario)", async () => {
     const { db, users } = fakeDb()
-    users.staff = { id: "staff", status: "PENDING", role: "EMPLOYEE" }
+    // Cuenta solo-teléfono: el canal sí prueba el contacto primario, pero el
+    // filtro PENDING+ADMIN no aplica a empleados — siguen esperando al admin.
+    users.staff = { id: "staff", status: "PENDING", role: "EMPLOYEE", email: null, phone: "5512345678" }
     const result = await markVerified(db, "staff", "TELEGRAM")
     expect(result.promotedOwner).toBe(false)
     expect(users.staff.status).toBe("PENDING")
+    expect(users.staff.phoneVerifiedAt).toBeInstanceOf(Date)
   })
 })

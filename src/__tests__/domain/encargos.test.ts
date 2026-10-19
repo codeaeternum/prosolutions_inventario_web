@@ -139,6 +139,22 @@ describe("alta de encargo", () => {
     expect(tx.encargo.create).not.toHaveBeenCalled()
   })
 
+  it("rechaza un anticipo mayor que el precio cotizado", async () => {
+    await expect(createEncargo(db, "admin-1", BIZ, {
+      idempotencyKey: key(), description: "Pantalla A54", priceQuoted: 800, deposit: 1200,
+    }))
+      .rejects.toMatchObject({ status: 400, message: expect.stringContaining("anticipo") })
+    expect(tx.encargo.create).not.toHaveBeenCalled()
+  })
+
+  it("acepta anticipo igual al cotizado, o cualquier anticipo sin cotización", async () => {
+    tx.encargo.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "e1", ...args.data }))
+    await createEncargo(db, "admin-1", BIZ, { idempotencyKey: key(), description: "Batería", priceQuoted: 500, deposit: 500 })
+    // Sin precio cotizado no hay con qué acotar: el anticipo queda a criterio.
+    await createEncargo(db, "admin-1", BIZ, { idempotencyKey: key(), description: "Flex", deposit: 9000 })
+    expect(tx.encargo.create).toHaveBeenCalledTimes(2)
+  })
+
   it("graba el alta en la bitácora", async () => {
     tx.encargo.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "e2", ...args.data }))
     await createEncargo(db, "admin-1", BIZ, { idempotencyKey: key(), description: "Cargador 65W", deposit: 100 })

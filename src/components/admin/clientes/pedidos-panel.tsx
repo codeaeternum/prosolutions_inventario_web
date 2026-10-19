@@ -257,7 +257,16 @@ export function PedidosPanel() {
                       <TableRow
                         key={`${row.tipo}:${row.id}`}
                         className="cursor-pointer"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Abrir pedido ${row.folio ?? row.id}`}
                         onClick={() => router.push(row.href)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault()
+                            router.push(row.href)
+                          }
+                        }}
                       >
                         <TableCell>
                           <TipoBadge tipo={row.tipo} />
