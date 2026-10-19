@@ -14,7 +14,7 @@ if (enabled) {
 }
 const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
 const prefix = `test-${randomUUID()}`
-let admin: string, customer: string, category: string, branchA: string, biz: string
+let admin: string, employee: string, customer: string, storeCustomer: string, category: string, branchA: string, biz: string
 let bizB: string, adminB: string
 const key = () => `${prefix}:${randomUUID()}`
 
@@ -31,7 +31,9 @@ describe.skipIf(!enabled)("PostgreSQL sales documents (suspendida, cotización, 
   beforeAll(async () => {
     biz = (await db.business.create({ data: { name: prefix, slug: prefix } })).id
     admin = (await db.user.create({ data: { businessId: biz, name: prefix, role: "ADMIN", status: "APPROVED" } })).id
+    employee = (await db.user.create({ data: { businessId: biz, name: `${prefix}-emp`, role: "EMPLOYEE", status: "APPROVED" } })).id
     customer = (await db.user.create({ data: { businessId: biz, name: prefix, role: "CUSTOMER", status: "APPROVED", creditLimit: 10000 } })).id
+    storeCustomer = (await db.user.create({ data: { businessId: biz, name: `${prefix}-store`, role: "CUSTOMER", status: "APPROVED", customerType: "STORE", creditLimit: 10000 } })).id
     category = (await db.category.create({ data: { businessId: biz, name: prefix, slug: prefix } })).id
     branchA = (await db.branch.create({ data: { businessId: biz, name: `${prefix}-A` } })).id
     // Segundo tenant para probar el aislamiento entre negocios.
@@ -197,6 +199,43 @@ describe.skipIf(!enabled)("PostgreSQL sales documents (suspendida, cotización, 
     expect(first.operationId).toBe(second.operationId)
     expect(first.sale.id).toBe(second.sale.id)
     expect(await db.sale.count({ where: { businessId: biz, kind: "QUOTE", status: "DRAFT" } })).toBe(quotesBefore + 1)
+  })
+
+  it("un EMPLOYEE no puede fotografiar precio de taller para un cliente no calificado", async () => {
+    const wp0 = await db.product.create({ data: { businessId: biz, name: `${prefix}-wp`, categoryId: category, stock: 0, retailPrice: 100, wholesalePrice: 60, images: [] } })
+    await db.branchStock.create({ data: { businessId: biz, productId: wp0.id, branchId: branchA, quantity: 5 } })
+    const wp = await db.product.update({ where: { id: wp0.id }, data: { stock: 5 } })
+    // Walk-in (sin cliente) y cliente NORMAL: el DRAFT de taller necesita ADMIN.
+    await expect(parkDocument(db, employee, biz, { kind: "WORKSHOP", items: [{ productId: wp.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    await expect(parkDocument(db, employee, biz, { kind: "WORKSHOP", customerId: customer, items: [{ productId: wp.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    // Con cliente STORE el empleado sí puede — su precio de taller es legítimo.
+    const storeDoc = await parkDocument(db, employee, biz, { kind: "WORKSHOP", customerId: storeCustomer, items: [{ productId: wp.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })
+    expect(storeDoc.items[0].unitPrice).toBe(60)
+    // Y el ADMIN puede abrirlo sin cliente.
+    const adminDoc = await parkDocument(db, admin, biz, { kind: "WORKSHOP", items: [{ productId: wp.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })
+    expect(adminDoc.items[0].unitPrice).toBe(60)
+  })
+
+  it("checkout de un DRAFT de taller también se rechequea (defensa en profundidad)", async () => {
+    const wp0 = await db.product.create({ data: { businessId: biz, name: `${prefix}-wp2`, categoryId: category, stock: 0, retailPrice: 100, wholesalePrice: 60, images: [] } })
+    await db.branchStock.create({ data: { businessId: biz, productId: wp0.id, branchId: branchA, quantity: 5 } })
+    const wp = await db.product.update({ where: { id: wp0.id }, data: { stock: 5 } })
+    const doc = await parkDocument(db, admin, biz, { kind: "WORKSHOP", items: [{ productId: wp.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })
+    await expect(checkoutDocument(db, employee, biz, { saleId: doc.sale.id, paymentMethod: "EFECTIVO", idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    // El mismo documento lo cobra el admin sin problema.
+    const result = await checkoutDocument(db, admin, biz, { saleId: doc.sale.id, paymentMethod: "EFECTIVO", idempotencyKey: key() })
+    expect(result.sale.status).toBe("COMPLETED")
+  })
+
+  it("el cliente puede asignarse o corregirse al cobrar el documento", async () => {
+    const p = await product(2, 100)
+    const doc = await parkDocument(db, admin, biz, { kind: "RETAIL", items: [{ productId: p.id, quantity: 1 }], branchId: branchA, idempotencyKey: key() })
+    // Sin cliente en el documento, el cajero elige al titular en el diálogo:
+    // el crédito valida contra EL y la venta queda a su nombre.
+    const result = await checkoutDocument(db, admin, biz, { saleId: doc.sale.id, customerId: customer, payments: [{ method: "CREDITO" }], idempotencyKey: key() })
+    expect(result.sale.status).toBe("COMPLETED")
+    expect((await db.sale.findUniqueOrThrow({ where: { id: doc.sale.id } })).customerId).toBe(customer)
+    expect(await db.creditMovement.count({ where: { userId: customer, type: "DEBT" } })).toBe(1)
   })
 
   it("un documento de otro negocio no se ve, ni se cobra, ni se cancela", async () => {

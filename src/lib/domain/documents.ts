@@ -25,6 +25,9 @@ const parkSchema = z.object({
 const checkoutSchema = z.object({
   saleId: z.string().min(1),
   idempotencyKey: operationKeySchema,
+  // El cliente puede asignarse o corregirse al cobrar (walk-in que se
+  // identifica, o crédito que necesita titular). El documento lo adopta.
+  customerId: z.string().min(1).optional(),
   payments: z.array(paymentInput).min(1).max(6).optional(),
   paymentMethod: METHODS.optional(),
   // Descuento autorizado al cobrar, en centavos sobre el total de catálogo.
@@ -84,7 +87,15 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
     // Precio prometido: snapshot del servidor al momento de crear el
     // documento (precio de taller para talleres y clientes STORE/TECHNICIAN). El
     // cliente nunca dicta el precio — checkout cobra exactamente esto.
-    const wholesale = input.kind === "WORKSHOP" || customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN"
+    // La lista de taller sin cliente calificado solo la abre un ADMIN — la
+    // misma regla que sell(): un EMPLOYEE no puede fotografiar precios de
+    // taller para un walk-in o cliente NORMAL vía kind=WORKSHOP.
+    const qualifiedCustomer =
+      customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN" || customer?.role === "WORKSHOP"
+    if (input.kind === "WORKSHOP" && !qualifiedCustomer && seller.role !== "ADMIN") {
+      throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
+    }
+    const wholesale = input.kind === "WORKSHOP" || qualifiedCustomer
     const lines = []
     let totalCents = 0
     for (const item of items) {
@@ -155,8 +166,28 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
     // dato inconsistente se cobre por la caja de venta en vez de por abonos.
     if (sale.kind === "LAYAWAY") throw new BusinessError("Los apartados se liquidan por abonos, no por este cobro.", 409)
     if (sale.kind === "QUOTE" && sale.expiresAt && sale.expiresAt.getTime() < Date.now()) throw new BusinessError("La cotización venció.", 410)
+    // El cliente del documento puede reasignarse al cobrar (walk-in que se
+    // identifica al pagar, o el titular del crédito elegido en el diálogo).
+    // El rol del actor también se resuelve aquí porque sirve para el tier.
+    const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+    let customerId = sale.customerId
+    if (input.customerId && input.customerId !== sale.customerId) {
+      await actor(tx, input.customerId, "customer", businessId)
+      customerId = input.customerId
+    }
+    // Defensa en profundidad: un DRAFT WORKSHOP viejo o manipulado se
+    // rechequea contra el cliente FINAL — el gate vive también en parkDocument.
+    if (sale.kind === "WORKSHOP") {
+      const docCustomer = customerId
+        ? await tx.user.findUnique({ where: { id: customerId }, select: { role: true, customerType: true } })
+        : null
+      const qualified = docCustomer?.customerType === "STORE" || docCustomer?.customerType === "TECHNICIAN" || docCustomer?.role === "WORKSHOP"
+      if (!qualified && me?.role !== "ADMIN") {
+        throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
+      }
+    }
     // El cliente del documento (si lo tiene) es quien autoriza el CREDITO.
-    checkSalePayments(payments, sale.customerId)
+    checkSalePayments(payments, customerId)
     const totalCents = cents(sale.total)
     // Descuento autorizado al cobrar: sale.total conserva el precio de
     // catálogo y los pagos cuadran contra total − descuento. El cobro nunca
@@ -167,7 +198,6 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       // Regla por rol: el EMPLOYEE descuenta hasta 10% del total; un monto
       // mayor necesita al ADMIN (sin tope). Otros roles no llegan — el
       // permission "staff" de la operación ya los filtró.
-      const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
       if (me?.role === "EMPLOYEE" && discountCents * 10 > totalCents) {
         throw new BusinessError("Los empleados pueden descontar hasta 10%; pide autorización al administrador.", 403)
       }
@@ -182,13 +212,16 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: sale.branchId, businessId })
     }
     const committed = await commitSale(tx, {
-      sale, businessId, actorId, branchId: sale.branchId, customerId: sale.customerId,
+      sale, businessId, actorId, branchId: sale.branchId, customerId,
       lines: saleItems.map(item => ({ saleItemId: item.id, productId: item.productId, quantity: item.quantity, unitCents: cents(item.unitPrice), lineCents: cents(item.totalPrice) })),
       payments: settled, reason: `Venta V-${sale.number}`,
     })
     // Guardia de concurrencia: solo un checkout puede sellar el DRAFT — el
     // descuento autorizado queda persistido en el mismo flip atómico.
-    const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "DRAFT" }, data: { status: "COMPLETED", discountCents, discountReason } })
+    const changed = await tx.sale.updateMany({
+      where: { id: sale.id, status: "DRAFT" },
+      data: { status: "COMPLETED", discountCents, discountReason, ...(customerId !== sale.customerId ? { customerId } : {}) },
+    })
     if (changed.count !== 1) throw new BusinessError("El documento cambió durante la operación; reintenta.", 409)
     return {
       sale: { ...sale, status: "COMPLETED" as const, discountCents, discountReason },
