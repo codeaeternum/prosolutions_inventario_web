@@ -117,20 +117,34 @@ export async function POST(req: Request) {
       )
     }
 
-    // Solo un ADMIN puede crear otro ADMIN: un empleado con el módulo de
-    // usuarios gestiona personal pero no se puede coronar a sí mismo.
-    if (role === "ADMIN" && session.user.role !== "ADMIN") {
+    const isAdmin = session.user.role === "ADMIN"
+
+    // Solo un ADMIN crea staff: un empleado con el módulo de usuarios da de
+    // alta CLIENTES únicamente — ni admins, ni colegas, ni talleres aliados.
+    if (role === "ADMIN" && !isAdmin) {
       return NextResponse.json({ error: "Solo un administrador puede crear administradores" }, { status: 403 })
+    }
+    if (!isAdmin && role !== "CUSTOMER") {
+      return NextResponse.json({ error: "Solo un administrador puede crear empleados o talleres aliados" }, { status: 403 })
+    }
+    if (!["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"].includes(role)) {
+      return NextResponse.json({ error: "Rol inválido" }, { status: 400 })
+    }
+    if (customerType && !["NORMAL", "TECHNICIAN", "STORE"].includes(customerType)) {
+      return NextResponse.json({ error: "Tipo de cliente inválido" }, { status: 400 })
     }
 
     const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
     if (!accessParsed.success) {
       return NextResponse.json({ error: "Módulos o sucursales inválidos" }, { status: 400 })
     }
-    const { allowedModules, allowedBranchIds } = accessParsed.data
-    if (!await branchesOwned(allowedBranchIds, businessId)) {
+    if (!await branchesOwned(accessParsed.data.allowedBranchIds, businessId)) {
       return NextResponse.json({ error: "Alguna sucursal no pertenece al negocio" }, { status: 400 })
     }
+    // Un empleado no fija módulos ni sucursales permitidas al crear: se
+    // fuerzan los defaults (listas vacías) aunque el body las traiga.
+    const allowedModules = isAdmin ? accessParsed.data.allowedModules : undefined
+    const allowedBranchIds = isAdmin ? accessParsed.data.allowedBranchIds : undefined
 
     // Puesto visible del staff (opcional, texto libre de hasta 60 caracteres)
     const cleanJobTitle = typeof jobTitle === "string" ? jobTitle.trim() : ""
@@ -138,9 +152,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "El puesto no puede exceder 60 caracteres" }, { status: 400 })
     }
 
-    // PIN rápido para cambio de usuario (opcional, 4-6 dígitos; se guarda hasheado)
+    // PIN rápido para cambio de usuario (opcional, 4-6 dígitos; se guarda
+    // hasheado). Solo un ADMIN lo siembra: un empleado no puede dejar
+    // credenciales de cambio rápido en cuentas nuevas.
     let hashedPin: string | null = null
-    if (quickPin !== undefined && quickPin !== null && quickPin !== "") {
+    if (isAdmin && quickPin !== undefined && quickPin !== null && quickPin !== "") {
       if (typeof quickPin !== "string" || !/^\d{4,6}$/.test(quickPin)) {
         return NextResponse.json({ error: "El PIN rápido debe tener de 4 a 6 dígitos" }, { status: 400 })
       }
@@ -183,7 +199,9 @@ export async function POST(req: Request) {
         email,
         password: hashedPassword,
         role: role as UserRole,
-        customerType: customerType || "NORMAL",
+        // El tipo de cliente lo decide un ADMIN (TECHNICIAN/STORE abren
+        // precios de mayoreo): un empleado siempre crea clientes NORMAL.
+        customerType: (isAdmin ? customerType : null) || "NORMAL",
         homeBranchId: homeBranchId || null,
         jobTitle: cleanJobTitle || null,
         publicSlug: cleanPublicSlug,

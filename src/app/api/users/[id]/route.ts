@@ -14,6 +14,13 @@ const accessSchema = z.object({
   allowedBranchIds: z.array(z.string().min(1)).max(100).optional(),
 })
 
+// Estatus y tipo de cliente viajan por enum estricto: antes se aplicaban
+// crudos del body y un valor fuera de catálogo llegaba a Prisma como 500.
+const accountSchema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
+  customerType: z.enum(["NORMAL", "TECHNICIAN", "STORE"]).optional(),
+})
+
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -23,6 +30,7 @@ export async function PATCH(
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
+    const isAdmin = session.user.role === "ADMIN"
 
     const { id } = await params
     const body = await req.json()
@@ -50,8 +58,30 @@ export async function PATCH(
 
     // Solo un ADMIN toca a otro ADMIN o asigna el rol: un empleado con el
     // módulo de usuarios gestiona personal pero no escala privilegios.
-    if (session.user.role !== "ADMIN" && (existingUser.role === "ADMIN" || role === "ADMIN")) {
+    if (!isAdmin && (existingUser.role === "ADMIN" || role === "ADMIN")) {
       return NextResponse.json({ error: "Solo un administrador puede gestionar administradores" }, { status: 403 })
+    }
+
+    // Un empleado con el módulo jamás se edita a sí mismo por esta vía: su
+    // perfil (nombre/correo/teléfono) va por /api/perfil y TODOS los campos
+    // que este endpoint escribe son administrativos — permitirlo abriría
+    // auto-escalación de módulos, rol, PIN o estatus.
+    if (!isAdmin && session.user.id === id) {
+      return NextResponse.json({ error: "No puedes gestionar tu propia cuenta" }, { status: 403 })
+    }
+
+    // Rol, estatus, tipo de cliente, módulos/sucursales permitidas y PIN
+    // rápido son exclusivos del ADMIN. El empleado solo ajusta puesto,
+    // sucursal base y el slug público del taller (campos operativos).
+    if (!isAdmin && (
+      role !== undefined ||
+      status !== undefined ||
+      customerType !== undefined ||
+      quickPin !== undefined ||
+      body.allowedModules !== undefined ||
+      body.allowedBranchIds !== undefined
+    )) {
+      return NextResponse.json({ error: "Solo un administrador puede cambiar rol, estatus, módulos o PIN" }, { status: 403 })
     }
 
     const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
@@ -59,6 +89,14 @@ export async function PATCH(
       return NextResponse.json({ error: "Módulos o sucursales inválidos" }, { status: 400 })
     }
     const { allowedModules, allowedBranchIds } = accessParsed.data
+
+    // Enum estricto para estatus y tipo de cliente (400 en vez de un 500
+    // de Prisma cuando llegaba un valor inventado).
+    const accountParsed = accountSchema.safeParse({ status, customerType })
+    if (!accountParsed.success) {
+      return NextResponse.json({ error: "Estatus o tipo de cliente inválido" }, { status: 400 })
+    }
+    const { status: statusUpdate, customerType: customerTypeUpdate } = accountParsed.data
     if (allowedBranchIds?.length) {
       const owned = await prisma.branch.count({ where: { id: { in: allowedBranchIds }, businessId } })
       if (owned !== allowedBranchIds.length) {
@@ -127,8 +165,8 @@ export async function PATCH(
     const user = await prisma.user.update({
       where: { id, businessId },
       data: {
-        ...(status && { status }),
-        ...(customerType && { customerType }),
+        ...(statusUpdate && { status: statusUpdate }),
+        ...(customerTypeUpdate && { customerType: customerTypeUpdate }),
         ...(role && { role }),
         ...(homeBranchId !== undefined && { homeBranchId: homeBranchId || null }),
         ...(jobTitleUpdate !== undefined && { jobTitle: jobTitleUpdate }),
@@ -215,15 +253,16 @@ export async function DELETE(
     if (result.error) return result.error
     const session = getSession(result)!
 
+    // Solo un ADMIN elimina usuarios: borrar cuentas con historial (ventas,
+    // reservas, crédito) es irreversible y no es facultad del mostrador.
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Solo un administrador puede eliminar usuarios" }, { status: 403 })
+    }
+
     const { id } = await params
 
     const businessId = businessIdOf(session)
     const target = await prisma.user.findUnique({ where: { id, businessId }, select: { role: true, name: true } })
-
-    // Un empleado con el módulo no puede eliminar a un administrador.
-    if (session.user.role !== "ADMIN" && target?.role === "ADMIN") {
-      return NextResponse.json({ error: "Solo un administrador puede eliminar administradores" }, { status: 403 })
-    }
 
     await prisma.user.delete({
       where: { id, businessId },
