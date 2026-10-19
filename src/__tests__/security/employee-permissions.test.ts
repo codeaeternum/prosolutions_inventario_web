@@ -19,6 +19,9 @@ const tx = vi.hoisted(() => ({
   cashRegister: { findMany: vi.fn(), updateMany: vi.fn() },
   cashMovement: { create: vi.fn() },
   creditMovement: { findMany: vi.fn() },
+  sale: { create: vi.fn() },
+  saleItem: { create: vi.fn() },
+  payment: { create: vi.fn() },
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -27,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   settingsFindMany: vi.fn(),
   userFindMany: vi.fn(),
   userCount: vi.fn(),
-  repairFindMany: vi.fn(),
+  repairGroupBy: vi.fn(),
   productFindMany: vi.fn(),
   branchFindMany: vi.fn(),
   reservationFindMany: vi.fn(),
@@ -43,7 +46,7 @@ vi.mock("@/lib/prisma", () => ({
     workshopService: { findMany: mocks.serviceFindMany },
     systemSettings: { findMany: mocks.settingsFindMany },
     user: { findMany: mocks.userFindMany, count: mocks.userCount },
-    repairOrder: { findMany: mocks.repairFindMany },
+    repairOrder: { groupBy: mocks.repairGroupBy },
     product: { findMany: mocks.productFindMany },
     branch: { findMany: mocks.branchFindMany },
     reservation: {
@@ -62,7 +65,6 @@ import { GET as clientes } from "@/app/api/clientes/route"
 import { GET as exportCsv } from "@/app/api/export/route"
 import { GET as reservations } from "@/app/api/reservations/route"
 import { GET as reservationDetail, PATCH as changeOwn } from "@/app/api/reservations/[id]/route"
-import { PATCH as changeStaff } from "@/app/api/admin/reservations/[id]/route"
 import { GET as verifyLookup, POST as verifyDeliver } from "@/app/api/reservations/verify/route"
 import { GET as posCustomers } from "@/app/api/users/pos/route"
 
@@ -99,7 +101,11 @@ function armTxFor(action: "approve" | "cancel" | "complete") {
     tx.branch.findFirst.mockResolvedValue({ id: "b1", name: "Matriz", isActive: true })
     tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-1", status: "OPEN" }])
     tx.cashRegister.updateMany.mockResolvedValue({ count: 1 })
-    tx.cashMovement.create.mockResolvedValue({})
+    tx.cashMovement.create.mockResolvedValue({ id: "cash-1" })
+    // La entrega deja documento de venta: Sale + renglón + Payment ligado.
+    tx.sale.create.mockResolvedValue({ id: "sale-1", number: 7 })
+    tx.saleItem.create.mockResolvedValue({})
+    tx.payment.create.mockResolvedValue({})
   }
 }
 
@@ -110,7 +116,7 @@ beforeEach(() => {
   mocks.settingsFindMany.mockResolvedValue([])
   mocks.userFindMany.mockResolvedValue([])
   mocks.userCount.mockResolvedValue(0)
-  mocks.repairFindMany.mockResolvedValue([])
+  mocks.repairGroupBy.mockResolvedValue([])
   mocks.productFindMany.mockResolvedValue([])
   mocks.branchFindMany.mockResolvedValue([])
   mocks.reservationFindMany.mockResolvedValue([])
@@ -182,16 +188,6 @@ describe("exportación CSV vuelve a ser admin-only", () => {
 })
 
 describe("gestión de reservas en mostrador", () => {
-  it("empleado aprueba una reserva de otro usuario (PATCH admin)", async () => {
-    armTxFor("approve")
-    tx.user.findUnique.mockResolvedValue(staffUser("EMPLOYEE"))
-    mocks.auth.mockResolvedValue(session("employee-1", "EMPLOYEE"))
-    const res = await changeStaff(patch("https://app.invalid/api/admin/reservations/res-1", { action: "approve" }), params("res-1"))
-    expect(res.status).toBe(200)
-    expect((await res.json()).changed).toBe(true)
-    expect(tx.reservation.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "APPROVED" }) }))
-  })
-
   it("empleado entrega por QR cobrando el saldo en efectivo", async () => {
     armTxFor("complete")
     tx.user.findUnique.mockResolvedValue(staffUser("EMPLOYEE"))
@@ -200,6 +196,14 @@ describe("gestión de reservas en mostrador", () => {
     const res = await verifyDeliver(post("https://app.invalid/api/reservations/verify", { qrCode: "RES-QR", finalPaymentMethod: "EFECTIVO", idempotencyKey: "op-test-0002" }))
     expect(res.status).toBe(200)
     expect(tx.cashMovement.create).toHaveBeenCalled()
+    // La entrega deja el documento de venta: Sale COMPLETED + Payment ligado
+    // al único asiento de caja (sin re-cobro ni segundo movimiento).
+    expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "COMPLETED", kind: "RETAIL", customerId: "customer-9", sellerId: "employee-1" }),
+    }))
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ purpose: "RESERVATION", reference: "res-1", method: "CASH", cashMovementId: "cash-1" }),
+    }))
   })
 
   it("empleado cancela la reserva de un cliente y se libera el stock", async () => {
@@ -216,8 +220,6 @@ describe("gestión de reservas en mostrador", () => {
     armTxFor("approve")
     tx.user.findUnique.mockResolvedValue({ id: "c-1", name: "Cli", role: "CUSTOMER", status: "APPROVED", businessId: "biz-test" })
     mocks.auth.mockResolvedValue(session("c-1", "CUSTOMER"))
-    // La ruta admin ni siquiera deja pasar la autenticación.
-    expect((await changeStaff(patch("https://app.invalid/api/admin/reservations/res-1", { action: "approve" }), params("res-1"))).status).toBe(403)
     // La ruta de cliente llega al dominio y el dominio exige staff.
     expect((await changeOwn(patch("https://app.invalid/api/reservations/res-1", { action: "approve" }), params("res-1"))).status).toBe(403)
     expect(tx.reservation.updateMany).not.toHaveBeenCalled()

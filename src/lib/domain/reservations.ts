@@ -1,7 +1,7 @@
-import type { PrismaClient, Reservation } from "@prisma/client"
+import type { PaymentMethod, PrismaClient, Reservation } from "@prisma/client"
 import { z } from "zod"
 import { isOwnedPaymentProof } from "../payment-proofs"
-import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, takeStock, transaction, type Transaction } from "./operations"
+import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, resolveBranch, takeStock, transaction, type Transaction } from "./operations"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 export const ACTIVE_RESERVATIONS = ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"] as const
@@ -97,6 +97,12 @@ const actionSchema = z.object({
 })
 export type ReservationAction = z.infer<typeof actionSchema>
 
+// Tokens del contrato de reserva → enum de BD (Payment.method). El contrato
+// de entrega usa "CREDIT" (a diferencia del "CREDITO" del POS) y el anticipo
+// web guarda "TRANSFER"/"STORE"/"CREDIT" del alta.
+const DELIVERY_METHOD: Record<string, PaymentMethod> = { EFECTIVO: "CASH", TARJETA: "CARD", TRANSFERENCIA: "TRANSFER", CREDIT: "CREDIT" }
+const DEPOSIT_METHOD: Record<string, PaymentMethod> = { STORE: "CASH", TRANSFER: "TRANSFER", CREDIT: "CREDIT", ...DELIVERY_METHOD }
+
 export async function changeReservation(db: PrismaClient, actorId: string | null, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
   if (actorId === null && input.action !== "expire") throw new BusinessError("Acción no autorizada.", 403)
@@ -112,7 +118,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     if (!reservation || reservation.businessId !== businessId) throw new BusinessError("Reserva no encontrada.", 404)
     if (user && !["ADMIN", "EMPLOYEE"].includes(user.role) && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)
     const target = input.action === "cancel" ? "CANCELLED" : input.action === "reject" ? "REJECTED" : input.action === "expire" ? "EXPIRED" : input.action === "approve" ? "APPROVED" : ["pay", "verify_deposit"].includes(input.action) ? "DEPOSIT_VERIFIED" : "COMPLETED"
-    if (reservation.status === target) return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid }
+    if (reservation.status === target) return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid, saleId: null as string | null }
     if (!active(reservation.status)) throw new BusinessError("La reserva ya tiene un estado final y no admite esta acción.", 409, "TERMINAL_RESERVATION")
     const expired = reservation.expiresAt.getTime() <= Date.now()
     if (input.action === "expire" && !expired) throw new BusinessError("La reserva todavía no ha expirado.", 409)
@@ -120,6 +126,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
 
     const config = await settings(tx, businessId)
     let requiresRefund = false
+    let deliveredSaleId: string | null = null
     const notes = user && ["ADMIN", "EMPLOYEE"].includes(user.role) ? input.adminNotes : undefined
     let data: Parameters<typeof tx.reservation.update>[0]["data"] = { status: target, ...(notes !== undefined ? { adminNotes: notes } : {}) }
 
@@ -145,19 +152,55 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       const method = reservation.paymentMethod === "CREDIT" ? "CREDIT" : input.finalPaymentMethod
       if (reservation.paymentMethod === "CREDIT" && input.finalPaymentMethod && input.finalPaymentMethod !== "CREDIT") throw new BusinessError("Registra el abono en Crédito; entregar no cambia una deuda a otro medio.", 409)
       if (dueCents > 0 && !method) throw new BusinessError("Selecciona el medio de pago al entregar.")
+      const branch = await resolveBranch(tx, reservation.branchId, businessId)
+      let cashIn: { id: string } | null = null
       if (method === "CREDIT" && reservation.paymentMethod !== "CREDIT") {
         if (reservation.businessVersion < 1) throw new BusinessError("Revisa manualmente el historial antes de convertir esta reserva a crédito.", 409)
         await addDebt(tx, reservation.userId, dueCents, { type: "RESERVATION", id, notes: `Saldo a crédito al entregar reserva #${id}` }, businessId)
       } else if (method === "EFECTIVO" && dueCents > 0) {
-        const register = await openRegister(tx, reservation.branchId, businessId)
-        await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId!, type: "IN", amount: amount(dueCents), referenceType: "RESERVATION", referenceId: id, description: `Saldo en efectivo de reserva #${id}` } })
+        const register = await openRegister(tx, branch.id, businessId)
+        cashIn = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId!, type: "IN", amount: amount(dueCents), referenceType: "RESERVATION", referenceId: id, description: `Saldo en efectivo de reserva #${id}` } })
       }
       if (method) data.paymentMethod = method
+      // Capa documental de la entrega: la reserva ya movió su stock al nacer
+      // ("Compromiso") y el dinero quedó en su ledger (cashMovement / addDebt
+      // arriba). Lo que faltaba era el documento — sin Sale la venta del
+      // apartado era invisible a folios V-*, reportes y cobros por medio.
+      // NO se usa sell(): eso volvería a descontar stock y a cobrar de nuevo.
+      const sale = await tx.sale.create({ data: {
+        businessId, branchId: branch.id, sellerId: actorId!, customerId: reservation.userId,
+        kind: "RETAIL", status: "COMPLETED", total: reservation.totalPrice, discountCents: 0,
+      } })
+      await tx.saleItem.create({ data: {
+        businessId, saleId: sale.id, productId: reservation.productId, quantity: reservation.quantity,
+        unitPrice: reservation.totalPrice / reservation.quantity, totalPrice: reservation.totalPrice,
+      } })
+      // Un Payment por cada bolsa de dinero que realmente se movió: el
+      // anticipo verificado (transferencia con comprobante, cobrada antes) y
+      // el saldo cobrado al entregar. `reference` apunta a la reserva — es la
+      // ligadura sin tocar el esquema.
+      if (reservation.depositPaid && paidCents > 0) {
+        await tx.payment.create({ data: {
+          businessId, saleId: sale.id, purpose: "RESERVATION", reference: reservation.id,
+          method: DEPOSIT_METHOD[reservation.paymentMethod ?? ""] ?? "TRANSFER",
+          amount: amount(paidCents), status: "CONFIRMED", proofUrl: reservation.paymentProofUrl,
+          createdById: actorId!, notes: `Anticipo verificado de reserva #${id}`,
+        } })
+      }
+      if (dueCents > 0 && method) {
+        await tx.payment.create({ data: {
+          businessId, saleId: sale.id, purpose: "RESERVATION", reference: reservation.id,
+          method: DELIVERY_METHOD[method], amount: amount(dueCents), status: "CONFIRMED",
+          cashMovementId: cashIn?.id ?? null,
+          createdById: actorId!, notes: `Liquidación de reserva #${id}`,
+        } })
+      }
+      deliveredSaleId = sale.id
     }
     const changed = await tx.reservation.updateMany({ where: { id, status: reservation.status }, data })
     if (changed.count !== 1) throw new BusinessError("La reserva cambió durante la operación; reintenta.", 409)
     const updated = await tx.reservation.findUniqueOrThrow({ where: { id }, include: { product: { select: { id: true, name: true } } } })
-    return { reservation: updated, changed: true, requiresRefund }
+    return { reservation: updated, changed: true, requiresRefund, saleId: deliveredSaleId }
   })
   await syncLowStockAlerts(db, businessId, [...touchedProductIds])
   return result

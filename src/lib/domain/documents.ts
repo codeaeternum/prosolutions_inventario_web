@@ -212,6 +212,16 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
     const sale = await tx.sale.findUnique({ where: { id: input.saleId } })
     if (!sale || sale.businessId !== businessId) throw new BusinessError("Documento no encontrado.", 404)
     if (sale.kind !== "LAYAWAY" || sale.status !== "OPEN") throw new BusinessError("Solo los apartados vivos admiten abonos.", 409)
+    // Apartado vencido: congela los abonos del mostrador sin liberar stock ni
+    // cancelar nada — seguir cobrando (o darlo por perdido) es decisión de un
+    // ADMIN, nunca automática.
+    if (sale.expiresAt && sale.expiresAt.getTime() <= Date.now()) {
+      const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+      if (me?.role !== "ADMIN") {
+        const fecha = sale.expiresAt.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })
+        throw new BusinessError(`El apartado venció el ${fecha}; pide autorización al administrador para seguir cobrando.`, 409)
+      }
+    }
     const confirmed = await tx.payment.findMany({ where: { saleId: sale.id, status: "CONFIRMED" } })
     const totalCents = cents(sale.total)
     const paidCents = confirmed.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
@@ -306,6 +316,9 @@ export async function listDocuments(db: PrismaClient, businessId: string, raw: u
   })
   return rows.map(sale => {
     const paid = sale.payments.reduce((sum, p) => sum + p.amount, 0)
-    return { ...sale, itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0), paid, balance: sale.total - paid }
+    // `expiresAt` ya viaja con el documento; `expired` resuelve el badge
+    // "vencido" del POS sin que cada cliente recalcule la vigencia.
+    const expired = Boolean(sale.expiresAt && sale.expiresAt.getTime() <= Date.now())
+    return { ...sale, itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0), paid, balance: sale.total - paid, expired }
   })
 }
