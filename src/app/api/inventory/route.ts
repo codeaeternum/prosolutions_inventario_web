@@ -183,8 +183,55 @@ export async function GET(request: NextRequest) {
             .slice(offset, offset + limit)
 
         const total = (typeof totalMovements === "number" ? totalMovements : 0) + (typeof totalReservations === "number" ? totalReservations : 0)
+        // Devolvible por fila, en DOS lotes + los agregados por reserva:
+        // - Salidas ligadas a una venta POS: el pendiente vive en
+        //   SaleItem.returnedQuantity — un solo ledger compartido con
+        //   /api/sales/return y las devoluciones del historial (delegan ahí).
+        // - Salidas sin venta: los RETURN ligados por relatedId, en un solo
+        //   groupBy (antes era un aggregate por fila).
+        // - Reservas: RETURN por reservationId, agregado por fila como antes.
+        const saleIds = [...new Set(
+            combined.map(row => (row.source === "MOVEMENT" ? row.saleId : null)).filter((id): id is string => Boolean(id)),
+        )]
+        const movementIds = combined.filter(row => row.source === "MOVEMENT").map(row => row.id)
+        const [sales, relatedReturns] = await Promise.all([
+            saleIds.length
+                ? prisma.sale.findMany({
+                    where: { businessId, id: { in: saleIds } },
+                    select: { id: true, status: true, items: { select: { productId: true, quantity: true, returnedQuantity: true } } },
+                })
+                : Promise.resolve([]),
+            movementIds.length
+                ? prisma.inventoryMovement.groupBy({
+                    by: ["relatedId"],
+                    where: { businessId, type: "RETURN", relatedId: { in: movementIds } },
+                    _sum: { quantity: true },
+                })
+                : Promise.resolve([]),
+        ])
+        const saleById = new Map(sales.map(sale => [sale.id, sale]))
+        const relatedReturnedById = new Map(
+            relatedReturns.map(row => [row.relatedId, row._sum.quantity ?? 0] as const),
+        )
         const enriched = await Promise.all(combined.map(async row => {
-            const returned = await prisma.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", ...(row.source === "RESERVATION" ? { reservationId: row.id } : { relatedId: row.id }) }, _sum: { quantity: true } })
+            if (row.source === "MOVEMENT") {
+                const relatedReturned = relatedReturnedById.get(row.id) ?? 0
+                if (row.saleId) {
+                    const sale = saleById.get(row.saleId)
+                    // Venta anulada: el IN de la anulación ya repuso el stock —
+                    // no hay unidades por devolver aunque el OUT siga visible.
+                    if (!sale || sale.status !== "COMPLETED") return { ...row, returnableQuantity: 0 }
+                    // Ambos ledgers: lo devuelto por el POS (returnedQuantity)
+                    // y lo devuelto por el camino viejo (relatedId) que pudo
+                    // quedar grabado antes de la convergencia.
+                    const remaining = sale.items
+                        .filter(item => item.productId === row.productId)
+                        .reduce((sum, item) => sum + item.quantity - item.returnedQuantity, 0) - relatedReturned
+                    return { ...row, returnableQuantity: Math.max(0, Math.min(row.quantity, remaining)) }
+                }
+                return { ...row, returnableQuantity: Math.max(0, row.quantity - relatedReturned) }
+            }
+            const returned = await prisma.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", reservationId: row.id }, _sum: { quantity: true } })
             return { ...row, returnableQuantity: Math.max(0, row.quantity - (returned._sum.quantity ?? 0)) }
         }))
         return NextResponse.json({ movements: enriched, total })

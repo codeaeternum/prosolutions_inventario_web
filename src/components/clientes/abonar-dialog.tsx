@@ -52,6 +52,7 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
   const paymentInFlight = useRef(false)
   const [amount, setAmount] = useState("")
   const [notes, setNotes] = useState("")
+  const [reference, setReference] = useState("")
   const [loading, setLoading] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<AbonoMethod>("EFECTIVO")
   // Sucursal donde entra el efectivo del abono; "AUTO" = sucursal base del cobrador.
@@ -74,10 +75,15 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
     if (open) {
       setAmount("")
       setNotes("")
+      setReference("")
       setPaymentMethod("EFECTIVO")
       setBranch("AUTO")
     }
   }
+
+  // Tarjeta/transferencia exigen folio: el servidor lo rechaza con menos de 4
+  // caracteres (un abono sin rastro podría borrar deuda sin dinero real).
+  const requiresReference = paymentMethod !== "EFECTIVO"
 
   const handleOpenChange = (next: boolean) => {
     if (!paymentInFlight.current) onOpenChange(next)
@@ -90,6 +96,10 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
       toast.error("Ingresa un monto válido mayor a 0")
       return
     }
+    if (requiresReference && reference.trim().length < 4) {
+      toast.error("Captura la referencia del abono (mínimo 4 caracteres)")
+      return
+    }
     paymentInFlight.current = true
     setLoading(true)
     try {
@@ -98,6 +108,7 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
         amount: value,
         notes: notes || undefined,
         paymentMethod,
+        reference: requiresReference ? reference.trim() : undefined,
         branchId: branch !== "AUTO" ? branch : undefined,
       }
       paymentOperation.current = getClientOperationKey(paymentOperation.current, payload)
@@ -176,9 +187,25 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
             <p className="text-xs text-muted-foreground">
               {paymentMethod === "EFECTIVO"
                 ? "Efectivo: requiere caja abierta y registra una entrada de dinero."
-                : "Este abono reduce la deuda sin registrar efectivo en caja."}
+                : "Este abono reduce la deuda sin registrar efectivo en caja; la referencia es su rastro."}
             </p>
           </div>
+          {requiresReference && (
+            <div className="space-y-2">
+              <Label htmlFor="credit-payment-reference">Referencia</Label>
+              <Input
+                id="credit-payment-reference"
+                placeholder="Folio SPEI o autorización de la terminal (mín. 4 caracteres)"
+                value={reference}
+                disabled={loading}
+                maxLength={200}
+                onChange={(e) => setReference(e.target.value)}
+              />
+              {reference.trim().length > 0 && reference.trim().length < 4 && (
+                <p className="text-xs text-destructive">La referencia debe tener al menos 4 caracteres.</p>
+              )}
+            </div>
+          )}
           {paymentMethod === "EFECTIVO" && branches.length > 1 && (
             <div className="space-y-2">
               <Label htmlFor="credit-payment-branch">Sucursal donde se cobra</Label>
@@ -223,7 +250,7 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
           </Button>
           <Button
             onClick={handleAbonar}
-            disabled={loading || !amount || parseFloat(amount) <= 0}
+            disabled={loading || !amount || parseFloat(amount) <= 0 || (requiresReference && reference.trim().length < 4)}
             className="bg-green-600 hover:bg-green-700"
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

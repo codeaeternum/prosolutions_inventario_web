@@ -17,8 +17,10 @@ const mocks = vi.hoisted(() => ({
   movementFindMany: vi.fn(),
   movementCount: vi.fn(),
   movementAggregate: vi.fn(),
+  movementGroupBy: vi.fn(),
   reservationFindMany: vi.fn(),
   reservationCount: vi.fn(),
+  saleFindMany: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST: vi.fn() } }))
@@ -28,10 +30,14 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.movementFindMany,
       count: mocks.movementCount,
       aggregate: mocks.movementAggregate,
+      groupBy: mocks.movementGroupBy,
     },
     reservation: {
       findMany: mocks.reservationFindMany,
       count: mocks.reservationCount,
+    },
+    sale: {
+      findMany: mocks.saleFindMany,
     },
   },
 }))
@@ -75,8 +81,10 @@ beforeEach(() => {
   mocks.movementFindMany.mockResolvedValue([])
   mocks.movementCount.mockResolvedValue(0)
   mocks.movementAggregate.mockResolvedValue({ _sum: { quantity: 0 } })
+  mocks.movementGroupBy.mockResolvedValue([])
   mocks.reservationFindMany.mockResolvedValue([])
   mocks.reservationCount.mockResolvedValue(0)
+  mocks.saleFindMany.mockResolvedValue([])
 })
 
 describe("acceso", () => {
@@ -304,6 +312,8 @@ describe("merge, orden y enriquecimiento", () => {
     mocks.movementCount.mockResolvedValue(1)
     mocks.reservationCount.mockResolvedValue(1)
     mocks.movementAggregate.mockResolvedValue({ _sum: { quantity: 1 } })
+    // El groupBy por relatedId devuelve 1 pieza repuesta para m1.
+    mocks.movementGroupBy.mockResolvedValue([{ relatedId: "m1", _sum: { quantity: 1 } }])
 
     const res = await get()
     expect(res.status).toBe(200)
@@ -319,15 +329,91 @@ describe("merge, orden y enriquecimiento", () => {
     expect(body.movements[1]).toMatchObject({
       id: "m1", type: "SALE", source: "MOVEMENT", quantity: 3, returnableQuantity: 2,
     })
-    // El aggregate de devueltas apunta al id correcto según el origen.
+    // Los RETURN de movimientos se agregan en UN groupBy por relatedId; el
+    // aggregate por fila queda solo para reservas (reservationId).
+    expect(mocks.movementGroupBy).toHaveBeenCalledWith({
+      by: ["relatedId"],
+      where: { businessId: "biz-1", type: "RETURN", relatedId: { in: ["m1"] } },
+      _sum: { quantity: true },
+    })
     expect(mocks.movementAggregate).toHaveBeenCalledWith({
       where: { businessId: "biz-1", type: "RETURN", reservationId: "r1" },
       _sum: { quantity: true },
     })
-    expect(mocks.movementAggregate).toHaveBeenCalledWith({
-      where: { businessId: "biz-1", type: "RETURN", relatedId: "m1" },
-      _sum: { quantity: true },
-    })
+  })
+
+  it("salida ligada a venta: returnableQuantity sale de SaleItem.returnedQuantity, no del ledger relatedId", async () => {
+    // La venta V-x vendió 3 de p1; una devolución del POS ya repuso 2
+    // (returnedQuantity) sin tocar relatedId — el aggregate viejo diría 3.
+    mocks.movementFindMany.mockResolvedValue([{
+      id: "m-sale",
+      type: "OUT",
+      paymentMethod: "CASH",
+      saleId: "sale-1",
+      productId: "p1",
+      quantity: 3,
+      createdAt: new Date("2025-06-10T12:00:00Z"),
+      product: { id: "p1", name: "Pantalla", barcode: "123", costPrice: 50 },
+      user: { id: "u1", name: "Emp", role: "EMPLOYEE" },
+    }])
+    mocks.movementCount.mockResolvedValue(1)
+    mocks.saleFindMany.mockResolvedValue([{
+      id: "sale-1",
+      status: "COMPLETED",
+      items: [{ productId: "p1", quantity: 3, returnedQuantity: 2 }],
+    }])
+    const res = await get()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.movements[0]).toMatchObject({ id: "m-sale", type: "SALE", returnableQuantity: 1 })
+    // La venta se resolvió en UNA consulta por lotes.
+    expect(mocks.saleFindMany).toHaveBeenCalledTimes(1)
+    expect(mocks.saleFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { businessId: "biz-1", id: { in: ["sale-1"] } },
+    }))
+  })
+
+  it("salida de venta con devolución vieja por relatedId descuenta ambos ledgers", async () => {
+    // Historial mixto: la venta devolvió 1 por el POS (returnedQuantity=1) y
+    // otra por el camino viejo (RETURN relatedId) — quedan 3−1−1 = 1.
+    mocks.movementFindMany.mockResolvedValue([{
+      id: "m-mixed",
+      type: "OUT",
+      paymentMethod: "CASH",
+      saleId: "sale-1",
+      productId: "p1",
+      quantity: 3,
+      createdAt: new Date("2025-06-10T12:00:00Z"),
+      product: { id: "p1", name: "Pantalla", barcode: "123", costPrice: 50 },
+      user: { id: "u1", name: "Emp", role: "EMPLOYEE" },
+    }])
+    mocks.movementCount.mockResolvedValue(1)
+    mocks.saleFindMany.mockResolvedValue([{
+      id: "sale-1",
+      status: "COMPLETED",
+      items: [{ productId: "p1", quantity: 3, returnedQuantity: 1 }],
+    }])
+    mocks.movementGroupBy.mockResolvedValue([{ relatedId: "m-mixed", _sum: { quantity: 1 } }])
+    const res = await get()
+    expect((await res.json()).movements[0]).toMatchObject({ id: "m-mixed", returnableQuantity: 1 })
+  })
+
+  it("salida de venta anulada ya no muestra unidades por devolver", async () => {
+    mocks.movementFindMany.mockResolvedValue([{
+      id: "m-void",
+      type: "OUT",
+      paymentMethod: "CASH",
+      saleId: "sale-void",
+      productId: "p1",
+      quantity: 2,
+      createdAt: new Date("2025-06-10T12:00:00Z"),
+      product: { id: "p1", name: "Pantalla", barcode: "123", costPrice: 50 },
+      user: { id: "u1", name: "Emp", role: "EMPLOYEE" },
+    }])
+    mocks.movementCount.mockResolvedValue(1)
+    mocks.saleFindMany.mockResolvedValue([{ id: "sale-void", status: "VOIDED", items: [] }])
+    const res = await get()
+    expect((await res.json()).movements[0]).toMatchObject({ id: "m-void", returnableQuantity: 0 })
   })
 
   it("el total suma movimientos + reservas bajo los filtros aplicados", async () => {

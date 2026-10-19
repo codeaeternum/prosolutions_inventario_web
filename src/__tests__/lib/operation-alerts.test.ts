@@ -78,6 +78,7 @@ describe("alertSensitiveOperation", () => {
       ["SALE_DOCUMENT_CANCEL", { folio: "V-000015" }, /Canceló un documento[\s\S]*V-000015/],
       ["COUNT_APPLY", { folio: "CC-000002", adjustments: 3, branchName: "Matriz" }, /conteo[\s\S]*CC-000002[\s\S]*3 ajuste/],
       ["DEBT", { creditBalance: 300 }, /crédito[\s\S]*saldo \$300\.00/i],
+      ["CREDIT_PAYMENT", { creditBalance: 120 }, /abono de crédito[\s\S]*saldo \$120\.00/i],
       ["SUPPLIER_PAYMENT", { folio: "OC-000004", amountCents: 150000 }, /proveedor[\s\S]*OC-000004[\s\S]*1,500/],
     ]
     for (const [kind, response, re] of cases) {
@@ -104,6 +105,21 @@ describe("alertSensitiveOperation", () => {
   it("checkout sin descuento no alerta", async () => {
     await alert(op({ kind: "SALE_DOCUMENT_CHECKOUT", response: { number: 7, discountCents: 0 } }))
     await alert(op({ kind: "SALE_DOCUMENT_CHECKOUT", response: { number: 7 } }))
+    expect(mocks.sendTelegramToUsers).not.toHaveBeenCalled()
+  })
+
+  it("venta a lista de taller alerta aunque SALE no esté en el set", async () => {
+    await alert(op({ kind: "SALE", response: { number: 9, total: 350, priceTier: "wholesale" } }))
+    expect(mocks.sendTelegramToUsers).toHaveBeenCalledTimes(1)
+    const msg = sentMessage()
+    expect(msg).toContain("precio de taller")
+    expect(msg).toContain("V-9")
+    expect(msg).toContain("total $350.00")
+  })
+
+  it("venta a precio público no alerta", async () => {
+    await alert(op({ kind: "SALE", response: { number: 9, total: 500, priceTier: "retail" } }))
+    await alert(op({ kind: "SALE", response: { number: 9, total: 500 } }))
     expect(mocks.sendTelegramToUsers).not.toHaveBeenCalled()
   })
 

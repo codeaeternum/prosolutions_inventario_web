@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { amount, BusinessError, cents, openRegister, operation, operationKeySchema, releaseStock, takeStock, resolveBranch } from "./operations"
+import { amount, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, takeStock, resolveBranch } from "./operations"
+import { channelOfPaymentMethod, returnSaleItemsTx } from "./sales"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 const movementSchema = z.object({
@@ -48,6 +49,29 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
           : await tx.reservation.findUnique({ where: { id: row.reservationId!, businessId } })
         if (!source || source.productId !== row.productId || source.businessVersion < 1) throw new BusinessError("La venta original requiere conciliación del historial. No se modificó stock ni dinero.", 409)
         if ("status" in source ? source.status !== "COMPLETED" : source.type !== "OUT" || !source.paymentMethod) throw new BusinessError("La operación original no es una venta entregada.", 409)
+        // Una salida ligada a una venta del POS se devuelve por la lógica de
+        // ventas (returnSaleItemsTx): el pendiente vive en
+        // SaleItem.returnedQuantity —un solo ledger para devolución del POS y
+        // del historial—, una venta anulada ya no tiene unidades por devolver
+        // y el reembolso queda acotado por lo cobrado en el medio original.
+        // El agregado relatedId anterior permitía cobrar las mismas piezas
+        // una segunda vez tras /api/sales/return y hasta una tercera tras
+        // anular la venta (su reposición usa IN, no RETURN).
+        if (row.relatedId && !("status" in source) && source.saleId) {
+          const channel = channelOfPaymentMethod(source.paymentMethod)
+          if (!channel) throw new BusinessError("La venta original requiere conciliación del historial. No se modificó stock ni dinero.", 409)
+          // Piezas ya repuestas por el ledger viejo (RETURN con relatedId a
+          // este OUT): conviven en el historial con las devoluciones nuevas
+          // (saleId/returnedQuantity) — el reparto las descuenta del pendiente.
+          const legacyReturned = await tx.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", relatedId: row.relatedId }, _sum: { quantity: true } })
+          const outcome = await returnSaleItemsTx(tx, {
+            saleId: source.saleId, items: [{ productId: row.productId, quantity: row.quantity }],
+            actorId, businessId, refundMethod: channel, reason: row.reason,
+            relatedAlreadyReturned: legacyReturned._sum.quantity ?? 0,
+          })
+          movements.push(...outcome.movements)
+          continue
+        }
         // A reservation stores only its final payment method. It does not preserve
         // a refundable allocation between the bank deposit and the remaining payment.
         if ("status" in source && (source.type === "DEPOSIT" || source.depositPaid || (source.depositAmount ?? 0) > 0)) {
@@ -84,6 +108,10 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
       } })
       if (row.type === "RETURN" && method === "EFECTIVO" && value! > 0) {
         const register = await openRegister(tx, branch.id, businessId)
+        // Igual que refund() en ventas: la caja debe cubrir la devolución —
+        // una salida mayor dejaría efectivo negativo (dinero ficticio).
+        const availableCents = await registerCashCents(tx, register.id)
+        if (value! > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409, "INSUFFICIENT_CASH")
         await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: amount(value!), referenceType: "RETURN", referenceId: movement.id, description: `Devolución: ${product.name}` } })
       }
       movements.push(movement)

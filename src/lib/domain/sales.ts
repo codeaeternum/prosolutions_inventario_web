@@ -19,6 +19,18 @@ export type PaymentInput = z.infer<typeof paymentInput>
 export type SettledPayment = { method: MethodInput; reference?: string; cents: number }
 
 /**
+ * Medio de mostrador guardado en un movimiento/documento: acepta la etiqueta
+ * pública en español ("EFECTIVO") y el enum de BD ("CASH") que guardan los
+ * registros históricos. Devuelve null si el texto no corresponde a un medio.
+ */
+export function channelOfPaymentMethod(paymentMethod: string | null | undefined): MethodInput | null {
+  if (!paymentMethod) return null
+  if ((METHODS.options as readonly string[]).includes(paymentMethod)) return paymentMethod as MethodInput
+  const mapped = (Object.keys(METHOD_MAP) as MethodInput[]).find(key => METHOD_MAP[key] === paymentMethod)
+  return mapped ?? null
+}
+
+/**
  * Reglas del cobro de mostrador que no dependen del total: CREDITO exige
  * cliente (la deuda necesita un deudor), pago dividido exige monto por medio
  * y TRANSFERENCIA exige folio — sin referencia el movimiento no cuadra contra
@@ -172,6 +184,17 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
     // Toda nota a taller cobra la lista de taller salvo lista explícita:
     // el walk-in de taller sin cuenta STORE/TECHNICIAN también va a taller.
     const tier = input.priceTier ?? (kind === "WORKSHOP" ? "wholesale" : "auto")
+    // La lista de taller solo la cobra un cliente que ES taller/negocio
+    // (STORE/TECHNICIAN o cuenta aliada WORKSHOP — el surtido del mercado B2B
+    // se vende a la cuenta del taller). Un EMPLOYEE no puede aplicarla a un
+    // walk-in ni a un cliente NORMAL vía priceTier/workshopSale: para eso se
+    // necesita un ADMIN, igual que un descuento arriba del 10% en checkout.
+    const wholesaleCharged = tier === "wholesale" || (tier === "auto" && customer?.customerType === "STORE")
+    const qualifiedCustomer =
+      customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN" || customer?.role === "WORKSHOP"
+    if (wholesaleCharged && !qualifiedCustomer && seller.role !== "ADMIN") {
+      throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
+    }
     const lines = []
     let totalCents = 0
     for (const item of items) {
@@ -195,7 +218,13 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
       lines: lines.map(line => ({ productId: line.product.id, quantity: line.item.quantity, unitCents: line.unitCents, lineCents: line.lineCents })),
       payments: settled, reason: `Venta V-${sale.number}`,
     })
-    return { sale, items: committed.items, payments: committed.payments, movements: committed.movements, quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind }
+    return {
+      sale, items: committed.items, payments: committed.payments, movements: committed.movements,
+      quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind,
+      // Recibo de la operación: folio y lista efectivamente cobrada ("retail" |
+      // "wholesale") — operation-alerts avisa al dueño de toda venta a taller.
+      number: sale.number, priceTier: wholesaleCharged ? "wholesale" : "retail",
+    }
   })
   // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
   await syncLowStockAlerts(db, businessId, collectLowStockIds(items))
@@ -256,36 +285,121 @@ const returnSchema = z.object({
   reason: z.string().trim().min(1).max(500),
   idempotencyKey: operationKeySchema,
 })
+
+/**
+ * Núcleo de devolución sobre una venta, dentro de un tx ya abierto. Es el
+ * único ledger autorizado: marca SaleItem.returnedQuantity, repone stock en
+ * la sucursal de la venta con su movimiento RETURN ligado por saleId y
+ * reembolsa por refund() — acotado por lo netamente cobrado en ese medio.
+ *
+ * Lo comparten returnSaleItems (kind "SALE_RETURN") y el RETURN del historial
+ * de inventario cuando la salida origen pertenece a una venta (kind
+ * "INVENTORY"); ambos caminos convergen aquí para que las mismas piezas no
+ * puedan devolverse dos veces por ledgers paralelos.
+ *
+ * `items` admite dos selectores: saleItemId (flujo del POS) o productId —
+ * este último reparte la cantidad entre los renglones del producto, que es
+ * como el movimiento OUT del historial referencia su venta.
+ */
+export async function returnSaleItemsTx(tx: Transaction, input: {
+  saleId: string
+  items: { saleItemId?: string; productId?: string; quantity: number }[]
+  actorId: string
+  businessId: string
+  refundMethod: MethodInput
+  reason: string
+  touchedProductIds?: Set<string>
+  // Unidades del producto ya repuestas por el ledger viejo (RETURN con
+  // relatedId al movimiento OUT, sin tocar returnedQuantity): se absorben
+  // del pendiente repartible para que un historial mixto tampoco reembolse
+  // dos veces la misma pieza.
+  relatedAlreadyReturned?: number
+}) {
+  const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true } })
+  if (!sale || sale.businessId !== input.businessId || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
+
+  // Expande los renglones referidos por productId a saleItemId concretos,
+  // respetando lo ya devuelto de cada línea en ambos ledgers.
+  const expanded: { saleItemId: string; quantity: number }[] = []
+  let relatedLeft = input.relatedAlreadyReturned ?? 0
+  for (const row of input.items) {
+    if (row.quantity <= 0 || (row.saleItemId == null) === (row.productId == null)) throw new BusinessError("Cada línea a devolver indica su renglón o su producto.", 400)
+    if (row.saleItemId) {
+      expanded.push({ saleItemId: row.saleItemId, quantity: row.quantity })
+      continue
+    }
+    let pending = row.quantity
+    for (const item of sale.items.filter(i => i.productId === row.productId)) {
+      if (pending <= 0) break
+      const capacity = item.quantity - item.returnedQuantity
+      const absorbed = Math.min(capacity, relatedLeft)
+      relatedLeft -= absorbed
+      const take = Math.min(pending, capacity - absorbed)
+      if (take > 0) { expanded.push({ saleItemId: item.id, quantity: take }); pending -= take }
+    }
+    if (pending > 0) throw new BusinessError("La cantidad supera las unidades pendientes de devolución.", 409)
+  }
+  const merged = mergeItems(expanded.map(i => ({ productId: i.saleItemId, quantity: i.quantity })))
+
+  // Precio efectivamente cobrado por renglón: sale.total conserva el catálogo
+  // y lo pagado es total − discountCents. Se reparte lo cobrado a prorrata de
+  // cada línea (enteros; el último renglón absorbe el centavo de redondeo) —
+  // devolver a precio de catálogo regalaría el descuento al cliente.
+  const totalCents = cents(sale.total)
+  const payableCents = totalCents - sale.discountCents
+  const effectiveLineCents = new Map<string, number>()
+  let allocated = 0
+  for (const [index, item] of sale.items.entries()) {
+    const effective = index === sale.items.length - 1
+      ? payableCents - allocated
+      : Math.floor((cents(item.totalPrice) * payableCents) / totalCents)
+    allocated += effective
+    effectiveLineCents.set(item.id, effective)
+  }
+
+  let refundCents = 0
+  const movements = []
+  for (const line of merged) {
+    const item = sale.items.find(i => i.id === line.productId)
+    if (!item) throw new BusinessError("Una línea no pertenece a esta venta.", 409)
+    const changed = await tx.saleItem.updateMany({ where: { id: item.id, quantity: { gte: item.returnedQuantity + line.quantity } }, data: { returnedQuantity: { increment: line.quantity } } })
+    if (changed.count !== 1) throw new BusinessError(`La cantidad a devolver de ${item.id} supera lo vendido.`, 409)
+    await releaseStock(tx, { productId: item.productId, quantity: line.quantity, branchId: sale.branchId, businessId: input.businessId })
+    input.touchedProductIds?.add(item.productId)
+    const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
+    // Reembolso de la línea a su precio efectivo: cada pieza vale su prorrata
+    // redondeada y la devolución que agota el renglón salda el residuo, así
+    // la suma devuelta por línea termina exacta en lo que se cobró por ella.
+    const lineEffectiveCents = effectiveLineCents.get(item.id)!
+    const perUnitCents = Math.round(lineEffectiveCents / item.quantity)
+    const lineRefundCents = item.returnedQuantity + line.quantity === item.quantity
+      ? Math.max(0, lineEffectiveCents - perUnitCents * item.returnedQuantity)
+      : perUnitCents * line.quantity
+    movements.push(await tx.inventoryMovement.create({ data: {
+      businessId: input.businessId, productId: item.productId, userId: input.actorId, type: "RETURN", quantity: line.quantity,
+      previousStock: product.stock - line.quantity, newStock: product.stock,
+      reason: `Devolución V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
+      unitPrice: amount(Math.round(lineRefundCents / line.quantity)), totalPrice: amount(lineRefundCents),
+      customerId: sale.customerId,
+    } }))
+    refundCents += lineRefundCents
+  }
+  const refundRow = await refund(tx, { saleId: sale.id, actorId: input.actorId, businessId: input.businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
+  return { refund: refundRow, refunded: amount(refundCents), kind: sale.kind, sale, movements }
+}
+
 export async function returnSaleItems(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = returnSchema.parse(raw)
   // Productos repuestos por la devolución: se acumulan dentro del tx y la
   // alerta se sincroniza post-commit (fuera de la transacción).
   const touchedProductIds = new Set<string>()
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
-    const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true } })
-    if (!sale || sale.businessId !== businessId || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
-    const merged = mergeItems(input.items.map(i => ({ productId: i.saleItemId, quantity: i.quantity })))
-    let refundCents = 0
-    for (const line of merged) {
-      const item = sale.items.find(i => i.id === line.productId)
-      if (!item) throw new BusinessError("Una línea no pertenece a esta venta.", 409)
-      const changed = await tx.saleItem.updateMany({ where: { id: item.id, quantity: { gte: item.returnedQuantity + line.quantity } }, data: { returnedQuantity: { increment: line.quantity } } })
-      if (changed.count !== 1) throw new BusinessError(`La cantidad a devolver de ${item.id} supera lo vendido.`, 409)
-      await releaseStock(tx, { productId: item.productId, quantity: line.quantity, branchId: sale.branchId, businessId })
-      touchedProductIds.add(item.productId)
-      const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } })
-      await tx.inventoryMovement.create({ data: {
-        businessId, productId: item.productId, userId: actorId, type: "RETURN", quantity: line.quantity,
-        previousStock: product.stock - line.quantity, newStock: product.stock,
-        reason: `Devolución V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
-        unitPrice: item.unitPrice, totalPrice: amount(cents(item.unitPrice) * line.quantity),
-        customerId: sale.customerId,
-      } })
-      refundCents += cents(item.unitPrice) * line.quantity
-    }
-    const refundRow = await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
+    const outcome = await returnSaleItemsTx(tx, {
+      saleId: input.saleId, items: input.items, actorId, businessId,
+      refundMethod: input.refundMethod, reason: input.reason, touchedProductIds,
+    })
     // La devolución hereda el documento original: kind solo se expone, no se decide aquí.
-    return { refund: refundRow, refunded: amount(refundCents), kind: sale.kind }
+    return { refund: outcome.refund, refunded: outcome.refunded, kind: outcome.kind }
   })
   await syncLowStockAlerts(db, businessId, [...touchedProductIds])
   return result

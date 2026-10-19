@@ -136,6 +136,7 @@ export function UsuariosPanel() {
   const [creditSaving, setCreditSaving] = useState(false)
   const [abonoAmount, setAbonoAmount] = useState("")
   const [abonoNotes, setAbonoNotes] = useState("")
+  const [abonoReference, setAbonoReference] = useState("")
   const [abonoSaving, setAbonoSaving] = useState(false)
   const [abonoPaymentMethod, setAbonoPaymentMethod] = useState<"EFECTIVO" | "TARJETA" | "TRANSFERENCIA">("EFECTIVO")
   // Sucursal donde entra el efectivo del abono; "AUTO" = sucursal base del cobrador.
@@ -365,6 +366,7 @@ export function UsuariosPanel() {
     setCreditLimitValue(user.creditLimit?.toString() ?? "")
     setAbonoAmount("")
     setAbonoNotes("")
+    setAbonoReference("")
     setAbonoPaymentMethod("EFECTIVO")
     setAbonoBranch("AUTO")
     setCreditOpen(true)
@@ -402,11 +404,17 @@ export function UsuariosPanel() {
       toast.error("Monto inválido")
       return
     }
+    // Tarjeta/transferencia exigen folio (el servidor pide mínimo 4 caracteres).
+    if (abonoPaymentMethod !== "EFECTIVO" && abonoReference.trim().length < 4) {
+      toast.error("Captura la referencia del abono (mínimo 4 caracteres)")
+      return
+    }
     abonoInFlight.current = true
     setAbonoSaving(true)
     try {
       const payload = {
         userId: creditUser.id, amount, notes: abonoNotes || undefined, paymentMethod: abonoPaymentMethod,
+        reference: abonoPaymentMethod !== "EFECTIVO" ? abonoReference.trim() : undefined,
         branchId: abonoBranch !== "AUTO" ? abonoBranch : undefined,
       }
       abonoOperation.current = getClientOperationKey(abonoOperation.current, payload)
@@ -421,6 +429,7 @@ export function UsuariosPanel() {
         toast.success(`Abono de $${amount.toLocaleString()} registrado`)
         setAbonoAmount("")
         setAbonoNotes("")
+        setAbonoReference("")
         if (typeof data.creditBalance === "number") {
           setCreditUser(current => current?.id === payload.userId ? { ...current, creditBalance: data.creditBalance } : current)
         }
@@ -1094,9 +1103,18 @@ export function UsuariosPanel() {
                     <p className="text-xs text-muted-foreground">
                       {abonoPaymentMethod === "EFECTIVO"
                         ? "Efectivo: requiere caja abierta y registra una entrada de dinero."
-                        : "Este abono reduce la deuda sin registrar efectivo en caja."}
+                        : "Este abono reduce la deuda sin registrar efectivo en caja; la referencia es su rastro."}
                     </p>
                   </div>
+                  {abonoPaymentMethod !== "EFECTIVO" && (
+                    <Input
+                      placeholder="Referencia (folio SPEI/autorización, mín. 4 caracteres)"
+                      value={abonoReference}
+                      disabled={abonoSaving}
+                      maxLength={200}
+                      onChange={(e) => setAbonoReference(e.target.value)}
+                    />
+                  )}
                   {abonoPaymentMethod === "EFECTIVO" && branches.filter(b => b.isActive).length > 1 && (
                     <div className="space-y-2">
                       <Label htmlFor="abono-branch">Sucursal donde se cobra</Label>
@@ -1124,7 +1142,7 @@ export function UsuariosPanel() {
                     />
                     <Button
                       onClick={handleQuickAbono}
-                      disabled={abonoSaving || !abonoAmount || parseFloat(abonoAmount) <= 0}
+                      disabled={abonoSaving || !abonoAmount || parseFloat(abonoAmount) <= 0 || (abonoPaymentMethod !== "EFECTIVO" && abonoReference.trim().length < 4)}
                       size="sm"
                       className="shrink-0 bg-green-600 hover:bg-green-700"
                     >
