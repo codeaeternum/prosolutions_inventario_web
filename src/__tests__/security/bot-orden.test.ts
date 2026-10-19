@@ -252,9 +252,11 @@ describe("/orden wizard creates the repair via createRepair", () => {
 describe("orden_delegate_* sends the order to the partner workshop", () => {
   beforeEach(() => vi.clearAllMocks())
 
-  async function orderCreated() {
+  async function orderCreated(role = "ADMIN") {
     const { bot, command, action, dispatchText } = makeBot()
-    const prisma = makePrisma()
+    // Delegar es acción de ADMIN (dominio + /delegar): el botón solo se
+    // ofrece a admins, así que el flujo feliz usa una cuenta ADMIN.
+    const prisma = makePrisma(staffUser({ role }))
     mocks.createRepair.mockResolvedValue({ order: { id: "o-1", number: 7 }, operationId: "op-1" })
     mocks.resolveRepairPartner.mockResolvedValue({ repairerBusinessId: "biz-taller", repairerBusiness: { name: "Taller Pro" }, branch: { id: "br-t" }, repairerActor: { id: "u-t" }, partnerBusiness: { name: "Telcel" } })
     const sessions = makeSessions()
@@ -297,6 +299,19 @@ describe("orden_delegate_* sends the order to the partner workshop", () => {
     const ctx = actionCtx(555, delegate.match)
     await delegate.callback(ctx)
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("ya había sido enviada"), expect.any(Object))
+  })
+
+  it("EMPLOYEE no ve el botón de delegación y el callback lo rechaza sin tocar el dominio", async () => {
+    const { action, confirmCtx } = await orderCreated("EMPLOYEE")
+    // Aunque el taller asociado resuelve, la acción es solo-admin: no se ofrece.
+    expect(JSON.stringify((confirmCtx.editMessageText.mock.calls[0] as any[])[1])).not.toContain("orden_delegate_")
+
+    // Si un teclado viejo quedó en el chat, el handler vuelve a verificar el rol.
+    const delegate = action("orden_delegate_o-1")
+    const ctx = actionCtx(555, delegate.match)
+    await delegate.callback(ctx)
+    expect(mocks.delegateRepairToPartner).not.toHaveBeenCalled()
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("administrador"))
   })
 
   it("rejects delegation from a non-staff account", async () => {

@@ -382,14 +382,18 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             const folio = await folioOf(user.businessId, order.number)
             const track = await trackingUrl(user.businessId, folio, data.customerPhone!)
 
-            // El botón de delegación solo aparece si el taller asociado está
-            // configurado Y apto para recibir (negocio activo, con sucursal y
-            // staff habilitado — la resolución completa del dominio).
-            let canDelegate = false
-            try {
-                await resolveRepairPartner(prisma, user.businessId)
-                canDelegate = true
-            } catch { /* sin taller asociado (o no disponible): no se ofrece el botón */ }
+            // El botón de delegación solo se ofrece a un ADMIN — el dominio
+            // (delegateRepairToPartner → actor "admin") y la ruta /delegar lo
+            // exigen; un EMPLOYEE que lo tocara recibiría un 403. Además el
+            // taller asociado debe estar configurado Y apto para recibir
+            // (negocio activo, con sucursal y staff habilitado — la resolución
+            // completa del dominio).
+            let canDelegate = user.role === 'ADMIN'
+            if (canDelegate) {
+                try {
+                    await resolveRepairPartner(prisma, user.businessId)
+                } catch { canDelegate = false /* sin taller asociado (o no disponible): no se ofrece el botón */ }
+            }
 
             const equipo = [data.equipmentType, data.brand, data.model].filter(Boolean).join(' ')
             const successMsg = `✅ <b>Orden creada</b>
@@ -441,6 +445,13 @@ ${track}`
         if (!user || denied) {
             await ctx.answerCbQuery('Sin permiso')
             return ctx.reply(`🚫 ${denied ?? 'Cuenta no disponible.'}`)
+        }
+        // Delegar es acción de ADMIN (mismo gate que la web): el botón no se
+        // ofrece a EMPLOYEE, pero el rol pudo cambiar desde que se renderizó —
+        // se vuelve a verificar aquí, igual que en orden_confirm.
+        if (user.role !== 'ADMIN') {
+            await ctx.answerCbQuery('Sin permiso')
+            return ctx.reply('🚫 Solo un administrador puede enviar la orden al taller asociado.')
         }
         try {
             // La orden se busca con businessId del staff dentro del dominio:

@@ -167,9 +167,15 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       // arriba). Lo que faltaba era el documento — sin Sale la venta del
       // apartado era invisible a folios V-*, reportes y cobros por medio.
       // NO se usa sell(): eso volvería a descontar stock y a cobrar de nuevo.
+      // El kind se clasifica como en sell(): "nota a taller" (WORKSHOP)
+      // cuando el cliente califica para lista de taller — STORE, TECHNICIAN
+      // o la cuenta aliada WORKSHOP (mismo criterio que qualifiedCustomer de
+      // sales.ts). Sin esto el apartado cobrado a mayoreo reportaba retail.
+      const customer = await tx.user.findUnique({ where: { id: reservation.userId }, select: { customerType: true, role: true } })
+      const workshopSale = customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN" || customer?.role === "WORKSHOP"
       const sale = await tx.sale.create({ data: {
         businessId, branchId: branch.id, sellerId: actorId!, customerId: reservation.userId,
-        kind: "RETAIL", status: "COMPLETED", total: reservation.totalPrice, discountCents: 0,
+        kind: workshopSale ? "WORKSHOP" : "RETAIL", status: "COMPLETED", total: reservation.totalPrice, discountCents: 0,
       } })
       await tx.saleItem.create({ data: {
         businessId, saleId: sale.id, productId: reservation.productId, quantity: reservation.quantity,

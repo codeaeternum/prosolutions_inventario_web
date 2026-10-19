@@ -31,6 +31,8 @@ const users: Record<string, Record<string, unknown>> = {
   "admin-1": { id: "admin-1", name: "Admin", role: "ADMIN", status: "APPROVED", businessId: BIZ, homeBranchId: null },
   "emp-1": { id: "emp-1", name: "Empleado", role: "EMPLOYEE", status: "APPROVED", businessId: BIZ, homeBranchId: null },
   "cust-1": { id: "cust-1", name: "Cliente", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "NORMAL", creditBalance: 0, creditLimit: 5000 },
+  "cust-store": { id: "cust-store", name: "Tienda Aliada", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "STORE", creditBalance: 0, creditLimit: 5000 },
+  "cust-tech": { id: "cust-tech", name: "Técnico", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "TECHNICIAN", creditBalance: 0, creditLimit: 5000 },
 }
 
 function reservation(over: Record<string, unknown> = {}) {
@@ -151,6 +153,18 @@ describe("entrega de reserva → Sale + SaleItem + Payment", () => {
     // El stock salió al reservar ("Compromiso"): la entrega no crea movimientos.
     expect(tx.branchStock.updateMany).not.toHaveBeenCalled()
     expect(created.inventory).toHaveLength(0)
+  })
+
+  // Cliente taller/negocio (STORE o TECHNICIAN, misma regla que sell()): el
+  // apartado se cobró a lista de taller y su Sale debe clasificarse igual
+  // que la venta de mostrador — kind WORKSHOP, no RETAIL.
+  it.each([["cust-store"], ["cust-tech"]])("entrega a cliente de taller (%s): la Sale queda kind WORKSHOP", async userId => {
+    // total 300 = quantity 2 × precio de taller 150 (wholesalePrice del mock).
+    const { db, created } = fakeDb(reservation({ userId, totalPrice: 300 }))
+    const result = await changeReservation(db, "admin-1", BIZ, "res-1", { action: "deliver", finalPaymentMethod: "TARJETA" })
+    expect(result.saleId).toBe("sale-1")
+    expect(created.sales[0]).toMatchObject({ kind: "WORKSHOP", customerId: userId, total: 300 })
+    expect(created.saleItems[0]).toMatchObject({ unitPrice: 150, totalPrice: 300 })
   })
 
   it("entrega con TARJETA documenta el cobro sin tocar la caja", async () => {
