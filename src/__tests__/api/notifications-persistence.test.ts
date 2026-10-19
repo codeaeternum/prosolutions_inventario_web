@@ -171,6 +171,68 @@ describe("broadcast — persistencia", () => {
   })
 })
 
+describe("broadcast — destinatarios", () => {
+  /** read() pendiente = la conexión sigue abierta; done = la cerraron. */
+  const pendingOrClosed = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+    Promise.race([
+      reader.read().then(r => (r.done ? "closed" : "chunk")),
+      new Promise<string>(resolve => setTimeout(() => resolve("pending"), 60)),
+    ])
+
+  it("NO cierra ni revalida una conexión de OTRO tenant", async () => {
+    // La sesión foránea abre su stream con businessId de otro negocio.
+    mocks.auth.mockResolvedValue({ user: { id: "u-ext", role: "ADMIN", status: "APPROVED", businessId: "biz-otro" } })
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // "connected"
+      mocks.userFindUnique.mockClear()
+      await sendNotificationToStaff({ type: "low_stock", title: "t", message: "m" }, "biz-test")
+      // Antes el broadcast cerraba a TODOS los no-destinatarios y les pegaba
+      // el stillAuthorized(); ahora ni siquiera los recorre.
+      expect(mocks.userFindUnique).not.toHaveBeenCalled()
+      expect(await pendingOrClosed(reader)).toBe("pending")
+    } finally {
+      await reader.cancel()
+    }
+  })
+
+  it("NO cierra a un EMPLOYEE del tenant cuando el broadcast es solo para admins", async () => {
+    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE"))
+    mocks.userFindUnique.mockResolvedValue({
+      role: "EMPLOYEE", status: "APPROVED", password: "pw", businessId: "biz-test", business: { isActive: true },
+    })
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // "connected"
+      mocks.userFindUnique.mockClear()
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      expect(mocks.userFindUnique).not.toHaveBeenCalled() // no-destinatario: sin revalidación
+      expect(await pendingOrClosed(reader)).toBe("pending")
+    } finally {
+      await reader.cancel()
+    }
+  })
+
+  it("SÍ cierra al destinatario que ya no está autorizado (password cambió)", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // "connected"
+      // La revalidación del destinatario falla: la sesión quedó vieja.
+      mocks.userFindUnique.mockResolvedValue({
+        role: "ADMIN", status: "APPROVED", password: "cambió", businessId: "biz-test", business: { isActive: true },
+      })
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      expect((await reader.read()).done).toBe(true)
+    } finally {
+      await reader.cancel()
+    }
+  })
+})
+
 describe("GET /api/notifications", () => {
   it("rechaza sin sesión o sin rol de staff", async () => {
     for (const s of [null, session("c", "CUSTOMER"), session("p", "ADMIN", "PENDING")]) {

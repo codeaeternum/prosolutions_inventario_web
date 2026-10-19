@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
+import { csvCell } from "@/lib/csv"
 
 const MAX_ROWS = 5000
 const EXPORT_TYPES = ["products", "sales", "orders"] as const
@@ -17,11 +18,6 @@ const paymentMethodLabels: Record<string, string> = {
   CREDIT: "Crédito",
 }
 const saleStatusLabels: Record<string, string> = { COMPLETED: "Completada", VOIDED: "Anulada" }
-
-function csvCell(value: string | number | null | undefined): string {
-  const text = value === null || value === undefined ? "" : String(value)
-  return `"${text.replace(/"/g, '""')}"`
-}
 
 function toCsv(headers: string[], rows: (string | number | null | undefined)[][]): string {
   const lines = [headers.map(csvCell).join(",")]

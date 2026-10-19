@@ -4,9 +4,10 @@ import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
-// Almacenar conexiones activas
+// Conexiones activas indexadas por negocio: un broadcast solo recorre las del
+// tenant destinatario en vez de barrer todas las sesiones SSE del proceso.
 type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; businessId: string; password: string | null; close: () => void }
-const connections = new Map<string, Connection>()
+const connections = new Map<string, Set<Connection>>() // businessId → conexiones
 
 // Revalida la sesión en cada heartbeat/broadcast: la conexión muere si el
 // usuario cambia de estado/password/empresa O si la empresa se suspende
@@ -19,20 +20,22 @@ async function stillAuthorized(connection: Connection): Promise<boolean> {
   return user?.status === "APPROVED" && user.password === connection.password && user.businessId === connection.businessId && user.business.isActive
 }
 
-// Tipos de eventos
-export type NotificationType =
-  | "new_reservation"
-  | "reservation_updated"
-  | "reservation_expired"
-  | "reservation_expiring_soon"
-  | "deposit_received"
-  | "user_registered"
-  | "low_stock"
-  | "repair_ready"
-  | "marketplace_request"
-  | "encargo_listo"
-  | "delegation_update"
-  | "sensitive_alert"
+// Tipos de eventos (fuente única: el POST de /send los valida con este enum)
+export const NOTIFICATION_TYPES = [
+  "new_reservation",
+  "reservation_updated",
+  "reservation_expired",
+  "reservation_expiring_soon",
+  "deposit_received",
+  "user_registered",
+  "low_stock",
+  "repair_ready",
+  "marketplace_request",
+  "encargo_listo",
+  "delegation_update",
+  "sensitive_alert",
+] as const
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number]
 
 export interface NotificationPayload {
   // id de la fila persistida; los clientes lo usan para dedupe contra el
@@ -81,9 +84,14 @@ async function broadcast(notification: Omit<NotificationPayload, "id" | "timesta
   }
   const payload: NotificationPayload = { ...notification, id, timestamp: new Date().toISOString() }
   const bytes = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`)
-  await Promise.all([...connections.values()].map(async connection => {
+  // Solo las conexiones del tenant objetivo y del rol destinatario reciben el
+  // evento. Las demás NO se cierran (antes cualquier broadcast desconectaba a
+  // todos los no-destinatarios) ni pagan la revalidación de BD — su propio
+  // heartbeat las revalida cada 30 s.
+  await Promise.all([...(connections.get(businessId) ?? [])].map(async connection => {
     try {
-      if (connection.businessId !== businessId || !roles.has(connection.role) || !await stillAuthorized(connection)) { connection.close(); return }
+      if (!roles.has(connection.role)) return
+      if (!await stillAuthorized(connection)) { connection.close(); return }
       connection.controller.enqueue(bytes)
     } catch { connection.close() }
   }))
@@ -108,20 +116,30 @@ export async function GET(req: NextRequest) {
   const businessId = businessIdOf(session)
   const current = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true, password: true } })
   if (!current || (current.role !== "ADMIN" && current.role !== "EMPLOYEE") || current.status !== "APPROVED") return new Response(null, { status: 403 })
-  const connectionId = crypto.randomUUID()
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let controllerRef: ReadableStreamDefaultController | undefined
+  let connectionRef: Connection | undefined
   const close = () => {
     if (heartbeat) clearInterval(heartbeat)
-    connections.delete(connectionId)
+    if (connectionRef) {
+      const set = connections.get(connectionRef.businessId)
+      if (set) {
+        set.delete(connectionRef)
+        if (set.size === 0) connections.delete(connectionRef.businessId)
+      }
+      connectionRef = undefined
+    }
     req.signal.removeEventListener("abort", close)
     try { controllerRef?.close() } catch { /* Already closed. */ }
   }
   const stream = new ReadableStream({
     start(controller) {
       controllerRef = controller
-      const connection = { controller, userId, role: current.role, businessId, password: current.password, close }
-      connections.set(connectionId, connection)
+      const connection: Connection = { controller, userId, role: current.role, businessId, password: current.password, close }
+      connectionRef = connection
+      let set = connections.get(businessId)
+      if (!set) connections.set(businessId, (set = new Set()))
+      set.add(connection)
       controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`))
       heartbeat = setInterval(async () => {
         try {

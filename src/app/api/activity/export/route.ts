@@ -3,15 +3,15 @@ import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
 import { fetchActivityFeed, parseDateParam, type ActivityItem } from "@/lib/activity"
+import { csvCell } from "@/lib/csv"
 
 /**
  * GET /api/activity/export — la misma bitácora de /api/activity como CSV
  * descargable (solo ADMIN). Mismos filtros menos paginación: actorId, source,
  * entity, from, to, q. Tope duro de 2000 filas (las más recientes del merge).
  * La convención de archivo sigue a /api/export: celdas siempre entre comillas
- * con comillas internas duplicadas, BOM UTF-8 para Excel y \r\n por fila;
- * además se neutraliza CSV-injection prefijando ' a valores que empiezan con
- * = + - @ (fórmulas al abrirlo en Excel/Sheets).
+ * con comillas internas duplicadas, BOM UTF-8 para Excel y \r\n por fila.
+ * csvCell (lib/csv, compartida con /api/export) neutraliza CSV-injection.
  */
 
 const MAX_ROWS = 2000
@@ -27,12 +27,6 @@ const ROLE_LABELS: Record<string, string> = {
   EMPLOYEE: "Empleado",
   WORKSHOP: "Taller aliado",
   CUSTOMER: "Cliente",
-}
-
-function csvCell(value: string | null | undefined): string {
-  let text = value ?? ""
-  if (/^[=+\-@]/.test(text)) text = `'${text}`
-  return `"${text.replace(/"/g, '""')}"`
 }
 
 function toCsv(headers: string[], rows: string[][]): string {
