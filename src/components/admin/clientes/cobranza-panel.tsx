@@ -78,11 +78,12 @@ export function CobranzaPanel() {
   const [abonarUser, setAbonarUser] = useState<AbonarTarget | null>(null)
   const [estadoCuentaUserId, setEstadoCuentaUserId] = useState<string | null>(null)
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     try {
-      const res = await fetch("/api/credit/movements?summary=true")
+      const res = await fetch("/api/credit/movements?summary=true", { signal })
       const data = await res.json()
+      if (signal?.aborted) return
       setTotalDebt(data.totalDebt ?? 0)
       setActiveClients(data.activeClients ?? 0)
       setMonthPayments(data.monthPayments ?? 0)
@@ -90,16 +91,20 @@ export function CobranzaPanel() {
       setMovements(data.movements ?? [])
       setBusinessName(data.businessName ?? "")
     } catch {
-      toast.error("Error al cargar datos de crédito")
+      if (!signal?.aborted) toast.error("Error al cargar datos de crédito")
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    const controller = new AbortController()
     // setTimeout evita setState síncrono dentro del effect (react-hooks/set-state-in-effect)
-    const timer = setTimeout(() => void fetchData(), 0)
-    return () => clearTimeout(timer)
+    const timer = setTimeout(() => void fetchData(controller.signal), 0)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [fetchData])
 
   // Filtro local de la cartera (la API ya limita a los 20 mayores saldos y
@@ -139,7 +144,7 @@ export function CobranzaPanel() {
         <p className="text-sm text-muted-foreground">
           La ficha completa de cada cliente está en Clientes 360.
         </p>
-        <Button onClick={fetchData} variant="ghost" size="icon" title="Actualizar" className="shrink-0">
+        <Button onClick={() => void fetchData()} variant="ghost" size="icon" title="Actualizar" className="shrink-0">
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -397,7 +402,7 @@ export function CobranzaPanel() {
           if (!open) setAbonarUser(null)
         }}
         user={abonarUser}
-        onSuccess={fetchData}
+        onSuccess={() => void fetchData()}
       />
       <EstadoCuentaSheet
         open={estadoCuentaUserId != null}

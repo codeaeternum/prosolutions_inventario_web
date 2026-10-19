@@ -224,7 +224,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
     // Actions menu (mobile-friendly popover alternative)
     const [actionsOpenId, setActionsOpenId] = useState<string | null>(null)
 
-    const fetchMovements = useCallback(async () => {
+    const fetchMovements = useCallback(async (signal?: AbortSignal) => {
         setLoading(true)
         try {
             const params = new URLSearchParams()
@@ -250,8 +250,9 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                 params.set("to", to)
             }
 
-            const res = await fetch(`/api/inventory?${params.toString()}`)
+            const res = await fetch(`/api/inventory?${params.toString()}`, { signal })
             const data = await res.json()
+            if (signal?.aborted) return
 
             if (res.ok) {
                 setMovements(data.movements)
@@ -261,16 +262,19 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                 toast.error(data?.error || "No se pudieron cargar los movimientos")
             }
         } catch (error) {
+            if (signal?.aborted) return
             console.error("Error fetching movements:", error)
             toast.error("No se pudieron cargar los movimientos")
         } finally {
-            setLoading(false)
+            if (!signal?.aborted) setLoading(false)
         }
     }, [page, typeFilter, branchFilter, productId, debouncedQ, from, to, limit])
 
     useEffect(() => {
+        const controller = new AbortController()
         // Diferido a un callback: setState sincrónico en el cuerpo del efecto está prohibido.
-        void Promise.resolve().then(fetchMovements)
+        void Promise.resolve().then(() => fetchMovements(controller.signal))
+        return () => controller.abort()
     }, [fetchMovements])
 
     // Al entrar un filtro de producto la paginación anterior ya no aplica.
@@ -290,9 +294,11 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
     }, [search])
 
     useEffect(() => {
-        fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
+        const controller = new AbortController()
+        fetch("/api/branches", { signal: controller.signal }).then(r => r.ok ? r.json() : null).then(d => {
             setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive))
         }).catch(() => {})
+        return () => controller.abort()
     }, [])
 
     // Cambiar de filtro reinicia a la primera página — con la página vieja el

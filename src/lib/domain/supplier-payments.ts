@@ -283,12 +283,17 @@ export async function supplierAging(db: PrismaClient, businessId: string, now: D
   return { suppliers: rows, totals }
 }
 
-/** Historial de abonos de un proveedor del tenant, más reciente primero. */
-export async function listSupplierPayments(db: PrismaClient, businessId: string, supplierId: string) {
-  const supplier = await db.supplier.findFirst({ where: { id: supplierId, businessId } })
-  if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
+/** Historial de abonos del tenant, más reciente primero. Con `supplierId`
+ *  se limita a ese proveedor (404 si no existe); sin él devuelve los últimos
+ *  abonos del negocio completo — la vista "pagos recientes" del panel Les
+ *  debo, que antes pedía el historial de cada proveedor por separado. */
+export async function listSupplierPayments(db: PrismaClient, businessId: string, supplierId?: string | null) {
+  if (supplierId) {
+    const supplier = await db.supplier.findFirst({ where: { id: supplierId, businessId } })
+    if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
+  }
   return db.supplierPayment.findMany({
-    where: { businessId, supplierId },
+    where: { businessId, ...(supplierId ? { supplierId } : {}) },
     include: {
       purchase: { select: { id: true, number: true } },
       createdBy: { select: { id: true, name: true } },

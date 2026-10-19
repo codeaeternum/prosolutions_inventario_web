@@ -13,11 +13,23 @@ const TERMINAL_STAGES = ["DELIVERED", "CANCELLED", "NOT_AUTHORIZED", "NOT_REPAIR
 const closedForEmployee = (status: string, role: string | undefined) =>
   TERMINAL_STAGES.includes(status) && role !== "ADMIN"
 
+// Margen para el framing multipart (boundary, headers de parte, campo label):
+// el Content-Length declara archivo + empaque, no solo la imagen.
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
+
 // Sube una evidencia (jpeg/png/webp, ≤5 MB) a una orden de reparación.
 // El archivo queda en data/uploads/repairs/<orderId>/<photoId>.<ext> y se
 // sirve por /api/evidence?id=<photoId> (los ids son cuid no adivinables).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    // Rechazo temprano por Content-Length: si el cuerpo completo ya supera el
+    // tope de la imagen + framing, no hace falta buferarlo (formData() carga
+    // todo en memoria). El chequeo de file.size sigue siendo la guarda real.
+    const declared = Number(req.headers.get("content-length"))
+    if (Number.isFinite(declared) && declared > MAX_EVIDENCE_BYTES + MULTIPART_OVERHEAD_BYTES) {
+      throw new BusinessError("La imagen debe pesar máximo 5 MB.", 413)
+    }
+
     const auth = await requireModule("taller")
     if (auth.error) return auth.error
     const session = getSession(auth)!

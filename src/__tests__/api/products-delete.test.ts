@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(),
   userFindUnique: vi.fn(),
   transaction: vi.fn(),
+  unlink: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -44,6 +45,12 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
   },
 }))
+// El DELETE desvincula las fotos /uploads/products/* del disco: unlink queda
+// mockeado para verificar qué rutas se borran (y cuáles jamás se tocan).
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>()
+  return { ...actual, promises: { ...actual.promises, unlink: mocks.unlink } }
+})
 
 import { DELETE } from "@/app/api/products/[id]/route"
 
@@ -59,10 +66,11 @@ const session = (id = "u-admin", role = "ADMIN", extra: Record<string, unknown> 
   user: { id, role, status: "APPROVED", businessId: "biz-1", ...extra },
 })
 
-const productRow = (reservations: unknown[] = []) => ({
+const productRow = (reservations: unknown[] = [], images: string[] = []) => ({
   id: "p1",
   name: "Pantalla iPhone 11",
   retailPrice: 1200,
+  images,
   reservations,
 })
 
@@ -81,6 +89,7 @@ beforeEach(() => {
   mocks.inventoryMovementDeleteMany.mockResolvedValue({ count: 0 })
   mocks.productDelete.mockResolvedValue({})
   mocks.auditCreate.mockResolvedValue({})
+  mocks.unlink.mockResolvedValue(undefined)
   mocks.transaction.mockImplementation((work: (t: unknown) => unknown) => work(tx))
 })
 
@@ -170,6 +179,51 @@ describe("borrado exitoso", () => {
       entityId: "p1",
       entityName: "Pantalla iPhone 11",
     })
+  })
+})
+
+describe("limpieza de archivos de imagen", () => {
+  it("desvincula del disco las fotos /uploads/products/* tras el delete", async () => {
+    mocks.productFindUnique.mockResolvedValue(
+      productRow([], ["/uploads/products/a.jpg", "/uploads/products/b.webp"])
+    )
+    const res = await del()
+    expect(res.status).toBe(200)
+
+    expect(mocks.unlink).toHaveBeenCalledTimes(2)
+    const paths = mocks.unlink.mock.calls.map(c => String(c[0]))
+    for (const p of paths) {
+      expect(p.replaceAll("\\", "/")).toContain("public/uploads/products/")
+    }
+    expect(paths.some(p => p.endsWith("a.jpg"))).toBe(true)
+    expect(paths.some(p => p.endsWith("b.webp"))).toBe(true)
+    // El archivo se borra solo después de que la fila quedó eliminada.
+    expect(mocks.unlink.mock.invocationCallOrder[0])
+      .toBeGreaterThan(mocks.productDelete.mock.invocationCallOrder[0])
+  })
+
+  it("solo el prefijo /uploads/products/ con nombre plano se borra (sin traversal ni externos)", async () => {
+    mocks.productFindUnique.mockResolvedValue(
+      productRow([], [
+        "/uploads/products/ok.png",
+        "https://cdn.example.com/x.jpg",
+        "/uploads/products/../secret.txt",
+        "/uploads/products/subdir/y.jpg",
+        "/uploads/logos/z.png",
+      ])
+    )
+    const res = await del()
+    expect(res.status).toBe(200)
+    expect(mocks.unlink).toHaveBeenCalledTimes(1)
+    expect(String(mocks.unlink.mock.calls[0][0])).toMatch(/ok\.png$/)
+  })
+
+  it("un archivo ausente o un error de disco no tumban el delete", async () => {
+    mocks.unlink.mockRejectedValue(Object.assign(new Error("no file"), { code: "ENOENT" }))
+    mocks.productFindUnique.mockResolvedValue(productRow([], ["/uploads/products/a.jpg"]))
+    const res = await del()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true })
   })
 })
 

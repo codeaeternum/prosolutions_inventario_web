@@ -44,12 +44,13 @@ export function DesempenoPanel() {
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     setForbidden(false)
     try {
-      const res = await fetch(`/api/actividad/desempeno?dias=${dias}`)
+      const res = await fetch(`/api/actividad/desempeno?dias=${dias}`, { signal })
+      if (signal?.aborted) return
       if (res.status === 401 || res.status === 403) {
         setForbidden(true)
         setUsuarios([])
@@ -57,17 +58,22 @@ export function DesempenoPanel() {
       }
       if (!res.ok) throw new Error()
       const data = await res.json()
+      if (signal?.aborted) return
       setUsuarios(data.usuarios ?? [])
     } catch {
-      setError("No se pudo cargar el desempeño del equipo")
+      if (!signal?.aborted) setError("No se pudo cargar el desempeño del equipo")
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [dias])
 
   useEffect(() => {
-    const t = setTimeout(() => { void load() }, 0)
-    return () => clearTimeout(t)
+    const controller = new AbortController()
+    const t = setTimeout(() => { void load(controller.signal) }, 0)
+    return () => {
+      clearTimeout(t)
+      controller.abort()
+    }
   }, [load])
 
   if (forbidden) {

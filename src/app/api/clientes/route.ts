@@ -79,44 +79,58 @@ export async function GET(req: Request) {
 
     // Las órdenes de taller se ligan por FK (customerId) y, como respaldo para
     // las históricas sin ligar, por teléfono normalizado (customerPhone o
-    // customerPhoneAlt). Se deduplica por orden: el mismo número puede estar
-    // en ambos campos y una orden puede llegar por los dos caminos.
-    const orderPhones = await prisma.repairOrder.findMany({
+    // customerPhoneAlt). UNA sola consulta agregada por la tripleta
+    // (customerId, phone, phoneAlt): cada grupo reúne las órdenes con la misma
+    // combinación, así el conteo por cliente se deduplica en memoria sin
+    // materializar una fila por orden (antes leía toda la tabla del tenant).
+    const orderGroups = await prisma.repairOrder.groupBy({
+      by: ["customerId", "customerPhone", "customerPhoneAlt"],
       where: { businessId },
-      select: { id: true, customerId: true, customerPhone: true, customerPhoneAlt: true },
+      _count: { _all: true },
     })
-    const repairsByPhone = new Map<string, Set<string>>()
-    const repairsByCustomer = new Map<string, Set<string>>()
-    for (const order of orderPhones) {
-      if (order.customerId) {
-        let set = repairsByCustomer.get(order.customerId)
-        if (!set) {
-          set = new Set()
-          repairsByCustomer.set(order.customerId, set)
-        }
-        set.add(order.id)
-      }
-      for (const raw of [order.customerPhone, order.customerPhoneAlt]) {
+
+    // Para el conteo por cliente se necesitan tres mapas:
+    //  - byCustomer[cid]: órdenes ligadas por FK.
+    //  - byPhone[p]: órdenes alcanzables por el teléfono normalizado p (un
+    //    grupo con el mismo número en ambos campos solo cuenta una vez).
+    //  - byCustomerPhone[`cid\np`]: la intersección — órdenes de cid cuyo
+    //    teléfono también es p; se resta para no duplicar al unir A ∪ B.
+    const repairsByCustomer = new Map<string, number>()
+    const repairsByPhone = new Map<string, number>()
+    const repairsByCustomerPhone = new Map<string, number>()
+    for (const group of orderGroups) {
+      const count = group._count._all
+      const phones = new Set<string>()
+      for (const raw of [group.customerPhone, group.customerPhoneAlt]) {
         const norm = normalizePhone(raw)
-        if (!norm) continue
-        let set = repairsByPhone.get(norm)
-        if (!set) {
-          set = new Set()
-          repairsByPhone.set(norm, set)
+        if (norm) phones.add(norm)
+      }
+      if (group.customerId) {
+        repairsByCustomer.set(group.customerId, (repairsByCustomer.get(group.customerId) ?? 0) + count)
+        for (const phone of phones) {
+          const key = `${group.customerId}\n${phone}`
+          repairsByCustomerPhone.set(key, (repairsByCustomerPhone.get(key) ?? 0) + count)
         }
-        set.add(order.id)
+      }
+      for (const phone of phones) {
+        repairsByPhone.set(phone, (repairsByPhone.get(phone) ?? 0) + count)
       }
     }
 
-    const clientes = users.map(({ _count, ...u }) => ({
-      ...u,
-      reservationsCount: _count.reservations,
-      salesCount: _count.salesAsCustomer,
-      repairsCount: new Set([
-        ...(repairsByPhone.get(normalizePhone(u.phone)) ?? []),
-        ...(repairsByCustomer.get(u.id) ?? []),
-      ]).size,
-    }))
+    const clientes = users.map(({ _count, ...u }) => {
+      const phone = normalizePhone(u.phone)
+      const byCustomer = repairsByCustomer.get(u.id) ?? 0
+      const byPhone = phone ? (repairsByPhone.get(phone) ?? 0) : 0
+      const both = phone ? (repairsByCustomerPhone.get(`${u.id}\n${phone}`) ?? 0) : 0
+      return {
+        ...u,
+        reservationsCount: _count.reservations,
+        salesCount: _count.salesAsCustomer,
+        // |A ∪ B| = |A| + |B| − |A∩B|: una orden ligada por FK y teléfono a
+        // la vez se cuenta una sola vez, igual que el Set de ids anterior.
+        repairsCount: byCustomer + byPhone - both,
+      }
+    })
 
     const totalPages = Math.ceil(total / limit) || 1
     return NextResponse.json({ clientes, total, page, limit, totalPages }, { headers: { "Cache-Control": "private, no-store" } })

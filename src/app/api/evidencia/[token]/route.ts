@@ -13,6 +13,9 @@ const INVALID = { error: "Enlace no válido o expirado." }
 const EXPIRED = { error: "Este link ya no está vigente." }
 const WINDOW_MS = 60 * 60 * 1000
 const MAX_UPLOADS = 20 // fotos por hora por IP
+// Margen para el framing multipart (boundary, headers de parte, campo label):
+// el Content-Length declara archivo + empaque, no solo la imagen.
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 // Caducidad del QR de evidencias: NULL = token histórico (anterior a la
 // caducidad) y sigue válido — la vigencia solo corre para tokens emitidos
@@ -44,6 +47,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
   try {
+    // Rechazo temprano por Content-Length: si el cuerpo completo ya supera el
+    // tope de la imagen + framing, no hace falta buferarlo (formData() carga
+    // todo en memoria). El chequeo de file.size sigue siendo la guarda real.
+    const declared = Number(req.headers.get("content-length"))
+    if (Number.isFinite(declared) && declared > MAX_EVIDENCE_BYTES + MULTIPART_OVERHEAD_BYTES) {
+      return NextResponse.json(
+        { error: "La imagen debe pesar máximo 5 MB." },
+        { status: 413, headers: NO_STORE },
+      )
+    }
+
     if (!checkAndRecord("evidencia", getClientIp(req), WINDOW_MS, MAX_UPLOADS)) {
       return NextResponse.json(
         { error: "Demasiadas subidas. Intenta de nuevo en una hora." },

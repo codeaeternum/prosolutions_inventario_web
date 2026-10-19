@@ -318,7 +318,7 @@ export async function platformDirectoryStats(days = 30): Promise<PlatformDirecto
   since.setUTCDate(since.getUTCDate() - (windowDays - 1))
   const inWindow = { createdAt: { gte: since } }
 
-  const [searches, clicks, requests, topQueryRows, topBusinessRows, timeline] =
+  const [searches, clicks, requests, topQueryRows, topBusinessRows, dailyRows] =
     await Promise.all([
       prisma.directoryEvent.count({ where: { kind: "search", ...inWindow } }),
       prisma.directoryEvent.count({ where: { kind: "click", ...inWindow } }),
@@ -337,11 +337,16 @@ export async function platformDirectoryStats(days = 30): Promise<PlatformDirecto
         orderBy: { _count: { businessId: "desc" } },
         take: 10,
       }),
-      // Solo timestamp+kind: se agrega por día en memoria (volumen chico).
-      prisma.directoryEvent.findMany({
-        where: inWindow,
-        select: { createdAt: true, kind: true },
-      }),
+      // La serie diaria se agrega en SQL (kind × día UTC): el findMany
+      // anterior materializaba hasta 365 días de eventos solo para
+      // agruparlos en memoria. to_char sobre la columna timestamp (UTC por
+      // convención de Prisma) da la misma llave YYYY-MM-DD que utcDay().
+      prisma.$queryRaw<{ kind: string; day: string; n: number }[]>`
+        SELECT "kind", to_char("createdAt", 'YYYY-MM-DD') AS "day", COUNT(*)::int AS "n"
+        FROM "DirectoryEvent"
+        WHERE "createdAt" >= ${since}
+        GROUP BY "kind", to_char("createdAt", 'YYYY-MM-DD')
+      `,
     ])
 
   // Join defensivo de nombres: un negocio borrado conserva sus clicks
@@ -358,14 +363,13 @@ export async function platformDirectoryStats(days = 30): Promise<PlatformDirecto
   const businessMap = new Map(businesses.map(b => [b.id, b]))
 
   const byDay = new Map<string, PlatformDirectoryDay>()
-  for (const event of timeline) {
-    const date = utcDay(event.createdAt)
-    const day = byDay.get(date) ?? { date, searches: 0, clicks: 0, requests: 0, total: 0 }
-    if (event.kind === "search") day.searches++
-    else if (event.kind === "click") day.clicks++
-    else if (event.kind === "request") day.requests++
-    day.total++
-    byDay.set(date, day)
+  for (const row of dailyRows) {
+    const day = byDay.get(row.day) ?? { date: row.day, searches: 0, clicks: 0, requests: 0, total: 0 }
+    if (row.kind === "search") day.searches += row.n
+    else if (row.kind === "click") day.clicks += row.n
+    else if (row.kind === "request") day.requests += row.n
+    day.total += row.n
+    byDay.set(row.day, day)
   }
   // Rellena días sin eventos para que la gráfica no tenga huecos falsos.
   const daily: PlatformDirectoryDay[] = []

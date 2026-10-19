@@ -58,9 +58,8 @@ interface DebtRow {
     aging: AgingRow | null
 }
 
-/** Sin endpoint global de pagos: se consulta el historial por proveedor
-    (solo los que tienen abonos registrados, tope de peticiones acotado). */
-const MAX_SUPPLIERS_PAYMENTS_FETCH = 12
+/** Una sola petición devuelve los últimos abonos del negocio (antes era un
+    fetch por proveedor con saldo — N+1 HTTP). */
 const MAX_RECENT_PAYMENTS = 10
 
 /** Celda monetaria de la tabla: guion cuando el bucket está en cero. */
@@ -86,13 +85,15 @@ export function LesDeboPanel() {
     const [error, setError] = useState<string | null>(null)
     const [payTarget, setPayTarget] = useState<DebtRow | null>(null)
 
-    const fetchAll = useCallback(async () => {
+    const fetchAll = useCallback(async (signal?: AbortSignal) => {
         setError(null)
         try {
-            const [balRes, agingRes] = await Promise.all([
-                fetch("/api/suppliers/balances"),
-                fetch("/api/suppliers/aging"),
+            const [balRes, agingRes, payRes] = await Promise.all([
+                fetch("/api/suppliers/balances", { signal }),
+                fetch("/api/suppliers/aging", { signal }),
+                fetch("/api/supplier-payments", { signal }),
             ])
+            if (signal?.aborted) return
             if (!balRes.ok && !agingRes.ok) {
                 const data = await balRes.json().catch(() => null)
                 throw new Error(data?.error || "No se pudieron cargar los saldos de proveedores.")
@@ -108,31 +109,23 @@ export function LesDeboPanel() {
             }
             setAging(map)
 
-            // Pagos recientes: se mezclan los historiales de los proveedores
-            // que tienen abonos (pagadoCents > 0) y se toman los últimos ~10.
-            const conPagos = balanceList.filter(b => b.pagadoCents > 0).slice(0, MAX_SUPPLIERS_PAYMENTS_FETCH)
-            const batches = await Promise.all(
-                conPagos.map(b =>
-                    fetch(`/api/supplier-payments?supplierId=${encodeURIComponent(b.supplier.id)}`)
-                        .then(r => (r.ok ? r.json() : null))
-                        .then(d => ((d?.payments ?? []) as PaymentRow[]))
-                        .catch(() => [] as PaymentRow[]),
-                ),
-            )
-            setPayments(
-                batches.flat()
-                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                    .slice(0, MAX_RECENT_PAYMENTS),
-            )
+            // Pagos recientes: el endpoint ya devuelve los abonos del negocio
+            // más recientes primero; su fallo no tumba el panel.
+            const payData = payRes.ok ? await payRes.json().catch(() => null) : null
+            if (signal?.aborted) return
+            setPayments(((payData?.payments ?? []) as PaymentRow[]).slice(0, MAX_RECENT_PAYMENTS))
         } catch (e) {
+            if (signal?.aborted) return
             setError(e instanceof Error ? e.message : "Error al cargar los saldos de proveedores.")
         } finally {
-            setLoading(false)
+            if (!signal?.aborted) setLoading(false)
         }
     }, [])
 
     useEffect(() => {
-        void Promise.resolve().then(fetchAll)
+        const controller = new AbortController()
+        void Promise.resolve().then(() => fetchAll(controller.signal))
+        return () => controller.abort()
     }, [fetchAll])
 
     // Unión de saldos derivados (compras recibidas − abonos) y antigüedad

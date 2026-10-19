@@ -8,9 +8,23 @@ import { imageFormat } from "@/lib/payment-proofs"
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"]
 const MAX_SIZE_MB = 5
 const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
+// Margen para el framing multipart (boundary, headers de parte): el
+// Content-Length declara archivo + empaque, no solo la imagen.
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 export async function POST(request: NextRequest) {
   try {
+    // Rechazo temprano por Content-Length: si el cuerpo completo ya supera el
+    // tope de la imagen + framing, no hace falta buferarlo (formData() carga
+    // todo en memoria). El chequeo de file.size sigue siendo la guarda real.
+    const declared = Number(request.headers.get("content-length"))
+    if (Number.isFinite(declared) && declared > MAX_SIZE + MULTIPART_OVERHEAD_BYTES) {
+      return NextResponse.json(
+        { error: `La imagen no debe superar ${MAX_SIZE_MB} MB` },
+        { status: 413 }
+      )
+    }
+
     const result = await requireModule("inventario")
     if (result.error) return result.error
 

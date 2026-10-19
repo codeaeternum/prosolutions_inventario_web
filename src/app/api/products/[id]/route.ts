@@ -10,9 +10,35 @@ import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reserva
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
 import { normalizeProductName } from "@/lib/utils"
+import { promises as fs } from "node:fs"
+import path from "node:path"
 import type { Prisma } from "@prisma/client"
 
 type TransactionClient = Prisma.TransactionClient
+
+// Las imágenes subidas viven en public/uploads/products/<archivo> y se
+// referencian como "/uploads/products/<archivo>". El valor guardado nunca se
+// confía: solo se borra lo que cuelga del prefijo exacto y es un nombre plano
+// (sin subdirectorios ni ".."), resuelto siempre dentro del dir de uploads.
+const PRODUCT_UPLOAD_PREFIX = "/uploads/products/"
+
+async function unlinkProductImages(images: unknown): Promise<void> {
+  if (!Array.isArray(images)) return
+  const dir = path.join(process.cwd(), "public", "uploads", "products")
+  await Promise.all(
+    images.map(async (img) => {
+      try {
+        if (typeof img !== "string" || !img.startsWith(PRODUCT_UPLOAD_PREFIX)) return
+        const name = img.slice(PRODUCT_UPLOAD_PREFIX.length)
+        if (!name || name !== path.basename(name)) return
+        await fs.unlink(path.join(dir, name))
+      } catch {
+        // Archivo ausente o error de disco: el delete ya se confirmó, la
+        // limpieza es best-effort y nunca tumba la respuesta.
+      }
+    }),
+  )
+}
 
 // GET /api/products/[id] - Get single product
 export async function GET(
@@ -512,6 +538,10 @@ export async function DELETE(
       entityName: existingProduct.name,
       summary: `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
     })
+
+    // Post-delete: las fotos /uploads/products/* quedaban huérfanas en disco.
+    // Fuera de la tx — si el borrado de un archivo falla el delete ya pasó.
+    await unlinkProductImages(existingProduct.images)
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -5,7 +5,8 @@ import { prisma } from "@/lib/prisma"
 import { listSupplierPayments, paySupplier } from "@/lib/domain/supplier-payments"
 import { businessFailure } from "@/lib/domain/http"
 
-/** Historial de abonos de un proveedor: ?supplierId=<id>. */
+/** Historial de abonos: ?supplierId=<id> acota a un proveedor; sin él,
+ *  últimos abonos del negocio (vista "pagos recientes", una sola llamada). */
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")
@@ -13,8 +14,6 @@ export async function GET(request: NextRequest) {
     const businessId = businessIdOf(getSession(auth)!)
 
     const supplierId = new URL(request.url).searchParams.get("supplierId")
-    if (!supplierId) return NextResponse.json({ error: "supplierId requerido" }, { status: 400 })
-
     const payments = await listSupplierPayments(prisma, businessId, supplierId)
     return NextResponse.json({ payments }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
