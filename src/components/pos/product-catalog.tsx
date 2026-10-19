@@ -24,6 +24,12 @@ interface ProductCatalogProps {
     query: string
     onQueryChange: (query: string) => void
     onAdd: (product: PosProduct) => void
+    /**
+     * Enter en el buscador (pistola HID que teclea el código y manda Enter):
+     * la página intenta el alta por coincidencia exacta; sin exacta el texto
+     * queda y el filtro normal sigue — sin errores.
+     */
+    onSubmitCode?: (code: string) => void
     /** Bump tras cada venta: el stock de las tarjetas vuelve a pedirse. */
     refreshKey?: number
 }
@@ -80,7 +86,7 @@ function ProductCard({ product, workshopActive, disabled, onAdd }: {
 }
 
 /** Catálogo del mostrador: búsqueda instantánea + parrilla navegable por categoría. */
-export function ProductCatalog({ branchId, workshopActive, disabled, query, onQueryChange, onAdd, refreshKey }: ProductCatalogProps) {
+export function ProductCatalog({ branchId, workshopActive, disabled, query, onQueryChange, onAdd, onSubmitCode, refreshKey }: ProductCatalogProps) {
     const [categories, setCategories] = useState<Category[]>([])
     const [categoryId, setCategoryId] = useState("")
 
@@ -170,6 +176,15 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
                     placeholder="Buscar por nombre o escanear código…"
                     value={query}
                     onChange={e => onQueryChange(e.target.value)}
+                    onKeyDown={e => {
+                        // Pistola HID: Enter tras el código intenta el alta
+                        // directa por coincidencia exacta (misma vía que el
+                        // escáner); sin match exacto solo filtra el catálogo.
+                        if (e.key === "Enter" && onSubmitCode) {
+                            e.preventDefault()
+                            onSubmitCode(query)
+                        }
+                    }}
                     className="pl-9 pr-9 h-11 text-base"
                     autoFocus
                 />

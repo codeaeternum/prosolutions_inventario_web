@@ -28,14 +28,15 @@ import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-ope
 import { CustomerPicker } from "./customer-picker"
 import {
     DEPOSIT_METHODS,
-    PAYMENT_METHODS,
     cartUnitsOf,
+    paymentMethodsFor,
     toPaymentsPayload,
     type CartItem,
     type CheckoutResult,
     type PaymentDraft,
     type PosCustomer,
     type PosPaymentMethod,
+    type PosPaymentMethodOption,
 } from "./types"
 
 type DocType = "VENTA" | "LAYAWAY" | "QUOTE" | "WORKSHOP"
@@ -104,7 +105,7 @@ function MethodSelect({ value, onChange, disabled, methods }: {
     value: PosPaymentMethod
     onChange: (method: PosPaymentMethod) => void
     disabled?: boolean
-    methods: { value: PosPaymentMethod; label: string }[]
+    methods: PosPaymentMethodOption[]
 }) {
     return (
         <Select value={value} onValueChange={v => onChange(v as PosPaymentMethod)}>
@@ -113,7 +114,7 @@ function MethodSelect({ value, onChange, disabled, methods }: {
             </SelectTrigger>
             <SelectContent>
                 {methods.map(m => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                    <SelectItem key={m.value} value={m.value} disabled={m.disabled}>{m.label}</SelectItem>
                 ))}
             </SelectContent>
         </Select>
@@ -140,14 +141,19 @@ function CheckoutForm({
     onOpenChange, cart, cartTotal, workshopActive, workshopCustomer, onWorkshopSaleChange,
     customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, autoOpenTicket, onCompleted,
 }: CheckoutDialogProps) {
+    // Caja cerrada: el efectivo siempre rebota con 409 REGISTER_REQUIRED.
+    // Se bloquea en todos lados (pago único, dividido y anticipo de apartado)
+    // y el método por defecto pasa a tarjeta.
+    const cashBlocked = cajaOpen === false
+    const defaultMethod: PosPaymentMethod = cashBlocked ? "TARJETA" : "EFECTIVO"
     const [docType, setDocType] = useState<DocType>(workshopActive || workshopCustomer ? "WORKSHOP" : "VENTA")
-    const [paymentMethod, setPaymentMethod] = useState<PosPaymentMethod>("EFECTIVO")
+    const [paymentMethod, setPaymentMethod] = useState<PosPaymentMethod>(defaultMethod)
     const [cashGiven, setCashGiven] = useState("")
     const [transferRef, setTransferRef] = useState("")
     const [splitMode, setSplitMode] = useState(false)
-    const [splitPayments, setSplitPayments] = useState<PaymentDraft[]>([{ method: "EFECTIVO", amount: "" }])
+    const [splitPayments, setSplitPayments] = useState<PaymentDraft[]>([{ method: defaultMethod, amount: "" }])
     const [withDeposit, setWithDeposit] = useState(false)
-    const [deposit, setDeposit] = useState<PaymentDraft>({ method: "EFECTIVO", amount: "" })
+    const [deposit, setDeposit] = useState<PaymentDraft>({ method: defaultMethod, amount: "" })
     const [validityDays, setValidityDays] = useState("15")
     // Descuento autorizado al cobrar: monto en pesos + motivo obligatorio.
     const [withDiscount, setWithDiscount] = useState(false)
@@ -193,6 +199,19 @@ function CheckoutForm({
     const usesCredit = splitMode
         ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0)
         : paymentMethod === "CREDITO"
+    // Listas de métodos con el efectivo bloqueado cuando no hay caja abierta;
+    // hasCashPayment/cashSelected son la guardia residual por si el estado
+    // quedó con EFECTIVO (el cobro igual se bloquea abajo y en el servidor).
+    const saleMethods = paymentMethodsFor(cajaOpen)
+    const depositMethods = paymentMethodsFor(cajaOpen, DEPOSIT_METHODS)
+    const hasCashPayment = splitMode
+        ? splitPayments.some(p => p.method === "EFECTIVO" && parseFloat(p.amount) > 0)
+        : paymentMethod === "EFECTIVO"
+    const cashSelected = cashBlocked
+        && ((isSale && hasCashPayment) || (docType === "LAYAWAY" && withDeposit && deposit.method === "EFECTIVO"))
+    // Primer método cobrable sin caja: al dividir desde crédito o agregar
+    // medio de pago, nunca se prellena efectivo bloqueado.
+    const fallbackMethod: PosPaymentMethod = saleMethods.find(m => !m.disabled && m.value !== "CREDITO")?.value ?? "TARJETA"
     const creditPortion = splitMode
         ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
         : (paymentMethod === "CREDITO" ? payable : 0)
@@ -243,6 +262,10 @@ function CheckoutForm({
 
     const submit = async () => {
         if (cart.length === 0 || submitting.current) return
+        if (cashSelected) {
+            toast.error("Sin caja abierta no se puede cobrar en efectivo — abre turno o usa otro método")
+            return
+        }
 
         const items = cart.map(item => ({ productId: item.product.id, quantity: item.quantity }))
         let url = "/api/sales"
@@ -417,6 +440,7 @@ function CheckoutForm({
     }
 
     const confirmDisabled = processing
+        || cashSelected
         || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < payable))
         || (isSale && usesCredit && (!customer || customer.creditLimit == null || creditPortion > (creditAvailable ?? 0)))
         || (isSale && discountCents > 0 && (discountCents >= cartTotalCents || discountReason.trim().length < 3))
@@ -447,7 +471,7 @@ function CheckoutForm({
 
                     {cajaOpen === false && isSale && (
                         <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                            La caja está cerrada en esta sucursal; el cobro puede quedar sin registrar en caja.
+                            No hay caja abierta — los cobros en efectivo serán rechazados; abre turno o cobra con otro método.
                         </p>
                     )}
 
@@ -565,11 +589,11 @@ function CheckoutForm({
                             <Label>Método de pago</Label>
                             <div className="flex gap-2">
                                 <div className="flex-1">
-                                    <MethodSelect value={paymentMethod} onChange={setPaymentMethod} disabled={processing} methods={PAYMENT_METHODS} />
+                                    <MethodSelect value={paymentMethod} onChange={setPaymentMethod} disabled={processing} methods={saleMethods} />
                                 </div>
                                 <Button type="button" variant="outline" disabled={processing} onClick={() => {
                                     setSplitMode(true)
-                                    setSplitPayments([{ method: paymentMethod === "CREDITO" ? "EFECTIVO" : paymentMethod, amount: payable.toFixed(2) }])
+                                    setSplitPayments([{ method: paymentMethod === "CREDITO" || (cashBlocked && paymentMethod === "EFECTIVO") ? fallbackMethod : paymentMethod, amount: payable.toFixed(2) }])
                                 }}>
                                     Dividir
                                 </Button>
@@ -630,7 +654,7 @@ function CheckoutForm({
                                                 value={p.method}
                                                 onChange={m => setSplitPayments(prev => prev.map((x, j) => j === i ? { ...x, method: m } : x))}
                                                 disabled={processing}
-                                                methods={PAYMENT_METHODS}
+                                                methods={saleMethods}
                                             />
                                         </div>
                                         <Input
@@ -663,7 +687,7 @@ function CheckoutForm({
                             {splitPayments.length < 4 && (
                                 <Button type="button" variant="outline" size="sm" disabled={processing} onClick={() => {
                                     const used = new Set(splitPayments.map(p => p.method))
-                                    const next = PAYMENT_METHODS.find(m => !used.has(m.value))?.value ?? "EFECTIVO"
+                                    const next = saleMethods.find(m => !used.has(m.value) && !m.disabled)?.value ?? fallbackMethod
                                     const remaining = payable - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
                                     setSplitPayments(prev => [...prev, { method: next, amount: remaining > 0 ? remaining.toFixed(2) : "" }])
                                 }}>
@@ -705,7 +729,7 @@ function CheckoutForm({
                                                 value={deposit.method}
                                                 onChange={m => setDeposit(prev => ({ ...prev, method: m }))}
                                                 disabled={processing}
-                                                methods={DEPOSIT_METHODS}
+                                                methods={depositMethods}
                                             />
                                         </div>
                                         <Input

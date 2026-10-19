@@ -14,6 +14,14 @@ export interface PosProduct {
     imageUrl?: string | null
     categoryId?: string | null
     category?: { name: string } | null
+    /**
+     * Precio de catálogo vigente al recuperar un documento: las líneas
+     * retomadas muestran el snapshot (retailPrice/wholesalePrice = unitPrice
+     * del documento), pero si el ticket se desliga se cobra como venta nueva
+     * con el precio de catálogo — que es este.
+     */
+    catalogRetailPrice?: number
+    catalogWholesalePrice?: number
 }
 
 export interface CartItem {
@@ -69,6 +77,19 @@ export const PAYMENT_METHODS: { value: PosPaymentMethod; label: string }[] = [
     { value: "CREDITO", label: "A crédito" },
 ]
 
+export interface PosPaymentMethodOption { value: PosPaymentMethod; label: string; disabled?: boolean }
+
+/**
+ * Con la caja cerrada todo cobro en efectivo rebota en el servidor (409
+ * REGISTER_REQUIRED): el método queda visible pero bloqueado para que el
+ * cajero entienda por qué no puede elegirlo. cajaOpen null (aún cargando)
+ * no bloquea — el servidor sigue siendo la autoridad.
+ */
+export function paymentMethodsFor(cajaOpen: boolean | null, methods: PosPaymentMethodOption[] = PAYMENT_METHODS): PosPaymentMethodOption[] {
+    if (cajaOpen !== false) return methods
+    return methods.map(m => m.value === "EFECTIVO" ? { ...m, label: `${m.label} (caja cerrada)`, disabled: true } : m)
+}
+
 /** Anticipos de apartado: un depósito a crédito no tiene sentido en caja. */
 export const DEPOSIT_METHODS = PAYMENT_METHODS.filter(m => m.value !== "CREDITO")
 
@@ -106,6 +127,49 @@ export function cartTotalOf(cart: CartItem[], workshopActive: boolean): number {
 
 export function cartUnitsOf(cart: CartItem[]): number {
     return cart.reduce((sum, item) => sum + item.quantity, 0)
+}
+
+/**
+ * Coincidencia exacta para el escáner (cámara o pistola HID que teclea el
+ * código + Enter): barcode o id del producto, sin fuzzy — una coincidencia
+ * parcial nunca debe agregar al ticket sola.
+ */
+export function exactCodeMatches(products: PosProduct[], code: string): PosProduct[] {
+    const clean = code.trim()
+    if (!clean) return []
+    return products.filter(p => p.barcode?.trim() === clean || p.id === clean)
+}
+
+/**
+ * Reconstruye las líneas del ticket desde el detalle de un documento
+ * (suspendida/cotización). El precio mostrado es el SNAPSHOT del documento
+ * (item.unitPrice en ambos campos: el checkout cobra ese, no el catálogo —
+ * mostrar retailPrice actual hacía cobrar distinto de lo anunciado). El
+ * precio de catálogo vigente queda en catalogRetailPrice/catalogWholesalePrice
+ * para restaurarlo si el ticket se desliga y se cobra como venta nueva.
+ * `branchStock` (overlay de /api/search/pos) topa el botón + con la
+ * existencia de la sucursal; sin él se usa el stock total y topa el servidor.
+ */
+export function docItemsToCart(doc: PosDocumentDetail, branchStock?: ReadonlyMap<string, number>): CartItem[] {
+    return (doc.items ?? []).flatMap(i => {
+        const p = i.product
+        if (!p?.id) return []
+        const snapshot = i.unitPrice
+        return [{
+            quantity: i.quantity,
+            product: {
+                id: p.id,
+                name: p.name ?? "Producto",
+                barcode: p.barcode ?? null,
+                stock: branchStock?.get(p.id) ?? p.stock ?? 0,
+                retailPrice: snapshot,
+                wholesalePrice: snapshot,
+                ...(p.retailPrice != null ? { catalogRetailPrice: p.retailPrice } : {}),
+                ...(p.wholesalePrice != null ? { catalogWholesalePrice: p.wholesalePrice } : {}),
+                images: p.images,
+            },
+        }]
+    })
 }
 
 /** Pagos del checkout → cuerpo payments[] que espera el dominio. */

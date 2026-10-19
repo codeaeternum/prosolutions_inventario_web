@@ -3,7 +3,7 @@
 import { useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react"
 import { toast } from "sonner"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import type { CartItem, PosCustomer, PosDocumentDetail } from "./types"
+import { docItemsToCart, type CartItem, type PosCustomer, type PosDocumentDetail } from "./types"
 
 interface UsePosDocumentsArgs {
     cart: CartItem[]
@@ -68,22 +68,25 @@ export function usePosDocuments({
             const data: { document?: PosDocumentDetail; error?: string } | null = await res.json().catch(() => null)
             if (!res.ok || !data?.document) throw new Error(data?.error || "No se pudo cargar la venta suspendida")
             const doc = data.document
-            const items: CartItem[] = (doc.items ?? []).flatMap(i => {
-                const p = i.product
-                if (!p?.id) return []
-                return [{
-                    quantity: i.quantity,
-                    product: {
-                        id: p.id,
-                        name: p.name ?? "Producto",
-                        barcode: p.barcode ?? null,
-                        stock: p.stock ?? 0,
-                        retailPrice: p.retailPrice ?? i.unitPrice,
-                        wholesalePrice: p.wholesalePrice ?? i.unitPrice,
-                        images: p.images,
-                    },
-                }]
-            })
+            // El detalle trae Product.stock total, no el de la sucursal: el
+            // overlay por id contra /api/search/pos topa el botón + con la
+            // existencia real del local. Si falla, queda el total y el
+            // checkout sigue topando en el servidor.
+            let branchStock: Map<string, number> | undefined
+            if (branchId && (doc.items ?? []).length) {
+                branchStock = new Map()
+                await Promise.all((doc.items ?? []).map(async i => {
+                    const pid = i.product?.id
+                    if (!pid) return
+                    try {
+                        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(pid)}&branchId=${encodeURIComponent(branchId)}`)
+                        const overlay: { products?: { id?: string; stock?: number }[] } | null = res.ok ? await res.json() : null
+                        const match = overlay?.products?.find(p => p.id === pid)
+                        if (match?.stock != null) branchStock!.set(pid, match.stock)
+                    } catch { /* sin overlay: queda el stock total del producto */ }
+                }))
+            }
+            const items: CartItem[] = docItemsToCart(doc, branchStock)
             if (items.length === 0) throw new Error("El documento no tiene líneas recuperables")
             setCart(items)
             setResumedDoc({ id: doc.id, number: doc.number, kind: doc.kind })

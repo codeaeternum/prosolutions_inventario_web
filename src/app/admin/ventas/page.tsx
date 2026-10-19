@@ -1,8 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -24,7 +25,7 @@ import { ShortcutHints } from "@/components/pos/shortcut-hints"
 import { SuspendDialog } from "@/components/pos/suspend-dialog"
 import { usePosDocuments } from "@/components/pos/use-pos-documents"
 import {
-    cartTotalOf, cartUnitsOf,
+    cartTotalOf, cartUnitsOf, exactCodeMatches,
     type CartItem, type CheckoutResult, type PosCustomer, type PosProduct,
 } from "@/components/pos/types"
 
@@ -33,6 +34,7 @@ const KIND_BADGE: Record<CheckoutResult["kind"], string | null> = { SALE: null, 
 
 export default function VentasPage() {
     const router = useRouter()
+    const { data: session, status: sessionStatus } = useSession()
     const [searchQuery, setSearchQuery] = useState("")
     // ?escanear=1 (redirect de /admin/verificar) abre el escáner en modo QR
     // al montar — estado inicial perezoso, no efecto.
@@ -67,14 +69,25 @@ export default function VentasPage() {
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
     const [branchId, setBranchId] = useState("")
+    // Empleado con sucursales asignadas: la terminal solo ofrece las suyas —
+    // elegir otra convertía cada llamada en 403 y el error de /api/caja se
+    // renderizaba como "Caja cerrada". Vacío/ADMIN = sin restricción.
+    const allowedBranchIds = session?.user?.role === "ADMIN" ? null : session?.user?.allowedBranchIds
+    const visibleBranches = useMemo(
+        () => allowedBranchIds?.length ? branches.filter(b => allowedBranchIds.includes(b.id)) : branches,
+        [branches, allowedBranchIds],
+    )
+    // Sucursal efectiva derivada (nunca una ajena al empleado): la elegida si
+    // sigue siendo visible, si no la primera asignada. Mientras la sesión
+    // carga va vacía para no consultar con una sucursal aún no validada.
+    const activeBranchId = sessionStatus === "loading" ? ""
+        : visibleBranches.some(b => b.id === branchId) ? branchId : (visibleBranches[0]?.id ?? "")
 
     useEffect(() => {
         fetch("/api/settings").then(r => r.ok ? r.json() : null)
             .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) }).catch(() => {})
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
-            const list = (d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive)
-            setBranches(list)
-            if (list.length) setBranchId(prev => prev || list[0].id)
+            setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive))
         }).catch(() => {})
         // ?cliente=<id> — atajo "Nueva venta" desde la ficha Cliente 360.
         const params = new URLSearchParams(window.location.search)
@@ -88,9 +101,23 @@ export default function VentasPage() {
         // aparte; aquí solo se prellena el ticket.
         const encargoId = params.get("encargo")
         if (encargoId) {
-            fetch("/api/encargos").then(r => r.ok ? r.json() : null).then(d => {
-                const e = (d?.encargos ?? []).find((x: { id: string }) => x.id === encargoId)
-                if (!e) return
+            // /api/encargos exige el módulo inventario: un cajero solo-ventas
+            // recibe 403 — se avisa en vez de fallar en silencio.
+            interface EncargoListItem {
+                id: string; description: string; priceQuoted?: number | null
+                deposit?: number | null; customerId?: string | null
+                productId?: string | null; quantity?: number | null
+            }
+            fetch("/api/encargos").then(async r => {
+                const d: { encargos?: EncargoListItem[]; error?: string } | null = await r.json().catch(() => null)
+                if (!r.ok) throw new Error(d?.error || "No se pudieron cargar los encargos")
+                return d
+            }).then(d => {
+                const e = (d?.encargos ?? []).find(x => x.id === encargoId)
+                if (!e) {
+                    toast.error("No se encontró el encargo a cobrar — puede ser de otra sucursal")
+                    return
+                }
                 setEncargoCtx({ id: e.id, description: e.description, priceQuoted: e.priceQuoted ?? null, deposit: e.deposit ?? 0 })
                 if (e.customerId) {
                     fetch(`/api/users/pos?id=${e.customerId}`).then(r => r.ok ? r.json() : null)
@@ -103,14 +130,18 @@ export default function VentasPage() {
                             if (p) setCart(prev => prev.length ? prev : [{ product: p, quantity: Math.max(1, e.quantity ?? 1) }])
                         }).catch(() => {})
                 }
-            }).catch(() => {})
+            }).catch(err => {
+                toast.error(err instanceof Error ? err.message : "No se pudo cargar el encargo")
+            })
         }
     }, [])
 
     useEffect(() => {
-        if (!branchId) return
-        fetch(`/api/caja?branchId=${branchId}`).then(r => r.json()).then(d => setCajaOpen(!!d.active)).catch(() => {})
-    }, [branchId])
+        // activeBranchId ya espera a la sesión y cae en una sucursal visible:
+        // nunca se consulta la caja de una sucursal ajena (403 → "cerrada").
+        if (!activeBranchId) return
+        fetch(`/api/caja?branchId=${activeBranchId}`).then(r => r.ok ? r.json() : null).then(d => setCajaOpen(!!d?.active)).catch(() => {})
+    }, [activeBranchId])
 
     const workshopCustomer = customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN"
     const workshopActive = workshopSale || workshopCustomer
@@ -120,12 +151,24 @@ export default function VentasPage() {
 
     // Un documento suspendido se cobra con sus líneas snapshot: si el cajero
     // edita el ticket retomado, se desliga y cobra como venta nueva (la
-    // suspendida queda guardada para retomarla o descartarla).
+    // suspendida queda guardada para retomarla o descartarla). Como venta
+    // nueva el servidor cobra el catálogo vigente — las líneas retomadas
+    // restauran el precio guardado al recuperar, no el snapshot.
     const detachIfResumed = () => {
         setResumedDoc(prev => {
             if (prev) toast.info("Ticket desligado de la suspendida — se cobra como venta nueva")
             return null
         })
+        setCart(prev => prev.map(item => item.product.catalogRetailPrice != null
+            ? {
+                ...item,
+                product: {
+                    ...item.product,
+                    retailPrice: item.product.catalogRetailPrice,
+                    wholesalePrice: item.product.catalogWholesalePrice ?? item.product.catalogRetailPrice,
+                },
+            }
+            : item))
     }
 
     const addToCart = (product: PosProduct) => {
@@ -154,6 +197,26 @@ export default function VentasPage() {
         setCart(prev => prev.filter(item => item.product.id !== productId))
     }
 
+    // Coincidencia exacta por barcode/id → alta directa en el ticket. La
+    // comparten el escáner de cámara y la pistola HID (Enter en el buscador);
+    // quietMiss silencia el aviso cuando el texto solo estaba filtrando.
+    const addByExactCode = async (code: string, opts?: { quietMiss?: boolean }): Promise<boolean> => {
+        const clean = code.trim()
+        if (!clean) return false
+        try {
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(clean)}${activeBranchId ? `&branchId=${activeBranchId}` : ""}`)
+            if (!res.ok) throw new Error()
+            const data: { products?: PosProduct[] } = await res.json()
+            const matches = exactCodeMatches(data.products ?? [], clean)
+            if (matches.length === 1) { addToCart(matches[0]); return true }
+            if (!opts?.quietMiss) toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "Sin coincidencia exacta. Busca y selecciona el producto manualmente.")
+            return false
+        } catch {
+            if (!opts?.quietMiss) toast.error("Error al buscar producto")
+            return false
+        }
+    }
+
     // El QR de un apartado del cliente apunta a /verificar/<codigo>; si lo
     // escaneado trae esa forma, se abre la verificación en vez de buscar
     // producto. Un solo escáner, dos destinos.
@@ -167,20 +230,11 @@ export default function VentasPage() {
             router.push(`/verificar/${encodeURIComponent(reservationCode)}`)
             return
         }
-        try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(clean)}${branchId ? `&branchId=${branchId}` : ""}`)
-            if (!res.ok) throw new Error()
-            const data: { products?: PosProduct[] } = await res.json()
-            const matches = (data.products ?? []).filter(p => p.barcode?.trim() === clean || p.id === clean)
-            if (matches.length === 1) addToCart(matches[0])
-            else toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "Sin coincidencia exacta. Busca y selecciona el producto manualmente.")
-        } catch {
-            toast.error("Error al buscar producto")
-        }
+        await addByExactCode(clean)
     }
 
     const { suspendSale, resumeDoc } = usePosDocuments({
-        cart, customer, branchId, workshopActive, submittingRef: submitting,
+        cart, customer, branchId: activeBranchId, workshopActive, submittingRef: submitting,
         setCart, setCustomer, setWorkshopSale, setResumedDoc, clearTicket,
         onDocumentsChanged: () => setDocsRefreshKey(k => k + 1),
     })
@@ -228,7 +282,9 @@ export default function VentasPage() {
         const onKey = (e: KeyboardEvent) => {
             const t = e.target as HTMLElement | null
             const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
-            if (e.key === "F2" || ((e.ctrlKey || e.metaKey) && e.key === "Enter")) {
+            // Con cualquier overlay abierto F2/Ctrl+Enter no disparan otro
+            // cobro — antes apilaban el checkout encima del diálogo activo.
+            if (!anyOverlayOpen && (e.key === "F2" || ((e.ctrlKey || e.metaKey) && e.key === "Enter"))) {
                 if (e.key === "F2" || !typing) { e.preventDefault(); if (cart.length > 0 && !submitting.current) setShowCheckout(true) }
                 return
             }
@@ -241,7 +297,7 @@ export default function VentasPage() {
     const setBusy = (busy: boolean) => { submitting.current = busy; setProcessing(busy) }
     const panelProps = {
         cart, workshopActive, customer, onCustomerChange: setCustomer, resumedDoc,
-        onDetachResumed: () => setResumedDoc(null), processing, cajaOpen,
+        onDetachResumed: detachIfResumed, processing, cajaOpen,
         onUpdateQuantity: updateQuantity, onRemove: removeFromCart, onClear: clearTicket,
         onCheckout: () => setShowCheckout(true), onSuspend: () => setShowSuspend(true),
         onOpenParked: () => setShowParked(true), onOpenLayaways: () => setShowLayaways(true),
@@ -265,13 +321,13 @@ export default function VentasPage() {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    {branches.length > 1 && (
-                        <Select value={branchId} onValueChange={setBranchId}>
+                    {visibleBranches.length > 1 && (
+                        <Select value={activeBranchId} onValueChange={setBranchId}>
                             <SelectTrigger className="w-[160px]"><SelectValue placeholder="Sucursal" /></SelectTrigger>
-                            <SelectContent>{branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
+                            <SelectContent>{visibleBranches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
                         </Select>
                     )}
-                    <ExportButton type="sales" branchId={branchId || undefined} />
+                    <ExportButton type="sales" branchId={activeBranchId || undefined} />
                     <Button onClick={() => { setScanMode("qr"); setShowScanner(true) }} disabled={processing} variant="outline" title="Escanea el QR que muestra el cliente para entregar su apartado">
                         <QrCode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">QR apartado</span>
                     </Button>
@@ -296,7 +352,7 @@ export default function VentasPage() {
             )}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-start">
-                <ProductCatalog branchId={branchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} refreshKey={docsRefreshKey} />
+                <ProductCatalog branchId={activeBranchId} workshopActive={workshopActive} disabled={processing} query={searchQuery} onQueryChange={setSearchQuery} onAdd={addToCart} onSubmitCode={code => void addByExactCode(code, { quietMiss: true })} refreshKey={docsRefreshKey} />
                 <div className="hidden lg:block"><CartPanel {...panelProps} /></div>
             </div>
 
@@ -341,12 +397,12 @@ export default function VentasPage() {
 
             <CheckoutDialog open={showCheckout} onOpenChange={setShowCheckout} cart={cart} cartTotal={cartTotal}
                 workshopActive={workshopActive} workshopCustomer={workshopCustomer} onWorkshopSaleChange={setWorkshopSale}
-                customer={customer} onCustomerChange={setCustomer} branchId={branchId} cajaOpen={cajaOpen}
+                customer={customer} onCustomerChange={setCustomer} branchId={activeBranchId} cajaOpen={cajaOpen}
                 resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket} onCompleted={handleCompleted} />
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
-            <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
-            <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={branchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
-            <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={branchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={activeBranchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
+            <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
         </div>
     )
 }

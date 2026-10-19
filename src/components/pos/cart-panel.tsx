@@ -111,7 +111,7 @@ export function CartPanel(props: CartPanelProps) {
                     {workshopActive && <Badge variant="secondary">Taller</Badge>}
                 </span>
                 {resumedDoc && (
-                    <Badge variant="secondary" className="gap-1 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    <Badge variant="secondary" title="Se cobra con los precios guardados en el documento" className="gap-1 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                         {resumedDoc.kind === "QUOTE" ? "Cotización" : "Suspendida"} #{resumedDoc.number}
                         <button type="button" onClick={onDetachResumed} aria-label="Desvincular venta suspendida" className="hover:text-foreground">
                             <X className="h-3 w-3" />
