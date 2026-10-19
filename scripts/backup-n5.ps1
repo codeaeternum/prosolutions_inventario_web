@@ -8,6 +8,8 @@
 #   2) tar.gz de cada volumen de datos        -> <BackupRoot>\<tipo>\<tipo>-YYYYMMDD-HHmm.tar.gz
 #   3) Retención: borra artefactos con más de -RetentionDays días (por tipo)
 #   4) Escribe <BackupRoot>\last-backup-status.json con el resultado de cada paso
+#      y lo copia al volumen prosolutions_payment_proofs (la app lo expone en
+#      GET /api/admin/backup-status).
 #
 # Credenciales: NUNCA en este archivo. Usuario/nombre de BD se toman de
 # DATABASE_URL en .env.docker (o de -DbUser/-DbName/-DatabaseUrl).
@@ -208,6 +210,22 @@ try {
     } catch {
         Write-Log "No se pudo escribir ${statusFile}: $_"
         $script:hadFailure = $true
+    }
+    # Copia del status dentro del volumen prosolutions_payment_proofs: la app lo
+    # lee en /app/storage/payment-proofs/.backup-status.json. Es best-effort:
+    # si falla solo se avisa, el backup en $BackupRoot ya quedó.
+    if (Test-Path -LiteralPath $statusFile) {
+        try {
+            $statusDirDocker = ($BackupRoot -replace "\\", "/")   # Docker Desktop acepta D:/... directo
+            & docker run --rm `
+                -v "prosolutions_payment_proofs:/data" `
+                -v "${statusDirDocker}:/backup:ro" `
+                $TarImage sh -c "cp /backup/last-backup-status.json /data/.backup-status.json"
+            if ($LASTEXITCODE -ne 0) { throw "docker run cp devolvió exit $LASTEXITCODE" }
+            Write-Log "Estado copiado a prosolutions_payment_proofs:/.backup-status.json"
+        } catch {
+            Write-Log "Copia del estado al volumen FALLO (no afecta el backup): $_"
+        }
     }
 }
 
