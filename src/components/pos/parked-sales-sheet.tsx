@@ -18,7 +18,7 @@ import { History, Loader2, RefreshCw, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import type { PosDocumentSummary } from "./types"
+import { docAgeLabel, type PosDocumentSummary } from "./types"
 
 interface ParkedSalesSheetProps {
     open: boolean
@@ -34,6 +34,8 @@ interface ParkedSalesSheetProps {
 export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refreshKey }: ParkedSalesSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
+    // "Ahora" se fotografía al cargar: Date.now() en render viola react-hooks/purity.
+    const [nowMs, setNowMs] = useState<number | null>(null)
     const [resumingId, setResumingId] = useState<string | null>(null)
     const [discardTarget, setDiscardTarget] = useState<PosDocumentSummary | null>(null)
     const [discarding, setDiscarding] = useState(false)
@@ -52,6 +54,7 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
             const data: { documents?: PosDocumentSummary[]; error?: string } | null = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudieron cargar")
             setDocuments((data?.documents ?? []).filter(d => d.kind === "RETAIL" || d.kind === "WORKSHOP"))
+            setNowMs(Date.now())
         } catch (error) {
             setDocuments([])
             toast.error(error instanceof Error ? error.message : "No se pudieron cargar las ventas suspendidas")
@@ -134,6 +137,9 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
                                     </div>
                                     <p className="text-xs text-muted-foreground">
                                         {formatDate(doc.createdAt)}
+                                        {/* El DRAFT no retiene stock: una suspendida vieja es
+                                            candidata a descartarse, no un compromiso vivo. */}
+                                        {nowMs != null && ` · ${docAgeLabel(doc.createdAt, nowMs)}`}
                                         {doc.customer?.name ? ` · ${doc.customer.name}` : " · Mostrador"}
                                         {doc.note ? ` · “${doc.note}”` : ""}
                                     </p>

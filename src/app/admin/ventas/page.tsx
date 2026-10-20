@@ -65,9 +65,18 @@ export default function VentasPage() {
     // ?encargo=<id> — "Cobrar" desde Pedidos: prellena cliente + pieza y
     // muestra la cotización/anticipo del encargo como referencia de cobro.
     const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number } | null>(null)
+    // Pieza del encargo pendiente de prellenar: espera a que la sucursal
+    // activa esté resuelta para pedir el stock POR SUCURSAL — sin branchId
+    // /api/search/pos devuelve el total de catálogo y el badge del ticket
+    // mentiría hasta que el servidor topara al cobrar.
+    const [pendingEncargoProduct, setPendingEncargoProduct] = useState<{ productId: string; quantity: number } | null>(null)
+    const encargoProductFetched = useRef(false)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
     const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
+    // Marca el fin de la carga de sucursales (éxito o fallo): sin ella un
+    // catálogo vacío sería indistinguible de "aún cargando".
+    const [branchesLoaded, setBranchesLoaded] = useState(false)
     const [branchId, setBranchId] = useState("")
     // Empleado con sucursales asignadas: la terminal solo ofrece las suyas —
     // elegir otra convertía cada llamada en 403 y el error de /api/caja se
@@ -88,7 +97,7 @@ export default function VentasPage() {
             .then(d => { if (d) setAutoTicket(d.saleAutoTicket !== false) }).catch(() => {})
         fetch("/api/branches").then(r => r.ok ? r.json() : null).then(d => {
             setBranches((d?.branches ?? []).filter((b: { isActive: boolean }) => b.isActive))
-        }).catch(() => {})
+        }).catch(() => {}).finally(() => setBranchesLoaded(true))
         // ?cliente=<id> — atajo "Nueva venta" desde la ficha Cliente 360.
         const params = new URLSearchParams(window.location.search)
         const preselectId = params.get("cliente")
@@ -124,11 +133,9 @@ export default function VentasPage() {
                         .then(dd => { const u = dd?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
                 }
                 if (e.productId) {
-                    fetch(`/api/search/pos?q=${encodeURIComponent(e.productId)}`).then(r => r.ok ? r.json() : null)
-                        .then(dd => {
-                            const p = (dd?.products ?? []).find((x: PosProduct) => x.id === e.productId)
-                            if (p) setCart(prev => prev.length ? prev : [{ product: p, quantity: Math.max(1, e.quantity ?? 1) }])
-                        }).catch(() => {})
+                    // El fetch sale en el efecto de abajo, ya con sucursal:
+                    // dispararlo aquí traería el stock total de catálogo.
+                    setPendingEncargoProduct({ productId: e.productId, quantity: Math.max(1, e.quantity ?? 1) })
                 }
             }).catch(err => {
                 toast.error(err instanceof Error ? err.message : "No se pudo cargar el encargo")
@@ -142,6 +149,24 @@ export default function VentasPage() {
         if (!activeBranchId) return
         fetch(`/api/caja?branchId=${activeBranchId}`).then(r => r.ok ? r.json() : null).then(d => setCajaOpen(!!d?.active)).catch(() => {})
     }, [activeBranchId])
+
+    useEffect(() => {
+        // Prefill del producto del encargo, diferido a que sesión y catálogo
+        // de sucursales resolvieran: con activeBranchId la búsqueda trae el
+        // stock del local (overlay idéntico al de resumeDoc para documentos);
+        // si no hay sucursal resoluble se busca igual — con el stock total.
+        if (!pendingEncargoProduct || encargoProductFetched.current) return
+        if (sessionStatus === "loading" || !branchesLoaded) return
+        encargoProductFetched.current = true
+        const { productId, quantity } = pendingEncargoProduct
+        fetch(`/api/search/pos?q=${encodeURIComponent(productId)}${activeBranchId ? `&branchId=${encodeURIComponent(activeBranchId)}` : ""}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(dd => {
+                const p = (dd?.products ?? []).find((x: PosProduct) => x.id === productId)
+                if (p) setCart(prev => prev.length ? prev : [{ product: p, quantity }])
+            }).catch(() => {})
+            .finally(() => setPendingEncargoProduct(null))
+    }, [pendingEncargoProduct, sessionStatus, branchesLoaded, activeBranchId])
 
     const workshopCustomer = customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN"
     const workshopActive = workshopSale || workshopCustomer

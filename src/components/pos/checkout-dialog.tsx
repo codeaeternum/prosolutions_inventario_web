@@ -28,7 +28,9 @@ import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-ope
 import { CustomerPicker } from "./customer-picker"
 import {
     DEPOSIT_METHODS,
+    amountToCents,
     cartUnitsOf,
+    paymentDraftsCents,
     paymentMethodsFor,
     toPaymentsPayload,
     type CartItem,
@@ -187,17 +189,22 @@ function CheckoutForm({
     }
 
     const isSale = docType === "VENTA" || docType === "WORKSHOP"
-    const depositAmount = parseFloat(deposit.amount) || 0
+    const depositCents = amountToCents(deposit.amount)
 
     // Lo que realmente se cobra: catálogo menos el descuento capturado. El
     // servidor valida contra su propio snapshot — aquí solo se refleja.
+    // Toda comparación de dinero va en CENTAVOS enteros: el dominio cuadra
+    // los pagos contra el total sin tolerancia (settleSalePayments), así que
+    // el UI debe validar en la misma unidad o habilitaría cobros que el
+    // servidor rechaza — y viceversa.
     const cartTotalCents = Math.round(cartTotal * 100)
-    const discountCents = withDiscount ? Math.round((parseFloat(discountAmount) || 0) * 100) : 0
-    const payable = Math.max(0, (cartTotalCents - discountCents) / 100)
+    const discountCents = withDiscount ? amountToCents(discountAmount) : 0
+    const payableCents = Math.max(0, cartTotalCents - discountCents)
+    const payable = payableCents / 100
     const employeeCapCents = Math.floor(cartTotalCents / 10)
 
     const usesCredit = splitMode
-        ? splitPayments.some(p => p.method === "CREDITO" && parseFloat(p.amount) > 0)
+        ? splitPayments.some(p => p.method === "CREDITO" && amountToCents(p.amount) > 0)
         : paymentMethod === "CREDITO"
     // Listas de métodos con el efectivo bloqueado cuando no hay caja abierta;
     // hasCashPayment/cashSelected son la guardia residual por si el estado
@@ -205,18 +212,18 @@ function CheckoutForm({
     const saleMethods = paymentMethodsFor(cajaOpen)
     const depositMethods = paymentMethodsFor(cajaOpen, DEPOSIT_METHODS)
     const hasCashPayment = splitMode
-        ? splitPayments.some(p => p.method === "EFECTIVO" && parseFloat(p.amount) > 0)
+        ? splitPayments.some(p => p.method === "EFECTIVO" && amountToCents(p.amount) > 0)
         : paymentMethod === "EFECTIVO"
     const cashSelected = cashBlocked
         && ((isSale && hasCashPayment) || (docType === "LAYAWAY" && withDeposit && deposit.method === "EFECTIVO"))
     // Primer método cobrable sin caja: al dividir desde crédito o agregar
     // medio de pago, nunca se prellena efectivo bloqueado.
     const fallbackMethod: PosPaymentMethod = saleMethods.find(m => !m.disabled && m.value !== "CREDITO")?.value ?? "TARJETA"
-    const creditPortion = splitMode
-        ? splitPayments.filter(p => p.method === "CREDITO").reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-        : (paymentMethod === "CREDITO" ? payable : 0)
-    const creditAvailable = customer?.creditLimit != null
-        ? Math.max(0, customer.creditLimit - customer.creditBalance)
+    const creditPortionCents = splitMode
+        ? paymentDraftsCents(splitPayments.filter(p => p.method === "CREDITO"))
+        : (paymentMethod === "CREDITO" ? payableCents : 0)
+    const creditAvailableCents = customer?.creditLimit != null
+        ? Math.max(0, Math.round((customer.creditLimit - customer.creditBalance) * 100))
         : null
 
     /** Pagos del modo venta → payments[] | paymentMethod (validaciones incluidas).
@@ -231,17 +238,20 @@ function CheckoutForm({
                 toast.error("El cliente no tiene línea de crédito autorizada")
                 return null
             }
-            const available = creditAvailable ?? 0
-            if (creditPortion > available) {
-                toast.error(`Crédito insuficiente. Disponible: ${formatPrice(available)}, Cargo: ${formatPrice(creditPortion)}`)
+            const availableCents = creditAvailableCents ?? 0
+            if (creditPortionCents > availableCents) {
+                toast.error(`Crédito insuficiente. Disponible: ${formatPrice(availableCents / 100)}, Cargo: ${formatPrice(creditPortionCents / 100)}`)
                 return null
             }
         }
         if (splitMode) {
-            const drafts = splitPayments.filter(p => parseFloat(p.amount) > 0)
-            const sum = drafts.reduce((s, p) => s + parseFloat(p.amount), 0)
-            if (drafts.length === 0 || Math.abs(sum - payable) > 0.009) {
-                toast.error(`Los pagos deben sumar ${formatPrice(payable)} (suman ${formatPrice(sum)})`)
+            const drafts = splitPayments.filter(p => amountToCents(p.amount) > 0)
+            const sumCents = paymentDraftsCents(drafts)
+            // Cuadre EXACTO en centavos, como settleSalePayments: ni un
+            // centavo de tolerancia — el servidor rechaza cualquier sobrante
+            // o faltante y el UI no debe habilitar lo que va a rebotar.
+            if (drafts.length === 0 || sumCents !== payableCents) {
+                toast.error(`Los pagos deben sumar ${formatPrice(payable)} (suman ${formatPrice(sumCents / 100)})`)
                 return null
             }
             if (drafts.some(p => p.method === "TRANSFERENCIA" && !p.reference?.trim())) {
@@ -320,11 +330,11 @@ function CheckoutForm({
                 return
             }
             if (withDeposit) {
-                if (depositAmount <= 0) {
+                if (depositCents <= 0) {
                     toast.error("Captura el monto del anticipo o marca «sin anticipo»")
                     return
                 }
-                if (depositAmount >= cartTotal) {
+                if (depositCents >= cartTotalCents) {
                     toast.error("Un apartado debe quedar con saldo — si lo cubre completo, cobra como venta")
                     return
                 }
@@ -339,7 +349,7 @@ function CheckoutForm({
                 items,
                 customerId: customer.id,
                 branchId: branchId || undefined,
-                ...(withDeposit && depositAmount > 0 ? { payments: toPaymentsPayload([{ ...deposit, amount: depositAmount.toFixed(2) }]) } : {}),
+                ...(withDeposit && depositCents > 0 ? { payments: toPaymentsPayload([deposit]) } : {}),
             }
         } else {
             // Cotización: vigencia en días → expiresAt (el dominio topa en 90).
@@ -411,7 +421,7 @@ function CheckoutForm({
                 : (data?.sale?.kind === "WORKSHOP" || data?.document?.sale?.kind === "WORKSHOP" || docType === "WORKSHOP") ? "WORKSHOP" : "SALE"
             const paidWithCard =
                 (Array.isArray(data?.payments) && data.payments.some(p => p.method === "CARD"))
-                || (splitMode ? splitPayments.some(p => p.method === "TARJETA" && parseFloat(p.amount) > 0) : paymentMethod === "TARJETA")
+                || (splitMode ? splitPayments.some(p => p.method === "TARJETA" && amountToCents(p.amount) > 0) : paymentMethod === "TARJETA")
 
             onCompleted({
                 kind: resultKind,
@@ -439,10 +449,11 @@ function CheckoutForm({
         }
     }
 
+    const cashGivenCents = amountToCents(cashGiven)
     const confirmDisabled = processing
         || cashSelected
-        || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && parseFloat(cashGiven) < payable))
-        || (isSale && usesCredit && (!customer || customer.creditLimit == null || creditPortion > (creditAvailable ?? 0)))
+        || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && cashGivenCents < payableCents))
+        || (isSale && usesCredit && (!customer || customer.creditLimit == null || creditPortionCents > (creditAvailableCents ?? 0)))
         || (isSale && discountCents > 0 && (discountCents >= cartTotalCents || discountReason.trim().length < 3))
         || (docType === "LAYAWAY" && !customer)
 
@@ -623,14 +634,14 @@ function CheckoutForm({
                                         value={cashGiven}
                                         onChange={e => setCashGiven(e.target.value)}
                                     />
-                                    {cashGiven && parseFloat(cashGiven) >= payable && (
+                                    {cashGiven && cashGivenCents >= payableCents && (
                                         <p className="text-green-600 font-medium text-sm">
-                                            Cambio: {formatPrice(parseFloat(cashGiven) - payable)}
+                                            Cambio: {formatPrice((cashGivenCents - payableCents) / 100)}
                                         </p>
                                     )}
-                                    {cashGiven && parseFloat(cashGiven) < payable && (
+                                    {cashGiven && cashGivenCents < payableCents && (
                                         <p className="text-destructive font-medium text-sm">
-                                            Faltan: {formatPrice(payable - parseFloat(cashGiven))}
+                                            Faltan: {formatPrice((payableCents - cashGivenCents) / 100)}
                                         </p>
                                     )}
                                 </div>
@@ -688,18 +699,19 @@ function CheckoutForm({
                                 <Button type="button" variant="outline" size="sm" disabled={processing} onClick={() => {
                                     const used = new Set(splitPayments.map(p => p.method))
                                     const next = saleMethods.find(m => !used.has(m.value) && !m.disabled)?.value ?? fallbackMethod
-                                    const remaining = payable - splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                    setSplitPayments(prev => [...prev, { method: next, amount: remaining > 0 ? remaining.toFixed(2) : "" }])
+                                    const remainingCents = payableCents - paymentDraftsCents(splitPayments)
+                                    setSplitPayments(prev => [...prev, { method: next, amount: remainingCents > 0 ? (remainingCents / 100).toFixed(2) : "" }])
                                 }}>
                                     <Plus className="h-4 w-4 mr-1" /> Agregar método
                                 </Button>
                             )}
                             {(() => {
-                                const sum = splitPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
-                                const diff = payable - sum
-                                return Math.abs(diff) > 0.009 ? (
-                                    <p className={cn("text-sm font-medium", diff > 0 ? "text-destructive" : "text-amber-600")}>
-                                        {diff > 0 ? `Faltan ${formatPrice(diff)}` : `Sobran ${formatPrice(-diff)}`}
+                                // Mismo cuadre exacto del servidor: solo una
+                                // suma al centavo muestra "cubren el total".
+                                const diffCents = payableCents - paymentDraftsCents(splitPayments)
+                                return diffCents !== 0 ? (
+                                    <p className={cn("text-sm font-medium", diffCents > 0 ? "text-destructive" : "text-amber-600")}>
+                                        {diffCents > 0 ? `Faltan ${formatPrice(diffCents / 100)}` : `Sobran ${formatPrice(-diffCents / 100)}`}
                                     </p>
                                 ) : (
                                     <p className="text-sm font-medium text-green-600">Los pagos cubren el total</p>
@@ -750,9 +762,9 @@ function CheckoutForm({
                                             onChange={e => setDeposit(prev => ({ ...prev, reference: e.target.value }))}
                                         />
                                     )}
-                                    {depositAmount > 0 && (
+                                    {depositCents > 0 && (
                                         <p className="text-xs text-muted-foreground">
-                                            Resta por liquidar: {formatPrice(Math.max(0, cartTotal - depositAmount))}
+                                            Resta por liquidar: {formatPrice(Math.max(0, cartTotalCents - depositCents) / 100)}
                                         </p>
                                     )}
                                 </div>

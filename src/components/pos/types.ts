@@ -99,6 +99,43 @@ export interface PaymentDraft {
     reference?: string
 }
 
+/**
+ * Monto capturado en el diálogo → centavos enteros. El servidor valúa cada
+ * pago en centavos y exige cuadre EXACTO contra el total (settleSalePayments);
+ * validar aquí en la misma unidad evita que el UI habilite un cobro que el
+ * servidor rechaza por un tercer decimal o por residuo flotante. Redondear al
+ * parsear con el mismo Math.round(x*100) del dominio normaliza "10.005" a
+ * 1001 centavos — idéntico resultado en ambos lados, nunca diverge.
+ * Texto no numérico o no positivo → 0 (el input min="0" ya lo restringe).
+ */
+export function amountToCents(raw: string): number {
+    const value = Number.parseFloat(raw)
+    if (!Number.isFinite(value) || value <= 0) return 0
+    return Math.round(value * 100)
+}
+
+/** Suma en centavos de los borradores de un pago dividido. */
+export function paymentDraftsCents(drafts: PaymentDraft[]): number {
+    return drafts.reduce((sum, p) => sum + amountToCents(p.amount), 0)
+}
+
+/**
+ * Antigüedad corta de un documento vivo ("hace 5 min", "hace 3 días").
+ * Una suspendida DRAFT no retiene stock ni dinero — pero una vieja suele ser
+ * ruido descartable; la edad visible ayuda a decidirlo sin auto-borrar nada.
+ * `nowMs` se fotografía al cargar la lista (Date.now() en render impurifica).
+ */
+export function docAgeLabel(createdAt: string, nowMs: number): string {
+    const ms = nowMs - new Date(createdAt).getTime()
+    if (!Number.isFinite(ms) || ms < 60_000) return "hace <1 min"
+    const minutes = Math.floor(ms / 60_000)
+    if (minutes < 60) return `hace ${minutes} min`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `hace ${hours} h`
+    const days = Math.floor(hours / 24)
+    return `hace ${days} ${days === 1 ? "día" : "días"}`
+}
+
 /** Resultado normalizado de un cobro/documento para la tarjeta "última venta". */
 export interface CheckoutResult {
     kind: "SALE" | "WORKSHOP" | "LAYAWAY" | "QUOTE"
@@ -172,11 +209,15 @@ export function docItemsToCart(doc: PosDocumentDetail, branchStock?: ReadonlyMap
     })
 }
 
-/** Pagos del checkout → cuerpo payments[] que espera el dominio. */
+/**
+ * Pagos del checkout → cuerpo payments[] que espera el dominio. El monto
+ * viaja con máximo dos decimales (el redondeo al parsear del amountToCents):
+ * un tercer decimal capturado sería rechazado por cents() en el servidor.
+ */
 export function toPaymentsPayload(drafts: PaymentDraft[]): { method: string; amount: number; reference?: string }[] {
     return drafts.map(p => ({
         method: p.method,
-        amount: parseFloat(p.amount),
+        amount: amountToCents(p.amount) / 100,
         ...(p.method === "TRANSFERENCIA" && p.reference?.trim() ? { reference: p.reference.trim() } : {}),
     }))
 }

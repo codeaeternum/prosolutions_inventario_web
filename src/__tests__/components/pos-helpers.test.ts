@@ -2,9 +2,14 @@ import { describe, it, expect } from "vitest"
 import {
     DEPOSIT_METHODS,
     PAYMENT_METHODS,
+    amountToCents,
+    docAgeLabel,
     docItemsToCart,
     exactCodeMatches,
+    paymentDraftsCents,
     paymentMethodsFor,
+    toPaymentsPayload,
+    type PaymentDraft,
     type PosDocumentDetail,
     type PosProduct,
 } from "@/components/pos/types"
@@ -90,5 +95,91 @@ describe("docItemsToCart", () => {
         expect(items[0].product.stock).toBe(3)
         // Sin overlay para p2 cae al stock total que trae el documento.
         expect(items[1].product.stock).toBe(10)
+    })
+})
+
+// Pago dividido: el servidor cuadra los pagos contra el total en centavos
+// EXACTOS (settleSalePayments) y rechaza montos con más de dos decimales
+// (cents()). El cliente valida en la misma unidad — sin tolerancia flotante.
+describe("amountToCents", () => {
+    it("convierte montos capturados a centavos enteros", () => {
+        expect(amountToCents("10.55")).toBe(1055)
+        expect(amountToCents("100")).toBe(10000)
+        expect(amountToCents("0.01")).toBe(1)
+    })
+
+    it("redondea a dos decimales al parsear: un tercer decimal no rebota en el servidor", () => {
+        // Mismo Math.round(x*100) que cents() del dominio: half-up sobre el
+        // float — "10.005" vale 1001 centavos en ambos lados, nunca diverge.
+        expect(amountToCents("10.005")).toBe(1001)
+        expect(amountToCents("10.004")).toBe(1000)
+        expect(amountToCents("19.999")).toBe(2000)
+    })
+
+    it("texto no numérico, vacío o no positivo vale cero", () => {
+        expect(amountToCents("")).toBe(0)
+        expect(amountToCents("abc")).toBe(0)
+        expect(amountToCents("0")).toBe(0)
+        expect(amountToCents("-5")).toBe(0)
+    })
+})
+
+describe("paymentDraftsCents", () => {
+    const draft = (amount: string, method: PaymentDraft["method"] = "EFECTIVO"): PaymentDraft => ({ method, amount })
+
+    it("suma exacta en centavos: 33.33+33.33+33.34 cuadra 100.00 sin residuo", () => {
+        expect(paymentDraftsCents([draft("33.33"), draft("33.33"), draft("33.34")])).toBe(10000)
+    })
+
+    it("un centavo de sobra o de falta ya no cuadra (== lo que exige el servidor)", () => {
+        expect(paymentDraftsCents([draft("50"), draft("50.01")])).not.toBe(10000)
+        expect(paymentDraftsCents([draft("50"), draft("49.99")])).not.toBe(10000)
+        // "10.005" ya no se cuela con tolerancia: redondea a 1001 y sobra 1¢.
+        expect(paymentDraftsCents([draft("90"), draft("10.005")])).toBe(10001)
+    })
+})
+
+describe("toPaymentsPayload", () => {
+    it("envía cada monto con máximo dos decimales (el redondeo del parseo)", () => {
+        // "10.005" viaja como 10.01: cents() del servidor lo valúa en los
+        // mismos 1001 centavos que el cliente ya validó — nunca diverge.
+        const payload = toPaymentsPayload([{ method: "EFECTIVO", amount: "10.005" }])
+        expect(payload[0].amount).toBe(10.01)
+    })
+
+    it("conserva el método y solo adjunta referencia en transferencias capturadas", () => {
+        const payload = toPaymentsPayload([
+            { method: "TRANSFERENCIA", amount: "60", reference: "  SPEI-123  " },
+            { method: "TARJETA", amount: "40.50", reference: "ignorada" },
+        ])
+        expect(payload).toEqual([
+            { method: "TRANSFERENCIA", amount: 60, reference: "SPEI-123" },
+            { method: "TARJETA", amount: 40.5 },
+        ])
+    })
+})
+
+// Lista «Recuperar»: el DRAFT no retiene stock ni dinero, pero una suspendida
+// vieja es candidata a descartarse — la antigüedad se muestra al staff.
+describe("docAgeLabel", () => {
+    const now = new Date("2026-03-10T12:00:00Z").getTime()
+    const ago = (ms: number) => new Date(now - ms).toISOString()
+
+    it("minutos y horas para lo reciente", () => {
+        expect(docAgeLabel(ago(30_000), now)).toBe("hace <1 min")
+        expect(docAgeLabel(ago(5 * 60_000), now)).toBe("hace 5 min")
+        expect(docAgeLabel(ago(59 * 60_000), now)).toBe("hace 59 min")
+        expect(docAgeLabel(ago(3 * 3_600_000), now)).toBe("hace 3 h")
+    })
+
+    it("días para lo viejo, con singular correcto", () => {
+        expect(docAgeLabel(ago(26 * 3_600_000), now)).toBe("hace 1 día")
+        expect(docAgeLabel(ago(3 * 86_400_000), now)).toBe("hace 3 días")
+        expect(docAgeLabel(ago(40 * 86_400_000), now)).toBe("hace 40 días")
+    })
+
+    it("fecha futura o inválida no produce antigüedad negativa", () => {
+        expect(docAgeLabel(ago(-60_000), now)).toBe("hace <1 min")
+        expect(docAgeLabel("no-es-fecha", now)).toBe("hace <1 min")
     })
 })
