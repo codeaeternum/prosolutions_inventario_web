@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
-import { hasModule } from "@/lib/access"
+import { hasBranchAccess, hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
 import { parseQuoteValidityDays, DEFAULT_QUOTE_TERMS } from "@/app/api/cotizacion/quote-config"
@@ -115,6 +115,10 @@ export default async function TicketPage({
     })
 
     if (saleDoc) {
+      // Ticket de venta: la sucursal del documento delimita quién lo imprime
+      // (misma regla que GET /api/sales/[id]) — el empleado restringido no
+      // reproduce tickets de sucursales ajenas.
+      if (!hasBranchAccess(session.user, saleDoc.branchId)) notFound()
       const METHOD_LABEL: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito" }
       // Nota de venta a taller (SaleKind.WORKSHOP): otro encabezado, folio NT-,
       // sello de precio taller y el cliente se identifica por su negocio.
@@ -174,6 +178,8 @@ export default async function TicketPage({
       })
 
       if (sale) {
+        // El movimiento heredado también lleva sucursal (nullable → libre).
+        if (!hasBranchAccess(session.user, sale.branchId)) notFound()
         ticketData = {
           title: "TICKET DE VENTA",
           folio: sale.id.slice(-8).toUpperCase(),
@@ -203,6 +209,9 @@ export default async function TicketPage({
     })
 
     if (res) {
+      // La reserva pertenece a una sucursal: un empleado restringido no
+      // imprime tickets de entrega de sucursales que no tiene asignadas.
+      if (!hasBranchAccess(session.user, res.branchId)) notFound()
       const qrUrl = `${process.env.NEXTAUTH_URL || 'https://reficio.app'}/verificar/${res.qrCode || res.id}`
       ticketData = {
         title: "TICKET DE RESERVA / ENTREGA",
@@ -223,6 +232,10 @@ export default async function TicketPage({
       }
     }
   } else if (tipo === "abono") {
+    // El abono es un movimiento de crédito del cliente: sin sucursal propia,
+    // el gate es el módulo clientes (canónico de cobranza — el alias legacy
+    // "credito" también autoriza, igual que la página).
+    if (!hasModule(session.user, "clientes")) notFound()
     // Buscar movimiento de crédito
     const mov = await prisma.creditMovement.findUnique({
       where: { id, businessId },
@@ -262,6 +275,9 @@ export default async function TicketPage({
     const order = await loadRepairOrder(id, businessId)
 
     if (order) {
+      // Misma barrera que GET /api/workshop/[id]: la sucursal actual de la
+      // orden debe estar asignada al empleado que imprime el documento.
+      if (!hasBranchAccess(session.user, order.currentBranchId)) notFound()
       const conditions = (order.functionalConditions ?? "")
         .split(",")
         .map(c => CONDITION_LABELS[c.trim()] ?? c.trim())

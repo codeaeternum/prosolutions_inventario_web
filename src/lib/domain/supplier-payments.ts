@@ -34,7 +34,10 @@ const paymentSchema = z.object({
  */
 export async function paySupplier(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = paymentSchema.parse(raw)
-  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SUPPLIER_PAYMENT", permission: "staff", payload: input }, async tx => {
+  // Liquidar la cuenta por pagar es mutación permanente sin reverso: solo
+  // ADMIN — un empleado no registra salidas de dinero del negocio (el gate
+  // temprano vive además en el POST de /api/supplier-payments).
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SUPPLIER_PAYMENT", permission: "admin", payload: input }, async tx => {
     // Se permite pagar aunque el proveedor esté inactivo: la deuda no desaparece.
     const supplier = await tx.supplier.findFirst({ where: { id: input.supplierId, businessId } })
     if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
@@ -93,31 +96,43 @@ export async function paySupplier(db: PrismaClient, actorId: string, businessId:
   })
 }
 
+/** Filtro Prisma que deja fuera los abonos ligados a OCs de sucursales ajenas
+ *  (un abono a cuenta general, purchaseId null, es del negocio y no se recorta). */
+function paymentScopeWhere(branchIds: readonly string[] | null | undefined) {
+  return branchIds?.length
+    ? { OR: [{ purchaseId: null }, { purchase: { branchId: { in: [...branchIds] } } }] }
+    : {}
+}
+
 /**
  * Saldos por proveedor (cuentas por pagar). La deuda se deriva:
  * sum(Purchase.totalCents RECEIVED) - sum(SupplierPayment.amountCents).
  * Incluye ocsPendientes (ORDERED|RECEIVED con saldo) para ligar abonos y
  * proximoVencimiento = min(dueAt) entre ellas.
+ * `purchaseBranchIds` recorta las OCs y los abonos ligados a ellas a esas
+ * sucursales (empleado con allowedBranchIds); null/vacío = sin recorte.
  */
-export async function supplierBalances(db: PrismaClient, businessId: string) {
+export async function supplierBalances(db: PrismaClient, businessId: string, purchaseBranchIds?: readonly string[] | null) {
+  const purchaseScope = purchaseBranchIds?.length ? { branchId: { in: [...purchaseBranchIds] } } : {}
+  const paymentScope = paymentScopeWhere(purchaseBranchIds)
   const [suppliers, received, paid, openPurchases] = await Promise.all([
     db.supplier.findMany({
       where: { businessId },
-      include: { _count: { select: { purchases: true } } },
+      include: { _count: { select: { purchases: { where: purchaseScope } } } },
       orderBy: [{ isActive: "desc" }, { name: "asc" }],
     }),
     db.purchase.groupBy({
       by: ["supplierId"],
-      where: { businessId, status: "RECEIVED", supplierId: { not: null } },
+      where: { businessId, status: "RECEIVED", supplierId: { not: null }, ...purchaseScope },
       _sum: { totalCents: true },
     }),
     db.supplierPayment.groupBy({
       by: ["supplierId"],
-      where: { businessId },
+      where: { businessId, ...paymentScope },
       _sum: { amountCents: true },
     }),
     db.purchase.findMany({
-      where: { businessId, supplierId: { not: null }, status: { in: PAYABLE_STATUSES } },
+      where: { businessId, supplierId: { not: null }, status: { in: PAYABLE_STATUSES }, ...purchaseScope },
       select: { id: true, number: true, supplierId: true, status: true, totalCents: true, paidCents: true, dueAt: true },
     }),
   ])
@@ -220,16 +235,18 @@ export function agingBuckets(
  * abonos ligados a OCs que ya no son pagaderas (ej. canceladas después de
  * abonar) descuentan del bucket más viejo primero. Devuelve solo proveedores
  * con deuda (total > 0), ordenados por nombre, más los totales generales.
+ * `purchaseBranchIds` recorta las OCs y los abonos ligados a ellas a esas
+ * sucursales (empleado con allowedBranchIds); null/vacío = sin recorte.
  */
-export async function supplierAging(db: PrismaClient, businessId: string, now: Date = new Date()) {
+export async function supplierAging(db: PrismaClient, businessId: string, now: Date = new Date(), purchaseBranchIds?: readonly string[] | null) {
   const [suppliers, openPurchases, payments] = await Promise.all([
     db.supplier.findMany({ where: { businessId }, select: { id: true, name: true } }),
     db.purchase.findMany({
-      where: { businessId, supplierId: { not: null }, status: { in: PAYABLE_STATUSES } },
+      where: { businessId, supplierId: { not: null }, status: { in: PAYABLE_STATUSES }, ...(purchaseBranchIds?.length ? { branchId: { in: [...purchaseBranchIds] } } : {}) },
       select: { id: true, supplierId: true, totalCents: true, dueAt: true },
     }),
     db.supplierPayment.findMany({
-      where: { businessId },
+      where: { businessId, ...paymentScopeWhere(purchaseBranchIds) },
       select: { supplierId: true, purchaseId: true, amountCents: true },
     }),
   ])
@@ -286,14 +303,16 @@ export async function supplierAging(db: PrismaClient, businessId: string, now: D
 /** Historial de abonos del tenant, más reciente primero. Con `supplierId`
  *  se limita a ese proveedor (404 si no existe); sin él devuelve los últimos
  *  abonos del negocio completo — la vista "pagos recientes" del panel Les
- *  debo, que antes pedía el historial de cada proveedor por separado. */
-export async function listSupplierPayments(db: PrismaClient, businessId: string, supplierId?: string | null) {
+ *  debo, que antes pedía el historial de cada proveedor por separado.
+ *  `purchaseBranchIds` recorta los abonos ligados a OCs de esas sucursales
+ *  (los a cuenta general son del negocio); null/vacío = sin recorte. */
+export async function listSupplierPayments(db: PrismaClient, businessId: string, supplierId?: string | null, purchaseBranchIds?: readonly string[] | null) {
   if (supplierId) {
     const supplier = await db.supplier.findFirst({ where: { id: supplierId, businessId } })
     if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
   }
   return db.supplierPayment.findMany({
-    where: { businessId, ...(supplierId ? { supplierId } : {}) },
+    where: { businessId, ...(supplierId ? { supplierId } : {}), ...paymentScopeWhere(purchaseBranchIds) },
     include: {
       purchase: { select: { id: true, number: true } },
       createdBy: { select: { id: true, name: true } },

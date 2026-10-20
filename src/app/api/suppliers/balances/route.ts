@@ -10,7 +10,10 @@ export async function GET() {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const balances = await supplierBalances(prisma, businessIdOf(getSession(auth)!))
+    const session = getSession(auth)!
+    // Saldos derivados de OCs por sucursal: se recortan a las asignadas.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const balances = await supplierBalances(prisma, businessIdOf(session), allowed)
     return NextResponse.json({ balances }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return businessFailure(error)

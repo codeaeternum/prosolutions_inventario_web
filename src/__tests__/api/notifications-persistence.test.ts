@@ -43,8 +43,8 @@ import {
   sendNotificationToStaff,
 } from "@/app/api/notifications/stream/route"
 
-const session = (id: string, role = "ADMIN", status = "APPROVED") => ({
-  user: { id, role, status, businessId: "biz-test" },
+const session = (id: string, role = "ADMIN", status = "APPROVED", allowedModules?: string[]) => ({
+  user: { id, role, status, businessId: "biz-test", ...(allowedModules ? { allowedModules } : {}) },
 })
 
 const post = (body: unknown) =>
@@ -75,10 +75,13 @@ beforeEach(() => {
   mocks.notifFindMany.mockResolvedValue([])
   mocks.notifCount.mockResolvedValue(0)
   mocks.readCreateMany.mockResolvedValue({ count: 0 })
+  // La revalidación del stream compara rol + módulos contra el snapshot del
+  // conectar: el mock trae el mismo set para que la conexión siga autorizada.
   mocks.userFindUnique.mockResolvedValue({
     role: "ADMIN",
     status: "APPROVED",
     password: "pw",
+    allowedModules: [],
     businessId: "biz-test",
     business: { isActive: true },
   })
@@ -198,9 +201,12 @@ describe("broadcast — destinatarios", () => {
   })
 
   it("NO cierra a un EMPLOYEE del tenant cuando el broadcast es solo para admins", async () => {
-    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE"))
+    // El stream exige el módulo notificaciones: la sesión lo lleva concedido.
+    mocks.auth.mockResolvedValue({
+      user: { id: "emp-1", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-test", allowedModules: ["notificaciones"] },
+    })
     mocks.userFindUnique.mockResolvedValue({
-      role: "EMPLOYEE", status: "APPROVED", password: "pw", businessId: "biz-test", business: { isActive: true },
+      role: "EMPLOYEE", status: "APPROVED", password: "pw", allowedModules: ["notificaciones"], businessId: "biz-test", business: { isActive: true },
     })
     const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
     const reader = res.body!.getReader()
@@ -223,7 +229,7 @@ describe("broadcast — destinatarios", () => {
       await reader.read() // "connected"
       // La revalidación del destinatario falla: la sesión quedó vieja.
       mocks.userFindUnique.mockResolvedValue({
-        role: "ADMIN", status: "APPROVED", password: "cambió", businessId: "biz-test", business: { isActive: true },
+        role: "ADMIN", status: "APPROVED", password: "cambió", allowedModules: [], businessId: "biz-test", business: { isActive: true },
       })
       await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
       expect((await reader.read()).done).toBe(true)
@@ -249,10 +255,20 @@ describe("GET /api/notifications", () => {
     expect(mocks.notifFindMany.mock.calls[0][0].where).toMatchObject({ businessId: "biz-test" })
     expect(mocks.notifFindMany.mock.calls[0][0].where.audience).toBeUndefined()
 
-    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE"))
+    // Empleado con el módulo notificaciones concedido: solo la audiencia STAFF.
+    mocks.auth.mockResolvedValue({
+      user: { id: "emp-1", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-test", allowedModules: ["notificaciones"] },
+    })
     await listNotifications()
     expect(mocks.notifFindMany.mock.calls[1][0].where).toMatchObject({ businessId: "biz-test", audience: "STAFF" })
     expect(mocks.notifCount.mock.calls[1][0].where).toMatchObject({ businessId: "biz-test", audience: "STAFF" })
+  })
+
+  it("EMPLOYEE sin el módulo notificaciones no lee el historial", async () => {
+    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE"))
+    const res = await listNotifications()
+    expect(res.status).toBe(403)
+    expect(mocks.notifFindMany).not.toHaveBeenCalled()
   })
 
   it("devuelve read por usuario, timestamp ISO y unreadCount", async () => {
@@ -321,7 +337,8 @@ describe("POST /api/notifications/read", () => {
   })
 
   it("EMPLOYEE solo marca audience STAFF (jamás notificaciones ADMIN)", async () => {
-    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE"))
+    // El read exige el módulo notificaciones: el empleado lo lleva concedido.
+    mocks.auth.mockResolvedValue(session("emp-1", "EMPLOYEE", "APPROVED", ["notificaciones"]))
     mocks.notifFindMany.mockResolvedValue([])
 
     await post({ all: true })

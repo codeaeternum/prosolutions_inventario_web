@@ -73,7 +73,9 @@ export async function assertOperationBranch(
     branchId = me?.homeBranchId ?? null
   }
   if (!branchId) {
-    const principal = await prisma.branch.findFirst({ where: { id: PRINCIPAL_BRANCH_ID, businessId }, select: { id: true } })
+    // Igual que resolveBranch: la principal inactiva no es respaldo válido —
+    // el fallback continúa a la sucursal activa más antigua del negocio.
+    const principal = await prisma.branch.findFirst({ where: { id: PRINCIPAL_BRANCH_ID, businessId, isActive: true }, select: { id: true } })
       ?? await prisma.branch.findFirst({ where: { businessId, isActive: true }, select: { id: true }, orderBy: { createdAt: "asc" } })
     branchId = principal?.id ?? null
   }

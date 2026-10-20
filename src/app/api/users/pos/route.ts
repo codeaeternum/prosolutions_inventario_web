@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -7,11 +8,17 @@ const SELECT = { id: true, name: true, customerType: true, creditLimit: true, cr
 
 /** Customer lookup for the POS: credit sale check (default), direct id
  *  preselect (?id=) from the 360 ficha, and ?all=1 for apartados/cotizaciones
- *  donde cualquier cliente aprobado aplica — no solo los que tienen crédito. */
+ *  donde cualquier cliente aprobado aplica — no solo los que tienen crédito.
+ *  Expone teléfono (búsqueda) y saldo/límite de crédito: exige el módulo
+ *  ventas (POS) o clientes (ficha 360) — no cualquier staff. */
 export async function GET(req: Request) {
   const result = await requireAdminOrEmployee()
   if (result.error) return result.error
-  const businessId = businessIdOf(getSession(result)!)
+  const session = getSession(result)!
+  if (!hasModule(session.user, "ventas") && !hasModule(session.user, "clientes")) {
+    return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
+  }
+  const businessId = businessIdOf(session)
   const params = new URL(req.url).searchParams
 
   const id = params.get("id")?.trim()

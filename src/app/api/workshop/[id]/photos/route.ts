@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -37,8 +37,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const businessId = businessIdOf(session)
     const { id } = await params
 
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { id: true, status: true } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { id: true, status: true, currentBranchId: true } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    // La evidencia se sube sobre la orden: misma barrera de sucursal que la
+    // ficha — un empleado restringido no documenta órdenes de otra sucursal.
+    const deniedBranch = assertBranchAllowed(session, order.currentBranchId)
+    if (deniedBranch) return deniedBranch
     if (closedForEmployee(order.status, session.user.role)) {
       throw new BusinessError("La orden está cerrada; solo un administrador puede agregar evidencia.", 403)
     }
@@ -91,8 +95,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const photoId = typeof body?.photoId === "string" ? body.photoId : ""
     if (!photoId) throw new BusinessError("Indica la foto a eliminar.")
 
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { status: true } })
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId }, select: { status: true, currentBranchId: true } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
+    // Borrar evidencia de una orden de otra sucursal sigue el mismo criterio
+    // que subirla: la sucursal actual de la orden debe estar asignada.
+    const deniedBranch = assertBranchAllowed(session, order.currentBranchId)
+    if (deniedBranch) return deniedBranch
     if (closedForEmployee(order.status, session.user.role)) {
       throw new BusinessError("La orden está cerrada; solo un administrador puede eliminar evidencia.", 403)
     }

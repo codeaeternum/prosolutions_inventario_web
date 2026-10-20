@@ -16,8 +16,15 @@ export async function GET() {
   try {
     const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
+    const session = getSession(auth)!
+    // Empleado con sucursales asignadas: la lista (y sus conteos/cajas) se
+    // recorta a las suyas — los selectores de sucursal no ofrecen ajenas.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
     const branches = await prisma.branch.findMany({
-      where: { businessId: businessIdOf(getSession(auth)!) },
+      where: {
+        businessId: businessIdOf(session),
+        ...(allowed?.length ? { id: { in: allowed } } : {}),
+      },
       orderBy: { createdAt: "asc" },
       include: {
         _count: { select: { stocks: true, homeStaff: true, receivedOrders: true, sales: true } },

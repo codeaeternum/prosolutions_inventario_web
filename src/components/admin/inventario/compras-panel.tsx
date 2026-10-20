@@ -1,5 +1,6 @@
 "use client"
 
+import { useSession } from "next-auth/react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { guardedClose } from "@/lib/dialog-guard"
@@ -140,6 +141,10 @@ interface ComprasPanelProps {
 }
 
 export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
+    const { data: session } = useSession()
+    // Abonar a una OC es solo-admin (POST /api/supplier-payments lo exige):
+    // el empleado ve el detalle y el historial pero no el botón de pago.
+    const isAdmin = session?.user?.role === "ADMIN"
     const [purchases, setPurchases] = useState<PurchaseRow[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -430,7 +435,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                                 <PackageCheck className="h-4 w-4" />
                                                             </Button>
                                                         )}
-                                                        {isPayable(p) && (
+                                                        {isAdmin && isPayable(p) && (
                                                             <Button
                                                                 variant="ghost"
                                                                 size="icon"
@@ -484,15 +489,15 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                 purchase={editTarget}
             />
 
-            {/* Abono ligado a esta OC */}
-            <PagoProveedorDialog
+            {/* Abono ligado a esta OC (solo admin) */}
+            {isAdmin && <PagoProveedorDialog
                 open={payTarget !== null}
                 onOpenChange={(open) => { if (!open) setPayTarget(null) }}
                 supplier={payTarget?.supplier ?? null}
                 purchases={payTarget ? [toPendingPurchase(payTarget)] : []}
                 fixedPurchase={payTarget ? toPendingPurchase(payTarget) : null}
                 onSaved={() => void fetchPurchases()}
-            />
+            />}
 
             {/* Detalle de la orden: también muta (recepción parcial por línea) —
                 guardedClose bloquea Escape/clic fuera mientras el POST está en vuelo. */}
@@ -645,7 +650,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                 <p className="text-sm text-muted-foreground border rounded-md p-3">{detail.notes}</p>
                             )}
                             <div className="flex justify-end gap-2 pt-1">
-                                {isPayable(detail) && (
+                                {isAdmin && isPayable(detail) && (
                                     <Button variant="outline" onClick={() => { setDetail(null); setPayTarget(detail) }}>
                                         <Banknote className="mr-2 h-4 w-4" /> Pagar
                                     </Button>

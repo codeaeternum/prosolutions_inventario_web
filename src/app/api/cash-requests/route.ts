@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
+import { hasBranchAccess } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
@@ -52,16 +53,21 @@ export async function GET(req: Request) {
     if (status && !(statuses as readonly string[]).includes(status)) {
       return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     }
+    // El filtro de sucursal se valida contra allowedBranchIds.
+    const denied = assertBranchAllowed(session, branchId)
+    if (denied) return denied
     let where: Prisma.CashRequestWhereInput
     if (session.user.role === "EMPLOYEE") {
-      // El empleado ve sus propias solicitudes y las pendientes de su sucursal base.
+      // El empleado ve sus propias solicitudes y las pendientes de su sucursal
+      // base — salvo que la base quede fuera de sus sucursales asignadas.
       const me = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
+      const homeVisible = me?.homeBranchId && hasBranchAccess(session.user, me.homeBranchId)
       where = {
         businessId: businessIdOf(session),
         ...(branchId ? { branchId } : {}),
         OR: [
           { requestedById: session.user.id, ...(status ? { status: status as (typeof statuses)[number] } : {}) },
-          ...(me?.homeBranchId ? [{ status: "PENDING" as const, branchId: me.homeBranchId }] : []),
+          ...(homeVisible ? [{ status: "PENDING" as const, branchId: me.homeBranchId! }] : []),
         ],
       }
     } else {

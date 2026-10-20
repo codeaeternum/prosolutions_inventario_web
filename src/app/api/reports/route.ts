@@ -12,14 +12,21 @@ export async function GET(req: NextRequest) {
   try {
     const result = await requireModule("reportes")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
+    // Reporte por sucursal: el empleado con sucursales asignadas solo ve las
+    // métricas de las suyas (ventas, caja, taller, reservas). Catálogo y
+    // clientes-altas son por negocio y no se recortan.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const scopedBranchIds = allowed?.length ? allowed : null
+    const branchScope = scopedBranchIds ? { in: scopedBranchIds } : undefined
 
     const { searchParams } = new URL(req.url)
 
     // ?series=1 — series de tiempo y rankings para las gráficas del panel.
     // Es una respuesta independiente: no usa los filtros from/to.
     if (searchParams.get("series") === "1") {
-      return NextResponse.json(await buildReportSeries(businessId))
+      return NextResponse.json(await buildReportSeries(businessId, scopedBranchIds))
     }
 
     // from/to en fecha corta "YYYY-MM-DD" = día completo del negocio
@@ -74,14 +81,15 @@ export async function GET(req: NextRequest) {
       prisma.user.count({ where: { businessId, role: "CUSTOMER" } }),
       prisma.user.count({ where: { businessId, role: "CUSTOMER", status: "APPROVED" } }),
       prisma.user.count({ where: { businessId, status: "PENDING" } }),
-      // Reservas (con filtro de fecha si aplica)
+      // Reservas (con filtro de fecha si aplica; recortadas por sucursal
+      // cuando el empleado tiene asignadas)
       prisma.reservation.count({
-        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
+        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
       }),
       prisma.reservation.groupBy({
         by: ["status"],
         _count: { status: true },
-        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
+        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
       }),
       // Catálogo
       prisma.brand.count({ where: { businessId } }),
@@ -97,8 +105,8 @@ export async function GET(req: NextRequest) {
           _count: {
             select: {
               reservations: hasDateFilter
-                ? { where: { businessId, createdAt: dateFilter } }
-                : { where: { businessId } },
+                ? { where: { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } }
+                : { where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) } },
             },
           },
         },
@@ -124,7 +132,7 @@ export async function GET(req: NextRequest) {
       }),
       // Últimas reservas
       prisma.reservation.findMany({
-        where: hasDateFilter ? { businessId, createdAt: dateFilter } : { businessId },
+        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
         include: {
           user: { select: { name: true } },
           product: { select: { name: true } },
@@ -143,8 +151,8 @@ export async function GET(req: NextRequest) {
           _count: {
             select: {
               reservations: hasDateFilter
-                ? { where: { businessId, createdAt: dateFilter, status: "COMPLETED" } }
-                : { where: { businessId, status: "COMPLETED" } },
+                ? { where: { businessId, createdAt: dateFilter, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) } }
+                : { where: { businessId, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) } },
             },
           },
         },
@@ -335,13 +343,15 @@ export async function GET(req: NextRequest) {
 // México, así que las claves se derivan con businessDayKey/businessMonthKey
 // (no toISOString, que es UTC) y el rango empieza en el día MX actual.
 // Los días/meses sin datos se rellenan en cero.
-async function buildReportSeries(businessId: string) {
+async function buildReportSeries(businessId: string, branchIds?: readonly string[] | null) {
   const now = new Date()
   const days = lastDayKeys(30, now)
   const months = lastMonthKeys(6, now)
   // Inicio real (UTC) del primer día/mes del rango en la zona del negocio.
   const since30 = parseBusinessDateParam(days[0], "start")!
   const since6m = parseBusinessDateParam(`${months[0]}-01`, "start")!
+  // Recorte por sucursal: ventas/caja/cobros/órdenes de las asignadas.
+  const branchScope = branchIds?.length ? { in: [...branchIds] } : undefined
 
   const toCents = (v: number | null | undefined) => Math.round((v ?? 0) * 100)
   const dayKey = (d: Date) => businessDayKey(d)
@@ -362,12 +372,13 @@ async function buildReportSeries(businessId: string) {
     // Sale.total es el importe de CATÁLOGO; lo cobrado de verdad es
     // total − discountCents (descuento autorizado al cobrar).
     prisma.sale.findMany({
-      where: { businessId, status: "COMPLETED", createdAt: { gte: since30 } },
+      where: { businessId, status: "COMPLETED", createdAt: { gte: since30 }, ...(branchScope ? { branchId: branchScope } : {}) },
       select: { createdAt: true, total: true, discountCents: true },
     }),
-    // Movimientos de caja: IN suma efectivo, OUT lo retira.
+    // Movimientos de caja: IN suma efectivo, OUT lo retira (la caja lleva
+    // la sucursal; movimiento sin registro abierto queda fuera del recorte).
     prisma.cashMovement.findMany({
-      where: { businessId, createdAt: { gte: since30 } },
+      where: { businessId, createdAt: { gte: since30 }, ...(branchScope ? { register: { branchId: branchScope } } : {}) },
       select: { createdAt: true, amount: true, type: true },
     }),
     // Cobros de taller netos: CONFIRMED suma anticipos/abonos/liquidaciones
@@ -380,24 +391,25 @@ async function buildReportSeries(businessId: string) {
         repairOrderId: { not: null },
         status: { in: ["CONFIRMED", "REFUNDED"] },
         createdAt: { gte: since30 },
+        ...(branchScope ? { repairOrder: { currentBranchId: branchScope } } : {}),
       },
       select: { createdAt: true, amount: true },
     }),
     // Modelos más reparados (histórico, brand+model concatenados abajo).
     prisma.repairOrder.groupBy({
       by: ["brand", "model"],
-      where: { businessId },
+      where: { businessId, ...(branchScope ? { currentBranchId: branchScope } : {}) },
       _count: { _all: true },
     }),
     // Refacciones más usadas; solo las autorizadas cuentan como cobradas.
     prisma.repairPart.findMany({
-      where: { businessId, status: "APPROVED" },
+      where: { businessId, status: "APPROVED", ...(branchScope ? { order: { currentBranchId: branchScope } } : {}) },
       select: { description: true, qty: true, unitPriceCents: true },
     }),
     // Órdenes de reparación agrupadas por estado (histórico).
     prisma.repairOrder.groupBy({
       by: ["status"],
-      where: { businessId },
+      where: { businessId, ...(branchScope ? { currentBranchId: branchScope } : {}) },
       _count: { _all: true },
     }),
     // Clientes (User rol CUSTOMER) dados de alta en los últimos 6 meses.
@@ -408,7 +420,7 @@ async function buildReportSeries(businessId: string) {
     // Clientes del taller con más órdenes (histórico).
     prisma.repairOrder.groupBy({
       by: ["customerName"],
-      where: { businessId },
+      where: { businessId, ...(branchScope ? { currentBranchId: branchScope } : {}) },
       _count: { _all: true },
       _sum: { approvedQuoteCents: true },
     }),

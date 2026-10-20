@@ -68,13 +68,14 @@ describe("la entrega solo ocurre por SETTLE_DELIVER", () => {
 
   it("SETTLE_DELIVER desde NOT_AUTHORIZED marca closedWithoutRepair y cobra solo el diagnóstico", async () => {
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "NOT_AUTHORIZED", quoteCents: 90000, approvedQuoteCents: null, diagnosticFeeCents: 15000 }))
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER", paymentReference: "SPEI-150" }))
     expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DELIVERED", closedWithoutRepair: true }),
     }))
-    // Solo el cargo de diagnóstico: $150, no la cotización de $900.
+    // Solo el cargo de diagnóstico: $150, no la cotización de $900 — y el
+    // cobro por transferencia guarda su folio externo.
     expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ purpose: "SETTLEMENT", method: "TRANSFER", amount: 150 }),
+      data: expect.objectContaining({ purpose: "SETTLEMENT", method: "TRANSFER", amount: 150, reference: "SPEI-150" }),
     }))
   })
 
@@ -343,11 +344,19 @@ describe("permisos y caja", () => {
     }))
   })
 
-  it("PAYMENT por transferencia no exige caja", async () => {
+  it("PAYMENT por transferencia no exige caja pero sí su folio externo", async () => {
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PAYMENT", paymentCents: 10000, paymentMethod: "TRANSFER" }))
+    // Espejo de ventas: la transferencia sin referencia no se puede rastrear
+    // contra el estado de cuenta — el dominio la rechaza antes de cobrar.
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PAYMENT", paymentCents: 10000, paymentMethod: "TRANSFER" })))
+      .rejects.toMatchObject({ message: "Captura la referencia de la transferencia." })
+    expect(tx.payment.create).not.toHaveBeenCalled()
+
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PAYMENT", paymentCents: 10000, paymentMethod: "TRANSFER", paymentReference: "SPEI-88" }))
     expect(tx.cashRegister.findMany).not.toHaveBeenCalled()
-    expect(tx.payment.create).toHaveBeenCalled()
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: "TRANSFER", reference: "SPEI-88" }),
+    }))
   })
 })
 
@@ -607,10 +616,10 @@ describe("ciclo de garantía con vigencia", () => {
     tx.repairPart.findMany.mockResolvedValue([
       { id: "pt1", productId: "p1", description: "Pantalla", qty: 1, unitCostCents: 5000, unitPriceCents: 30000, status: "APPROVED" },
     ])
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER", paymentReference: "SPEI-800" }))
     // $500 mano de obra + $300 refacción autorizada = $800 liquidados.
     expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ purpose: "SETTLEMENT", method: "TRANSFER", amount: 800 }),
+      data: expect.objectContaining({ purpose: "SETTLEMENT", method: "TRANSFER", amount: 800, reference: "SPEI-800" }),
     }))
     // La refacción se cobra: no se rechaza ni repone su stock.
     expect(tx.repairPart.updateMany).not.toHaveBeenCalled()
@@ -642,7 +651,7 @@ describe("ciclo de garantía con vigencia", () => {
     // La garantía tampoco pudo reparar (WARRANTY→NOT_REPAIRED): la entrega
     // cobra solo el cargo de diagnóstico y la marca queda otra vez en true.
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "NOT_REPAIRED", diagnosticFeeCents: 20000, warrantyCount: 1 }))
-    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER" }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente", paymentMethod: "TRANSFER", paymentReference: "SPEI-200" }))
     expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DELIVERED", closedWithoutRepair: true, warrantyUntil: null }),
     }))

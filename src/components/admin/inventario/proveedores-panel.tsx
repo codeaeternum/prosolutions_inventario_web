@@ -1,5 +1,6 @@
 "use client"
 
+import { useSession } from "next-auth/react"
 import { useCallback, useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -89,6 +90,10 @@ function AgingCell({ value, className }: { value: number; className?: string }) 
 }
 
 export function ProveedoresPanel() {
+    const { data: session } = useSession()
+    // Registrar abonos a proveedor es solo-admin (POST /api/supplier-payments);
+    // el empleado conserva saldos, antigüedad e historial, sin el botón de pago.
+    const isAdmin = session?.user?.role === "ADMIN"
     const [suppliers, setSuppliers] = useState<Supplier[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -431,10 +436,12 @@ export function ProveedoresPanel() {
                                     )}
 
                                     <div className="flex gap-2 pt-1">
-                                        <Button variant="outline" size="sm" onClick={() => setPayTarget(s)}>
-                                            <Banknote className="mr-1.5 h-4 w-4" />
-                                            Registrar pago
-                                        </Button>
+                                        {isAdmin && (
+                                            <Button variant="outline" size="sm" onClick={() => setPayTarget(s)}>
+                                                <Banknote className="mr-1.5 h-4 w-4" />
+                                                Registrar pago
+                                            </Button>
+                                        )}
                                         <Button variant="ghost" size="sm" onClick={() => openHistory(s)}>
                                             <History className="mr-1.5 h-4 w-4" />
                                             Historial
@@ -553,14 +560,14 @@ export function ProveedoresPanel() {
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Registrar abono al proveedor */}
-            <PagoProveedorDialog
+            {/* Registrar abono al proveedor (solo admin) */}
+            {isAdmin && <PagoProveedorDialog
                 open={payTarget !== null}
                 onOpenChange={(open) => { if (!open) setPayTarget(null) }}
                 supplier={payTarget}
                 purchases={payTarget ? (balances[payTarget.id]?.ocsPendientes ?? []) : []}
                 onSaved={() => void fetchSuppliers()}
-            />
+            />}
 
             {/* Historial de pagos del proveedor */}
             <Dialog open={historySupplier !== null} onOpenChange={(open) => { if (!open) setHistorySupplier(null) }}>

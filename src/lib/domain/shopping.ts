@@ -52,15 +52,19 @@ export interface LowStockRow {
  * `folioDigits` es el largo del folio impreso del negocio (order_folio_digits,
  * 4–8): el llamador lo resuelve con getOrderFolioDigits (la capa de dominio no
  * importa lib/settings para no arrastrar el cliente prisma a los tests).
+ * `orderBranchIds` recorta la demanda a órdenes en ESAS sucursales (empleado
+ * con allowedBranchIds): sin parámetro explícito, `available` se suma sobre
+ * esas mismas sucursales en vez del stock global.
  */
-export async function listShoppingNeeds(db: PrismaClient, businessId: string, branchId?: string, folioDigits: number = DEFAULT_FOLIO_DIGITS) {
+export async function listShoppingNeeds(db: PrismaClient, businessId: string, branchId?: string, folioDigits: number = DEFAULT_FOLIO_DIGITS, orderBranchIds?: readonly string[] | null) {
+  const scoped = orderBranchIds?.length ? [...orderBranchIds] : null
   // a) Refacciones pedidas/autorizadas en órdenes no terminales.
   const parts = await db.repairPart.findMany({
     where: {
       businessId,
       productId: { not: null },
       status: { in: [...OPEN_PART_STATUSES] },
-      order: { status: { notIn: TERMINAL_ORDER_STATUSES } },
+      order: { status: { notIn: TERMINAL_ORDER_STATUSES }, ...(scoped ? { currentBranchId: { in: scoped } } : {}) },
     },
     select: {
       productId: true,
@@ -72,13 +76,17 @@ export async function listShoppingNeeds(db: PrismaClient, businessId: string, br
   })
 
   const productIds = [...new Set(parts.map(part => part.productId).filter((id): id is string => Boolean(id)))]
-  const branchRows = branchId && productIds.length
+  // `available` de una refacción: la sucursal pedida, o la suma de las
+  // sucursales visibles del empleado, o (sin recorte) el total del producto.
+  const availabilityBranchIds: string[] | null = branchId ? [branchId] : scoped
+  const branchRows = availabilityBranchIds?.length && productIds.length
     ? await db.branchStock.findMany({
-      where: { businessId, branchId, productId: { in: productIds } },
+      where: { businessId, branchId: { in: [...availabilityBranchIds] }, productId: { in: productIds } },
       select: { productId: true, quantity: true },
     })
     : []
-  const branchQty = new Map(branchRows.map(row => [row.productId, row.quantity]))
+  const branchQty = new Map<string, number>()
+  for (const row of branchRows) branchQty.set(row.productId, (branchQty.get(row.productId) ?? 0) + row.quantity)
 
   const grouped = new Map<string, PartsShortageRow & { ordersById: Map<string, { orderId: string; number: number; qty: number; folio: string }> }>()
   for (const part of parts) {
@@ -87,7 +95,7 @@ export async function listShoppingNeeds(db: PrismaClient, businessId: string, br
       productId: part.productId,
       name: part.product.name,
       needed: 0,
-      available: branchId ? (branchQty.get(part.productId) ?? 0) : part.product.stock,
+      available: availabilityBranchIds?.length ? (branchQty.get(part.productId) ?? 0) : part.product.stock,
       shortage: 0,
       costPrice: part.product.costPrice,
       orders: [],

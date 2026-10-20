@@ -93,7 +93,7 @@ describe("refacciones faltantes", () => {
     const { partsShortage } = await listShoppingNeeds(db, BIZ, "b1")
     expect(partsShortage[0]).toMatchObject({ available: 1, shortage: 4 })
     expect(tx.branchStock.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ businessId: BIZ, branchId: "b1", productId: { in: ["p1"] } }),
+      where: expect.objectContaining({ businessId: BIZ, branchId: { in: ["b1"] }, productId: { in: ["p1"] } }),
     }))
   })
 })

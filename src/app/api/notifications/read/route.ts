@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
+import { assertModuleAllowed, requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -14,6 +14,10 @@ export async function POST(req: NextRequest) {
   if (result.error) return result.error
 
   const session = getSession(result)!
+  // Marcar leídas toca el mismo feed que el historial y el stream: exige el
+  // módulo notificaciones (sin él un empleado podía mutar su estado de lectura).
+  const denied = assertModuleAllowed(session, "notificaciones")
+  if (denied) return denied
   const businessId = businessIdOf(session)
   const userId = session.user.id
   const visible = session.user.role === "EMPLOYEE" ? { audience: "STAFF" } : {}

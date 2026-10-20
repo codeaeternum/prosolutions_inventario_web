@@ -814,7 +814,7 @@ function CajaPanel() {
             </TabsContent>
 
             <TabsContent value="proveedores">
-                <LesDeboPanel />
+                <LesDeboPanel isAdmin={isAdmin} />
             </TabsContent>
 
             {/* Diálogo de cierre con conteo de billetes */}

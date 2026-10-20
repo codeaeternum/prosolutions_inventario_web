@@ -1,23 +1,34 @@
 import { NextRequest } from "next/server"
 import { Prisma } from "@prisma/client"
-import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
+import { assertModuleAllowed, requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
 // Conexiones activas indexadas por negocio: un broadcast solo recorre las del
 // tenant destinatario en vez de barrer todas las sesiones SSE del proceso.
-type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; businessId: string; password: string | null; close: () => void }
+type Connection = { controller: ReadableStreamDefaultController; userId: string; role: string; allowedModules: string[]; businessId: string; password: string | null; close: () => void }
 const connections = new Map<string, Set<Connection>>() // businessId → conexiones
+
+/** Los módulos se comparan como conjunto: el orden de la lista no es identidad. */
+const sameModules = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(m => b.includes(m))
 
 // Revalida la sesión en cada heartbeat/broadcast: la conexión muere si el
 // usuario cambia de estado/password/empresa O si la empresa se suspende
-// (Business.isActive=false corta también los streams ya abiertos).
+// (Business.isActive=false corta también los streams ya abiertos). También
+// muere si cambian el rol o los módulos respecto al snapshot del conectar —
+// el broadcast filtra por ese snapshot, así que un empleado degradado o sin
+// "notificaciones" ya no seguiría recibiendo el feed con privilegio viejo.
 async function stillAuthorized(connection: Connection): Promise<boolean> {
   const user = await prisma.user.findUnique({
     where: { id: connection.userId },
-    select: { status: true, password: true, businessId: true, business: { select: { isActive: true } } },
+    select: { status: true, password: true, businessId: true, role: true, allowedModules: true, business: { select: { isActive: true } } },
   })
-  return user?.status === "APPROVED" && user.password === connection.password && user.businessId === connection.businessId && user.business.isActive
+  return user?.status === "APPROVED"
+    && user.password === connection.password
+    && user.businessId === connection.businessId
+    && user.role === connection.role
+    && sameModules(user.allowedModules ?? [], connection.allowedModules)
+    && user.business.isActive
 }
 
 // Tipos de eventos (fuente única: el POST de /send los valida con este enum)
@@ -112,9 +123,13 @@ export async function GET(req: NextRequest) {
   if (result.error) return result.error
 
   const session = getSession(result)!
+  // El stream lleva el feed completo en vivo (data sin depurar): mismo gate
+  // que el historial — el módulo notificaciones.
+  const denied = assertModuleAllowed(session, "notificaciones")
+  if (denied) return denied
   const userId = session.user.id
   const businessId = businessIdOf(session)
-  const current = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true, password: true } })
+  const current = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true, password: true, allowedModules: true } })
   if (!current || (current.role !== "ADMIN" && current.role !== "EMPLOYEE") || current.status !== "APPROVED") return new Response(null, { status: 403 })
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let controllerRef: ReadableStreamDefaultController | undefined
@@ -135,7 +150,7 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       controllerRef = controller
-      const connection: Connection = { controller, userId, role: current.role, businessId, password: current.password, close }
+      const connection: Connection = { controller, userId, role: current.role, allowedModules: current.allowedModules ?? [], businessId, password: current.password, close }
       connectionRef = connection
       let set = connections.get(businessId)
       if (!set) connections.set(businessId, (set = new Set()))

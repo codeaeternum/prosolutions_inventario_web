@@ -227,7 +227,7 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     expect((await update({ action: "STATUS", status: "READY", detail: "Salida de audio y carga verificadas" })).qualityCheck).toContain("verificadas")
     // La entrega física solo ocurre por SETTLE_DELIVER (cobra el saldo y cierra
     // refacciones); STATUS→DELIVERED ya no es una transición válida.
-    expect((await update({ action: "SETTLE_DELIVER", paymentMethod: "TRANSFER", deliveredTo: "Recibe cliente ficticio" })).deliveredTo).toBe("Recibe cliente ficticio")
+    expect((await update({ action: "SETTLE_DELIVER", paymentMethod: "TRANSFER", paymentReference: "SPEI-TEST-001", deliveredTo: "Recibe cliente ficticio" })).deliveredTo).toBe("Recibe cliente ficticio")
     await expect(update({ action: "NOTE", detail: "Reescribir historial" })).rejects.toMatchObject({ status: 409 })
     expect(await db.cashMovement.count({ where: { referenceId: order.id } })).toBe(0)
   })

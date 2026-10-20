@@ -51,6 +51,11 @@ export async function GET(req: Request) {
     }
     const isWorkshop = session.user.role === "WORKSHOP"
     const businessId = businessIdOf(session)
+    // El desglose de existencias por sucursal (branches[]) solo muestra las
+    // sucursales asignadas del empleado; WORKSHOP (aliado) conserva todas —
+    // necesita saber en qué sucursal recoger la pieza.
+    const allowed = isWorkshop || session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const stocksBranchScope = allowed?.length ? { branchId: { in: allowed } } : {}
 
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()
@@ -88,7 +93,7 @@ export async function GET(req: Request) {
           marketVisibility: true,
           category: { select: { id: true, name: true } },
           stocks: {
-            where: { businessId },
+            where: { businessId, ...stocksBranchScope },
             select: {
               quantity: true,
               branch: { select: { id: true, name: true } },

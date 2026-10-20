@@ -35,7 +35,14 @@ export async function GET() {
     try {
         const auth = await requireModule("inventario")
         if (auth.error) return auth.error
-        const businessId = businessIdOf(getSession(auth)!)
+        const session = getSession(auth)!
+        const businessId = businessIdOf(session)
+        // Las señales con sucursal (encargos pendientes, velocidad de venta) se
+        // recortan a las asignadas: sin el filtro el restringido veía la
+        // demanda y rotación del negocio completo. Stock mínimo y catálogo
+        // son por negocio (Product.stock es global).
+        const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+        const branchScope = allowed?.length ? { in: allowed } : undefined
 
         // Ventana de rotación: piezas vendidas en los últimos 30 días.
         const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -47,7 +54,7 @@ export async function GET() {
             }),
             prisma.encargo.groupBy({
                 by: ["productId"],
-                where: { businessId, status: "PENDING", productId: { not: null } },
+                where: { businessId, status: "PENDING", productId: { not: null }, ...(branchScope ? { branchId: branchScope } : {}) },
                 _sum: { quantity: true },
             }),
             prisma.shoppingItem.groupBy({
@@ -61,7 +68,7 @@ export async function GET() {
                 by: ["productId"],
                 where: {
                     businessId,
-                    sale: { status: "COMPLETED", createdAt: { gte: desde30d } },
+                    sale: { status: "COMPLETED", createdAt: { gte: desde30d }, ...(branchScope ? { branchId: branchScope } : {}) },
                 },
                 _sum: { quantity: true, returnedQuantity: true },
             }),
@@ -133,6 +140,7 @@ export async function GET() {
                     businessId,
                     productId: { in: suggestedIds },
                     marketplaceRequestId: { not: null },
+                    ...(branchScope ? { branchId: branchScope } : {}),
                 },
                 select: { productId: true, marketplaceRequestId: true },
             })

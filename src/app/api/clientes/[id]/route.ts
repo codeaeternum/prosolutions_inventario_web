@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client"
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
@@ -29,10 +30,11 @@ const OPEN_DOCUMENT_STATUSES = ["OPEN", "DRAFT"] as const
 // Misma transformación que normalizePhone pero en SQL: quita no-dígitos y
 // conserva los últimos 10. Los teléfonos cortos quedan intactos (RIGHT con n
 // mayor que la longitud devuelve la cadena completa).
-async function repairOrderIdsByPhone(businessId: string, phoneNorm: string): Promise<string[]> {
+async function repairOrderIdsByPhone(businessId: string, phoneNorm: string, branchIds: readonly string[] | null | undefined): Promise<string[]> {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "RepairOrder"
     WHERE "businessId" = ${businessId}
+      ${branchIds?.length ? Prisma.sql`AND "currentBranchId" IN (${Prisma.join(branchIds)})` : Prisma.empty}
       AND (
         RIGHT(regexp_replace("customerPhone", '[^0-9]', '', 'g'), 10) = ${phoneNorm}
         OR RIGHT(regexp_replace(COALESCE("customerPhoneAlt", ''), '[^0-9]', '', 'g'), 10) = ${phoneNorm}
@@ -48,7 +50,13 @@ export async function GET(
   try {
     const result = await requireModule("clientes")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
+    // Ficha 360: el cliente es del negocio, pero su actividad (ventas,
+    // reparaciones, apartados, documentos) se recorta a las sucursales
+    // asignadas del empleado — igual que /api/clientes.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const branchScope = allowed?.length ? { in: allowed } : undefined
 
     const { id } = await params
     const user = await prisma.user.findFirst({
@@ -77,10 +85,10 @@ export async function GET(
     // las históricas que solo empatan por teléfono normalizado.
     const [linkedOrders, phoneIds] = await Promise.all([
       prisma.repairOrder.findMany({
-        where: { businessId, customerId: id },
+        where: { businessId, customerId: id, ...(branchScope ? { currentBranchId: branchScope } : {}) },
         select: { id: true },
       }),
-      phoneNorm ? repairOrderIdsByPhone(businessId, phoneNorm) : Promise.resolve([]),
+      phoneNorm ? repairOrderIdsByPhone(businessId, phoneNorm, allowed) : Promise.resolve([]),
     ])
     const repairIds = [...new Set([...linkedOrders.map((o) => o.id), ...phoneIds])]
 
@@ -118,7 +126,7 @@ export async function GET(
             })
           : Promise.resolve(0),
         prisma.sale.findMany({
-          where: { businessId, customerId: id },
+          where: { businessId, customerId: id, ...(branchScope ? { branchId: branchScope } : {}) },
           select: {
             id: true,
             number: true,
@@ -137,17 +145,17 @@ export async function GET(
         // "Total comprado": solo ventas vigentes (las anuladas no son gasto real)
         // y lo efectivamente cobrado: total de catálogo menos descuento autorizado.
         prisma.sale.aggregate({
-          where: { businessId, customerId: id, status: "COMPLETED" },
+          where: { businessId, customerId: id, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) },
           _sum: { total: true, discountCents: true },
           _count: { _all: true },
         }),
         prisma.sale.findFirst({
-          where: { businessId, customerId: id, status: "COMPLETED" },
+          where: { businessId, customerId: id, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) },
           select: { createdAt: true },
           orderBy: { createdAt: "desc" },
         }),
         prisma.reservation.findMany({
-          where: { businessId, userId: id },
+          where: { businessId, userId: id, ...(branchScope ? { branchId: branchScope } : {}) },
           select: {
             id: true,
             quantity: true,
@@ -164,7 +172,7 @@ export async function GET(
           take: 50,
         }),
         prisma.reservation.count({
-          where: { businessId, userId: id, status: { in: [...PENDING_RESERVATION_STATUSES] } },
+          where: { businessId, userId: id, status: { in: [...PENDING_RESERVATION_STATUSES] }, ...(branchScope ? { branchId: branchScope } : {}) },
         }),
         prisma.creditMovement.findMany({
           where: { businessId, userId: id },
@@ -189,7 +197,7 @@ export async function GET(
         // Documentos vivos del cliente: apartados y cotizaciones/suspendidas
         // con lo cobrado a cuenta (pagos confirmados) para saber el saldo.
         prisma.sale.findMany({
-          where: { businessId, customerId: id, status: { in: [...OPEN_DOCUMENT_STATUSES] } },
+          where: { businessId, customerId: id, status: { in: [...OPEN_DOCUMENT_STATUSES] }, ...(branchScope ? { branchId: branchScope } : {}) },
           select: {
             id: true,
             number: true,

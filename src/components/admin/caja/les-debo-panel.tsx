@@ -75,8 +75,10 @@ function AgingCell({ value, formatPrice, className }: { value: number; formatPri
  * «Les debo»: resumen de cuentas por pagar a proveedores dentro del centro de
  * dinero (/admin/caja?tab=proveedores). La gestión completa (altas, edición,
  * detalle por OC) vive en /admin/inventario → Entradas → Proveedores.
+ * `isAdmin`: registrar abonos es solo-admin (POST /api/supplier-payments lo
+ * exige); el empleado ve saldos e historial pero no el botón de pago.
  */
-export function LesDeboPanel() {
+export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
     const { formatPrice } = useCurrency()
     const [balances, setBalances] = useState<SupplierBalance[]>([])
     const [aging, setAging] = useState<Record<string, AgingRow>>({})
@@ -244,9 +246,11 @@ export function LesDeboPanel() {
                                                 )}
                                             </td>
                                             <td className="px-2 py-1.5 text-right">
-                                                <Button size="sm" variant="outline" onClick={() => setPayTarget(row)}>
-                                                    Registrar pago
-                                                </Button>
+                                                {isAdmin && (
+                                                    <Button size="sm" variant="outline" onClick={() => setPayTarget(row)}>
+                                                        Registrar pago
+                                                    </Button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -303,14 +307,14 @@ export function LesDeboPanel() {
                 </Card>
             )}
 
-            {/* Reutiliza el flujo de POST /api/supplier-payments (abono a OC o a cuenta general). */}
-            <PagoProveedorDialog
+            {/* Reutiliza el flujo de POST /api/supplier-payments (abono a OC o a cuenta general). Solo admin. */}
+            {isAdmin && <PagoProveedorDialog
                 open={payTarget !== null}
                 onOpenChange={open => { if (!open) setPayTarget(null) }}
                 supplier={payTarget ? { id: payTarget.supplierId, name: payTarget.name } : null}
                 purchases={payTarget?.ocsPendientes ?? []}
                 onSaved={() => void fetchAll()}
-            />
+            />}
         </div>
     )
 }

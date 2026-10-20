@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
+import { hasBranchAccess, hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSettingsMap } from "@/lib/settings"
 import prisma from "@/lib/prisma"
@@ -24,6 +25,9 @@ export default async function CorteTicketPage({
   if (staffCheck.error) redirect("/login")
   const session = getSession(staffCheck)!
   const businessId = businessIdOf(session)
+  // El corte es documento de caja: exige el módulo igual que /admin/caja
+  // (la ruta /admin/tickets no pasa por ese gate del middleware).
+  if (!hasModule(session.user, "caja")) notFound()
 
   const { id } = await params
   const register = await prisma.cashRegister.findUnique({
@@ -41,15 +45,21 @@ export default async function CorteTicketPage({
 
   // El corte es documento de caja cerrada; sin cierre no hay conteo que imprimir.
   if (!register || register.status !== "CLOSED" || !register.closedAt) notFound()
+  // La caja pertenece a una sucursal: un empleado restringido no reimprime
+  // cortes de sucursales que no tiene asignadas.
+  if (!hasBranchAccess(session.user, register.branchId)) notFound()
 
   // Cobrado por método durante el turno: los pagos CARD/TRANSFER no generan
   // CashMovement, así que el desglose sale de Payment acotado a la ventana
   // apertura→cierre y a la sucursal de la caja (vía venta u orden de taller).
+  // VOIDED entra en la suma como en methodTotals de /api/caja: al anular una
+  // venta del mismo turno el cobro +X queda VOIDED y su reembolso REFUNDED
+  // −X los cancela a 0 — sin VOIDED el ticket imprimía un −X fantasma.
   const paymentRows = await prisma.payment.groupBy({
     by: ["method"],
     where: {
       businessId,
-      status: { in: ["CONFIRMED", "REFUNDED"] },
+      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
       createdAt: { gte: register.openedAt, lte: register.closedAt },
       ...(register.branchId
         ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }] }

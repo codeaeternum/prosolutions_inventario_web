@@ -108,6 +108,15 @@ export async function GET(req: Request) {
       ...(sinStock && { stock: 0 }),
     }
 
+    // Existencias por sucursal (productDto las expone sólo a staff): al
+    // empleado con sucursales asignadas se le recortan a las suyas — el
+    // desglose nunca muestra existencias de sucursales ajenas.
+    const staffStocksWhere = isCatalogStaff(viewer)
+      ? (viewer && viewer.role !== "ADMIN" && viewer.allowedBranchIds?.length
+          ? { businessId, branchId: { in: viewer.allowedBranchIds } }
+          : { businessId })
+      : null
+
     const include = {
       models: {
         include: {
@@ -116,8 +125,7 @@ export async function GET(req: Request) {
       },
       category: true,
       _count: { select: { reservations: true } },
-      // Existencias por sucursal (productDto las expone sólo a staff).
-      ...(isCatalogStaff(viewer) ? { stocks: { where: { businessId }, include: { branch: { select: { id: true, name: true } } } } } : {}),
+      ...(staffStocksWhere ? { stocks: { where: staffStocksWhere, include: { branch: { select: { id: true, name: true } } } } } : {}),
     }
 
     // Resumen para el panel de staff: una pasada agregada sobre el catálogo.

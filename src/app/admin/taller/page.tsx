@@ -271,12 +271,12 @@ export default function WorkshopPage() {
     const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
     openWhatsApp(order.customerPhone, `Hola ${order.customerName}, tu equipo ${equipo} (orden ${folioOf(order)}) está listo en ${businessName}.`)
   }
-  const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== ""
+  const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== "" || paymentForm.reference !== ""
   const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
   const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
   // El nombre de quien recoge se prellena con el titular al abrir el panel:
   // solo cuenta como cambio si difiere del prellenado.
-  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null)
+  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null || settleForm.reference !== "")
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
   const hasUnsavedChanges = paymentFormDirty || refundFormDirty || feeDraftDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
@@ -502,7 +502,8 @@ export default function WorkshopPage() {
     try {
       if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) throw new Error("El abono debe ser mayor a cero y admite hasta dos decimales")
       if (!["CASH", "CARD", "TRANSFER"].includes(paymentForm.method)) throw new Error("Selecciona el método de cobro.")
-      await post(`/api/workshop/${selected.id}`, { action: "PAYMENT", expectedVersion: selected.version, paymentCents: Math.round(amount * 100), paymentMethod: paymentForm.method, detail: paymentForm.note.trim() || undefined })
+      if (paymentForm.method === "TRANSFER" && !paymentForm.reference.trim()) throw new Error("Captura la referencia de la transferencia.")
+      await post(`/api/workshop/${selected.id}`, { action: "PAYMENT", expectedVersion: selected.version, paymentCents: Math.round(amount * 100), paymentMethod: paymentForm.method, paymentReference: paymentForm.reference.trim() || undefined, detail: paymentForm.note.trim() || undefined })
       setPaymentForm(emptyPaymentForm)
       await openOrder(selected.id, true); await load()
       toast.success("Abono registrado")
@@ -547,9 +548,11 @@ export default function WorkshopPage() {
     try {
       if (deliveredTo.length < 2) throw new Error("Indica el nombre de quien recoge el equipo.")
       if (balance > 0 && !["CASH", "CARD", "TRANSFER"].includes(settleForm.method)) throw new Error("Selecciona el método de cobro del saldo.")
+      if (balance > 0 && settleForm.method === "TRANSFER" && !settleForm.reference.trim()) throw new Error("Captura la referencia de la transferencia.")
       await post(`/api/workshop/${selected.id}`, {
         action: "SETTLE_DELIVER", expectedVersion: selected.version,
         paymentMethod: balance > 0 ? settleForm.method : undefined,
+        paymentReference: balance > 0 ? settleForm.reference.trim() || undefined : undefined,
         deliveredTo,
         deliveredToDoc: deliveredToDoc || undefined,
         deliverySignatureData: settleForm.deliverySignatureData ?? undefined,

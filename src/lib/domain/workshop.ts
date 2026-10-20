@@ -76,6 +76,10 @@ async function signatureModeOf(tx: Prisma.TransactionClient, businessId: string)
 async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
   amountCents: number; method: "CASH" | "CARD" | "TRANSFER"; purpose: "ADVANCE" | "ABONO" | "SETTLEMENT"; note?: string
+  // Folio externo del cobro (autorización de terminal / clave SPEI). En pagos
+  // de taller `reference` está libre — la ligadura con reservas solo aplica a
+  // Payment de Sale con purpose RESERVATION (domain/reservations).
+  reference?: string
 }) {
   // Cobrar en efectivo exige caja abierta (misma regla que el reembolso): sin
   // asiento de caja el cobro quedaría fuera del corte del turno. Tarjeta y
@@ -86,7 +90,7 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
     if (registers.length !== 1) throw new BusinessError(registers.length ? "Hay más de una caja abierta en la sucursal; requiere revisión." : "Abre la caja antes de cobrar en efectivo.", 409, "REGISTER_REQUIRED")
     register = registers[0]
   }
-  const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, createdById: args.actorId, notes: args.note ?? null } })
+  const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, reference: args.reference ?? null, createdById: args.actorId, notes: args.note ?? null } })
   if (register) {
     const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller ${repairFolio(args.orderNumber, await folioDigitsOf(tx, args.businessId))} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
     await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
@@ -281,6 +285,10 @@ const actionSchema = z.object({
   sourceBranchId: z.string().min(1).optional(),
   noteIsPublic: z.boolean().default(false),
   paymentCents: moneyCents.optional(), paymentMethod: paymentMethod.optional(),
+  // Folio externo del cobro (SPEI/autorización); obligatorio en TRANSFER —
+  // espejo de la regla de ventas (sales.ts): sin folio la transferencia no
+  // se puede rastrear contra el estado de cuenta.
+  paymentReference: z.string().trim().min(1).max(200).optional(),
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
   // Entrega estructurada (SETTLE_DELIVER): quién recoge el equipo — puede ser
   // un familiar o empleado distinto al titular —, su identificación opcional
@@ -472,7 +480,8 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // cargo de diagnóstico en cierres sin reparación — menos lo retenido).
       const pendingCents = orderTotalCents(order, await orderParts()) - await heldCents()
       if (input.paymentCents > pendingCents) throw new BusinessError(`El abono excede el saldo pendiente de ${(Math.max(0, pendingCents) / 100).toFixed(2)} MXN.`, 409)
-      await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail })
+      if (input.paymentMethod === "TRANSFER" && !input.paymentReference) throw new BusinessError("Captura la referencia de la transferencia.")
+      await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: input.paymentCents, method: input.paymentMethod, purpose: "ABONO", note: input.detail, reference: input.paymentReference })
       eventType = "PAYMENT"
       detail = `Abono ${(input.paymentCents / 100).toFixed(2)} MXN (${input.paymentMethod}). ${input.detail ?? ""}`.trim()
     } else if (input.action === "REFUND") {
@@ -515,6 +524,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       const balanceCents = Math.max(0, totalCents - held)
       const overpaidCents = Math.max(0, held - totalCents)
       if (balanceCents > 0 && !input.paymentMethod) throw new BusinessError(`Restan ${(balanceCents / 100).toFixed(2)} MXN por cobrar. Selecciona el método.`, 409)
+      if (balanceCents > 0 && input.paymentMethod === "TRANSFER" && !input.paymentReference) throw new BusinessError("Captura la referencia de la transferencia.")
       const tail: string[] = []
       if (withoutRepair) {
         // Las refacciones no se cobran: las APPROVED regresan al stock y
@@ -524,7 +534,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         tail.push(...await releaseOrderParts(tx, { order, parts, actorId, businessId, note: "La orden se entregó sin reparación; no se cobra.", touched: touchedProductIds }))
       }
       if (balanceCents > 0) {
-        await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail })
+        await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail, reference: input.paymentReference })
         detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${recipientLabel}`
       } else detail = `Sin saldo pendiente. Entrega a: ${recipientLabel}`
       if (input.detail) detail = `${detail}. ${input.detail}`

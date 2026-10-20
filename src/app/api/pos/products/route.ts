@@ -42,12 +42,18 @@ export async function GET(req: Request) {
     const hasMore = products.length > limit
     let result = products.slice(0, limit)
 
-    if (branchId) {
+    // Overlay de stock por sucursal: la pedida explícita o, para el empleado
+    // con sucursales asignadas sin filtro, la SUMA de las suyas (igual que
+    // /api/search/pos — nunca el total global del negocio).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const overlayBranchIds = branchId ? [branchId] : (allowed?.length ? allowed : null)
+    if (overlayBranchIds) {
       const stocks = await prisma.branchStock.findMany({
-        where: { branchId, businessId, productId: { in: result.map(p => p.id) } },
+        where: { branchId: { in: overlayBranchIds }, businessId, productId: { in: result.map(p => p.id) } },
         select: { productId: true, quantity: true },
       })
-      const byProduct = new Map(stocks.map(s => [s.productId, s.quantity]))
+      const byProduct = new Map<string, number>()
+      for (const s of stocks) byProduct.set(s.productId, (byProduct.get(s.productId) ?? 0) + s.quantity)
       result = result.map(p => ({ ...p, stock: byProduct.get(p.id) ?? 0 }))
     }
     return NextResponse.json(

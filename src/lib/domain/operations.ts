@@ -107,7 +107,10 @@ export async function resolveBranch(tx: Transaction, branchId?: string | null, b
     if (!branch || !branch.isActive) throw new BusinessError("La sucursal seleccionada no está activa.", 409)
     return branch
   }
-  const branch = await tx.branch.findFirst({ where: { id: PRINCIPAL_BRANCH_ID, ...scope } })
+  // El respaldo por la principal exige lo mismo que el camino explícito:
+  // una principal inactiva no recibe operaciones — se cae a la más antigua
+  // activa del negocio.
+  const branch = await tx.branch.findFirst({ where: { id: PRINCIPAL_BRANCH_ID, isActive: true, ...scope } })
   if (branch) return branch
   const first = await tx.branch.findFirst({ where: { isActive: true, ...scope }, orderBy: { createdAt: "asc" } })
   if (!first) throw new BusinessError("No hay sucursales activas.", 409)

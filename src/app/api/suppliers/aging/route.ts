@@ -10,7 +10,10 @@ export async function GET() {
   try {
     const auth = await requireModule("inventario")
     if (auth.error) return auth.error
-    const aging = await supplierAging(prisma, businessIdOf(getSession(auth)!))
+    const session = getSession(auth)!
+    // Antigüedad derivada de OCs por sucursal: se recorta a las asignadas.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const aging = await supplierAging(prisma, businessIdOf(session), new Date(), allowed)
     return NextResponse.json(aging, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) {
     return businessFailure(error)

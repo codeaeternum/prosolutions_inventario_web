@@ -24,6 +24,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
     }
     const businessId = businessIdOf(session)
+    // El directorio es del negocio, pero los agregados de actividad
+    // (apartados/ventas/reparaciones) se recortan a las sucursales asignadas.
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const branchScope = allowed?.length ? { in: allowed } : undefined
 
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()
@@ -65,8 +69,8 @@ export async function GET(req: Request) {
           createdAt: true,
           _count: {
             select: {
-              reservations: { where: { businessId } },
-              salesAsCustomer: { where: { businessId } },
+              reservations: { where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) } },
+              salesAsCustomer: { where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) } },
             },
           },
         },
@@ -85,7 +89,7 @@ export async function GET(req: Request) {
     // materializar una fila por orden (antes leía toda la tabla del tenant).
     const orderGroups = await prisma.repairOrder.groupBy({
       by: ["customerId", "customerPhone", "customerPhoneAlt"],
-      where: { businessId },
+      where: { businessId, ...(branchScope ? { currentBranchId: branchScope } : {}) },
       _count: { _all: true },
     })
 

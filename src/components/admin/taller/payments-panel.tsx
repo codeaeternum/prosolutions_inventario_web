@@ -18,13 +18,14 @@ export type WorkshopPayment = {
   id: string; amount: number; method: string; purpose: string | null
   status?: string | null; notes: string | null; createdAt: string; createdBy: { name: string }
 }
-export type PaymentForm = { amount: string; method: string; note: string }
+export type PaymentForm = { amount: string; method: string; note: string; reference: string }
 // Entrega estructurada: nombre de quien recoge (obligatorio, puede no ser el
 // titular), identificación opcional y firma de quien recibe (PNG data URL).
-export type SettleForm = { method: string; deliveredTo: string; deliveredToDoc: string; deliverySignatureData: string | null }
+// `reference`: folio SPEI/autorización — obligatorio al cobrar por TRANSFER.
+export type SettleForm = { method: string; deliveredTo: string; deliveredToDoc: string; deliverySignatureData: string | null; reference: string }
 export type RefundForm = { amount: string; method: string; note: string }
-export const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "" }
-export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null }
+export const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "", reference: "" }
+export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "" }
 export const emptyRefundForm: RefundForm = { amount: "", method: "", note: "" }
 
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
@@ -106,9 +107,12 @@ export function PaymentsPanel(props: {
       <fieldset disabled={props.disabled} className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs">Monto MXN<Input type="number" min={0} step="0.01" required value={props.paymentForm.amount} onChange={e => props.onPaymentChange({ ...props.paymentForm, amount: e.target.value })} placeholder="0.00" className="mt-1" /></label>
         <label className="text-xs">Método de cobro<select required value={props.paymentForm.method} onChange={e => props.onPaymentChange({ ...props.paymentForm, method: e.target.value })} className={`${inputClass} mt-1`}><option value="">Selecciona</option><option value="CASH">Efectivo</option><option value="CARD">Tarjeta</option><option value="TRANSFER">Transferencia</option></select></label>
+        {props.paymentForm.method === "TRANSFER" && (
+          <label className="text-xs sm:col-span-2">Referencia de la transferencia<Input required maxLength={200} value={props.paymentForm.reference} onChange={e => props.onPaymentChange({ ...props.paymentForm, reference: e.target.value })} placeholder="Clave SPEI o folio de autorización" className="mt-1" /></label>
+        )}
         <label className="text-xs sm:col-span-2">Nota (opcional)<Input maxLength={500} value={props.paymentForm.note} onChange={e => props.onPaymentChange({ ...props.paymentForm, note: e.target.value })} placeholder="Referencia o comprobante…" className="mt-1" /></label>
       </fieldset>
-      <Button size="sm" disabled={props.disabled || !props.paymentForm.amount || !props.paymentForm.method}>{props.disabled ? "Guardando…" : "Registrar abono"}</Button>
+      <Button size="sm" disabled={props.disabled || !props.paymentForm.amount || !props.paymentForm.method || (props.paymentForm.method === "TRANSFER" && !props.paymentForm.reference.trim())}>{props.disabled ? "Guardando…" : "Registrar abono"}</Button>
     </form>}
     {overpaid > 0 && props.canRefund && <form onSubmit={props.onRefundSubmit} className="space-y-3 rounded-lg border border-dashed border-rose-300/70 p-3 dark:border-rose-800">
       <p className="flex items-center gap-1.5 text-xs font-medium"><Undo2 size={14} />Devolver excedente al cliente</p>
@@ -124,12 +128,15 @@ export function PaymentsPanel(props: {
         <p className="text-sm font-medium">{balance > 0 ? <>Saldo a cobrar: <strong>{money(balance)}</strong></> : "Sin saldo pendiente — la entrega queda liquidada."}{overpaid > 0 && <> El cliente tiene <strong>{money(overpaid)}</strong> a favor — regístralo como reembolso.</>}</p>
         <fieldset disabled={props.disabled} className="space-y-3">
           {balance > 0 && <label className="block text-xs">Método de cobro del saldo<select required value={props.settleForm.method} onChange={e => props.onSettleChange({ ...props.settleForm, method: e.target.value })} className={`${inputClass} mt-1`}><option value="">Selecciona el método</option><option value="CASH">Efectivo</option><option value="CARD">Tarjeta</option><option value="TRANSFER">Transferencia</option></select></label>}
+          {balance > 0 && props.settleForm.method === "TRANSFER" && (
+            <label className="block text-xs">Referencia de la transferencia<Input required maxLength={200} value={props.settleForm.reference} onChange={e => props.onSettleChange({ ...props.settleForm, reference: e.target.value })} placeholder="Clave SPEI o folio de autorización" className="mt-1" /></label>
+          )}
           <label className="block text-xs">Nombre de quien recoge<Input required minLength={2} maxLength={80} value={props.settleForm.deliveredTo} onChange={e => props.onSettleChange({ ...props.settleForm, deliveredTo: e.target.value })} placeholder="Puede ser un familiar o empleado del titular" className="mt-1" /></label>
           <label className="block text-xs">Identificación (INE/licencia, opcional)<Input maxLength={40} value={props.settleForm.deliveredToDoc} onChange={e => props.onSettleChange({ ...props.settleForm, deliveredToDoc: e.target.value })} placeholder="Número o folio de la identificación" className="mt-1" /></label>
           <SignaturePad label="Firma de quien recibe" hint="La firma queda como constancia de entrega del equipo." onChange={dataUrl => props.onSettleChange({ ...props.settleForm, deliverySignatureData: dataUrl })} />
         </fieldset>
         <div className="flex gap-2">
-          <Button size="sm" disabled={props.disabled || props.settleForm.deliveredTo.trim().length < 2 || (balance > 0 && !props.settleForm.method)}>{props.disabled ? "Guardando…" : "Confirmar entrega"}</Button>
+          <Button size="sm" disabled={props.disabled || props.settleForm.deliveredTo.trim().length < 2 || (balance > 0 && !props.settleForm.method) || (balance > 0 && props.settleForm.method === "TRANSFER" && !props.settleForm.reference.trim())}>{props.disabled ? "Guardando…" : "Confirmar entrega"}</Button>
           <Button size="sm" variant="outline" type="button" disabled={props.disabled} onClick={() => props.onSettleOpenChange(false)}>Cancelar</Button>
         </div>
       </form>

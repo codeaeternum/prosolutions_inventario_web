@@ -26,8 +26,12 @@ export async function GET(request: NextRequest) {
     // empleado restringido consultaba faltantes y stock de sucursales ajenas.
     const denied = assertBranchAllowed(session, branchId)
     if (denied) return denied
+    // Empleado con sucursales asignadas: la demanda de refacciones se recorta
+    // a órdenes de sus sucursales (sin filtro agregaba la demanda global).
+    const allowed = session.user.role === "ADMIN" ? null : session.user.allowedBranchIds
+    const orderBranchIds = allowed?.length ? (branchId ? [branchId] : allowed) : undefined
     // El folio de cada orden sale con los dígitos del negocio (order_folio_digits).
-    const needs = await listShoppingNeeds(prisma, businessId, branchId, await getOrderFolioDigits(businessId))
+    const needs = await listShoppingNeeds(prisma, businessId, branchId, await getOrderFolioDigits(businessId), orderBranchIds)
     // El costo revela el margen real: solo el ADMIN lo ve (misma regla que
     // productDto); el empleado conserva cantidades y sugeridos para surtir.
     const stripCost = <T extends { costPrice: number | null }>(row: T) => {

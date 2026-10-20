@@ -139,6 +139,13 @@ async function handleUpdate(req: Request, params: Promise<{ id: string }>) {
     const actorId = session.user.id
     const { id } = await params
     const body = await req.json()
+    // La orden que se opera también delimita el acceso: un empleado con
+    // sucursales restringidas no puede TRANSFER/PAYMENT/STATUS/etc. sobre una
+    // orden radicada en otra sucursal — espejo del assert del GET de arriba.
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, select: { currentBranchId: true } })
+    if (!order) return NextResponse.json({ error: "Orden no encontrada" }, { status: 404 })
+    const deniedOrder = assertBranchAllowed(session, order.currentBranchId)
+    if (deniedOrder) return deniedOrder
     // TRANSFER mueve la orden a branchId; PART_REQUEST/PART_ADD descuenta la
     // pieza de sourceBranchId — ambas sucursales deben estar asignadas.
     for (const branchId of [body?.branchId, body?.sourceBranchId]) {

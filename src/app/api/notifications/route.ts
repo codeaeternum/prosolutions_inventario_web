@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { requireAdminOrEmployee, getSession } from "@/lib/api-auth"
+import { assertModuleAllowed, requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 
@@ -15,6 +15,10 @@ export async function GET() {
   if (result.error) return result.error
 
   const session = getSession(result)!
+  // El historial es el mismo feed que /admin/notificaciones: exige el módulo
+  // (sin él, un empleado sin notificaciones leía igual por la API).
+  const denied = assertModuleAllowed(session, "notificaciones")
+  if (denied) return denied
   const businessId = businessIdOf(session)
   const userId = session.user.id
   const visible = session.user.role === "EMPLOYEE" ? { audience: "STAFF" } : {}

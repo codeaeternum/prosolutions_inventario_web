@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
-import { requireAdminOrEmployee } from "@/lib/api-auth"
+import { requireModule } from "@/lib/api-auth"
 import { checkAndRecord } from "@/lib/rate-limit"
 
 // GET /api/settings/geocode?q= — Geocoding server-side contra Nominatim
-// (OpenStreetMap) para ubicar el negocio en el mapa de /mercado. Solo staff:
-// el cliente nunca llama Nominatim directo, así la política de uso de OSM
-// (User-Agent identificable + volumen bajo) se cumple desde el servidor.
+// (OpenStreetMap) para ubicar el negocio en el mapa de /mercado. Solo el
+// módulo configuración (la única pantalla que geocodifica): el cliente nunca
+// llama Nominatim directo, así la política de uso de OSM (User-Agent
+// identificable + volumen bajo) se cumple desde el servidor.
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 const USER_AGENT = "Reficio/1.0 (reficio.app)"
 const TIMEOUT_MS = 8_000
@@ -21,7 +22,7 @@ const NO_STORE = { "Cache-Control": "private, no-store" } as const
 
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdminOrEmployee()
+    const auth = await requireModule("configuracion")
     if (auth.error) return auth.error
     const businessId = auth.session.user.businessId
 
