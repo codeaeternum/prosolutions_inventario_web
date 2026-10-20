@@ -26,6 +26,7 @@ import {
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
 import { OnboardingCard } from "@/components/admin/onboarding-card"
+import { BackupStatusBanner } from "@/components/admin/backup-status-banner"
 import { getPendientes, type PendienteSeverity } from "@/lib/pendientes"
 
 async function getDashboardStats() {
@@ -249,6 +250,9 @@ export default async function AdminDashboard() {
           Resumen general y métricas de operación
         </p>
       </div>
+
+      {/* Estado del respaldo nocturno: solo ADMIN; silencioso si la API falla */}
+      {session?.user?.role === "ADMIN" && <BackupStatusBanner />}
 
       {/* Checklist de onboarding: solo ADMIN; se auto-oculta con dismissed */}
       {session?.user?.role === "ADMIN" && <OnboardingCard />}
