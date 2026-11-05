@@ -88,18 +88,20 @@ git fetch --all
 git checkout ${CURRENT_BRANCH}
 git pull --ff-only origin ${CURRENT_BRANCH}
 
+if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5.'; exit 1 }
+
 Write-Host '>>> Construyendo imágenes (incluida la de migraciones)...'
-docker compose -f docker-compose.yml --profile migrate build
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host '>>> Asegurando DB y aplicando migraciones ANTES de promover la app...'
-docker compose -f docker-compose.yml up -d db
+docker compose -f docker-compose.yml --env-file .env.docker up -d db
 if (\$LASTEXITCODE -ne 0) { exit 1 }
-docker compose -f docker-compose.yml --profile migrate run --rm migrate
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate
 if (\$LASTEXITCODE -ne 0) { Write-Host 'Migracion fallo; app no promovida.'; exit 1 }
 
 Write-Host '>>> Promoviendo app y bot...'
-docker compose -f docker-compose.yml up -d --force-recreate app bot
+docker compose -f docker-compose.yml --env-file .env.docker up -d --force-recreate app bot
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host '>>> Esperando readiness (health 503 hasta esquema listo)...'
