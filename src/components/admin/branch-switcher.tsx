@@ -52,6 +52,19 @@ export function BranchSwitcher({ homeBranchId }: BranchSwitcherProps) {
         const valid = candidate && list.some((b) => b.id === candidate) ? candidate : null
         setSelected(valid)
 
+        // La preferencia guardada puede ser de OTRO negocio (modo soporte) o
+        // de una sucursal inactiva: se purga para que los lectores directos
+        // (taller, ajustes de stock, surtido) no envíen un branchId ajeno y
+        // vean pantallas vacías.
+        if (candidate && !valid) {
+          try {
+            localStorage.removeItem(BRANCH_KEY)
+            document.cookie = `${BRANCH_KEY}=;path=/;max-age=0`
+          } catch {
+            // Sin storage disponible.
+          }
+        }
+
         // Si se resolvió desde localStorage/homeBranch sin cookie, la persistimos
         // para que el servidor también la vea en las siguientes peticiones.
         if (valid && readCookie(BRANCH_KEY) !== valid) {

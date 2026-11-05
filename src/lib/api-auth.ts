@@ -63,11 +63,24 @@ export async function assertOperationBranch(
   requestedBranchId: string | null | undefined,
   opts: { homeFallback?: boolean } = {},
 ): Promise<NextResponse | null> {
+  const businessId = session.user.businessId
+  let branchId = requestedBranchId ?? null
+  // La sucursal pedida debe existir ACTIVA en ESTE negocio para cualquier rol
+  // (ADMIN incluido): un id de otro tenant — preferencia `reficio-branch`
+  // vieja del modo soporte o un request forjado — se rechaza aquí, antes del
+  // dominio. Sin este check el ADMIN saltaba toda validación de pertenencia.
+  if (branchId) {
+    const owned = await prisma.branch.findFirst({
+      where: { id: branchId, businessId, isActive: true },
+      select: { id: true },
+    })
+    if (!owned) {
+      return NextResponse.json({ error: "La sucursal indicada no está disponible." }, { status: 400 })
+    }
+  }
   if (session.user.role === "ADMIN") return null
   const allowed = session.user.allowedBranchIds
   if (!allowed || allowed.length === 0) return null
-  const businessId = session.user.businessId
-  let branchId = requestedBranchId ?? null
   if (!branchId && opts.homeFallback !== false) {
     const me = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
     branchId = me?.homeBranchId ?? null

@@ -21,7 +21,8 @@ vi.mock("@/lib/prisma", () => ({
   },
 }))
 
-import { requireModule, assertModuleAllowed, assertBranchAllowed } from "@/lib/api-auth"
+import { requireModule, assertModuleAllowed, assertBranchAllowed, assertOperationBranch } from "@/lib/api-auth"
+import { prisma } from "@/lib/prisma"
 import type { ApiSession } from "@/lib/api-auth"
 
 const user = (role: string, allowedModules?: string[], allowedBranchIds?: string[]) => ({
@@ -116,5 +117,50 @@ describe("assertBranchAllowed", () => {
     expect(denied).toBeTruthy()
     expect(denied!.status).toBe(403)
     expect(await denied!.json()).toEqual({ error: "No tienes acceso a esta sucursal." })
+  })
+})
+
+// La sucursal pedida debe existir ACTIVA en el negocio de la sesión para
+// cualquier rol: un branchId de otro tenant (preferencia reficio-branch
+// vieja del modo soporte o request forjado) se rechaza en el guard, no
+// más abajo en el dominio.
+describe("assertOperationBranch", () => {
+  const branchFindFirst = vi.mocked(prisma.branch.findFirst)
+
+  it("rechaza 400 un branchId ajeno/inactivo aunque el actor sea ADMIN", async () => {
+    branchFindFirst.mockResolvedValueOnce(null)
+    const denied = await assertOperationBranch(sessionOf("ADMIN"), "rama-de-otro-negocio")
+    expect(denied?.status).toBe(400)
+    expect(await denied!.json()).toEqual({ error: "La sucursal indicada no está disponible." })
+    expect(branchFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "rama-de-otro-negocio", businessId: "biz-test", isActive: true } }),
+    )
+  })
+
+  it("rechaza 400 un branchId ajeno también para empleado sin restricción", async () => {
+    branchFindFirst.mockResolvedValueOnce(null)
+    const denied = await assertOperationBranch(sessionOf("EMPLOYEE", undefined, []), "rama-ajena")
+    expect(denied?.status).toBe(400)
+  })
+
+  it("ADMIN con sucursal propia activa pasa sin más validación", async () => {
+    branchFindFirst.mockResolvedValueOnce({ id: "b-1" } as never)
+    expect(await assertOperationBranch(sessionOf("ADMIN"), "b-1")).toBeNull()
+  })
+
+  it("empleado restringido: sucursal propia y asignada pasa; ajena a su lista da 403", async () => {
+    branchFindFirst.mockResolvedValueOnce({ id: "b-1" } as never)
+    expect(await assertOperationBranch(sessionOf("EMPLOYEE", undefined, ["b-1", "b-2"]), "b-1")).toBeNull()
+
+    branchFindFirst.mockResolvedValueOnce({ id: "b-3" } as never)
+    const denied = await assertOperationBranch(sessionOf("EMPLOYEE", undefined, ["b-1"]), "b-3")
+    expect(denied?.status).toBe(403)
+    expect(await denied!.json()).toEqual({ error: "No tienes acceso a esta sucursal." })
+  })
+
+  it("sin branchId pedido resuelve la sucursal base del empleado restringido", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ homeBranchId: "b-2" } as never)
+    expect(await assertOperationBranch(sessionOf("EMPLOYEE", undefined, ["b-2"]), null)).toBeNull()
+    expect(branchFindFirst).not.toHaveBeenCalled()
   })
 })

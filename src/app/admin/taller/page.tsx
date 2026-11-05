@@ -422,6 +422,19 @@ export default function WorkshopPage() {
   const load = useCallback(async () => {
     const version = ++requestVersion.current
     setLoading(true); setError("")
+    // El branchId guardado puede ser de OTRO negocio (preferencia reficio-branch
+    // vieja del modo soporte) o de una sucursal inactiva: si no existe entre las
+    // del negocio se descarta — dejarlo filtraría el tablero a cero resultados.
+    const dropStaleBranch = (list: Branch[]) => {
+      if (!branch || !list.length || list.some((b) => b.id === branch)) return
+      setBranch("")
+      try {
+        localStorage.removeItem("reficio-branch")
+        document.cookie = "reficio-branch=;path=/;max-age=0"
+      } catch {
+        // Sin storage disponible.
+      }
+    }
     try {
       if (view === "board" && !stage && !search) {
         const params = new URLSearchParams({ board: "1", branchId: branch })
@@ -436,7 +449,9 @@ export default function WorkshopPage() {
           boardTotals[status] = data.board?.[status]?.total ?? 0
         })
         setBoard({ orders: boardOrders, totals: boardTotals })
-        setBranches(data.branches ?? [])
+        const branchList: Branch[] = data.branches ?? []
+        setBranches(branchList)
+        dropStaleBranch(branchList)
         setStaff(data.staff ?? [])
         setTotal(boardStages.reduce((sum, status) => sum + boardTotals[status], 0))
       } else {
@@ -446,7 +461,7 @@ export default function WorkshopPage() {
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
         if (version !== requestVersion.current) return
-        setOrders(data.orders); setBranches(data.branches); setStaff(data.staff); setPages(data.totalPages); setTotal(data.total)
+        setOrders(data.orders); setBranches(data.branches); dropStaleBranch(data.branches ?? []); setStaff(data.staff); setPages(data.totalPages); setTotal(data.total)
       }
     } catch (cause) { if (version === requestVersion.current) setError(cause instanceof Error ? cause.message : "Error de conexión") }
     finally { if (version === requestVersion.current) setLoading(false) }
