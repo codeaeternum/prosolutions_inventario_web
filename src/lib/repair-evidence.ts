@@ -37,7 +37,7 @@ export async function writeRepairPhoto(orderId: string, photoId: string, bytes: 
 /** Resuelve filePath confinado dentro del dir base (realpath, sin traversal). */
 async function confinedEvidencePath(filePath: string): Promise<string> {
   if (!SAFE_PATH.test(filePath)) throw new Error("Ruta de evidencia inválida")
-  const root = await fs.realpath(evidenceBaseDirectory())
+  const root = await fs.realpath(/*turbopackIgnore: true*/ evidenceBaseDirectory())
   const file = await fs.realpath(path.join(root, filePath))
   if (!file.startsWith(root + path.sep)) throw new Error("Ruta de evidencia inválida")
   return file

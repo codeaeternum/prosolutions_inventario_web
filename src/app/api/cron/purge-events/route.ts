@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { purgeOldEvents } from "@/lib/event-retention"
 
 /**
  * GET /api/cron/purge-events — Retención de bitácoras: borra eventos viejos.
@@ -10,16 +11,9 @@ import { prisma } from "@/lib/prisma"
  *
  * Auth: igual que /api/cron/purge-pending-signups — CRON_SECRET por
  * `Authorization: Bearer` o `x-cron-secret` con timingSafeEqual.
+ * El bot corre la misma purga a diario vía purgeOldEvents() — este
+ * endpoint es el disparo manual/externo.
  */
-
-const DAY_MS = 24 * 60 * 60 * 1000
-
-function retentionDays(raw: string | undefined, fallback: number, min: number, max: number) {
-  const n = Number(raw)
-  if (!raw || !Number.isFinite(n)) return fallback
-  return Math.min(max, Math.max(min, Math.trunc(n)))
-}
-
 export async function GET(req: Request) {
   const expected = process.env.CRON_SECRET
   if (!expected) {
@@ -35,28 +29,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 })
   }
 
-  const auditDays = retentionDays(process.env.AUDIT_RETENTION_DAYS, 90, 30, 365)
-  const platformDays = retentionDays(process.env.PLATFORM_RETENTION_DAYS, 365, 90, 730)
-  const now = Date.now()
-  const auditCutoff = new Date(now - auditDays * DAY_MS)
-  const platformCutoff = new Date(now - platformDays * DAY_MS)
-
   try {
-    const [audit, platform] = await Promise.all([
-      prisma.auditEvent.deleteMany({ where: { createdAt: { lt: auditCutoff } } }),
-      prisma.platformEvent.deleteMany({ where: { createdAt: { lt: platformCutoff } } }),
-    ])
+    const result = await purgeOldEvents(prisma)
     console.log(
-      `[cron:purge-events] auditDeleted=${audit.count} platformDeleted=${platform.count} ` +
-        `auditCutoff=${auditCutoff.toISOString()} platformCutoff=${platformCutoff.toISOString()}`
+      `[cron:purge-events] auditDeleted=${result.auditDeleted} platformDeleted=${result.platformDeleted} ` +
+        `auditCutoff=${result.auditCutoff.toISOString()} platformCutoff=${result.platformCutoff.toISOString()}`
     )
-    return NextResponse.json({
-      ok: true,
-      auditDeleted: audit.count,
-      platformDeleted: platform.count,
-      auditCutoff,
-      platformCutoff,
-    })
+    return NextResponse.json({ ok: true, ...result })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[cron:purge-events] error: ${message}`)

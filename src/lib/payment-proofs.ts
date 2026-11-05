@@ -29,10 +29,13 @@ export async function writePaymentProof(bytes: Uint8Array, uploaderId: string): 
   const directory = paymentProofDirectory()
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })
   const name = `${randomUUID()}.${format.extension}`
-  await fs.writeFile(path.join(directory, name), bytes, { flag: "wx", mode: 0o600 })
+  // turbopackIgnore: el dir base depende de PAYMENT_PROOFS_DIR (runtime env) y
+  // el nombre de un randomUUID — path no analizable; el tracing ya se acota con
+  // outputFileTracingExcludes en next.config.ts.
+  await fs.writeFile(path.join(/*turbopackIgnore: true*/ directory, name), bytes, { flag: "wx", mode: 0o600 })
   try {
     await fs.writeFile(path.join(directory, `${name}.json`), JSON.stringify({ uploaderId, createdAt: new Date().toISOString() }), { flag: "wx", mode: 0o600 })
-  } catch (error) { await fs.unlink(path.join(directory, name)); throw error }
+  } catch (error) { await fs.unlink(path.join(/*turbopackIgnore: true*/ directory, name)); throw error }
   return paymentProofUrl(name)
 }
 async function confinedPath(directory: string, name: string): Promise<string> {

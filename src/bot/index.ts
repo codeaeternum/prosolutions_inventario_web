@@ -1,5 +1,6 @@
 import { expireReservations } from "../lib/domain/reservations"
 import { purgePendingSignups } from "../lib/pending-signup-purge"
+import { purgeOldEvents } from "../lib/event-retention"
 import 'dotenv/config'
 import { Telegraf } from 'telegraf'
 import * as cron from 'node-cron'
@@ -186,6 +187,21 @@ cron.schedule('17 4 * * *', async () => {
         }
     } catch (e) {
         console.error('Error in pending signup purge job:', e)
+    }
+})
+
+// Retención diaria (04:25) de bitácoras: AuditEvent >AUDIT_RETENTION_DAYS
+// (default 90d) y PlatformEvent >PLATFORM_RETENTION_DAYS (default 365d).
+// El endpoint /api/cron/purge-events usa la misma lógica para disparo manual.
+cron.schedule('25 4 * * *', async () => {
+    if (!_prisma) return
+    try {
+        const result = await purgeOldEvents(_prisma)
+        if (result.auditDeleted > 0 || result.platformDeleted > 0) {
+            console.log('Event retention purge:', result)
+        }
+    } catch (e) {
+        console.error('Error in event retention job:', e)
     }
 })
 
