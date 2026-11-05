@@ -45,9 +45,11 @@ else
     git commit -m "deploy: update from Mac $(date '+%Y-%m-%d %H:%M')" || true
 fi
 
-# Push a main
-echo -e "${YELLOW}Pushing to main...${NC}"
-git push origin main
+# Push de la rama activa (y sincronización con main)
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo -e "${YELLOW}Pushing branch ${CURRENT_BRANCH} (and main)...${NC}"
+git push origin "HEAD:${CURRENT_BRANCH}"
+git push origin "HEAD:main" || true
 
 # --- PASO 2: Deploy en N5 ---
 echo -e "${BLUE}>>> [N5 PRO] Conectando vía Tailscale a ${REMOTE_HOST}...${NC}"
@@ -82,10 +84,10 @@ if (-not (Test-Path 'prosolutions_inventario_web')) {
 
 cd prosolutions_inventario_web
 
-Write-Host '>>> Actualizando desde GitHub (main)...'
+Write-Host '>>> Actualizando desde GitHub (${CURRENT_BRANCH})...'
 git fetch --all
-git reset --hard origin/main
-git clean -fd
+git checkout ${CURRENT_BRANCH}
+git pull --ff-only origin ${CURRENT_BRANCH}
 
 Write-Host '>>> Construyendo imágenes (incluida la de migraciones)...'
 docker compose -f docker-compose.yml --profile migrate build
