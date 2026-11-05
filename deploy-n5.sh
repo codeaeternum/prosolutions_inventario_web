@@ -93,7 +93,7 @@ if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5.'; 
 # SHA del commit desplegado: queda horneado en la imagen (APP_BUILD_SHA) y la
 # consola /platform lo muestra — así se ve a simple vista qué build corre.
 $env:GIT_SHA = (git rev-parse --short HEAD)
-Write-Host ">>> Construyendo imágenes (incluida la de migraciones) [$env:GIT_SHA]..."
+Write-Host ('>>> Construyendo imagenes (incluida la de migraciones) [build ' + $env:GIT_SHA + ']...')
 docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
