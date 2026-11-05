@@ -7,8 +7,8 @@ set -e  # Exit on any error
 # ============================================
 
 # --- CONFIGURACIÓN DEL N5 PRO ---
-REMOTE_USER="dgali"
-# IP de Tailscale del N5 (fija)
+# Alias configurado en ~/.ssh/config con llave prosolutions_galindoasc_ed25519
+SSH_TARGET="${SSH_TARGET:-galindoasc-desktop}"
 REMOTE_HOST="100.106.83.19"
 # Carpeta en el N5 (usar '/' para SSH aunque sea Windows)
 REMOTE_DIR="/d/Projectos/prosolutions_inventario_web"
@@ -45,29 +45,28 @@ else
     git commit -m "deploy: update from Mac $(date '+%Y-%m-%d %H:%M')" || true
 fi
 
-# Push de la rama activa (y sincronización con main)
+# Push de la rama activa
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-echo -e "${YELLOW}Pushing branch ${CURRENT_BRANCH} (and main)...${NC}"
+echo -e "${YELLOW}Pushing branch ${CURRENT_BRANCH}...${NC}"
 git push origin "HEAD:${CURRENT_BRANCH}"
-git push origin "HEAD:main" || true
 
 # --- PASO 2: Deploy en N5 ---
-echo -e "${BLUE}>>> [N5 PRO] Conectando vía Tailscale a ${REMOTE_HOST}...${NC}"
+echo -e "${BLUE}>>> [N5 PRO] Conectando vía Tailscale a ${SSH_TARGET} (${REMOTE_HOST})...${NC}"
 
 # Verificar conexión primero
-if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$REMOTE_USER@$REMOTE_HOST" "echo 'Conexión OK'"; then
+if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SSH_TARGET" "echo 'Conexión OK'"; then
     echo -e "${RED}Error: No se puede conectar al N5 Pro${NC}"
     echo -e "${YELLOW}Verifica que:${NC}"
     echo "  1. Tailscale está activo en el N5"
     echo "  2. SSH está habilitado en Windows"
-    echo "  3. La IP ${REMOTE_HOST} es correcta"
+    echo "  3. El alias ${SSH_TARGET} (${REMOTE_HOST}) es accesible"
     exit 1
 fi
 
 echo -e "${GREEN}>>> Actualizando código y reconstruyendo contenedores...${NC}"
 
 # Comando remoto - PowerShell (Windows SSH en N5 Pro)
-ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_HOST" "
+ssh -o StrictHostKeyChecking=no "$SSH_TARGET" "
 cd D:\\Projectos
 
 if (Test-Path 'prosolutions_inventario_web') {
