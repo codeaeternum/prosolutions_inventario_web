@@ -1,6 +1,13 @@
 "use client"
 
 import { useEffect, useRef, useState, useCallback } from "react"
+import { useSession } from "next-auth/react"
+import {
+  LEGACY_NOTIFICATION_KEYS,
+  notificationClearedKey,
+  notificationScope,
+  notificationStorageKey,
+} from "@/lib/notification-cache"
 
 export type NotificationType =
   | "new_reservation"
@@ -34,10 +41,9 @@ interface UseNotificationsOptions {
   persist?: boolean
 }
 
-const STORAGE_KEY = "prosolutions_notifications"
-// Marca de "limpiar historial": oculta del merge lo que el servidor devuelva
-// con timestamp <= a ella (el clear no borra filas en BD, solo la vista).
-const CLEARED_KEY = "prosolutions_notifications_cleared_at"
+// El caché local se segmenta por `businessId:userId` (notificationScope):
+// sin eso, una clave global hacía reaparecer el feed de un negocio dentro
+// del panel de otro al cambiar de cuenta o entrar en modo soporte.
 const NOTIFICATION_SOUND = "/sounds/notification.mp3"
 const MAX_NOTIFICATIONS = 50
 
@@ -67,31 +73,34 @@ export function notificationHref(notification: Notification): string | null {
   }
 }
 
-function loadPersistedNotifications(): Notification[] {
+function loadPersistedNotifications(scope: string): Notification[] {
   if (typeof window === "undefined") return []
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = localStorage.getItem(notificationStorageKey(scope))
     return stored ? JSON.parse(stored) : []
   } catch {
     return []
   }
 }
 
-function persistNotifications(notifications: Notification[]) {
+function persistNotifications(scope: string, notifications: Notification[]) {
   if (typeof window === "undefined") return
   try {
     // Keep only last 50 notifications
     const toStore = notifications.slice(0, MAX_NOTIFICATIONS)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
+    localStorage.setItem(notificationStorageKey(scope), JSON.stringify(toStore))
   } catch {
     // Ignore storage errors
   }
 }
 
-function loadClearedAt(): string | null {
+// Marca de "limpiar historial": oculta del merge lo que el servidor devuelva
+// con timestamp <= a ella (el clear no borra filas en BD, solo la vista).
+// También va por scope: limpiar en un negocio no debe ocultar el feed de otro.
+function loadClearedAt(scope: string): string | null {
   if (typeof window === "undefined") return null
   try {
-    return localStorage.getItem(CLEARED_KEY)
+    return localStorage.getItem(notificationClearedKey(scope))
   } catch {
     return null
   }
@@ -142,6 +151,10 @@ function playNotificationSound() {
 
 export function useNotifications(options: UseNotificationsOptions = {}) {
   const { onNotification, enabled = true, playSound = true, persist = true } = options
+  const { data: session } = useSession()
+  // Alcance tenant+usuario de la sesión: null mientras no se resuelve — sin
+  // scope no se lee ni escribe localStorage (evita un bucket compartido).
+  const scope = notificationScope(session?.user?.businessId, session?.user?.id)
   // Initialize empty to avoid hydration mismatch
   const [notifications, setNotifications] = useState<Notification[]>([])
   // rawConnected refleja el socket; isConnected expuesto también respeta `enabled`.
@@ -158,14 +171,18 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   const listRef = useRef<Notification[]>([])
   // Ids/firmas ya vistos: dedupe entre historial del servidor y eventos SSE.
   const seenRef = useRef<Set<string>>(new Set())
+  // Scope vigente del estado en memoria; al cambiar de cuenta/negocio la
+  // lista anterior se descarta antes de hidratar (ver effect de hidratación).
+  const scopeRef = useRef<string | null>(null)
 
   // Único punto de mutación de la lista: mantiene state + ref + caché local.
   const applyList = useCallback((updater: (prev: Notification[]) => Notification[]) => {
     const next = updater(listRef.current)
     listRef.current = next
     setNotifications(next)
-    if (persistRef.current) {
-      persistNotifications(next)
+    const scope = scopeRef.current
+    if (persistRef.current && scope) {
+      persistNotifications(scope, next)
     }
     return next
   }, [])
@@ -175,10 +192,27 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // microtask: setState síncrono en el effect dispararía renders en cascada
   // (react-hooks/set-state-in-effect) y en useState() rompería la hidratación.
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !scope) return
     let cancelled = false
     queueMicrotask(async () => {
-      const local = persist ? loadPersistedNotifications() : []
+      if (cancelled) return
+      // Cambio de cuenta o de negocio (modo soporte, cambio rápido POS): la
+      // lista en memoria es del contexto anterior — se descarta antes de
+      // hidratar para no mezclar notificaciones de otro tenant en el merge.
+      if (scopeRef.current !== scope) {
+        scopeRef.current = scope
+        seenRef.current = new Set()
+        applyList(() => [])
+        setUnreadCount(0)
+        // Purga única de las claves globales heredadas: contenían el feed de
+        // cualquier negocio visitado (la fuga cross-tenant ya corregida).
+        try {
+          for (const key of LEGACY_NOTIFICATION_KEYS) localStorage.removeItem(key)
+        } catch {
+          // Ignore storage errors
+        }
+      }
+      const local = persist ? loadPersistedNotifications(scope) : []
       let remote: Notification[] | null = null
       let serverUnread: number | null = null
       try {
@@ -192,7 +226,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
         // Sin red o endpoint caído: queda solo el caché local.
       }
       if (cancelled) return
-      const clearedAt = loadClearedAt()
+      const clearedAt = loadClearedAt(scope)
       const merged = applyList((prev) => {
         const seen = new Set<string>()
         const out: Notification[] = []
@@ -212,7 +246,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       setUnreadCount(Math.max(serverUnread ?? 0, merged.filter((n) => !n.read).length))
     })
     return () => { cancelled = true }
-  }, [enabled, persist, generation, applyList])
+  }, [enabled, persist, generation, applyList, scope])
 
   // Actualizar ref cuando cambia onNotification
   useEffect(() => {
@@ -223,7 +257,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // setState solo ocurren en callbacks de eventos (onopen/onmessage/onerror),
   // que es el patrón correcto para suscribirse a un sistema externo.
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !scope) return
 
     const maxReconnectAttempts = 5
     let attempts = 0
@@ -317,7 +351,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       eventSource?.close()
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
-  }, [enabled, generation, applyList])
+  }, [enabled, generation, applyList, scope])
 
   // Marca leída en servidor y corrige el contador con el unreadCount real
   // (puede haber no leídas fuera de la ventana de 50 que el hook no lista).
@@ -345,10 +379,11 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   const clearNotifications = useCallback(() => {
     applyList(() => [])
     setUnreadCount(0)
-    if (persistRef.current) {
+    const scope = scopeRef.current
+    if (persistRef.current && scope) {
       try {
-        localStorage.removeItem(STORAGE_KEY)
-        localStorage.setItem(CLEARED_KEY, new Date().toISOString())
+        localStorage.removeItem(notificationStorageKey(scope))
+        localStorage.setItem(notificationClearedKey(scope), new Date().toISOString())
       } catch {
         // Ignore storage errors
       }

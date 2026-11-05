@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react"
+import { useSession } from "next-auth/react"
 
 export interface CartItem {
     productId: string
@@ -23,36 +24,70 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined)
 
+// El carrito se guarda por NEGOCIO (`cart:{businessId}`) y como "public" para
+// visitantes anónimos (catálogo del negocio default). Antes una sola clave
+// global "cart" mezclaba productos entre negocios al cambiar de cuenta o
+// entrar en modo soporte — la misma fuga que el caché de notificaciones.
+const CART_STORAGE_PREFIX = "cart:"
+const PUBLIC_CART_SCOPE = "public"
+const LEGACY_CART_KEY = "cart"
+
+function cartKey(scope: string) {
+    return `${CART_STORAGE_PREFIX}${scope}`
+}
+
+function readCart(key: string): CartItem[] | null {
+    try {
+        const raw = localStorage.getItem(key)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) && parsed.every((i) => i?.productId && typeof i.quantity === "number")
+            ? parsed
+            : null
+    } catch {
+        return null
+    }
+}
+
 export function CartProvider({ children }: { children: ReactNode }) {
+    const { data: session, status } = useSession()
     const [items, setItems] = useState<CartItem[]>([])
     const [isInitialized, setIsInitialized] = useState(false)
 
-    // Load from localStorage on mount. El setState síncrono aquí es intencional:
-    // hidrata el carrito guardado solo en cliente (un useState lazy correría en
-    // SSR/prerender, donde localStorage no existe, y causaría hydration mismatch).
+    const scope = status === "authenticated" && session?.user?.businessId ? session.user.businessId : PUBLIC_CART_SCOPE
+    const isCustomer = session?.user?.role === "CUSTOMER"
+
+    // Load from localStorage al resolver la sesión. El setState síncrono aquí
+    // es intencional: hidrata el carrito guardado solo en cliente (un useState
+    // lazy correría en SSR/prerender, donde localStorage no existe, y causaría
+    // hydration mismatch).
     /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
-        const savedCart = localStorage.getItem("cart")
-        if (savedCart) {
-            try {
-                const parsed = JSON.parse(savedCart)
-                if (Array.isArray(parsed) && parsed.every((i) => i?.productId && typeof i.quantity === "number")) {
-                    setItems(parsed)
-                }
-            } catch {
-                localStorage.removeItem("cart")
-            }
-        }
+        if (status === "loading") return
+        const key = cartKey(scope)
+        const isPublic = scope === PUBLIC_CART_SCOPE
+        // Migraciones de una sola vez:
+        // - legacy "cart" → scope vigente (anónimos y clientes lo conservan).
+        // - "cart:public" (carrito anónimo) → lo adopta un CUSTOMER al entrar:
+        //   continúa su compra tras el login. El staff no hereda carritos ajenos.
+        const adoptSources = isPublic || isCustomer
+        const stored =
+            readCart(key) ??
+            (adoptSources && !isPublic ? readCart(cartKey(PUBLIC_CART_SCOPE)) : null) ??
+            (adoptSources ? readCart(LEGACY_CART_KEY) : null)
+        setItems(stored ?? [])
+        if (adoptSources) localStorage.removeItem(LEGACY_CART_KEY)
+        if (adoptSources && !isPublic) localStorage.removeItem(cartKey(PUBLIC_CART_SCOPE))
         setIsInitialized(true)
-    }, [])
+    }, [scope, status, isCustomer])
     /* eslint-enable react-hooks/set-state-in-effect */
 
-    // Save to localStorage on change
+    // Save to localStorage on change (clave segmentada por negocio)
     useEffect(() => {
         if (isInitialized) {
-            localStorage.setItem("cart", JSON.stringify(items))
+            localStorage.setItem(cartKey(scope), JSON.stringify(items))
         }
-    }, [items, isInitialized])
+    }, [items, isInitialized, scope])
 
     const addItem = (newItem: CartItem) => {
         setItems((currentItems) => {
