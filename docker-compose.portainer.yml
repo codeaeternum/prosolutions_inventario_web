@@ -55,7 +55,6 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs

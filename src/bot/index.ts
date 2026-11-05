@@ -38,35 +38,89 @@ console.log('🤖 ProSolutions Bot Starting...')
 // Account data and every bot command are restricted to direct private conversations.
 bot.use(async (ctx, next) => {
     if (ctx.chat?.type !== 'private' || !ctx.from) return
-    const user = await prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
+    if (!_prisma) return next()
+    const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
     if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
     return next()
 })
 
-// Test notification command
-bot.command('testnt', async (ctx) => {
-    const telegramId = ctx.from.id.toString()
-    const user = await prisma.user.findUnique({ where: { telegramId } })
-    if (!user || user.role !== 'ADMIN' || user.status !== 'APPROVED') return
-    await ctx.reply('🔔 Enviando notificación de prueba a todos los admins...')
-    await notifyAdmins(bot, user.businessId, `🧪 <b>Prueba de Notificación</b>\n\nSi ves esto, el sistema funciona para ti.\nID: ${ctx.from.id}`)
-    await ctx.reply('✅ Proceso terminado. Revisa si llegaron los mensajes.')
-})
+// Test notification command (development only)
+if (process.env.NODE_ENV === 'development') {
+    bot.command('testnt', async (ctx) => {
+        if (!_prisma) return
+        const telegramId = ctx.from.id.toString()
+        const user = await _prisma.user.findUnique({ where: { telegramId } })
+        if (!user || user.role !== 'ADMIN' || user.status !== 'APPROVED') return
+        await ctx.reply('🔔 Enviando notificación de prueba a todos los admins...')
+        await notifyAdmins(bot, user.businessId, `🧪 <b>Prueba de Notificación</b>\n\nSi ves esto, el sistema funciona para ti.\nID: ${ctx.from.id}`)
+        await ctx.reply('✅ Proceso terminado. Revisa si llegaron los mensajes.')
+    })
+}
 
 // Middleware
 bot.use(loggerMiddleware)
 
-// Session stores
+// Session stores with TTL (30m) and max-size bound per store to prevent leaks
+const SESSION_TTL_MS = 30 * 60 * 1000
+const MAX_SESSIONS_PER_STORE = 500
+const sessionTimestamps = new Map<Record<string, unknown>, Map<string, number>>()
+
+function createBoundedStore<T extends Record<string, unknown>>(): T {
+    const target = {} as T
+    const touched = new Map<string, number>()
+    sessionTimestamps.set(target, touched)
+    const proxy = new Proxy(target, {
+        get(obj, prop, receiver) {
+            if (typeof prop === 'string' && Object.prototype.hasOwnProperty.call(obj, prop)) {
+                touched.set(prop, Date.now())
+            }
+            return Reflect.get(obj, prop, receiver)
+        },
+        set(obj, prop, value, receiver) {
+            if (typeof prop === 'string') {
+                touched.delete(prop)
+                touched.set(prop, Date.now())
+                while (touched.size > MAX_SESSIONS_PER_STORE) {
+                    const oldest = touched.keys().next().value
+                    if (oldest === undefined) break
+                    touched.delete(oldest)
+                    delete obj[oldest]
+                }
+            }
+            return Reflect.set(obj, prop, value, receiver)
+        },
+        deleteProperty(obj, prop) {
+            if (typeof prop === 'string') touched.delete(prop)
+            return Reflect.deleteProperty(obj, prop)
+        },
+    })
+    sessionTimestamps.set(proxy, touched)
+    return proxy
+}
+
+function pruneStaleSessions(stores: SessionStores, now = Date.now()) {
+    for (const store of Object.values(stores) as Record<string, unknown>[]) {
+        const touched = sessionTimestamps.get(store)
+        for (const key of Object.keys(store)) {
+            const last = touched?.get(key)
+            if (last === undefined || now - last > SESSION_TTL_MS) {
+                delete store[key]
+                touched?.delete(key)
+            }
+        }
+    }
+}
+
 const sessions: SessionStores = {
-    registration: {},
-    adminProduct: {},
-    reservation: {},
-    deleteProduct: {},
-    sale: {},
-    cart: {},
-    qr: {},
-    settings: {},
-    orden: {},
+    registration: createBoundedStore(),
+    adminProduct: createBoundedStore(),
+    reservation: createBoundedStore(),
+    deleteProduct: createBoundedStore(),
+    sale: createBoundedStore(),
+    cart: createBoundedStore(),
+    qr: createBoundedStore(),
+    settings: createBoundedStore(),
+    orden: createBoundedStore(),
 }
 
 // Shared context for all modules
@@ -106,12 +160,14 @@ registerAlerts(ctx)
 
 // ======= CRON JOBS =======
 
-// Cancel expired reservations every 30 min
+// Cancel expired reservations and prune abandoned sessions every 30 min
 cron.schedule('*/30 * * * *', async () => {
+    pruneStaleSessions(sessions)
+    if (!_prisma) return
     if (isDev) console.log('⏳ Checking for expired reservations...')
 
     try {
-        const result = await expireReservations(prisma)
+        const result = await expireReservations(_prisma)
         if (isDev) console.log('Reservation expiration', result)
     } catch (e) {
         console.error('Error in expiration job:', e)
@@ -122,8 +178,9 @@ cron.schedule('*/30 * * * *', async () => {
 // verificaron su contacto. El endpoint /api/cron/purge-pending-signups usa
 // la misma lógica para forzarla a mano o desde schedulers externos.
 cron.schedule('17 4 * * *', async () => {
+    if (!_prisma) return
     try {
-        const result = await purgePendingSignups(prisma)
+        const result = await purgePendingSignups(_prisma)
         if (result.purged > 0 || result.skipped.length > 0) {
             console.log('Pending signup purge:', result)
         }

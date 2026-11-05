@@ -101,6 +101,7 @@ async function getDashboardStats() {
     }
 
     return {
+      dbError: false,
       totalProducts,
       totalUsers,
       pendingUsers,
@@ -118,6 +119,7 @@ async function getDashboardStats() {
   } catch (error) {
     console.error("Error fetching dashboard stats:", error)
     return {
+      dbError: true,
       totalProducts: 0,
       totalUsers: 0,
       pendingUsers: 0,
@@ -167,9 +169,9 @@ async function getLowStockProducts() {
 }
 
 const SEVERITY_STYLE: Record<PendienteSeverity, { dot: string; label: string }> = {
-  alta: { dot: "bg-rose-500", label: "Urgente" },
-  media: { dot: "bg-amber-500", label: "Atención" },
-  baja: { dot: "bg-sky-500", label: "Cuando puedas" },
+  alta: { dot: "bg-destructive", label: "Urgente" },
+  media: { dot: "bg-warning", label: "Atención" },
+  baja: { dot: "bg-primary", label: "Cuando puedas" },
 }
 
 export default async function AdminDashboard() {
@@ -186,7 +188,7 @@ export default async function AdminDashboard() {
       icon: TrendingUp,
       href: "/admin/ventas",
       alert: stats.todaysSales > 0 ? "¡Buen trabajo!" : null,
-      alertClass: "text-green-500",
+      alertClass: "text-success",
     },
     {
       title: "Caja Actual",
@@ -195,7 +197,7 @@ export default async function AdminDashboard() {
       icon: Wallet,
       href: "/admin/caja",
       alert: stats.isRegisterOpen ? "Turno activo" : "Requiere apertura",
-      alertClass: stats.isRegisterOpen ? "text-green-500" : "text-amber-500",
+      alertClass: stats.isRegisterOpen ? "text-success" : "text-warning-strong",
     },
     {
       title: "Reservas",
@@ -204,7 +206,7 @@ export default async function AdminDashboard() {
       icon: Clock,
       href: "/admin/clientes?tab=pedidos",
       alert: stats.pendingReservations > 0 ? "Requiere atención" : null,
-      alertClass: "text-amber-500",
+      alertClass: "text-warning-strong",
     },
     {
       title: "Órdenes en taller",
@@ -213,7 +215,7 @@ export default async function AdminDashboard() {
       icon: Wrench,
       href: "/admin/taller",
       alert: stats.overdueRepairs > 0 ? `${stats.overdueRepairs} atrasadas` : stats.readyRepairs > 0 ? "Entregas pendientes" : null,
-      alertClass: stats.overdueRepairs > 0 ? "text-rose-500" : "text-green-500",
+      alertClass: stats.overdueRepairs > 0 ? "text-destructive" : "text-success",
     },
     {
       title: "Usuarios Nuevos",
@@ -222,7 +224,7 @@ export default async function AdminDashboard() {
       icon: UserPlus,
       href: "/admin/equipo?tab=usuarios",
       alert: stats.pendingUsers > 0 ? `${stats.pendingUsers} esperando` : null,
-      alertClass: "text-amber-500",
+      alertClass: "text-warning-strong",
     },
     {
       title: "Stock Bajo",
@@ -250,6 +252,21 @@ export default async function AdminDashboard() {
           Resumen general y métricas de operación
         </p>
       </div>
+
+      {stats.dbError && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <div>
+            <p className="font-semibold">No se pudieron cargar algunas métricas en tiempo real</p>
+            <p className="text-xs opacity-90">
+              Verifica la conexión con la base de datos y recarga la página. Los valores en cero mostrados abajo son temporales.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Estado del respaldo nocturno: solo ADMIN; silencioso si la API falla */}
       {session?.user?.role === "ADMIN" && <BackupStatusBanner />}

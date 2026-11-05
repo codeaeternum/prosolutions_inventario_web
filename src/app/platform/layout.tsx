@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation"
-import Link from "next/link"
 import { auth } from "@/lib/auth"
-import { Button } from "@/components/ui/button"
-import { Shield, Store } from "lucide-react"
+import { PlatformHeaderActions } from "@/components/platform/platform-header-actions"
+import { Shield } from "lucide-react"
 
 /**
  * Consola de plataforma (Reficio): solo superadmins. El middleware ya filtra
@@ -37,15 +36,7 @@ export default async function PlatformLayout({
               </span>
             </div>
           </div>
-          {canAccessAdmin && (
-            <Button asChild variant="outline" size="sm" className="gap-2 shrink-0">
-              <Link href="/admin">
-                <Store className="h-4 w-4" />
-                <span className="hidden sm:inline">Panel del negocio</span>
-                <span className="sm:hidden">Mi panel</span>
-              </Link>
-            </Button>
-          )}
+          <PlatformHeaderActions canAccessAdmin={canAccessAdmin} />
         </div>
       </header>
       <main id="main-content" className="mx-auto max-w-7xl p-4 lg:p-8" role="main">

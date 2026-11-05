@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
@@ -41,16 +42,48 @@ import {
     readPreferredBranchId,
     StockQtyEditor,
 } from "@/components/admin/productos/stock-editor"
-import { ProductoFormDialog, type MarketVisibility } from "@/components/admin/inventario/producto-form"
-import { TraspasoBuscarDialog } from "@/components/admin/inventario/traspaso-buscar-dialog"
-import { MermaDialog } from "@/components/admin/inventario/merma-dialog"
-import { EtiquetasDialog } from "@/components/admin/inventario/etiquetas-dialog"
-import { ConteoPanel } from "@/components/admin/inventario/conteo-panel"
-import { FotosImportDialog } from "@/components/admin/inventario/fotos-import-dialog"
-import { CapturaRapidaPanel } from "@/components/admin/productos/captura-rapida"
-import { CategoriesPanel } from "@/app/admin/categorias/panel"
-import { BrandsPanel } from "@/app/admin/marcas/panel"
-import { ModelsPanel } from "@/app/admin/modelos/panel"
+import type { MarketVisibility } from "@/components/admin/inventario/producto-form"
+
+const ProductoFormDialog = dynamic(
+    () => import("@/components/admin/inventario/producto-form").then((m) => m.ProductoFormDialog),
+    { ssr: false }
+)
+const TraspasoBuscarDialog = dynamic(
+    () => import("@/components/admin/inventario/traspaso-buscar-dialog").then((m) => m.TraspasoBuscarDialog),
+    { ssr: false }
+)
+const MermaDialog = dynamic(
+    () => import("@/components/admin/inventario/merma-dialog").then((m) => m.MermaDialog),
+    { ssr: false }
+)
+const EtiquetasDialog = dynamic(
+    () => import("@/components/admin/inventario/etiquetas-dialog").then((m) => m.EtiquetasDialog),
+    { ssr: false }
+)
+const ConteoPanel = dynamic(
+    () => import("@/components/admin/inventario/conteo-panel").then((m) => m.ConteoPanel),
+    { ssr: false }
+)
+const FotosImportDialog = dynamic(
+    () => import("@/components/admin/inventario/fotos-import-dialog").then((m) => m.FotosImportDialog),
+    { ssr: false }
+)
+const CapturaRapidaPanel = dynamic(
+    () => import("@/components/admin/productos/captura-rapida").then((m) => m.CapturaRapidaPanel),
+    { ssr: false }
+)
+const CategoriesPanel = dynamic(
+    () => import("@/app/admin/categorias/panel").then((m) => m.CategoriesPanel),
+    { ssr: false }
+)
+const BrandsPanel = dynamic(
+    () => import("@/app/admin/marcas/panel").then((m) => m.BrandsPanel),
+    { ssr: false }
+)
+const ModelsPanel = dynamic(
+    () => import("@/app/admin/modelos/panel").then((m) => m.ModelsPanel),
+    { ssr: false }
+)
 
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { guardedClose } from "@/lib/dialog-guard"
@@ -1293,300 +1326,320 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
             />
 
             {/* Diálogo: alta / edición de producto */}
-            <ProductoFormDialog
-                open={nuevoOpen || editarId !== null}
-                onOpenChange={(o) => { if (!o) setParams({ nuevo: null, editar: null, codigo: null }) }}
-                productId={editarId}
-                initialBarcode={initialBarcode}
-                isAdmin={isAdmin}
-                branches={branches}
-                lockedBranchId={lockedBranchId}
-                onSaved={() => void fetchProducts()}
-            />
+            {(nuevoOpen || editarId !== null) && (
+                <ProductoFormDialog
+                    open={nuevoOpen || editarId !== null}
+                    onOpenChange={(o) => { if (!o) setParams({ nuevo: null, editar: null, codigo: null }) }}
+                    productId={editarId}
+                    initialBarcode={initialBarcode}
+                    isAdmin={isAdmin}
+                    branches={branches}
+                    lockedBranchId={lockedBranchId}
+                    onSaved={() => void fetchProducts()}
+                />
+            )}
 
             {/* Diálogo: traspaso entre sucursales con búsqueda de producto */}
-            <TraspasoBuscarDialog
-                branches={branches}
-                lockedFromId={lockedBranchId}
-                open={traspasoOpen}
-                onOpenChange={setTraspasoOpen}
-                onSaved={() => void fetchProducts()}
-            />
+            {traspasoOpen && (
+                <TraspasoBuscarDialog
+                    branches={branches}
+                    lockedFromId={lockedBranchId}
+                    open={traspasoOpen}
+                    onOpenChange={setTraspasoOpen}
+                    onSaved={() => void fetchProducts()}
+                />
+            )}
 
             {/* Diálogo: merma */}
-            <MermaDialog
-                branches={branches}
-                lockedBranchId={lockedBranchId}
-                open={mermaOpen}
-                onOpenChange={setMermaOpen}
-                onSaved={() => void fetchProducts()}
-            />
+            {mermaOpen && (
+                <MermaDialog
+                    branches={branches}
+                    lockedBranchId={lockedBranchId}
+                    open={mermaOpen}
+                    onOpenChange={setMermaOpen}
+                    onSaved={() => void fetchProducts()}
+                />
+            )}
 
             {/* Diálogo: captura rápida en serie (alta masiva) */}
-            <Dialog open={capturaOpen} onOpenChange={(o) => { if (!o) { setParams({ captura: null }); void fetchProducts() } }}>
-                <DialogContent className="sm:max-w-5xl">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <Zap className="h-5 w-5 text-muted-foreground" />
-                            Captura rápida
-                        </DialogTitle>
-                        <DialogDescription>
-                            Alta en serie de productos: escanea el código y captura.
-                        </DialogDescription>
-                    </DialogHeader>
-                    {capturaOpen && <CapturaRapidaPanel />}
-                </DialogContent>
-            </Dialog>
+            {capturaOpen && (
+                <Dialog open={capturaOpen} onOpenChange={(o) => { if (!o) { setParams({ captura: null }); void fetchProducts() } }}>
+                    <DialogContent className="sm:max-w-5xl">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2">
+                                <Zap className="h-5 w-5 text-muted-foreground" />
+                                Captura rápida
+                            </DialogTitle>
+                            <DialogDescription>
+                                Alta en serie de productos: escanea el código y captura.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <CapturaRapidaPanel />
+                    </DialogContent>
+                </Dialog>
+            )}
 
             {/* Diálogo: clasificación del catálogo (categorías/marcas/modelos) */}
-            <Dialog open={herramienta === "clasificacion"} onOpenChange={(o) => { if (!o) setParams({ herramienta: null, sub: null }) }}>
-                <DialogContent className="sm:max-w-4xl">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <FolderTree className="h-5 w-5 text-muted-foreground" />
-                            Clasificación
-                        </DialogTitle>
-                        <DialogDescription>
-                            Organiza tus productos por tipo de refacción, marca y modelo de equipo.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <Tabs
-                        value={subClasificacion}
-                        onValueChange={(v) => setParams({ herramienta: "clasificacion", sub: v })}
-                        className="w-full"
-                    >
-                        <TabsList className="mb-4">
-                            <TabsTrigger value="categorias">Categorías</TabsTrigger>
-                            <TabsTrigger value="marcas">Marcas</TabsTrigger>
-                            <TabsTrigger value="modelos">Modelos</TabsTrigger>
-                        </TabsList>
-                        <TabsContent value="categorias" className="mt-0">
-                            <CategoriesPanel embedded />
-                        </TabsContent>
-                        <TabsContent value="marcas" className="mt-0">
-                            <BrandsPanel embedded />
-                        </TabsContent>
-                        <TabsContent value="modelos" className="mt-0">
-                            <ModelsPanel embedded />
-                        </TabsContent>
-                    </Tabs>
-                </DialogContent>
-            </Dialog>
+            {herramienta === "clasificacion" && (
+                <Dialog open={herramienta === "clasificacion"} onOpenChange={(o) => { if (!o) setParams({ herramienta: null, sub: null }) }}>
+                    <DialogContent className="sm:max-w-4xl">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2">
+                                <FolderTree className="h-5 w-5 text-muted-foreground" />
+                                Clasificación
+                            </DialogTitle>
+                            <DialogDescription>
+                                Organiza tus productos por tipo de refacción, marca y modelo de equipo.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <Tabs
+                            value={subClasificacion}
+                            onValueChange={(v) => setParams({ herramienta: "clasificacion", sub: v })}
+                            className="w-full"
+                        >
+                            <TabsList className="mb-4">
+                                <TabsTrigger value="categorias">Categorías</TabsTrigger>
+                                <TabsTrigger value="marcas">Marcas</TabsTrigger>
+                                <TabsTrigger value="modelos">Modelos</TabsTrigger>
+                            </TabsList>
+                            <TabsContent value="categorias" className="mt-0">
+                                <CategoriesPanel embedded />
+                            </TabsContent>
+                            <TabsContent value="marcas" className="mt-0">
+                                <BrandsPanel embedded />
+                            </TabsContent>
+                            <TabsContent value="modelos" className="mt-0">
+                                <ModelsPanel embedded />
+                            </TabsContent>
+                        </Tabs>
+                    </DialogContent>
+                </Dialog>
+            )}
 
             {/* Diálogo único de etiquetas imprimibles (QR + nombre + precio):
                 desde la fila del producto, la selección múltiple del stock, o
                 la herramienta "Etiquetas" (abre vacío para buscar y agregar). */}
-            <EtiquetasDialog
-                open={etiquetasOpen || herramienta === "etiquetas"}
-                onOpenChange={(o) => {
-                    if (!o) {
-                        setEtiquetasOpen(false)
-                        if (herramienta === "etiquetas") setParams({ herramienta: null })
-                    }
-                }}
-                products={etiquetasOpen ? etiquetasProducts : []}
-            />
+            {(etiquetasOpen || herramienta === "etiquetas") && (
+                <EtiquetasDialog
+                    open={etiquetasOpen || herramienta === "etiquetas"}
+                    onOpenChange={(o) => {
+                        if (!o) {
+                            setEtiquetasOpen(false)
+                            if (herramienta === "etiquetas") setParams({ herramienta: null })
+                        }
+                    }}
+                    products={etiquetasOpen ? etiquetasProducts : []}
+                />
+            )}
 
             {/* Diálogo: ajuste masivo de precios sobre la selección */}
-            <Dialog open={bulkOpen} onOpenChange={guardedClose(setBulkOpen, bulkBusy)}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Ajustar precios · {labelSelected.size} producto(s)</DialogTitle>
-                        <DialogDescription>
-                            Asigna valores directos o aplica un porcentaje. Los campos vacíos no se tocan;
-                            cada cambio queda en el historial de precios del producto.
-                        </DialogDescription>
-                    </DialogHeader>
+            {bulkOpen && (
+                <Dialog open={bulkOpen} onOpenChange={guardedClose(setBulkOpen, bulkBusy)}>
+                    <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                            <DialogTitle>Ajustar precios · {labelSelected.size} producto(s)</DialogTitle>
+                            <DialogDescription>
+                                Asigna valores directos o aplica un porcentaje. Los campos vacíos no se tocan;
+                                cada cambio queda en el historial de precios del producto.
+                            </DialogDescription>
+                        </DialogHeader>
 
-                    <div className="flex gap-2">
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant={bulkMode === "set" ? "default" : "outline"}
-                            onClick={() => setBulkMode("set")}
-                        >
-                            Asignar precios
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant={bulkMode === "percent" ? "default" : "outline"}
-                            onClick={() => setBulkMode("percent")}
-                        >
-                            Porcentaje %
-                        </Button>
-                    </div>
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={bulkMode === "set" ? "default" : "outline"}
+                                onClick={() => setBulkMode("set")}
+                            >
+                                Asignar precios
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={bulkMode === "percent" ? "default" : "outline"}
+                                onClick={() => setBulkMode("percent")}
+                            >
+                                Porcentaje %
+                            </Button>
+                        </div>
 
-                    {bulkMode === "set" ? (
-                        <div className="grid grid-cols-2 gap-3">
-                            {(([
-                                ["Público", bulkRetail, setBulkRetail],
-                                ["Taller", bulkWholesale, setBulkWholesale],
-                                ["Taller propio", bulkInternal, setBulkInternal],
-                                // El costo solo lo puede fijar el dueño (el API lo
-                                // ignora para empleados, igual que en la edición).
-                                ...(isAdmin ? [["Costo", bulkCost, setBulkCost]] : []),
-                            ]) as [string, string, (v: string) => void][]).map(([label, value, setter]) => (
-                                <div key={label} className="space-y-1">
-                                    <Label className="text-xs">{label}</Label>
-                                    <div className="relative">
-                                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-                                        <Input
-                                            type="number" min="0" step="0.01" inputMode="decimal"
-                                            value={value} onChange={(e) => setter(e.target.value)}
-                                            className="pl-6" placeholder="sin cambio"
-                                        />
+                        {bulkMode === "set" ? (
+                            <div className="grid grid-cols-2 gap-3">
+                                {(([
+                                    ["Público", bulkRetail, setBulkRetail],
+                                    ["Taller", bulkWholesale, setBulkWholesale],
+                                    ["Taller propio", bulkInternal, setBulkInternal],
+                                    // El costo solo lo puede fijar el dueño (el API lo
+                                    // ignora para empleados, igual que en la edición).
+                                    ...(isAdmin ? [["Costo", bulkCost, setBulkCost]] : []),
+                                ]) as [string, string, (v: string) => void][]).map(([label, value, setter]) => (
+                                    <div key={label} className="space-y-1">
+                                        <Label className="text-xs">{label}</Label>
+                                        <div className="relative">
+                                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+                                            <Input
+                                                type="number" min="0" step="0.01" inputMode="decimal"
+                                                value={value} onChange={(e) => setter(e.target.value)}
+                                                className="pl-6" placeholder="sin cambio"
+                                            />
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="space-y-1">
-                            <Label className="text-xs">Porcentaje sobre precio público y taller</Label>
-                            <div className="relative">
-                                <Input
-                                    type="number" step="0.1" inputMode="decimal"
-                                    value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)}
-                                    className="pr-8" placeholder="ej. 10 o -15"
-                                />
-                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+                                ))}
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                                Un producto a $100 con +10% queda a $110. No aplica a costo ni taller propio.
-                            </p>
-                        </div>
-                    )}
+                        ) : (
+                            <div className="space-y-1">
+                                <Label className="text-xs">Porcentaje sobre precio público y taller</Label>
+                                <div className="relative">
+                                    <Input
+                                        type="number" step="0.1" inputMode="decimal"
+                                        value={bulkPercent} onChange={(e) => setBulkPercent(e.target.value)}
+                                        className="pr-8" placeholder="ej. 10 o -15"
+                                    />
+                                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Un producto a $100 con +10% queda a $110. No aplica a costo ni taller propio.
+                                </p>
+                            </div>
+                        )}
 
-                    <DialogFooter>
-                        <Button variant="ghost" onClick={() => setBulkOpen(false)} disabled={bulkBusy}>
-                            Cancelar
-                        </Button>
-                        <Button onClick={() => void applyBulkPrices()} disabled={bulkBusy}>
-                            {bulkBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Aplicar a {labelSelected.size}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                        <DialogFooter>
+                            <Button variant="ghost" onClick={() => setBulkOpen(false)} disabled={bulkBusy}>
+                                Cancelar
+                            </Button>
+                            <Button onClick={() => void applyBulkPrices()} disabled={bulkBusy}>
+                                {bulkBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Aplicar a {labelSelected.size}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
 
             {/* Diálogo: importar desde Excel */}
-            <Dialog open={importOpen} onOpenChange={setImportOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Importar productos desde Excel</DialogTitle>
-                        <DialogDescription>
-                            Sube un archivo .xlsx con los productos. Los productos con ID existente se actualizarán.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".xlsx,.xls"
-                            onChange={handleImport}
-                            className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
-                            disabled={importing}
-                        />
-                        {importing && (
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Importando...
-                            </div>
-                        )}
-                        {importResult && (
-                            <div className={`p-3 rounded-lg border ${importResult.errors.length > 0 ? "bg-destructive/5 border-destructive/20 text-destructive" : "bg-primary/5 border-primary/20 text-foreground"}`} role="status">
-                                <p className="font-medium">{importResult.message}</p>
-                                {importResult.errors.length > 0 && (
-                                    <ul className="mt-2 text-sm text-muted-foreground list-disc list-inside">
-                                        {importResult.errors.map((err, i) => (
-                                            <li key={i}>{err}</li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setImportOpen(false)}>Cerrar</Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Diálogo: iniciar conteo físico */}
-            <Dialog open={countDialogOpen} onOpenChange={setCountDialogOpen}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <ClipboardList className="h-5 w-5 text-muted-foreground" />
-                            Nuevo conteo físico
-                        </DialogTitle>
-                        <DialogDescription>
-                            Captura lo que hay realmente en la sucursal; al aplicar, el sistema
-                            ajusta las diferencias y las deja auditadas en el historial.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 pt-2">
-                        <div className="space-y-1.5">
-                            <Label htmlFor="conteo-branch">Sucursal a contar</Label>
-                            {lockedBranchId ? (
-                                <p className="h-10 flex items-center rounded-md border bg-muted/40 px-3 text-sm">
-                                    {branches.find((b) => b.id === countBranchId)?.name ?? actionBranchName ?? "Mi sucursal"}
-                                </p>
-                            ) : (
-                                <Select value={countBranchId} onValueChange={setCountBranchId}>
-                                    <SelectTrigger id="conteo-branch">
-                                        <SelectValue placeholder="Sucursal" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {branches.map((b) => (
-                                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+            {importOpen && (
+                <Dialog open={importOpen} onOpenChange={setImportOpen}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Importar productos desde Excel</DialogTitle>
+                            <DialogDescription>
+                                Sube un archivo .xlsx con los productos. Los productos con ID existente se actualizarán.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".xlsx,.xls"
+                                onChange={handleImport}
+                                className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
+                                disabled={importing}
+                            />
+                            {importing && (
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Importando...
+                                </div>
+                            )}
+                            {importResult && (
+                                <div className={`p-3 rounded-lg border ${importResult.errors.length > 0 ? "bg-destructive/5 border-destructive/20 text-destructive" : "bg-primary/5 border-primary/20 text-foreground"}`} role="status">
+                                    <p className="font-medium">{importResult.message}</p>
+                                    {importResult.errors.length > 0 && (
+                                        <ul className="mt-2 text-sm text-muted-foreground list-disc list-inside">
+                                            {importResult.errors.map((err, i) => (
+                                                <li key={i}>{err}</li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
                             )}
                         </div>
-                        <div className="space-y-1.5">
-                            <Label htmlFor="conteo-notes">Notas (opcional)</Label>
-                            <Input
-                                id="conteo-notes"
-                                placeholder="Ej: conteo de fin de mes, auditoría sorpresa…"
-                                value={countNotes}
-                                onChange={(e) => setCountNotes(e.target.value)}
-                                maxLength={1000}
-                            />
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setImportOpen(false)}>Cerrar</Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            {/* Diálogo: iniciar conteo físico */}
+            {countDialogOpen && (
+                <Dialog open={countDialogOpen} onOpenChange={setCountDialogOpen}>
+                    <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2">
+                                <ClipboardList className="h-5 w-5 text-muted-foreground" />
+                                Nuevo conteo físico
+                            </DialogTitle>
+                            <DialogDescription>
+                                Captura lo que hay realmente en la sucursal; al aplicar, el sistema
+                                ajusta las diferencias y las deja auditadas en el historial.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 pt-2">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="conteo-branch">Sucursal a contar</Label>
+                                {lockedBranchId ? (
+                                    <p className="h-10 flex items-center rounded-md border bg-muted/40 px-3 text-sm">
+                                        {branches.find((b) => b.id === countBranchId)?.name ?? actionBranchName ?? "Mi sucursal"}
+                                    </p>
+                                ) : (
+                                    <Select value={countBranchId} onValueChange={setCountBranchId}>
+                                        <SelectTrigger id="conteo-branch">
+                                            <SelectValue placeholder="Sucursal" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {branches.map((b) => (
+                                                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                )}
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="conteo-notes">Notas (opcional)</Label>
+                                <Input
+                                    id="conteo-notes"
+                                    placeholder="Ej: conteo de fin de mes, auditoría sorpresa…"
+                                    value={countNotes}
+                                    onChange={(e) => setCountNotes(e.target.value)}
+                                    maxLength={1000}
+                                />
+                            </div>
+                            <div className="flex items-start gap-2">
+                                <Checkbox
+                                    id="conteo-blind"
+                                    checked={countBlind}
+                                    onCheckedChange={(v) => setCountBlind(v === true)}
+                                />
+                                <Label htmlFor="conteo-blind" className="text-sm font-normal leading-tight cursor-pointer">
+                                    Conteo ciego — el contador no ve el stock esperado
+                                </Label>
+                            </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                            <Checkbox
-                                id="conteo-blind"
-                                checked={countBlind}
-                                onCheckedChange={(v) => setCountBlind(v === true)}
-                            />
-                            <Label htmlFor="conteo-blind" className="text-sm font-normal leading-tight cursor-pointer">
-                                Conteo ciego — el contador no ve el stock esperado
-                            </Label>
-                        </div>
-                    </div>
-                    <DialogFooter className="gap-2">
-                        <Button variant="outline" onClick={() => setCountDialogOpen(false)} disabled={creatingCount}>
-                            Cancelar
-                        </Button>
-                        <Button onClick={() => void createCount()} disabled={creatingCount || !countBranchId}>
-                            {creatingCount
-                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                : <ClipboardList className="mr-2 h-4 w-4" />}
-                            Abrir conteo
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                        <DialogFooter className="gap-2">
+                            <Button variant="outline" onClick={() => setCountDialogOpen(false)} disabled={creatingCount}>
+                                Cancelar
+                            </Button>
+                            <Button onClick={() => void createCount()} disabled={creatingCount || !countBranchId}>
+                                {creatingCount
+                                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    : <ClipboardList className="mr-2 h-4 w-4" />}
+                                Abrir conteo
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
 
             {/* Diálogo: importar fotos por nombre de archivo */}
-            <FotosImportDialog
-                open={fotosOpen}
-                onOpenChange={setFotosOpen}
-                products={products}
-                onDone={() => void fetchProducts()}
-            />
+            {fotosOpen && (
+                <FotosImportDialog
+                    open={fotosOpen}
+                    onOpenChange={setFotosOpen}
+                    products={products}
+                    onDone={() => void fetchProducts()}
+                />
+            )}
         </div>
     )
 }

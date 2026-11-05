@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSetting } from "@/lib/settings"
+import prisma from "@/lib/prisma"
 
 export async function GET() {
   const result = await requireAdminOrEmployee()
@@ -11,15 +12,19 @@ export async function GET() {
   }
 
   try {
-    const setting = await getBusinessSetting(businessIdOf(session), "ticket_business_name")
+    const businessId = businessIdOf(session)
+    const [setting, business] = await Promise.all([
+      getBusinessSetting(businessId, "ticket_business_name"),
+      prisma.business.findUnique({ where: { id: businessId }, select: { name: true } }).catch(() => null),
+    ])
     return NextResponse.json(
-      { name: setting || "ProSolutions" },
+      { name: setting || business?.name || "Reficio" },
       { headers: { "Cache-Control": "private, no-store" } }
     )
   } catch (error) {
     console.error("Error fetching business name:", error)
     return NextResponse.json(
-      { name: "ProSolutions" },
+      { name: "Reficio" },
       { headers: { "Cache-Control": "private, no-store" } }
     )
   }

@@ -55,7 +55,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
           number: true,
           businessId: true,
           // Tenant suspendido: el enlace muere igual que un token inválido.
-          business: { select: { isActive: true } },
+          business: { select: { isActive: true, name: true } },
           status: true,
           customerName: true,
           equipmentType: true,
@@ -139,7 +139,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
       {
         quote: {
           folio: repairFolio(order.number, parseFolioDigits(folioDigitsRaw)),
-          businessName: businessName || "PROSOLUTIONS",
+          businessName: businessName || order.business?.name || "Reficio",
           issuedAt,
           customerName: order.customerName,
           equipment: {

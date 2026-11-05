@@ -4,6 +4,7 @@ import { ArrowLeft, Printer } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { serviceLinesMatchLabor, type QuoteServiceLine } from "@/lib/quote-services"
+import { parseReportedIssue } from "@/lib/workshop-labels"
 
 export interface QuoteTicketData {
   folio: string
@@ -38,34 +39,6 @@ export interface QuoteTicketData {
 const DEFAULT_TERMS =
   "Esta cotización es un estimado basado en el diagnóstico inicial. Si se detectan daños adicionales se le contactará antes de proceder."
 
-// La falla registrada puede arrastrar texto de datos viejos:
-//   "Servicio: Cambio de pantalla — Falla: no enciende"
-//   "Cambio de pantalla · no enciende · Presupuesto estimado: $1,500.00"
-// Se separa el nombre del servicio del detalle y se quita el presupuesto
-// embebido (el importe real va en el desglose, no dentro del texto).
-function parseIssue(raw: string): { service?: string; issue: string } {
-  const withoutBudget = raw
-    .replace(/presupuesto\s+estimado\s*:?\s*\$?\s*[\d.,]+/gi, "")
-    .replace(/\s{2,}/g, " ")
-
-  const legacy = withoutBudget.match(/servicio\s*:\s*(.+?)\s*[—–-]\s*falla\s*:\s*(.+)/i)
-  if (legacy) {
-    return { service: legacy[1].trim() || undefined, issue: legacy[2].trim() }
-  }
-
-  const segments = withoutBudget
-    .split("·")
-    .map(s => s.trim())
-    .filter(Boolean)
-
-  // La recepción actual guarda "Servicio · Detalle": el primer segmento es
-  // el nombre del servicio y el resto es la falla descrita por el cliente.
-  if (segments.length >= 2) {
-    return { service: segments[0], issue: segments.slice(1).join(" · ") }
-  }
-  return { service: undefined, issue: segments[0] ?? raw.trim() }
-}
-
 function Row({ label, value }: { label: string; value?: string }) {
   if (!value) return null
   return (
@@ -77,7 +50,7 @@ function Row({ label, value }: { label: string; value?: string }) {
 }
 
 export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
-  const { service, issue } = parseIssue(data.issue)
+  const { service, issue } = parseReportedIssue(data.issue)
   const partsTotal = data.parts.reduce((sum, part) => sum + part.subtotal, 0)
   // Mano de obra en centavos para compararla con las líneas: serviceAmount
   // llega en pesos (laborCents / 100 al armar data) — el round-trip es exacto.
@@ -123,7 +96,7 @@ export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
 
         {/* Membrete */}
         <div className="text-center border-b-2 border-black pb-4">
-          <h1 className="text-lg font-bold uppercase leading-tight">{data.businessName || "PROSOLUTIONS"}</h1>
+          <h1 className="text-lg font-bold uppercase leading-tight">{data.businessName || "Reficio"}</h1>
           <h2 className="mt-2 text-sm font-bold uppercase tracking-widest">Cotización de reparación</h2>
           <p className="mt-1">
             Folio: <span className="font-bold">{data.folio}</span>

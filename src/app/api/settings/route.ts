@@ -122,7 +122,7 @@ export async function GET() {
         bankTransferInfo: systemSettings.get("bank_transfer_info") || DEFAULTS.bankTransferInfo,
         bankCashInfo: systemSettings.get("bank_cash_info") || DEFAULTS.bankCashInfo,
       } : {}),
-      ticketBusinessName: systemSettings.get("ticket_business_name") || "PROSOLUTIONS",
+      ticketBusinessName: systemSettings.get("ticket_business_name") || "Reficio",
       ticketSubtitle: systemSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional",
       ticketFooter: systemSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",
       // Prefijo del folio de órdenes de taller (OT-000001 → p. ej. PS-000001).

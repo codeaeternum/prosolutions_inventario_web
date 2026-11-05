@@ -6,7 +6,7 @@ export function registerHelp(bot: Telegraf) {
     const telegramId = ctx.from.id.toString()
     const userIsAdmin = await isAdmin(telegramId)
 
-    let msg = `📋 *Ayuda — ProSolutions*
+    let msg = `📋 *Ayuda — Reficio*
 
 🔍 Escribe el nombre de un producto para buscar.
    Ej: Pantalla iPhone 15
@@ -32,7 +32,7 @@ export function registerHelp(bot: Telegraf) {
     const telegramId = ctx.from.id.toString()
     const userIsAdmin = await isAdmin(telegramId)
 
-    let msg = `📋 *Ayuda — ProSolutions*
+    let msg = `📋 *Ayuda — Reficio*
 
 🔍 Escribe el nombre de un producto para buscar.
    Ej: Pantalla iPhone 15

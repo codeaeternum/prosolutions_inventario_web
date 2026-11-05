@@ -574,6 +574,20 @@ describe("ciclo de garantía con vigencia", () => {
     expect(updateData().warrantyCount).toEqual({ increment: 1 })
   })
 
+  it("un EMPLOYEE no puede reabrir una garantía con warrantyUntil vencida (409), pero un ADMIN sí puede", async () => {
+    const expiredDate = new Date(Date.now() - 2 * DAY_MS)
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyUntil: expiredDate, warrantyCount: 1 }))
+    tx.user.findUnique.mockResolvedValue({ ...admin, id: "emp-1", role: "EMPLOYEE" })
+
+    await expect(updateRepair(db, "emp-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Reingreso vencido" })))
+      .rejects.toMatchObject({ status: 409, message: "La garantía ya venció; solicita autorización de un administrador para reabrir la orden." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+
+    tx.user.findUnique.mockResolvedValue(admin)
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Cortesía autorizada por admin" }))
+    expect(updateData().status).toBe("WARRANTY")
+  })
+
   it("SETTLE_DELIVER desde WARRANTY entrega y cierra el ciclo limpiando warrantyUntil", async () => {
     // La orden reingresó por garantía; al entregarla de nuevo la vigencia se
     // limpia y warrantyCount conserva el historial (no se toca aquí).

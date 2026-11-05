@@ -9,6 +9,7 @@ import { Camera, CameraOff, Loader2 } from "lucide-react"
 interface BarcodeScannerProps {
   onScan: (code: string) => void
   onClose?: () => void
+  open?: boolean
 }
 
 interface CaptureSession {
@@ -32,7 +33,7 @@ function releaseCapture(session: CaptureSession): Promise<void> {
   return session.release
 }
 
-export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
+export function BarcodeScanner({ onScan, onClose, open = true }: BarcodeScannerProps) {
   const scannerId = `barcode-scanner-${useId().replace(/:/g, "")}`
   const [isScanning, setIsScanning] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -73,7 +74,7 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
         {
           fps: 10,
           qrbox: (width, height) => {
-            const size = Math.floor(Math.min(Math.min(width, height) * 0.75, 400))
+            const size = Math.max(50, Math.floor(Math.min(Math.min(width, height) * 0.75, 400)))
             return { width: size, height: size }
           },
           aspectRatio: 1.0,
@@ -110,6 +111,18 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
       if (session) void releaseCapture(session)
     }
   }, [])
+
+  useEffect(() => {
+    if (!open) {
+      void stopScanner()
+      return
+    }
+    const timer = setTimeout(() => {
+      if (mountedRef.current) void startScanner()
+    }, 60)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   return (
     <Card className="w-full max-w-lg mx-auto overflow-hidden">

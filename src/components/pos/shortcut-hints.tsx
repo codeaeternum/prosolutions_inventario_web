@@ -2,6 +2,7 @@ import { Keyboard } from "lucide-react"
 
 const HINTS: [string, string][] = [
     ["F2 / Ctrl+Enter", "Cobrar"],
+    ["F4", "Tickets / Devoluciones"],
     ["Esc", "Cerrar / limpiar búsqueda"],
     ["+ / −", "Cantidad en línea enfocada"],
     ["Supr", "Quitar línea enfocada"],

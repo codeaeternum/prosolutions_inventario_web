@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { createReservations } from "../../lib/domain/reservations"
-import { Markup } from 'telegraf'
+import { Input, Markup } from 'telegraf'
 import type { Context } from 'telegraf'
 import type { InputMediaPhoto } from 'telegraf/types'
 import * as QRCode from 'qrcode'
@@ -10,6 +10,10 @@ import type { BotContext } from '../lib/types'
 import { isAdmin } from '../lib/notify'
 import { requirePrisma } from '../lib/guards'
 import { getBusinessSetting, getDefaultBusinessId } from '../../lib/settings'
+
+function escapeMarkdown(text?: string | null): string {
+    return (text ?? '').replace(/([*_`\[])/g, '\\$1')
+}
 
 export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // Helper: getSetting (duplicated here for independence; in production use a shared module)
@@ -87,7 +91,7 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
             })
             buttons.push([Markup.button.callback('⬅️ Volver a Categorías', 'back_categories')])
 
-            await ctx.editMessageText(`📂 *${category?.name || 'Productos'}*\n\n_${products.length} productos disponibles:_`, {
+            await ctx.editMessageText(`📂 *${escapeMarkdown(category?.name || 'Productos')}*\n\n_${products.length} productos disponibles:_`, {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard(buttons)
             })
@@ -119,10 +123,10 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
                 ? `\n🏷️ *Costo:* $${product.costPrice.toLocaleString()}\n📊 *Ganancia:* $${(product.retailPrice - product.costPrice).toLocaleString()} (${Math.round(((product.retailPrice - product.costPrice) / product.costPrice) * 100)}%)`
                 : ''
 
-            const msg = `📦 *${product.name}*
+            const msg = `📦 *${escapeMarkdown(product.name)}*
 
-${product.description ? `_${product.description}_\n` : ''}
-📂 *Categoría:* ${product.category?.name || 'N/A'}
+${product.description ? `_${escapeMarkdown(product.description)}_\n` : ''}
+📂 *Categoría:* ${escapeMarkdown(product.category?.name || 'N/A')}
 💰 *Precio:* $${product.retailPrice.toLocaleString()}${costInfo}
 ✅ *Disponible:* ${product.stock} unidades
 ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
@@ -201,8 +205,8 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         const product = await prisma.product.findFirst({ where: { id: productId, businessId } })
         if (!product) return
         const qrData = product.barcode || product.id
-        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`
-        await ctx.replyWithPhoto({ url: qrUrl }, { caption: `📱 *${product.name}*\n\nCódigo: \`${qrData}\``, parse_mode: 'Markdown' })
+        const qrBuffer = await QRCode.toBuffer(qrData)
+        await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdown(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
     })
 
     // delprod_ action
@@ -217,7 +221,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         if (!product) return
         const telegramId = ctx.from.id.toString()
         sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: product }
-        await ctx.reply(`🗑️ *¿Eliminar este producto?*\n\n📦 ${product.name}\n⚠️ Ten cuidado, esta acción es irreversible.\n\nResponde SI para confirmar.`, { parse_mode: 'Markdown' })
+        await ctx.reply(`🗑️ *¿Eliminar este producto?*\n\n📦 ${escapeMarkdown(product.name)}\n⚠️ Ten cuidado, esta acción es irreversible.\n\nResponde SI para confirmar.`, { parse_mode: 'Markdown' })
     })
 
     // confirm_delete action
@@ -252,7 +256,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
                 await ctx.answerCbQuery('Producto no encontrado')
                 return ctx.editMessageText('❌ Producto no encontrado en tu negocio.')
             }
-            const productName = product.name
+            const productName = escapeMarkdown(product.name)
             const hasLedger = (product._count.reservations + product._count.movements + product._count.saleItems) > 0
             if (hasLedger) {
                 await prisma.product.updateMany({ where: { id: product.id, businessId: actor.businessId }, data: { isActive: false } })
@@ -289,7 +293,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
         if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
 
-        await ctx.reply(`🛒 *Reservar: ${product.name}*
+        await ctx.reply(`🛒 *Reservar: ${escapeMarkdown(product.name)}*
 
 💰 Precio: $${product.retailPrice}
 ✅ Stock: ${product.stock} uds
@@ -375,7 +379,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
             const methodLabel = method === 'STORE' ? 'Pago en Tienda' : method === 'TRANSFER' ? 'Transferencia' : 'A crédito'
             const userMsg = `✅ *¡Reserva Confirmada!*
 
-📦 *${session.productName}*
+📦 *${escapeMarkdown(session.productName)}*
 📊 Cantidad: ${session.quantity}
 💰 Total: $${totalPrice.toLocaleString()}
 💳 Método: ${methodLabel}
@@ -384,17 +388,17 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
 
 _Muestra este QR al recoger:_`
 
-            await ctx.replyWithPhoto({ source: qrBuffer }, { caption: userMsg, parse_mode: 'Markdown' })
+            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: userMsg, parse_mode: 'Markdown' })
 
-            // Multi-tenant: la reserva se avisa solo a los admins del negocio
-            // del cliente — nunca a administradores de otras empresas.
-            const admins = await prisma.user.findMany({ where: { businessId: user.businessId, role: 'ADMIN', telegramId: { not: null } } })
+            // Multi-tenant: la reserva se avisa solo a los admins aprobados del
+            // negocio del cliente — nunca a administradores de otras empresas.
+            const admins = await prisma.user.findMany({ where: { businessId: user.businessId, role: 'ADMIN', status: 'APPROVED', telegramId: { not: null } } })
             const adminTitle = method === 'TRANSFER' ? '(Con Comprobante)' : method === 'CREDIT' ? '(A Crédito)' : '(Pago en Tienda)'
             const adminFooter = method === 'TRANSFER' ? '⚠️ *Validar Comprobante*' : method === 'CREDIT' ? '💳 Cobro a cuenta de crédito' : 'ℹ️ Pendiente de pago en tienda'
             const adminMsg = `🔔 *Nueva Reserva ${adminTitle}*
 
-👤 ${user.name}
-📦 ${session.productName}
+👤 ${escapeMarkdown(user.name)}
+📦 ${escapeMarkdown(session.productName)}
 📊 ${session.quantity} uds
 💰 $${totalPrice.toLocaleString()}
 
@@ -440,8 +444,8 @@ ${adminFooter}`
             if (products.length === 0) return ctx.reply('📦 No hay ofertas disponibles.')
             let msg = `🔥 *Productos Destacados:*\n\n`
             products.forEach((p, i) => {
-                msg += `${i + 1}. *${p.name}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n`
-                if (p.category) msg += `   📂 ${p.category.name}\n`
+                msg += `${i + 1}. *${escapeMarkdown(p.name)}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n`
+                if (p.category) msg += `   📂 ${escapeMarkdown(p.category.name)}\n`
                 msg += '\n'
             })
             msg += '_Busca por nombre para ver detalles._'
@@ -489,7 +493,7 @@ ${adminFooter}`
                 return [Markup.button.callback(`📦 ${display}`, `prod_${p.id}`)]
             })
             buttons.push([Markup.button.callback('⬅️ Volver a Marcas', 'back_brands')])
-            await ctx.editMessageText(`📱 *${brand.charAt(0).toUpperCase() + brand.slice(1)}*\n\n_${products.length} productos:_`, {
+            await ctx.editMessageText(`📱 *${escapeMarkdown(brand.charAt(0).toUpperCase() + brand.slice(1))}*\n\n_${products.length} productos:_`, {
                 parse_mode: 'Markdown',
                 ...Markup.inlineKeyboard(buttons)
             })

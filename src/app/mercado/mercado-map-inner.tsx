@@ -85,7 +85,7 @@ export default function MercadoMapInner({
   return (
     // relative + z-0 crean stacking context: los panes de Leaflet usan
     // z-index altos que, sin aislar, taparían el header sticky al hacer scroll.
-    <div className={`relative z-0 w-full overflow-hidden rounded-xl border bg-muted ${MAP_HEIGHT}`}>
+    <div className={`relative z-0 w-full overflow-hidden rounded-xl border bg-muted [.dark_&_.leaflet-tile-pane]:brightness-90 [.dark_&_.leaflet-tile-pane]:invert [.dark_&_.leaflet-tile-pane]:contrast-90 [.dark_&_.leaflet-tile-pane]:hue-rotate-180 ${MAP_HEIGHT}`}>
       <MapContainer
         center={points[0]}
         zoom={13}

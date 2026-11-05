@@ -7,7 +7,10 @@
 // resuelve el servidor.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { CalendarClock, ClipboardList, Link2Off, PackagePlus, RefreshCw } from "lucide-react"
+import {
+  CalendarClock, Check, CheckCircle2, ClipboardList, Copy,
+  ExternalLink, Link2Off, MessageCircle, PackagePlus, RefreshCw, Search, X,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -16,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { formatDate, formatDay } from "@/lib/utils"
+import { waLink } from "@/lib/whatsapp"
 
 type PartnerOrder = {
   number: number
@@ -30,6 +34,64 @@ type PartnerOrder = {
   reportedIssue: string
   createdAt: string
   promisedAt: string | null
+}
+
+type LastCapturedOrder = {
+  folio: string
+  customerName: string
+  customerPhone: string
+  equipment: string
+  reportedIssue: string
+}
+
+type StatusFilter = "all" | "active" | "attention" | "closed"
+
+const ATTENTION_STATUSES = new Set(["WAITING_APPROVAL", "READY"])
+const CLOSED_STATUSES = new Set(["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"])
+
+function getOrderStatusGroup(status: string): Exclude<StatusFilter, "all"> {
+  if (ATTENTION_STATUSES.has(status)) return "attention"
+  if (CLOSED_STATUSES.has(status)) return "closed"
+  return "active"
+}
+
+const STATUS_FILTER_OPTIONS: ReadonlyArray<{ id: StatusFilter; label: string }> = [
+  { id: "all", label: "Todos" },
+  { id: "active", label: "En proceso" },
+  { id: "attention", label: "Por autorizar / Listo para entregar" },
+  { id: "closed", label: "Entregados / Cerrados" },
+]
+
+function phoneLast4(phone: string): string {
+  return phone.replace(/\D/g, "").slice(-4)
+}
+
+function buildTrackingPath(folio: string, customerPhone: string): string {
+  const phone4 = phoneLast4(customerPhone)
+  return `/seguimiento?folio=${encodeURIComponent(folio)}&t=${phone4}`
+}
+
+function buildTrackingUrl(folio: string, customerPhone: string): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+  return `${origin}${buildTrackingPath(folio, customerPhone)}`
+}
+
+function buildCapturedWhatsAppHref(captured: LastCapturedOrder): string {
+  const trackingUrl = buildTrackingUrl(captured.folio, captured.customerPhone)
+  const message = [
+    `Hola ${captured.customerName}, recibimos tu equipo (${captured.equipment}) para revisión y reparación.`,
+    `Folio: ${captured.folio}`,
+    `Falla reportada: ${captured.reportedIssue}`,
+    `Consulta el seguimiento en vivo en 1 toque: ${trackingUrl}`,
+  ].join("\n")
+  return waLink(captured.customerPhone, message)
+}
+
+function buildOrderWhatsAppHref(order: PartnerOrder): string {
+  const equipment = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")
+  const trackingUrl = buildTrackingUrl(order.folio, order.customerPhone)
+  const message = `Hola ${order.customerName}, te compartimos el seguimiento de tu equipo ${equipment} (folio ${order.folio} · ${order.statusLabel}). Consulta el avance en 1 toque: ${trackingUrl}`
+  return waLink(order.customerPhone, message)
 }
 
 const EQUIPMENT_TYPES = ["Celular", "Tablet", "Computadora", "Consola", "TV", "Otro"]
@@ -67,6 +129,11 @@ export default function AliadoPage() {
   const [unlinked, setUnlinked] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [lastCaptured, setLastCaptured] = useState<LastCapturedOrder | null>(null)
+  const [copiedLink, setCopiedLink] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const requestVersion = useRef(0)
 
@@ -104,7 +171,28 @@ export default function AliadoPage() {
     return () => clearTimeout(timer)
   }, [load])
 
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
   const update = (changes: Partial<typeof emptyForm>) => setForm(previous => ({ ...previous, ...changes }))
+
+  async function copyTrackingUrl(folio: string, customerPhone: string) {
+    const url = buildTrackingUrl(folio, customerPhone)
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+      }
+      setCopiedLink(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopiedLink(false), 2500)
+      toast.success("Link de seguimiento copiado")
+    } catch {
+      toast.error("No se pudo copiar el enlace")
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -156,7 +244,16 @@ export default function AliadoPage() {
         toast.error(data.error || "No se pudo registrar el equipo.")
         return
       }
+      const capturedFolio = data?.order?.folio ?? String(data?.order?.number ?? "")
       toast.success(`Equipo capturado · folio ${data?.order?.number ?? ""}`)
+      setLastCaptured({
+        folio: capturedFolio,
+        customerName,
+        customerPhone,
+        equipment: [form.equipmentType, brand, model].filter(Boolean).join(" · "),
+        reportedIssue,
+      })
+      setCopiedLink(false)
       setForm(emptyForm)
       operationKey.current = null
       load()
@@ -166,6 +263,36 @@ export default function AliadoPage() {
       setSaving(false)
     }
   }
+
+  const statusCounts: Record<StatusFilter, number> = {
+    all: orders.length,
+    active: orders.filter(order => getOrderStatusGroup(order.status) === "active").length,
+    attention: orders.filter(order => getOrderStatusGroup(order.status) === "attention").length,
+    closed: orders.filter(order => getOrderStatusGroup(order.status) === "closed").length,
+  }
+
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const queryDigits = normalizedQuery.replace(/\D/g, "")
+  const filteredOrders = orders.filter(order => {
+    if (statusFilter !== "all" && getOrderStatusGroup(order.status) !== statusFilter) {
+      return false
+    }
+    if (!normalizedQuery) return true
+    const haystack = [
+      order.folio,
+      String(order.number),
+      order.customerName,
+      order.customerPhone,
+      order.equipmentType,
+      order.brand ?? "",
+      order.model ?? "",
+      order.reportedIssue,
+      order.statusLabel,
+    ].join(" ").toLowerCase()
+    if (haystack.includes(normalizedQuery)) return true
+    if (queryDigits.length >= 3 && order.customerPhone.replace(/\D/g, "").includes(queryDigits)) return true
+    return false
+  })
 
   if (unlinked) {
     return (
@@ -192,6 +319,88 @@ export default function AliadoPage() {
 
   return (
     <div className="space-y-6">
+      {lastCaptured && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-primary">
+                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Equipo registrado con éxito</span>
+              </div>
+              <CardTitle className="text-2xl font-bold">
+                Folio: {lastCaptured.folio}
+              </CardTitle>
+              <CardDescription className="text-foreground/80">
+                {lastCaptured.customerName} ({lastCaptured.customerPhone}) · {lastCaptured.equipment}
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="Cerrar confirmación"
+              onClick={() => setLastCaptured(null)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              <span className="font-medium text-foreground">Falla reportada:</span> {lastCaptured.reportedIssue}
+            </p>
+            <div className="rounded-md border border-primary/20 bg-background/80 px-3 py-2 text-xs">
+              <span className="font-medium text-muted-foreground">Seguimiento público: </span>
+              <a
+                href={buildTrackingPath(lastCaptured.folio, lastCaptured.customerPhone)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="break-all font-mono text-primary underline-offset-4 hover:underline"
+              >
+                {buildTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone)}
+              </a>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button asChild size="sm">
+                <a
+                  href={buildCapturedWhatsAppHref(lastCaptured)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <MessageCircle className="mr-1.5 h-4 w-4" />
+                  Enviar comprobante al cliente por WhatsApp
+                </a>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void copyTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone)}
+              >
+                {copiedLink ? (
+                  <>
+                    <Check className="mr-1.5 h-4 w-4 text-emerald-600" />
+                    ¡Copiado!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="mr-1.5 h-4 w-4" />
+                    Copiar link de seguimiento
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setLastCaptured(null)}
+              >
+                Cerrar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -279,6 +488,49 @@ export default function AliadoPage() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="space-y-2.5">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Buscar por folio, cliente, teléfono, marca/modelo o falla…"
+                aria-label="Buscar envíos"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filtrar envíos por estado">
+              {STATUS_FILTER_OPTIONS.map(option => {
+                const active = statusFilter === option.id
+                const count = statusCounts[option.id]
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    data-filter={option.id}
+                    aria-pressed={active}
+                    onClick={() => setStatusFilter(option.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      active
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    <span>{option.label}</span>
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${
+                        active ? "bg-primary-foreground/20 text-primary-foreground" : "bg-background text-foreground"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           {loadError && (
             <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {loadError}
@@ -289,7 +541,12 @@ export default function AliadoPage() {
               Aún no has capturado equipos
             </p>
           )}
-          {orders.map(order => (
+          {!loadError && !loading && orders.length > 0 && filteredOrders.length === 0 && (
+            <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+              No se encontraron envíos con los filtros actuales
+            </p>
+          )}
+          {filteredOrders.map(order => (
             <article key={order.folio} className="space-y-1.5 rounded-lg border bg-card p-4 text-sm">
               <p className="flex items-center justify-between gap-2">
                 <strong className="text-xs text-muted-foreground">{order.folio}</strong>
@@ -302,14 +559,38 @@ export default function AliadoPage() {
               </p>
               <p className="text-xs text-muted-foreground">{order.customerName} · {order.customerPhone}</p>
               <p className="line-clamp-2 text-muted-foreground">{order.reportedIssue}</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground">
-                <span>Capturado {formatDate(order.createdAt)}</span>
-                {order.promisedAt && (
-                  <span className="flex items-center gap-1">
-                    <CalendarClock size={12} />
-                    Promesa {formatDay(order.promisedAt)}
-                  </span>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>Capturado {formatDate(order.createdAt)}</span>
+                  {order.promisedAt && (
+                    <span className="flex items-center gap-1">
+                      <CalendarClock size={12} />
+                      Promesa {formatDay(order.promisedAt)}
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button asChild variant="outline" size="sm" className="h-7 px-2.5 text-xs">
+                    <a
+                      href={buildOrderWhatsAppHref(order)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <MessageCircle className="mr-1 h-3.5 w-3.5" />
+                      Compartir rastreo por WhatsApp
+                    </a>
+                  </Button>
+                  <Button asChild variant="ghost" size="sm" className="h-7 px-2.5 text-xs">
+                    <a
+                      href={buildTrackingPath(order.folio, order.customerPhone)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                      Ver rastreo
+                    </a>
+                  </Button>
+                </div>
               </div>
             </article>
           ))}

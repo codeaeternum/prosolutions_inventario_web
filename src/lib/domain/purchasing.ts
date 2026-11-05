@@ -229,9 +229,29 @@ export async function setPurchaseStatus(db: PrismaClient, actorId: string, busin
       if (claimed.count !== 1) throw new BusinessError("Las cantidades recibidas cambiaron durante la operación; reintenta.", 409)
       await releaseStock(tx, { productId: item.productId, quantity: qty, branchId: purchase.branchId, businessId })
       receivedProductIds.push(item.productId)
-      // costPrice existe en Product: queda como "último costo" conocido.
-      const data: { costPrice?: number } = item.unitCostCents > 0 ? { costPrice: amount(item.unitCostCents) } : {}
+      // costPrice existe en Product: queda como "último costo" conocido y
+      // registra asiento en PriceHistory cuando cambia respecto al anterior.
+      const prevProduct = item.unitCostCents > 0 && typeof tx.product.findUnique === "function"
+        ? await tx.product.findUnique({ where: { id: item.productId }, select: { costPrice: true } })
+        : null
+      const newCost = item.unitCostCents > 0 ? amount(item.unitCostCents) : undefined
+      const data: { costPrice?: number } = newCost !== undefined ? { costPrice: newCost } : {}
       const updated = await tx.product.update({ where: { id: item.productId }, data })
+      if (newCost !== undefined && typeof tx.priceHistory?.create === "function") {
+        const oldCost = prevProduct?.costPrice ?? 0
+        if (Math.round(oldCost * 100) !== item.unitCostCents) {
+          await tx.priceHistory.create({
+            data: {
+              businessId,
+              productId: item.productId,
+              field: "costPrice",
+              oldValue: oldCost,
+              newValue: newCost,
+              changedById: actorId,
+            },
+          })
+        }
+      }
       await tx.inventoryMovement.create({
         data: {
           businessId,

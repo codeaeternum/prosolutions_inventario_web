@@ -72,8 +72,17 @@ export default function LoginPage() {
         setShowCountryDropdown(false)
       }
     }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowCountryDropdown(false)
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
   }, [])
 
   const formatPhoneNumber = (value: string) => {
@@ -224,19 +233,35 @@ export default function LoginPage() {
                     <button
                       type="button"
                       onClick={() => setShowCountryDropdown(!showCountryDropdown)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setShowCountryDropdown(false)
+                        }
+                      }}
                       className="flex items-center gap-1 h-10 px-3 border rounded-md bg-muted hover:bg-accent transition-colors min-w-[100px]"
                       disabled={isLoading}
+                      aria-label="Seleccionar código de país"
+                      aria-haspopup="listbox"
+                      aria-expanded={showCountryDropdown}
+                      aria-controls="login-country-listbox"
                     >
                       <span className="text-lg">{selectedCountry?.flag}</span>
                       <span className="text-sm font-medium">{countryCode}</span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
                     </button>
                     {showCountryDropdown && (
-                      <div className="absolute z-20 w-56 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto">
+                      <div
+                        id="login-country-listbox"
+                        role="listbox"
+                        aria-label="Códigos de país"
+                        className="absolute z-20 w-56 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto"
+                      >
                         {countryCodes.map((country) => (
                           <button
                             key={country.code}
                             type="button"
+                            role="option"
+                            aria-selected={country.code === countryCode}
                             className="w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors flex items-center gap-2"
                             onClick={() => {
                               setCountryCode(country.code)
@@ -305,13 +330,21 @@ export default function LoginPage() {
               Iniciar Sesión
             </Button>
 
-            <p className="text-sm text-muted-foreground text-center">
-              ¿No tienes cuenta?{" "}
-              <Link href="/register" className="text-primary hover:underline">
-                Regístrate aquí
-              </Link>
-            </p>
-            <p className="text-sm text-muted-foreground text-center">
+            <div className="w-full space-y-2 border-t pt-3 text-center">
+              <p className="text-sm text-muted-foreground">
+                ¿Compras como cliente de tienda?{" "}
+                <Link href="/register" className="font-medium text-primary hover:underline">
+                  Solicita tu cuenta aquí
+                </Link>
+              </p>
+              <p className="text-sm text-muted-foreground">
+                ¿Tienes un taller o negocio de refacciones?{" "}
+                <Link href="/registro" className="font-medium text-primary hover:underline">
+                  Registra tu negocio en Reficio →
+                </Link>
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground text-center">
               <Link href="/mercado" className="text-primary hover:underline">
                 Explorar negocios en reficio.app →
               </Link>

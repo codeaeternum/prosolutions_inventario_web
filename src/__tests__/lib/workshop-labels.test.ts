@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio, parseFolioDigits, repairFolio } from "@/lib/workshop-labels"
+import { DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio, parseFolioDigits, parseReportedIssue, repairFolio } from "@/lib/workshop-labels"
 
 describe("formatFolio", () => {
   it("uses the given prefix with 6-digit padding", () => {
@@ -72,5 +72,32 @@ describe("parseFolioDigits / clampFolioDigits", () => {
     expect(parseFolioDigits("abc")).toBe(6)
     expect(clampFolioDigits(undefined)).toBe(6)
     expect(clampFolioDigits(NaN)).toBe(6)
+  })
+})
+
+describe("parseReportedIssue", () => {
+  it("splits current 'Servicio · Detalle' format and strips embedded budget notes", () => {
+    expect(
+      parseReportedIssue("Cambio de pantalla · No da imagen · Presupuesto estimado: $1,800.00"),
+    ).toEqual({
+      service: "Cambio de pantalla",
+      issue: "No da imagen",
+    })
+  })
+
+  it("parses legacy 'Servicio: X — Falla: Y' format", () => {
+    expect(
+      parseReportedIssue("Servicio: Centro de carga — Falla: falso contacto"),
+    ).toEqual({
+      service: "Centro de carga",
+      issue: "falso contacto",
+    })
+  })
+
+  it("returns plain issue when no service separator is present", () => {
+    expect(parseReportedIssue("  No enciende tras caída  ")).toEqual({
+      service: undefined,
+      issue: "No enciende tras caída",
+    })
   })
 })

@@ -75,6 +75,7 @@ export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSide
             variant="ghost"
             size="icon"
             className="sm:hidden"
+            aria-label={mobileSearchOpen ? "Cerrar buscador" : "Abrir buscador"}
             onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
           >
             {mobileSearchOpen ? <X className="h-5 w-5" /> : <Search className="h-5 w-5" />}
@@ -87,7 +88,7 @@ export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSide
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center gap-2 px-2">
+              <Button variant="ghost" className="flex items-center gap-2 px-2" aria-label="Menú de cuenta de usuario">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                     {initials}

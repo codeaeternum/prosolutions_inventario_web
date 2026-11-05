@@ -131,4 +131,31 @@ describe("restaurar la cuenta original", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled()
     expect(mocks.encode).not.toHaveBeenCalled()
   })
+
+  it("un superadmin de plataforma puede entrar en modo soporte a un negocio distinto y restaurar su cuenta", async () => {
+    mocks.auth.mockResolvedValue({
+      user: { id: "op-1", name: "Operador Reficio", role: "ADMIN", status: "APPROVED", businessId: "biz-reficio-hq", isSuperAdmin: true, customerType: "NORMAL" },
+    })
+    mocks.findUnique.mockResolvedValue({ ...cashier, businessId: "biz-amigo", isSuperAdmin: false })
+    const enterRes = await POST(req({ userId: "emp-2" }))
+    expect(enterRes.status).toBe(200)
+    expect(mocks.encode).toHaveBeenCalledWith(expect.objectContaining({
+      token: expect.objectContaining({ id: "emp-2", businessId: "biz-amigo", impersonator: "op-1" }),
+    }))
+
+    // Y al restaurar desde la sesión del negocio del amigo, vuelve a su cuenta superadmin en biz-reficio-hq
+    mocks.auth.mockResolvedValue({
+      user: { id: "emp-2", name: "Kevin", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-amigo", isSuperAdmin: false, customerType: "NORMAL" },
+    })
+    mocks.decode.mockResolvedValue({ id: "emp-2", impersonator: "op-1" })
+    mocks.findUnique.mockResolvedValue({
+      id: "op-1", name: "Operador Reficio", email: "op@reficio.app", phone: null,
+      role: "ADMIN", status: "APPROVED", customerType: "NORMAL", password: "h",
+      jobTitle: null, businessId: "biz-reficio-hq", isSuperAdmin: true,
+    })
+    const restoreRes = await POST(req({ restore: true }))
+    expect(restoreRes.status).toBe(200)
+    const restoreJson = await restoreRes.json()
+    expect(restoreJson.user.isSuperAdmin).toBe(true)
+  })
 })

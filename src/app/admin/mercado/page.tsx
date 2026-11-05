@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { toast } from "sonner"
@@ -13,13 +14,6 @@ import {
   MarketplaceProductCard,
   type MarketplaceProduct,
 } from "@/components/admin/marketplace/product-card"
-import { CuentasPanel } from "@/components/admin/marketplace/cuentas-panel"
-import { MarketplaceOutgoingPanel } from "@/components/admin/marketplace/outgoing-panel"
-import { MarketplacePublicationPanel } from "@/components/admin/marketplace/publication-panel"
-import { MarketplacePurchasesPanel } from "@/components/admin/marketplace/purchases-panel"
-import { MarketplaceRequestDialog } from "@/components/admin/marketplace/request-dialog"
-import { MarketplaceRequestsPanel } from "@/components/admin/marketplace/requests-panel"
-import { PartRequestsPanel } from "@/components/admin/mercado/solicitudes-panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCurrency } from "@/components/currency-provider"
 import {
@@ -40,6 +34,35 @@ import {
   Store,
 } from "lucide-react"
 
+const CuentasPanel = dynamic(
+  () => import("@/components/admin/marketplace/cuentas-panel").then((m) => m.CuentasPanel),
+  { ssr: false }
+)
+const MarketplaceOutgoingPanel = dynamic(
+  () => import("@/components/admin/marketplace/outgoing-panel").then((m) => m.MarketplaceOutgoingPanel),
+  { ssr: false }
+)
+const MarketplacePublicationPanel = dynamic(
+  () => import("@/components/admin/marketplace/publication-panel").then((m) => m.MarketplacePublicationPanel),
+  { ssr: false }
+)
+const MarketplacePurchasesPanel = dynamic(
+  () => import("@/components/admin/marketplace/purchases-panel").then((m) => m.MarketplacePurchasesPanel),
+  { ssr: false }
+)
+const MarketplaceRequestDialog = dynamic(
+  () => import("@/components/admin/marketplace/request-dialog").then((m) => m.MarketplaceRequestDialog),
+  { ssr: false }
+)
+const MarketplaceRequestsPanel = dynamic(
+  () => import("@/components/admin/marketplace/requests-panel").then((m) => m.MarketplaceRequestsPanel),
+  { ssr: false }
+)
+const PartRequestsPanel = dynamic(
+  () => import("@/components/admin/mercado/solicitudes-panel").then((m) => m.PartRequestsPanel),
+  { ssr: false }
+)
+
 interface Category {
   id: string
   name: string
@@ -53,6 +76,23 @@ type TabValue =
   | "solicitudes-web"
   | "pedidos"
   | "cuentas"
+
+const TAB_SUBTITLES: Record<TabValue, string> = {
+  publicacion:
+    "Define qué refacciones de tu inventario son visibles para talleres aliados o para todo el público en el directorio.",
+  catalogo:
+    "Explora las refacciones publicadas con precio preferencial de taller aliado y solicita piezas en línea.",
+  solicitudes:
+    "Revisa, aprueba y surte los pedidos de refacciones que te envían otros talleres y negocios aliados.",
+  "solicitudes-web":
+    "Consulta las piezas que buscan los clientes en el directorio público /mercado y respóndeles si tienes existencia.",
+  compras:
+    "Consulta el historial de órdenes de compra y refacciones que ya fueron surtidas para tu taller.",
+  pedidos:
+    "Da seguimiento a los pedidos de refacciones que tu negocio ha solicitado a otros proveedores del mercado.",
+  cuentas:
+    "Administra los saldos, cargos y abonos pendientes del convenio B2B con tus talleres aliados.",
+}
 
 interface VisibilityCounts {
   hidden: number
@@ -420,63 +460,76 @@ export default function MercadoPage() {
         onValueChange={(v) => selectTab(v as TabValue)}
         className="gap-6"
       >
-        <TabsList>
-          {/* El catálogo navegable solo lo usa el taller aliado (WORKSHOP). */}
-          {isWorkshop && (
-            <TabsTrigger value="catalogo" className="px-4">
-              <Store className="h-4 w-4" />
-              Catálogo
-            </TabsTrigger>
-          )}
-          {!isWorkshop && (
-            <TabsTrigger value="publicacion" className="px-4">
-              <Megaphone className="h-4 w-4" />
-              Publicación
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="solicitudes" className="px-4">
-            <ClipboardList className="h-4 w-4" />
-            {isWorkshop ? "Mis solicitudes" : "Solicitudes"}
-            {pendingCount > 0 && (
-              <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
-                {pendingCount}
-              </span>
-            )}
-          </TabsTrigger>
-          {/* Pedidos del público en /mercado — solo staff (ADMIN/EMPLOYEE);
-              cuentas WORKSHOP no tienen acceso al feed. */}
-          {!isWorkshop && (
-            <TabsTrigger value="solicitudes-web" className="px-4">
-              <Globe className="h-4 w-4" />
-              Solicitudes web
-              {openPartRequests > 0 && (
-                <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
-                  {openPartRequests}
-                </span>
+        <div className="space-y-2.5">
+          <div className="w-full overflow-x-auto pb-1 -mx-1 px-1">
+            <TabsList
+              aria-label="Secciones del mercado"
+              className="inline-flex w-max min-w-full justify-start overflow-x-auto sm:w-fit sm:min-w-0"
+            >
+              {/* El catálogo navegable solo lo usa el taller aliado (WORKSHOP). */}
+              {isWorkshop && (
+                <TabsTrigger value="catalogo" className="shrink-0 gap-2 px-3.5">
+                  <Store className="h-4 w-4 shrink-0" />
+                  <span>Catálogo aliado</span>
+                </TabsTrigger>
               )}
-            </TabsTrigger>
-          )}
-          {/* Historial de compras surtidas — solo portal del taller aliado */}
-          {isWorkshop && (
-            <TabsTrigger value="compras" className="px-4">
-              <ShoppingBag className="h-4 w-4" />
-              Mis compras
-            </TabsTrigger>
-          )}
-          {/* Pedidos que este negocio hace a otros negocios del mercado */}
-          <TabsTrigger value="pedidos" className="px-4">
-            <Send className="h-4 w-4" />
-            Pedidos que hago
-          </TabsTrigger>
-          {/* Convenio B2B entre talleres asociados (ex /admin/convenio) —
-              solo staff con módulo taller; el portal aliado no lo tiene. */}
-          {canSeeCuentas && (
-            <TabsTrigger value="cuentas" className="px-4">
-              <Handshake className="h-4 w-4" />
-              Cuentas
-            </TabsTrigger>
-          )}
-        </TabsList>
+              {!isWorkshop && (
+                <TabsTrigger value="publicacion" className="shrink-0 gap-2 px-3.5">
+                  <Megaphone className="h-4 w-4 shrink-0" />
+                  <span>Mi publicación</span>
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="solicitudes" className="shrink-0 gap-2 px-3.5">
+                <ClipboardList className="h-4 w-4 shrink-0" />
+                <span>Pedidos recibidos</span>
+                {pendingCount > 0 && (
+                  <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
+                    {pendingCount}
+                  </span>
+                )}
+              </TabsTrigger>
+              {/* Pedidos del público en /mercado — solo staff (ADMIN/EMPLOYEE);
+                  cuentas WORKSHOP no tienen acceso al feed. */}
+              {!isWorkshop && (
+                <TabsTrigger value="solicitudes-web" className="shrink-0 gap-2 px-3.5">
+                  <Globe className="h-4 w-4 shrink-0" />
+                  <span>Solicitudes web</span>
+                  {openPartRequests > 0 && (
+                    <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-amber-700 dark:text-amber-400">
+                      {openPartRequests}
+                    </span>
+                  )}
+                </TabsTrigger>
+              )}
+              {/* Historial de compras surtidas — solo portal del taller aliado */}
+              {isWorkshop && (
+                <TabsTrigger value="compras" className="shrink-0 gap-2 px-3.5">
+                  <ShoppingBag className="h-4 w-4 shrink-0" />
+                  <span>Órdenes de compra</span>
+                </TabsTrigger>
+              )}
+              {/* Pedidos que este negocio hace a otros negocios del mercado */}
+              <TabsTrigger value="pedidos" className="shrink-0 gap-2 px-3.5">
+                <Send className="h-4 w-4 shrink-0" />
+                <span>Mis pedidos</span>
+              </TabsTrigger>
+              {/* Convenio B2B entre talleres asociados (ex /admin/convenio) —
+                  solo staff con módulo taller; el portal aliado no lo tiene. */}
+              {canSeeCuentas && (
+                <TabsTrigger value="cuentas" className="shrink-0 gap-2 px-3.5">
+                  <Handshake className="h-4 w-4 shrink-0" />
+                  <span>Cuentas con aliados</span>
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+          <p
+            className="text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            {TAB_SUBTITLES[activeTab]}
+          </p>
+        </div>
 
         {/* Publicación del staff: control de 3 niveles por producto y
             publicación masiva al nivel elegido. */}

@@ -12,8 +12,15 @@ import { checkAndRecord } from "@/lib/rate-limit"
 // Si alguien con sesión activa cambia a otra cuenta, guardamos `impersonator`
 // en el token para ofrecer "Volver a mi cuenta" sin pedir PIN de regreso.
 
+function isSecureRequest(req: NextRequest) {
+  return (
+    req.nextUrl.protocol === "https:" ||
+    (process.env.TRUST_PROXY_HEADERS === "true" && req.headers.get("x-forwarded-proto") === "https")
+  )
+}
+
 function sessionCookieName(req: NextRequest) {
-  return req.nextUrl.protocol === "https:" ? "__Secure-authjs.session-token" : "authjs.session-token"
+  return isSecureRequest(req) ? "__Secure-authjs.session-token" : "authjs.session-token"
 }
 
 function passwordVersion(password: string | null) {
@@ -24,7 +31,10 @@ async function mintSession(req: NextRequest, user: {
   id: string; name: string; email: string | null; phone: string | null;
   role: "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"; status: string;
   customerType: "NORMAL" | "STORE" | "TECHNICIAN"; password: string | null;
-  jobTitle: string | null; businessId: string
+  jobTitle: string | null; businessId: string;
+  isSuperAdmin?: boolean | null;
+  allowedModules?: string[] | null;
+  allowedBranchIds?: string[] | null;
 }, impersonator: string | null) {
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET
   if (!secret) throw new Error("AUTH_SECRET no configurado")
@@ -39,6 +49,9 @@ async function mintSession(req: NextRequest, user: {
       customerType: user.customerType,
       jobTitle: user.jobTitle,
       businessId: user.businessId,
+      isSuperAdmin: user.isSuperAdmin ?? false,
+      allowedModules: user.allowedModules ?? [],
+      allowedBranchIds: user.allowedBranchIds ?? [],
       passwordVersion: passwordVersion(user.password),
       impersonator,
     },
@@ -89,15 +102,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Usuario inválido" }, { status: 400 })
   }
 
-  const target = await prisma.user.findUnique({ where: { id: targetId } })
-  // Una cuenta de otra empresa responde igual que una inexistente: el cambio
-  // rápido de usuario nunca cruza negocios.
-  if (!target || target.businessId !== caller.businessId || target.status !== "APPROVED" || (target.role !== "ADMIN" && target.role !== "EMPLOYEE")) {
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      role: true,
+      status: true,
+      customerType: true,
+      password: true,
+      jobTitle: true,
+      businessId: true,
+      isSuperAdmin: true,
+      quickPin: true,
+      allowedModules: true,
+      allowedBranchIds: true,
+    },
+  })
+  // El cambio rápido normal nunca cruza negocios. Excepción exclusiva:
+  // un operador de plataforma (caller.isSuperAdmin === true) entrando en modo
+  // soporte desde /platform, o volviendo (restore) a su cuenta superadmin.
+  const canCrossTenant = caller.isSuperAdmin === true || Boolean(body?.restore && target?.isSuperAdmin === true)
+  if (!target || (!canCrossTenant && target.businessId !== caller.businessId) || target.status !== "APPROVED" || (target.role !== "ADMIN" && target.role !== "EMPLOYEE")) {
     return NextResponse.json({ error: "Usuario no disponible" }, { status: 404 })
   }
 
-  // Reglas: ADMIN entra a cualquier cuenta; staff necesita el PIN del destino.
-  if (!body?.restore && caller.role !== "ADMIN" && target.id !== caller.id) {
+  // Reglas: ADMIN o Superadmin entran sin PIN; staff necesita el PIN del destino.
+  if (!body?.restore && caller.role !== "ADMIN" && !caller.isSuperAdmin && target.id !== caller.id) {
     const pin = typeof body?.pin === "string" ? body.pin : ""
     if (!target.quickPin || !/^\d{4,6}$/.test(pin) || !(await bcrypt.compare(pin, target.quickPin))) {
       return NextResponse.json({ error: "PIN incorrecto" }, { status: 403 })
@@ -111,7 +144,7 @@ export async function POST(req: NextRequest) {
   // la sesión venía trabajando como `caller` solo de forma prestada. NUNCA
   // se registra el PIN.
   await recordAudit(prisma, {
-    businessId: caller.businessId,
+    businessId: body?.restore ? caller.businessId : target.businessId,
     actorId: body?.restore ? target.id : caller.id,
     action: body?.restore ? "AUTH_SWITCH_RESTORE" : "AUTH_SWITCH",
     entity: "user",
@@ -126,12 +159,21 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  const res = NextResponse.json({ ok: true, user: { id: target.id, name: target.name, role: target.role, jobTitle: target.jobTitle } })
+  const res = NextResponse.json({
+    ok: true,
+    user: {
+      id: target.id,
+      name: target.name,
+      role: target.role,
+      jobTitle: target.jobTitle,
+      isSuperAdmin: target.isSuperAdmin ?? false,
+    },
+  })
   res.cookies.set(cookieName, token, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: req.nextUrl.protocol === "https:",
+    secure: isSecureRequest(req),
     maxAge: 30 * 24 * 60 * 60,
   })
   return res

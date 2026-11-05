@@ -11,9 +11,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try {
     const auth = await requireModule("ventas")
     if (auth.error) return auth.error
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
     const { id } = await params
     const document = await prisma.sale.findUnique({
-      where: { id },
+      where: { id, businessId },
       include: {
         items: { include: { product: { select: { id: true, name: true, barcode: true, retailPrice: true, wholesalePrice: true, stock: true, images: true } } } },
         customer: { select: { id: true, name: true, phone: true, customerType: true } },
@@ -22,11 +24,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         branch: { select: { id: true, name: true } },
       },
     })
-    if (!document || document.businessId !== businessIdOf(getSession(auth)!)) {
+    if (!document || document.businessId !== businessId) {
       return NextResponse.json({ error: "Documento no encontrado" }, { status: 404 })
     }
     // El detalle expone renglones y pagos de la sucursal del documento.
-    const deniedBranch = assertBranchAllowed(getSession(auth)!, document.branchId)
+    const deniedBranch = assertBranchAllowed(session, document.branchId)
     if (deniedBranch) return deniedBranch
     const paid = document.payments.reduce((sum, p) => sum + p.amount, 0)
     return NextResponse.json(
@@ -41,14 +43,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const auth = await requireModule("ventas")
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    const businessId = businessIdOf(session)
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     // Cancelar reembolsa dinero en la sucursal DEL documento: sin este assert
     // un empleado restringido podía vaciar la caja de una sucursal ajena.
-    const doc = await prisma.sale.findUnique({ where: { id }, select: { branchId: true, businessId: true } })
-    const deniedBranch = assertBranchAllowed(session, doc?.businessId === businessIdOf(session) ? doc.branchId : null)
+    const doc = await prisma.sale.findUnique({ where: { id, businessId }, select: { branchId: true, businessId: true } })
+    const deniedBranch = assertBranchAllowed(session, doc?.businessId === businessId ? doc.branchId : null)
     if (deniedBranch) return deniedBranch
-    return NextResponse.json(await cancelDocument(prisma, session.user.id, businessIdOf(session), {
+    return NextResponse.json(await cancelDocument(prisma, session.user.id, businessId, {
       saleId: id, reason: body.reason ?? "Cancelado desde el mostrador",
       idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),
     }))

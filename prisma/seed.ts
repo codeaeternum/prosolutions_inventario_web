@@ -250,8 +250,14 @@ async function main() {
   // Create admin user
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@prosolutions.com'
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
+  const superAdminEmail = process.env.SUPERADMIN_EMAIL || 'admin@reficio.app'
+  const superAdminPassword = process.env.SUPERADMIN_PASSWORD || adminPassword
 
   const hashedPassword = await bcrypt.hash(adminPassword, 12)
+  const superAdminHashedPassword =
+    superAdminPassword === adminPassword
+      ? hashedPassword
+      : await bcrypt.hash(superAdminPassword, 12)
 
   // Negocio por defecto: todos los registros del seed cuelgan de este tenant.
   const business = await prisma.business.upsert({
@@ -268,19 +274,58 @@ async function main() {
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
-    update: {},
+    update: { isSuperAdmin: false },
     create: {
       businessId: business.id,
       email: adminEmail,
       password: hashedPassword,
       name: 'Administrador',
       role: UserRole.ADMIN,
+      isSuperAdmin: false,
       customerType: CustomerType.NORMAL,
       status: UserStatus.APPROVED,
     },
   })
 
   console.log(`Admin: ${admin.email}`)
+
+  // Negocio operador de plataforma (aislado de tenants comerciales y oculto del directorio público).
+  const operatorBusiness = await prisma.business.upsert({
+    where: { id: 'biz-reficio-hq' },
+    update: {
+      showInDirectory: false,
+    },
+    create: {
+      id: 'biz-reficio-hq',
+      name: 'Reficio HQ',
+      slug: 'reficio-hq',
+      showInDirectory: false,
+    },
+  })
+
+  console.log(`Platform Operator Business: ${operatorBusiness.id}`)
+
+  const superAdmin = await prisma.user.upsert({
+    where: { email: superAdminEmail },
+    update: {
+      businessId: operatorBusiness.id,
+      role: UserRole.ADMIN,
+      isSuperAdmin: true,
+      status: UserStatus.APPROVED,
+    },
+    create: {
+      businessId: operatorBusiness.id,
+      email: superAdminEmail,
+      password: superAdminHashedPassword,
+      name: 'Operador Reficio',
+      role: UserRole.ADMIN,
+      isSuperAdmin: true,
+      customerType: CustomerType.NORMAL,
+      status: UserStatus.APPROVED,
+    },
+  })
+
+  console.log(`Superadmin: ${superAdmin.email}`)
 
   // Create default settings
   await prisma.settings.upsert({

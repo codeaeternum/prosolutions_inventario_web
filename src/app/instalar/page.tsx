@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 
 export const metadata = {
   title: "Instalar app",
-  description: "Cómo instalar Pro-Solutions en la pantalla de inicio del móvil (PWA)",
+  description: "Cómo instalar Reficio en la pantalla de inicio del móvil (PWA)",
 }
 
 export default function InstalarPage() {
@@ -13,7 +13,7 @@ export default function InstalarPage() {
     <div className="min-h-screen bg-background p-4 pb-24">
       <div className="mx-auto max-w-lg space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold">Instalar Pro-Solutions</h1>
+          <h1 className="text-2xl font-bold">Instalar Reficio</h1>
           <p className="text-muted-foreground mt-1">
             Úsala como app en el móvil: escanear QR de reservas, ventas, inventario y más.
           </p>

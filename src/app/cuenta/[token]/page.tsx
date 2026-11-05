@@ -1,9 +1,8 @@
 import type { Metadata } from "next"
-import Link from "next/link"
-import { AlertCircle, ArrowDownRight, ArrowUpRight, CalendarCheck, TimerOff, Wallet, Wrench } from "lucide-react"
+import { AlertCircle, ArrowDownRight, ArrowUpRight, CalendarCheck, TimerOff, Wallet } from "lucide-react"
 import { prisma } from "@/lib/prisma"
 import { loadStatementByToken, type PublicStatement } from "@/lib/customer-statement"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { DocumentShell } from "@/components/public/document-shell"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
@@ -25,39 +24,6 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     // Enlace privado por WhatsApp: nunca indexable.
     robots: { index: false, follow: false },
   }
-}
-
-function PageShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
-      <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 safe-area-sticky z-50">
-        <div className="container mx-auto max-w-2xl flex h-14 items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
-              <Wrench className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-lg tracking-tight">Reficio</span>
-          </Link>
-          <ThemeToggle />
-        </div>
-      </header>
-      <main id="main-content" className="flex-1" role="main">
-        {children}
-      </main>
-      <footer className="border-t py-8">
-        <div className="container mx-auto max-w-2xl px-4 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-primary flex items-center justify-center">
-              <Wrench className="h-3.5 w-3.5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold text-foreground">Reficio</span>
-            <span>· reficio.app</span>
-          </div>
-          <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
-        </div>
-      </footer>
-    </div>
-  )
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -254,22 +220,22 @@ export default async function CuentaPage({ params }: { params: Promise<{ token: 
   // como "no encontrado"; el vencido muestra su propio mensaje.
   if (result.kind === "not_found") {
     return (
-      <PageShell>
+      <DocumentShell>
         <StatementNotFound />
-      </PageShell>
+      </DocumentShell>
     )
   }
   if (result.kind === "expired") {
     return (
-      <PageShell>
+      <DocumentShell>
         <StatementExpired />
-      </PageShell>
+      </DocumentShell>
     )
   }
 
   return (
-    <PageShell>
+    <DocumentShell>
       <StatementDocument statement={result.statement} linkExpiresAt={result.expiresAt} />
-    </PageShell>
+    </DocumentShell>
   )
 }

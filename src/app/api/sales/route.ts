@@ -30,7 +30,28 @@ export async function GET(req: Request) {
     const statusFilter = status
       ? { status: status as "DRAFT" | "OPEN" | "COMPLETED" | "VOIDED" }
       : { status: { in: ["COMPLETED", "VOIDED"] as ("COMPLETED" | "VOIDED")[] } }
-    const where = { businessId: businessIdOf(session), ...(branchScope ? { branchId: branchScope } : {}), ...statusFilter, ...(kind ? { kind: kind as "WORKSHOP" | "RETAIL" | "LAYAWAY" | "QUOTE" } : {}) }
+    // Búsqueda opcional ?q= por folio (V-000123 / 123), cliente o artículo.
+    // Cuando no se envía ?q=, `where` conserva exactamente su forma original.
+    const search = (query.get("q") ?? "").trim().slice(0, 100)
+    const folioMatch = /^(?:V-?)?0*(\d+)$/i.exec(search)?.[1]
+    const saleNumber = folioMatch && Number.isSafeInteger(Number(folioMatch)) && Number(folioMatch) <= 2147483647 ? Number(folioMatch) : undefined
+    const searchFilter = search
+      ? {
+          OR: [
+            ...(saleNumber !== undefined ? [{ number: saleNumber }] : []),
+            { customer: { name: { contains: search, mode: "insensitive" as const } } },
+            { items: { some: { product: { name: { contains: search, mode: "insensitive" as const } } } } },
+            { items: { some: { product: { barcode: { contains: search, mode: "insensitive" as const } } } } },
+          ],
+        }
+      : {}
+    const where = {
+      businessId: businessIdOf(session),
+      ...(branchScope ? { branchId: branchScope } : {}),
+      ...statusFilter,
+      ...(kind ? { kind: kind as "WORKSHOP" | "RETAIL" | "LAYAWAY" | "QUOTE" } : {}),
+      ...searchFilter,
+    }
     const [sales, total] = await Promise.all([
       prisma.sale.findMany({
         where, take: 20, skip: (page - 1) * 20, orderBy: [{ number: "desc" }],

@@ -4,14 +4,10 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   CalendarCheck,
-  LayoutDashboard,
-  Package,
   PackageSearch,
   ShoppingCart,
   Store,
   User,
-  Wallet,
-  Wrench,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -22,9 +18,9 @@ interface MobileNavProps {
 import { useCart } from "@/components/cart-context"
 
 /**
- * Rutas donde el menú inferior aplica: tienda del cliente y panel admin.
- * Cualquier otra ruta (landing /, /registro, /login, /<slug> de tenants,
- * /cotizacion/*, etc.) no muestra el menú.
+ * Rutas donde el menú inferior aplica: exclusivamente la tienda del cliente.
+ * Cualquier otra ruta (/admin/*, landing /, /registro, /login, /<slug> de tenants,
+ * /cotizacion/*, etc.) no muestra este menú (admin tiene su propia barra en AdminSidebar).
  */
 const NAV_PREFIXES = [
   "/catalogo",
@@ -32,7 +28,6 @@ const NAV_PREFIXES = [
   "/mis-reservas",
   "/perfil",
   "/seguimiento",
-  "/admin",
 ]
 
 const customerLinks = [
@@ -43,35 +38,24 @@ const customerLinks = [
   { href: "/perfil", icon: User, label: "Perfil" },
 ]
 
-const adminLinks = [
-  { href: "/admin", icon: LayoutDashboard, label: "Panel" },
-  { href: "/admin/taller", icon: Wrench, label: "Taller" },
-  { href: "/admin/inventario", icon: Package, label: "Almacén" },
-  { href: "/admin/caja", icon: Wallet, label: "Caja" },
-  { href: "/perfil", icon: User, label: "Perfil" },
-]
-
 function matchesPrefix(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`)
 }
 
-export function MobileNav({ isAdmin = false }: MobileNavProps) {
+export function MobileNav(props: MobileNavProps) {
+  void props
   const pathname = usePathname()
   const { totalItems } = useCart()
 
-  // Solo tienda del cliente y admin; en landing, registro, login y vitrinas
+  // Solo tienda del cliente; en admin, landing, registro, login y vitrinas
   // públicas de tenants no se muestra.
   const showNav = NAV_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix))
   if (!showNav) return null
 
-  // En /admin/* se muestran los accesos de staff; en el resto, los de cliente.
-  const isAdminSection = matchesPrefix(pathname, "/admin")
-  const links = isAdminSection && isAdmin ? adminLinks : customerLinks
-
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-50 safe-area-bottom" aria-label="Navegación principal">
       <div className="flex items-center justify-around h-16">
-        {links.map(({ href, icon: Icon, label }) => {
+        {customerLinks.map(({ href, icon: Icon, label }) => {
           const isActive = matchesPrefix(pathname, href)
           const isCart = label === "Carrito"
           return (

@@ -164,6 +164,7 @@ export default async function TicketPage({
           : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
         notes: [saleDoc.note, saleDoc.branch.name].filter(Boolean).join("\n"),
         cashier: saleDoc.seller.name,
+        qrCode: `${folioPrefix}-${String(saleDoc.number).padStart(6, "0")}`,
         // Doble copia (cliente + caja) cuando el mostrador lo pidió
         // (?copias=2 — ventas con tarjeta abren el ticket así).
         copies: copies > 1 ? copies : undefined,
@@ -531,9 +532,12 @@ export default async function TicketPage({
   }
 
   // Load ticket customization settings
-  const ticketSettings = await getBusinessSettingsMap(businessId, ["ticket_business_name", "ticket_subtitle", "ticket_footer"])
+  const [ticketSettings, businessRow] = await Promise.all([
+    getBusinessSettingsMap(businessId, ["ticket_business_name", "ticket_subtitle", "ticket_footer"]),
+    prisma.business.findUnique({ where: { id: businessId }, select: { name: true } }).catch(() => null),
+  ])
 
-  const businessName = ticketSettings.get("ticket_business_name") || "PROSOLUTIONS"
+  const businessName = ticketSettings.get("ticket_business_name") || businessRow?.name || "Reficio"
   const subtitle = ticketSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional"
   const footer = ticketSettings.get("ticket_footer") || "¡Gracias por tu preferencia!"
 

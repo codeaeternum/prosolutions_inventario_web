@@ -19,9 +19,11 @@ import {
   ChevronRight,
   MessageCircle,
   Clock,
+  Download,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
+import { csvCell } from "@/lib/csv"
 import type { CreditAging, CreditAgingBucket } from "@/lib/credit-aging"
 import { AbonarDialog, type AbonarTarget } from "@/components/clientes/abonar-dialog"
 import { EstadoCuentaSheet } from "@/components/clientes/estado-cuenta"
@@ -42,9 +44,9 @@ interface CreditMovement extends CreditMovementItem {
 
 const AGING_ORDER: CreditAgingBucket[] = ["0-7", "8-15", "16-30", "30+"]
 const agingBucketMeta: Record<CreditAgingBucket, { label: string; className: string }> = {
-  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 border-green-500/30" },
-  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
-  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 border-orange-500/30" },
+  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30" },
+  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 dark:text-amber-300 border-amber-500/30" },
+  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 dark:text-orange-300 border-orange-500/30" },
   "30+": { label: "+30 días", className: "bg-destructive/10 text-destructive border-destructive/30" },
 }
 
@@ -130,6 +132,34 @@ export function CobranzaPanel() {
     return acc
   }, [filteredDebtors])
 
+  const handleExportCsv = () => {
+    if (filteredDebtors.length === 0) return
+    const headers = [
+      "Cliente",
+      "Teléfono",
+      "Saldo Pendiente",
+      "Límite de Crédito",
+      "Antigüedad (Tramo)",
+      "Días de Atraso",
+    ]
+    const rows = filteredDebtors.map((d) => [
+      d.name,
+      d.phone ?? "",
+      d.creditBalance ?? 0,
+      d.creditLimit ?? "",
+      d.aging?.bucket ? agingBucketMeta[d.aging.bucket].label : "",
+      d.aging?.daysOverdue ?? "",
+    ])
+    const lines = [headers.map(csvCell).join(","), ...rows.map((r) => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `cartera-cobranza-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -140,13 +170,26 @@ export function CobranzaPanel() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <p className="text-sm text-muted-foreground">
           La ficha completa de cada cliente está en Clientes 360.
         </p>
-        <Button onClick={() => void fetchData()} variant="ghost" size="icon" title="Actualizar" className="shrink-0">
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={filteredDebtors.length === 0}
+            aria-label="Exportar cartera de cobranza a CSV"
+            onClick={handleExportCsv}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Exportar cartera CSV
+          </Button>
+          <Button onClick={() => void fetchData()} variant="ghost" size="icon" title="Actualizar" aria-label="Actualizar cartera de cobranza" className="shrink-0">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Tarjetas de Métricas */}

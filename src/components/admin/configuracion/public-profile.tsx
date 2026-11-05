@@ -446,7 +446,7 @@ export function PublicProfileCard() {
                 label="Link público (slug)"
                 value={profile.slug}
                 onChange={(value) => setProfile(prev => ({ ...prev, slug: value }))}
-                placeholder="prosolutions"
+                placeholder="mi-taller"
                 hint={`Tu vitrina pública vive en ${host}/<slug>.`}
                 disabled={saving}
               />

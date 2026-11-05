@@ -415,6 +415,14 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // el texto libre del staff va después del punto y se trunca al publicar.
       eventPublic = true
       if (input.status === "WARRANTY") {
+        // Si la orden tenía una vigencia previa ya vencida, un empleado de
+        // mostrador no puede reabrirla por su cuenta: requiere un ADMIN.
+        if (order.warrantyUntil && order.warrantyUntil.getTime() < Date.now()) {
+          const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+          if (me?.role !== "ADMIN") {
+            throw new BusinessError("La garantía ya venció; solicita autorización de un administrador para reabrir la orden.", 409)
+          }
+        }
         // Reingreso por garantía (solo desde DELIVERED, ver repairNextStages):
         // abre un ciclo con vigencia — warranty_days del negocio en
         // SystemSettings (default 30) — y cuenta las entradas a garantía.

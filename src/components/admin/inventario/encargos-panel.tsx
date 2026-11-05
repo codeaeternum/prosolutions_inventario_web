@@ -1,8 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { csvCell } from "@/lib/csv"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { EmptyState } from "@/components/admin/empty-state"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -15,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
-import { ArrowRight, PackageCheck, PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store, MessageCircle, LucideIcon } from "lucide-react"
+import { ArrowRight, Download, PackageCheck, PackageSearch, PackageX, ShoppingCart, Check, X, Wrench, Loader2, ClipboardList, Handshake, Search, Store, MessageCircle, LucideIcon } from "lucide-react"
 import { hasWhatsAppPhone, openWhatsApp } from "@/lib/whatsapp"
 
 // ============================ Tipos ============================
@@ -196,12 +197,13 @@ export function EncargosPanel() {
     const [needs, setNeeds] = useState<Needs>({ partsShortage: [], lowStock: [], manual: [] })
     const [loading, setLoading] = useState(true)
     // Nombre del negocio para el mensaje de "Avisar" por WhatsApp (mismo
-    // endpoint que usa <BusinessName />; su default es "ProSolutions").
-    const [businessName, setBusinessName] = useState("ProSolutions")
+    // endpoint que usa <BusinessName />; su default es "Reficio").
+    const [businessName, setBusinessName] = useState("Reficio")
 
     // ---- Encargos de clientes ----
     const [encargos, setEncargos] = useState<EncargoRow[]>([])
     const [encFilter, setEncFilter] = useState("")
+    const [encargoSearch, setEncargoSearch] = useState("")
     const [viewer, setViewer] = useState<{ role: string; homeBranchId: string | null }>({ role: "ADMIN", homeBranchId: null })
     const isEmployee = viewer.role === "EMPLOYEE"
     const employeeBranch = branches.find(b => b.id === viewer.homeBranchId) ?? null
@@ -509,6 +511,54 @@ export function EncargosPanel() {
         if (!item.customer || !hasWhatsAppPhone(item.customer.phone)) return
         const pieza = item.quantity > 1 ? `${item.quantity} × ${item.description}` : item.description
         openWhatsApp(item.customer.phone, `Hola ${item.customer.name}, tu pieza ${pieza} ya llegó a ${businessName}. Puedes pasar a recogerla.`)
+    }
+
+    const filteredEncargos = useMemo(() => {
+        const q = encargoSearch.trim().toLowerCase()
+        if (!q) return encargos
+        return encargos.filter(item =>
+            item.description.toLowerCase().includes(q) ||
+            (item.customer?.name ?? "").toLowerCase().includes(q) ||
+            (item.customer?.phone ?? "").toLowerCase().includes(q) ||
+            (item.product?.name ?? "").toLowerCase().includes(q) ||
+            (item.supplierNote ?? "").toLowerCase().includes(q),
+        )
+    }, [encargos, encargoSearch])
+
+    const handleExportEncargosCsv = () => {
+        if (filteredEncargos.length === 0) return
+        const headers = [
+            "Pieza / Descripción",
+            "Cantidad",
+            "Cliente",
+            "Teléfono",
+            "Cotizado",
+            "Anticipo",
+            "Estado",
+            "Sucursal",
+            "Nota Proveedor",
+            "Fecha",
+        ]
+        const csvRows = filteredEncargos.map(item => [
+            item.description,
+            item.quantity,
+            item.customer?.name ?? "",
+            item.customer?.phone ?? "",
+            item.priceQuoted != null ? item.priceQuoted.toFixed(2) : "",
+            item.deposit.toFixed(2),
+            ENCARGO_STATUS[item.status]?.label ?? item.status,
+            item.branch?.name ?? "",
+            item.supplierNote ?? "",
+            formatDate(item.createdAt),
+        ])
+        const lines = [headers.map(csvCell).join(","), ...csvRows.map(r => r.map(csvCell).join(","))]
+        const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = `encargos-${new Date().toISOString().slice(0, 10)}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
     }
 
     // --- Selección → líneas de la OC (lista de compras) ---
@@ -847,34 +897,73 @@ export function EncargosPanel() {
                         </div>
                     </form>
 
-                    {/* Filtro por estado */}
-                    <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar encargos por estado">
-                        {ENCARGO_FILTERS.map(f => (
-                            <Button
-                                key={f.value}
-                                type="button"
-                                size="sm"
-                                variant={encFilter === f.value ? "default" : "outline"}
-                                aria-pressed={encFilter === f.value}
-                                onClick={() => setEncFilter(f.value)}
-                            >
-                                {f.label}
-                            </Button>
-                        ))}
+                    {/* Buscador, filtro por estado y exportación */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                        <div className="relative flex-1 min-w-[220px]">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+                            <Input
+                                placeholder="Buscar por pieza, cliente, teléfono, producto o proveedor…"
+                                value={encargoSearch}
+                                onChange={e => setEncargoSearch(e.target.value)}
+                                aria-label="Buscar encargos de clientes"
+                                className="pl-9 pr-8"
+                            />
+                            {encargoSearch && (
+                                <button
+                                    type="button"
+                                    onClick={() => setEncargoSearch("")}
+                                    aria-label="Limpiar búsqueda de encargos"
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar encargos por estado">
+                            {ENCARGO_FILTERS.map(f => (
+                                <Button
+                                    key={f.value}
+                                    type="button"
+                                    size="sm"
+                                    variant={encFilter === f.value ? "default" : "outline"}
+                                    aria-pressed={encFilter === f.value}
+                                    onClick={() => setEncFilter(f.value)}
+                                >
+                                    {f.label}
+                                </Button>
+                            ))}
+                        </div>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={filteredEncargos.length === 0}
+                            aria-label="Exportar encargos a CSV"
+                            onClick={handleExportEncargosCsv}
+                        >
+                            <Download className="mr-1.5 h-4 w-4" aria-hidden />
+                            Exportar encargos CSV
+                        </Button>
                     </div>
 
                     {/* Lista de encargos */}
-                    {encargos.length === 0 ? (
+                    {filteredEncargos.length === 0 ? (
                         <EmptyState
                             icon={ClipboardList}
-                            title={encFilter ? "Sin encargos con este estado" : "Sin encargos registrados"}
-                            description={encFilter
-                                ? "Prueba con otro filtro de estado."
-                                : "Cuando un cliente pida una pieza que no hay en stock, regístrala arriba para darle seguimiento."}
+                            title={encargoSearch.trim()
+                                ? "Sin encargos que coincidan"
+                                : encFilter
+                                    ? "Sin encargos con este estado"
+                                    : "Sin encargos registrados"}
+                            description={encargoSearch.trim()
+                                ? "No se encontraron encargos que coincidan con la búsqueda."
+                                : encFilter
+                                    ? "Prueba con otro filtro de estado."
+                                    : "Cuando un cliente pida una pieza que no hay en stock, regístrala arriba para darle seguimiento."}
                         />
                     ) : (
                         <div className="space-y-2">
-                            {encargos.map(item => {
+                            {filteredEncargos.map(item => {
                                 const chip = ENCARGO_STATUS[item.status] ?? { label: item.status, variant: "outline" as const }
                                 const trail = [
                                     item.product ? `Catálogo: ${item.product.name}` : null,

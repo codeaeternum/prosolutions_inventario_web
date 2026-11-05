@@ -16,6 +16,7 @@ import {
   User,
   LogIn,
   UserPlus,
+  LayoutDashboard,
 } from "lucide-react"
 import { toast } from "sonner"
 import { useCart } from "@/components/cart-context"
@@ -494,12 +495,12 @@ export default function CatalogoPage() {
           <Link href="/" className="flex items-center gap-2 shrink-0">
             <Image
               src="/logo.jpg"
-              alt="Pro-Solutions"
+              alt="Reficio"
               width={32}
               height={32}
               className="rounded-lg"
             />
-            <span className="font-bold hidden sm:inline">Pro-Solutions</span>
+            <span className="font-bold hidden sm:inline">Reficio</span>
           </Link>
 
           {/* Search bar - desktop */}
@@ -521,7 +522,11 @@ export default function CatalogoPage() {
 
             {/* Cart - always visible */}
             <Button variant="ghost" size="icon" asChild className="relative">
-              <Link href="/carrito">
+              <Link
+                href="/carrito"
+                aria-label={totalItems > 0 ? `Carrito (${totalItems} producto${totalItems !== 1 ? "s" : ""})` : "Carrito"}
+                title="Carrito"
+              >
                 <ShoppingCart className="h-5 w-5" />
                 {totalItems > 0 && (
                   <span className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold rounded-full">
@@ -534,13 +539,20 @@ export default function CatalogoPage() {
             {/* Auth-dependent buttons */}
             {isLoggedIn ? (
               <>
+                {(session?.user?.role === "ADMIN" || session?.user?.role === "EMPLOYEE") && (
+                  <Button variant="ghost" size="icon" asChild>
+                    <Link href="/admin" aria-label="Panel de administración" title="Panel de administración">
+                      <LayoutDashboard className="h-5 w-5" />
+                    </Link>
+                  </Button>
+                )}
                 <Button variant="ghost" size="icon" asChild className="hidden sm:flex">
-                  <Link href="/mis-reservas">
+                  <Link href="/mis-reservas" aria-label="Mis reservas" title="Mis reservas">
                     <CalendarCheck className="h-5 w-5" />
                   </Link>
                 </Button>
                 <Button variant="ghost" size="icon" asChild>
-                  <Link href="/perfil">
+                  <Link href="/perfil" aria-label="Mi perfil" title="Mi perfil">
                     <User className="h-5 w-5" />
                   </Link>
                 </Button>
@@ -561,7 +573,7 @@ export default function CatalogoPage() {
                 </Button>
                 {/* Mobile: just icon for login */}
                 <Button variant="ghost" size="icon" asChild className="sm:hidden">
-                  <Link href="/login">
+                  <Link href="/login" aria-label="Iniciar sesión" title="Iniciar sesión">
                     <LogIn className="h-5 w-5" />
                   </Link>
                 </Button>
@@ -618,19 +630,55 @@ export default function CatalogoPage() {
             {selectedCategory && (
               <Badge variant="secondary" className="gap-1">
                 {categories.find(c => c.id === selectedCategory)?.name}
-                <X className="h-3 w-3 cursor-pointer" onClick={() => changeCategory(null)} />
+                <X
+                  className="h-3 w-3 cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Quitar filtro"
+                  onClick={() => changeCategory(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      changeCategory(null)
+                    }
+                  }}
+                />
               </Badge>
             )}
             {selectedBrand && (
               <Badge variant="secondary" className="gap-1">
                 {brands.find(b => b.id === selectedBrand)?.name}
-                <X className="h-3 w-3 cursor-pointer" onClick={() => changeBrand(null)} />
+                <X
+                  className="h-3 w-3 cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Quitar filtro"
+                  onClick={() => changeBrand(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      changeBrand(null)
+                    }
+                  }}
+                />
               </Badge>
             )}
             {selectedModel && (
               <Badge variant="secondary" className="gap-1">
                 {models.find(m => m.id === selectedModel)?.name}
-                <X className="h-3 w-3 cursor-pointer" onClick={() => changeModel(null)} />
+                <X
+                  className="h-3 w-3 cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Quitar filtro"
+                  onClick={() => changeModel(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      changeModel(null)
+                    }
+                  }}
+                />
               </Badge>
             )}
             <Button variant="ghost" size="sm" onClick={clearFilters} className="h-6 text-xs">
@@ -697,9 +745,18 @@ export default function CatalogoPage() {
                     {/* Card Content - Make clickable for details */}
                     <div
                       className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         setDetailsProduct(product)
                         setDetailsOpen(true)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          setDetailsProduct(product)
+                          setDetailsOpen(true)
+                        }
                       }}
                     >
                       <div className="aspect-square relative bg-gradient-to-br from-muted to-muted/50">
@@ -752,7 +809,19 @@ export default function CatalogoPage() {
                         </Button>
                       </div>
                     )}
-                    <CardContent className="p-3 cursor-pointer" onClick={() => { setDetailsProduct(product); setDetailsOpen(true); }}>
+                    <CardContent
+                      className="p-3 cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { setDetailsProduct(product); setDetailsOpen(true); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          setDetailsProduct(product)
+                          setDetailsOpen(true)
+                        }
+                      }}
+                    >
                       <div className="text-[10px] text-muted-foreground truncate mb-0.5">
                         {product.models[0]?.model?.brand?.name} {product.models[0]?.model?.name}
                       </div>
@@ -771,7 +840,7 @@ export default function CatalogoPage() {
                           )}
                         </div>
                         {customerType === "STORE" && (
-                          <span className="text-[10px] text-cyan-600">taller</span>
+                          <span className="text-[10px] text-cyan-700 dark:text-cyan-300">taller</span>
                         )}
                       </div>
                     </CardContent>

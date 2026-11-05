@@ -1,12 +1,23 @@
 "use client"
 
 import { Suspense } from "react"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Users, CreditCard, Package, Loader2 } from "lucide-react"
-import { ClientesPanel } from "@/components/admin/clientes/clientes-panel"
-import { CobranzaPanel } from "@/components/admin/clientes/cobranza-panel"
-import { PedidosPanel } from "@/components/admin/clientes/pedidos-panel"
+
+const ClientesPanel = dynamic(
+  () => import("@/components/admin/clientes/clientes-panel").then((m) => m.ClientesPanel),
+  { ssr: false }
+)
+const CobranzaPanel = dynamic(
+  () => import("@/components/admin/clientes/cobranza-panel").then((m) => m.CobranzaPanel),
+  { ssr: false }
+)
+const PedidosPanel = dynamic(
+  () => import("@/components/admin/clientes/pedidos-panel").then((m) => m.PedidosPanel),
+  { ssr: false }
+)
 
 const TABS = ["clientes", "cobranza", "pedidos"] as const
 type Tab = (typeof TABS)[number]

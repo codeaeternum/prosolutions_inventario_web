@@ -355,3 +355,20 @@ export async function listDocuments(db: PrismaClient, businessId: string, raw: u
     return { ...sale, itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0), paid, balance: sale.total - paid, expired }
   })
 }
+
+/**
+ * Sella como VOIDED las cotizaciones de mostrador (kind=QUOTE, status=DRAFT)
+ * cuya vigencia (`expiresAt`) ya venció. Las cotizaciones nunca comprometen
+ * stock ni dinero, así que expirarlas es una actualización atómica limpia.
+ */
+export async function expireQuoteDocuments(db: PrismaClient, now: Date = new Date()) {
+  const result = await db.sale.updateMany({
+    where: {
+      kind: "QUOTE",
+      status: "DRAFT",
+      expiresAt: { not: null, lte: now },
+    },
+    data: { status: "VOIDED" },
+  })
+  return { expiredQuotesCount: result.count }
+}

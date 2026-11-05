@@ -1,15 +1,36 @@
 "use client"
 
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Clock, History, TrendingUp, Users } from "lucide-react"
-import { ActividadPanel } from "@/components/admin/equipo/actividad-panel"
-import { UsuariosPanel } from "@/components/admin/equipo/usuarios-panel"
-import { TurnosPanel } from "@/components/admin/equipo/turnos-panel"
-import { DesempenoPanel } from "@/components/admin/equipo/desempeno-panel"
+
+const ActividadPanel = dynamic(
+    () => import("@/components/admin/equipo/actividad-panel").then((m) => m.ActividadPanel),
+    { ssr: false }
+)
+const UsuariosPanel = dynamic(
+    () => import("@/components/admin/equipo/usuarios-panel").then((m) => m.UsuariosPanel),
+    { ssr: false }
+)
+const TurnosPanel = dynamic(
+    () => import("@/components/admin/equipo/turnos-panel").then((m) => m.TurnosPanel),
+    { ssr: false }
+)
+const DesempenoPanel = dynamic(
+    () => import("@/components/admin/equipo/desempeno-panel").then((m) => m.DesempenoPanel),
+    { ssr: false }
+)
 
 const TABS = ["actividad", "usuarios", "turnos", "desempeno"] as const
 type Tab = (typeof TABS)[number]
+
+const DESCRIPTIONS: Record<Tab, string> = {
+    actividad: "Bitácora de auditoría y acciones recientes de todo el personal",
+    usuarios: "Cuentas de empleados, clientes, roles, sucursales y permisos por módulo",
+    turnos: "Asistencia y sesiones operativas derivadas de la actividad real",
+    desempeno: "Métricas de productividad, ventas y órdenes atendidas por integrante",
+}
 
 /**
  * Hub "Equipo": junta en una pantalla el registro de actividad, la gestión
@@ -45,7 +66,7 @@ export function EquipoPanel() {
                         <Users className="h-7 w-7" />
                         Equipo
                     </h1>
-                    <p className="text-muted-foreground">Actividad y permisos de tu equipo</p>
+                    <p className="text-muted-foreground">{DESCRIPTIONS[tab]}</p>
                 </div>
             </div>
 

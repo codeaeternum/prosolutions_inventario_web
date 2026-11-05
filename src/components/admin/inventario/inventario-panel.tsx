@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useState } from "react"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -14,12 +15,32 @@ import {
     Truck,
 } from "lucide-react"
 import { StockPanel } from "@/components/admin/inventario/stock-panel"
-import { ComprasPanel } from "@/components/admin/inventario/compras-panel"
-import { ProveedoresPanel } from "@/components/admin/inventario/proveedores-panel"
-import { EncargosPanel } from "@/components/admin/inventario/encargos-panel"
-import { HistorialMovimientos } from "@/components/admin/inventario/historial-movimientos"
-import { EntradaRapidaDialog } from "@/components/admin/inventario/entrada-rapida-dialog"
-import MovimientosInventario from "@/app/admin/inventario/components/movimientos"
+import { StockHealthBanner } from "@/components/admin/inventario/stock-health-banner"
+
+const ComprasPanel = dynamic(
+    () => import("@/components/admin/inventario/compras-panel").then((m) => m.ComprasPanel),
+    { ssr: false }
+)
+const ProveedoresPanel = dynamic(
+    () => import("@/components/admin/inventario/proveedores-panel").then((m) => m.ProveedoresPanel),
+    { ssr: false }
+)
+const EncargosPanel = dynamic(
+    () => import("@/components/admin/inventario/encargos-panel").then((m) => m.EncargosPanel),
+    { ssr: false }
+)
+const HistorialMovimientos = dynamic(
+    () => import("@/components/admin/inventario/historial-movimientos").then((m) => m.HistorialMovimientos),
+    { ssr: false }
+)
+const EntradaRapidaDialog = dynamic(
+    () => import("@/components/admin/inventario/entrada-rapida-dialog").then((m) => m.EntradaRapidaDialog),
+    { ssr: false }
+)
+const MovimientosInventario = dynamic(
+    () => import("@/app/admin/inventario/components/movimientos"),
+    { ssr: false }
+)
 
 const TABS = ["stock", "entradas", "encargos", "historial"] as const
 type Tab = (typeof TABS)[number]
@@ -120,6 +141,10 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
                 </div>
             </div>
 
+            {viewer.role === "ADMIN" && (
+                <StockHealthBanner onReconciled={() => setRefreshKey(k => k + 1)} />
+            )}
+
             <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
                 <div className="overflow-x-auto pb-2">
                     {/* Móvil: grid de 4 columnas para que las 4 pestañas quepan
@@ -204,13 +229,15 @@ export function InventarioPanel({ viewer, branches }: InventarioPanelProps) {
             </Tabs>
 
             {/* Entrada rápida compartida: la abre Stock (?entrada=1) y Entradas. */}
-            <EntradaRapidaDialog
-                branches={branches}
-                lockedBranchId={lockedBranchId}
-                open={entradaOpen}
-                onOpenChange={(o) => { if (!o) setParams({ entrada: null }) }}
-                onSaved={() => setRefreshKey((k) => k + 1)}
-            />
+            {entradaOpen && (
+                <EntradaRapidaDialog
+                    branches={branches}
+                    lockedBranchId={lockedBranchId}
+                    open={entradaOpen}
+                    onOpenChange={(o) => { if (!o) setParams({ entrada: null }) }}
+                    onSaved={() => setRefreshKey((k) => k + 1)}
+                />
+            )}
         </>
     )
 }

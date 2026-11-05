@@ -1,7 +1,7 @@
 "use client"
 
 import { useSession } from "next-auth/react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/admin/empty-state"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
-import { Ban, Banknote, CalendarClock, ChevronDown, ChevronUp, History, Loader2, Mail, Pencil, Phone, Plus, Truck, X } from "lucide-react"
+import { Ban, Banknote, CalendarClock, ChevronDown, ChevronUp, Download, History, Loader2, Mail, Pencil, Phone, Plus, Search, Truck, X } from "lucide-react"
+import { csvCell } from "@/lib/csv"
 import { guardedClose } from "@/lib/dialog-guard"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
@@ -80,6 +81,15 @@ interface SupplierPaymentRow {
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" }
 
+type SupplierStatusFilter = "all" | "debt" | "active" | "inactive"
+
+const STATUS_FILTERS: { value: SupplierStatusFilter; label: string }[] = [
+    { value: "all", label: "Todos" },
+    { value: "debt", label: "Con saldo por pagar" },
+    { value: "active", label: "Activos" },
+    { value: "inactive", label: "Inactivos" },
+]
+
 /** Celda monetaria de la tabla de antigüedad: guion cuando el bucket está en cero. */
 function AgingCell({ value, className }: { value: number; className?: string }) {
     return (
@@ -116,6 +126,10 @@ export function ProveedoresPanel() {
     const [aging, setAging] = useState<SupplierAging | null>(null)
     const [agingOpen, setAgingOpen] = useState<boolean | null>(null) // null = auto (abierto si hay pocos)
     const [focusSupplierId, setFocusSupplierId] = useState<string | null>(null)
+
+    // Búsqueda rápida y filtros de estado/saldo.
+    const [searchQuery, setSearchQuery] = useState("")
+    const [statusFilter, setStatusFilter] = useState<SupplierStatusFilter>("all")
 
     const fetchSuppliers = useCallback(async () => {
         setError(null)
@@ -229,6 +243,22 @@ export function ProveedoresPanel() {
         }
     }
 
+    const filteredSuppliers = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase()
+        return suppliers.filter(s => {
+            if (statusFilter === "debt" && (balances[s.id]?.saldoCents ?? 0) <= 0) return false
+            if (statusFilter === "active" && !s.isActive) return false
+            if (statusFilter === "inactive" && s.isActive) return false
+            if (!q) return true
+            return (
+                s.name.toLowerCase().includes(q) ||
+                (s.phone ?? "").toLowerCase().includes(q) ||
+                (s.email ?? "").toLowerCase().includes(q) ||
+                (s.notes ?? "").toLowerCase().includes(q)
+            )
+        })
+    }, [suppliers, balances, searchQuery, statusFilter])
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
@@ -239,8 +269,48 @@ export function ProveedoresPanel() {
 
     // Click en una fila de antigüedad enfoca la tarjeta de ese proveedor.
     const focusedSupplier = focusSupplierId ? suppliers.find(s => s.id === focusSupplierId) ?? null : null
-    const visibleSuppliers = focusedSupplier ? [focusedSupplier] : suppliers
+    const visibleSuppliers = focusedSupplier ? [focusedSupplier] : filteredSuppliers
     const agingExpanded = agingOpen ?? ((aging?.suppliers.length ?? 0) <= 6)
+
+    const handleExportCsv = () => {
+        if (visibleSuppliers.length === 0) return
+        const headers = [
+            "Proveedor",
+            "Teléfono",
+            "Correo",
+            "Estado",
+            "Órdenes de Compra",
+            "Recibido",
+            "Pagado",
+            "Saldo por Pagar",
+            "Próximo Vencimiento",
+            "Notas",
+        ]
+        const centsToPesos = (cents: number) => (cents / 100).toFixed(2)
+        const csvRows = visibleSuppliers.map(s => {
+            const bal = balances[s.id]
+            return [
+                s.name,
+                s.phone ?? "",
+                s.email ?? "",
+                s.isActive ? "Activo" : "Inactivo",
+                s._count.purchases,
+                centsToPesos(bal?.recibidoCents ?? 0),
+                centsToPesos(bal?.pagadoCents ?? 0),
+                centsToPesos(bal?.saldoCents ?? 0),
+                bal?.proximoVencimiento ? bal.proximoVencimiento.slice(0, 10) : "",
+                s.notes ?? "",
+            ]
+        })
+        const lines = [headers.map(csvCell).join(","), ...csvRows.map(r => r.map(csvCell).join(","))]
+        const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = `proveedores-${new Date().toISOString().slice(0, 10)}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
+    }
 
     return (
         <div className="space-y-4">
@@ -249,9 +319,58 @@ export function ProveedoresPanel() {
                     <Plus className="mr-2 h-4 w-4" />
                     Nuevo proveedor
                 </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={visibleSuppliers.length === 0}
+                    aria-label="Exportar proveedores a CSV"
+                    onClick={handleExportCsv}
+                >
+                    <Download className="mr-1.5 h-4 w-4" />
+                    Exportar CSV
+                </Button>
                 <p className="ml-auto text-sm text-muted-foreground">
+                    {visibleSuppliers.length !== suppliers.length ? `${visibleSuppliers.length} de ` : ""}
                     {suppliers.length} proveedor{suppliers.length === 1 ? "" : "es"} registrado{suppliers.length === 1 ? "" : "s"}
                 </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="relative flex-1 min-w-[220px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        placeholder="Buscar por nombre, teléfono, correo o notas…"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        aria-label="Buscar proveedores"
+                        className="pl-9 pr-8"
+                    />
+                    {searchQuery && (
+                        <button
+                            type="button"
+                            onClick={() => setSearchQuery("")}
+                            aria-label="Limpiar búsqueda"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    )}
+                </div>
+                <div className="flex gap-1.5 flex-wrap">
+                    {STATUS_FILTERS.map(f => (
+                        <Button
+                            key={f.value}
+                            type="button"
+                            variant={statusFilter === f.value ? "default" : "outline"}
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => setStatusFilter(f.value)}
+                        >
+                            {f.label}
+                        </Button>
+                    ))}
+                </div>
             </div>
 
             {error && (
@@ -362,6 +481,14 @@ export function ProveedoresPanel() {
                     icon={Truck}
                     title="No hay proveedores"
                     description="Registra a tus proveedores de refacciones para asociarlos a las órdenes de compra."
+                />
+            ) : !error && visibleSuppliers.length === 0 ? (
+                <EmptyState
+                    icon={Truck}
+                    title="No se encontraron proveedores"
+                    description={searchQuery.trim()
+                        ? "No hay proveedores que coincidan con la búsqueda."
+                        : "No hay proveedores que coincidan con el filtro seleccionado."}
                 />
             ) : (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

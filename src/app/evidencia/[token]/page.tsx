@@ -1,12 +1,12 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import Link from "next/link"
 import { useParams } from "next/navigation"
-import { Wrench, Camera, ImagePlus, Loader2, AlertCircle, Check, X } from "lucide-react"
+import { Camera, ImagePlus, Loader2, AlertCircle, Check, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { DocumentShell } from "@/components/public/document-shell"
 import { repairFolio } from "@/lib/workshop-labels"
 import { formatDate } from "@/lib/utils"
 
@@ -28,35 +28,9 @@ const LABEL_SUGGESTIONS = ["Frente", "Trasera", "Detalle", "Pantalla", "Antes", 
 
 export default function EvidenciaPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
-      <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 safe-area-sticky z-50">
-        <div className="container mx-auto max-w-6xl flex h-14 items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center">
-              <Wrench className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-lg tracking-tight">Reficio</span>
-          </Link>
-        </div>
-      </header>
-
-      <main id="main-content" className="flex-1" role="main">
-        <EvidenceUploader />
-      </main>
-
-      <footer className="border-t py-8">
-        <div className="container mx-auto max-w-6xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-primary flex items-center justify-center">
-              <Wrench className="h-3.5 w-3.5 text-primary-foreground" />
-            </div>
-            <span className="font-semibold text-foreground">Reficio</span>
-            <span>· reficio.app</span>
-          </div>
-          <p>© {new Date().getFullYear()} Reficio. Software para talleres de reparación.</p>
-        </div>
-      </footer>
-    </div>
+    <DocumentShell>
+      <EvidenceUploader />
+    </DocumentShell>
   )
 }
 
@@ -72,6 +46,7 @@ function EvidenceUploader() {
   const [label, setLabel] = useState("")
   const [uploading, setUploading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const previewsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
@@ -117,6 +92,7 @@ function EvidenceUploader() {
     }
     if (next.length) setPending(prev => [...prev, ...next])
     if (inputRef.current) inputRef.current.value = ""
+    if (cameraInputRef.current) cameraInputRef.current.value = ""
   }
 
   function revoke(preview: string) {
@@ -216,6 +192,14 @@ function EvidenceUploader() {
               className="hidden"
               onChange={e => addFiles(e.target.files)}
             />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => addFiles(e.target.files)}
+            />
             <div className="space-y-1.5">
               <label htmlFor="label" className="text-sm font-medium">Etiqueta (opcional)</label>
               <Input
@@ -232,15 +216,26 @@ function EvidenceUploader() {
               </datalist>
             </div>
 
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              className="w-full rounded-xl border-2 border-dashed p-8 text-center hover:border-primary/50 hover:bg-primary/5 transition-colors"
-            >
-              <ImagePlus className="h-8 w-8 mx-auto text-muted-foreground" />
-              <p className="mt-2 text-sm font-medium">Toca para tomar o elegir fotos</p>
-              <p className="mt-1 text-xs text-muted-foreground">JPG, PNG o WebP · máximo 5 MB por foto</p>
-            </button>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="default"
+                className="h-auto py-6 rounded-xl flex-col gap-2"
+                onClick={() => cameraInputRef.current?.click()}
+              >
+                <Camera className="h-7 w-7" />
+                <span className="text-sm font-medium">Tomar foto con cámara</span>
+              </Button>
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="w-full rounded-xl border-2 border-dashed p-6 text-center hover:border-primary/50 hover:bg-primary/5 transition-colors flex flex-col items-center justify-center"
+              >
+                <ImagePlus className="h-7 w-7 text-muted-foreground" />
+                <p className="mt-2 text-sm font-medium">Elegir de galería o archivos</p>
+                <p className="mt-1 text-xs text-muted-foreground">JPG, PNG o WebP · máximo 5 MB por foto</p>
+              </button>
+            </div>
 
             {/* Previsualización */}
             {pending.length > 0 && (

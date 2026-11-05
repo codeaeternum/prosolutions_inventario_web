@@ -143,6 +143,8 @@ export interface PlatformRecentSale {
 
 export interface PlatformBusinessDetail extends PlatformBusinessSummary {
   updatedAt: Date
+  businessKind?: string
+  showInDirectory?: boolean
   phone: string | null
   address: string | null
   logoUrl: string | null
@@ -170,6 +172,8 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     select: {
       ...BUSINESS_SELECT,
       updatedAt: true,
+      businessKind: true,
+      showInDirectory: true,
       phone: true,
       address: true,
       logoUrl: true,
@@ -243,6 +247,8 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
   return {
     ...toSummary(business, (salesTotal._sum.total ?? 0) - (salesTotal._sum.discountCents ?? 0) / 100, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
     updatedAt: business.updatedAt,
+    businessKind: business.businessKind ?? "FULL",
+    showInDirectory: business.showInDirectory ?? true,
     phone: business.phone,
     address: business.address,
     logoUrl: business.logoUrl,

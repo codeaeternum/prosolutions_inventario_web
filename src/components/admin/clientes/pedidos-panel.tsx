@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -31,9 +32,13 @@ import {
   Store,
   QrCode,
   ChevronRight,
+  Search,
+  Download,
+  AlertTriangle,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
+import { csvCell } from "@/lib/csv"
 
 type PedidoTipo = "ENCARGO" | "APARTADO_WEB" | "APARTADO_MOSTRADOR"
 
@@ -137,9 +142,12 @@ export function PedidosPanel() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [query, setQuery] = useState("")
 
   const fetchPedidos = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
+    setLoadError(null)
     try {
       const params = new URLSearchParams()
       if (tipo) params.set("tipo", tipo)
@@ -157,6 +165,11 @@ export function PedidosPanel() {
     } catch (error) {
       if (!signal?.aborted) {
         console.error("Error fetching pedidos:", error)
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "No se pudieron cargar los pedidos. Reintenta en un momento."
+        setLoadError(message)
         toast.error("No se pudieron cargar los pedidos. Reintenta en un momento.")
       }
     } finally {
@@ -173,6 +186,49 @@ export function PedidosPanel() {
       controller.abort()
     }
   }, [fetchPedidos])
+
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(
+      (r) =>
+        (r.folio ?? "").toLowerCase().includes(q) ||
+        (r.cliente ?? "").toLowerCase().includes(q) ||
+        r.detalle.toLowerCase().includes(q)
+    )
+  }, [rows, query])
+
+  const handleExportCsv = () => {
+    if (filteredRows.length === 0) return
+    const headers = [
+      "Tipo",
+      "Folio",
+      "Cliente",
+      "Detalle",
+      "Monto",
+      "Anticipo",
+      "Estado",
+      "Fecha",
+    ]
+    const csvRows = filteredRows.map((r) => [
+      TIPO_BADGE[r.tipo]?.label ?? r.tipo,
+      r.folio ?? "",
+      r.cliente ?? "",
+      r.detalle,
+      r.monto ?? "",
+      r.anticipo,
+      STATUS_META[r.status]?.label ?? r.status,
+      formatDate(r.createdAt),
+    ])
+    const lines = [headers.map(csvCell).join(","), ...csvRows.map((r) => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `pedidos-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   const updateFilters = (values: { tipo?: string; status?: string }) => {
     const params = new URLSearchParams(searchParams.toString())
@@ -191,9 +247,9 @@ export function PedidosPanel() {
 
   return (
     <div className="space-y-6">
-      {/* Filtros por tipo + estado + escáner QR */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex gap-2 flex-wrap flex-1">
+      {/* Filtros por tipo + buscador + estado + exportación + escáner QR */}
+      <div className="space-y-3">
+        <div className="flex gap-2 flex-wrap">
           {TIPO_FILTERS.map((f) => (
             <Button
               key={f.value}
@@ -206,37 +262,154 @@ export function PedidosPanel() {
             </Button>
           ))}
         </div>
-        <div className="flex gap-2">
-          <Select value={status} onValueChange={(value) => updateFilters({ status: value })}>
-            <SelectTrigger className="w-[190px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" className="h-10" asChild>
-            {/* El escáner vive en el POS: reconoce QR de apartados y productos. */}
-            <Link href="/admin/ventas?escanear=1">
-              <QrCode className="mr-2 h-4 w-4" />
-              Escanear
-            </Link>
-          </Button>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por folio, cliente o detalle..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Buscar pedidos por folio, cliente o detalle"
+              className="pl-9"
+            />
+          </div>
+          <div className="flex gap-2 flex-wrap items-center">
+            <Select value={status} onValueChange={(value) => updateFilters({ status: value })}>
+              <SelectTrigger className="w-full sm:w-[190px]" aria-label="Filtrar pedidos por estado">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-10"
+              disabled={filteredRows.length === 0}
+              aria-label="Exportar pedidos a CSV"
+              onClick={handleExportCsv}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Exportar CSV
+            </Button>
+            <Button variant="outline" size="sm" className="h-10" asChild>
+              {/* El escáner vive en el POS: reconoce QR de apartados y productos. */}
+              <Link href="/admin/ventas?escanear=1">
+                <QrCode className="mr-2 h-4 w-4" />
+                Escanear
+              </Link>
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Tabla de pedidos */}
+      {/* Banner de error resiliente */}
+      {loadError && (
+        <div
+          role="alert"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive"
+        >
+          <div className="flex items-start sm:items-center gap-2.5">
+            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 sm:mt-0" />
+            <span>{loadError}</span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchPedidos()}
+            className="shrink-0 self-end sm:self-auto"
+          >
+            Reintentar
+          </Button>
+        </div>
+      )}
+
+      {/* Listado de pedidos (tarjetas móviles + tabla de escritorio) */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
-      ) : rows.length > 0 ? (
+      ) : filteredRows.length > 0 ? (
         <>
-          <Card>
+          {/* Vista móvil: tarjetas clicables sin scroll horizontal */}
+          <div className="grid gap-3 md:hidden">
+            {filteredRows.map((row) => (
+              <Card
+                key={`${row.tipo}:${row.id}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`Abrir pedido ${row.folio ?? row.id}`}
+                onClick={() => router.push(row.href)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    router.push(row.href)
+                  }
+                }}
+                className="overflow-hidden cursor-pointer transition-colors hover:bg-muted/40"
+              >
+                <CardContent className="p-4 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TipoBadge tipo={row.tipo} />
+                      <span className="font-mono text-xs text-muted-foreground truncate">
+                        {row.folio ?? "—"}
+                      </span>
+                    </div>
+                    <StatusBadge status={row.status} />
+                  </div>
+
+                  <div className="min-w-0 space-y-1">
+                    <p className="font-medium text-sm truncate" title={row.cliente ?? undefined}>
+                      {row.cliente ?? (
+                        <span className="text-muted-foreground italic">Sin cliente</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-muted-foreground line-clamp-2" title={row.detalle}>
+                      {row.detalle}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t text-xs">
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <span className="font-semibold text-sm text-foreground">
+                          {row.monto != null ? formatPrice(row.monto) : "—"}
+                        </span>
+                        {row.anticipo > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            Anticipo {formatPrice(row.anticipo)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {formatDate(row.createdAt)}
+                      </p>
+                    </div>
+                    <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                      {row.tipo === "ENCARGO" && row.status === "READY" ? (
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/admin/ventas?encargo=${row.id}`}>Cobrar</Link>
+                        </Button>
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Vista escritorio: tabla completa */}
+          <Card className="hidden md:block">
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <Table>
@@ -253,7 +426,7 @@ export function PedidosPanel() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.map((row) => (
+                    {filteredRows.map((row) => (
                       <TableRow
                         key={`${row.tipo}:${row.id}`}
                         className="cursor-pointer"
@@ -330,17 +503,17 @@ export function PedidosPanel() {
             />
           </div>
         </>
-      ) : (
+      ) : !loadError ? (
         <EmptyState
           icon={Package}
           title="No hay pedidos"
           description={
-            tipo || status !== "ALL"
+            tipo || status !== "ALL" || query.trim()
               ? "Ningún pedido coincide con los filtros. Prueba con otro tipo o estado."
               : "Los encargos de mostrador, las reservas del catálogo y los apartados del POS aparecerán aquí."
           }
         />
-      )}
+      ) : null}
     </div>
   )
 }

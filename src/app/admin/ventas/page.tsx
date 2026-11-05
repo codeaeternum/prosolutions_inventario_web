@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
 import { BarcodeScanner } from "@/components/barcode-scanner"
-import { CheckCircle, ClipboardList, QrCode, ReceiptText, ScanBarcode, ShoppingCart } from "lucide-react"
+import { CheckCircle, ClipboardList, QrCode, ReceiptText, RotateCcw, ScanBarcode, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
 import { CartPanel } from "@/components/pos/cart-panel"
@@ -20,6 +20,7 @@ import { CheckoutDialog } from "@/components/pos/checkout-dialog"
 import { LayawaysSheet } from "@/components/pos/layaways-sheet"
 import { ParkedSalesSheet } from "@/components/pos/parked-sales-sheet"
 import { QuotesSheet } from "@/components/pos/quotes-sheet"
+import { SalesReturnsSheet } from "@/components/pos/sales-returns-sheet"
 import { ProductCatalog } from "@/components/pos/product-catalog"
 import { ShortcutHints } from "@/components/pos/shortcut-hints"
 import { SuspendDialog } from "@/components/pos/suspend-dialog"
@@ -61,6 +62,8 @@ export default function VentasPage() {
     // ?escanear=1 — llega del redirect de /admin/verificar (QR de apartado).
 
     const [showQuotes, setShowQuotes] = useState(false)
+    const [showSalesHistory, setShowSalesHistory] = useState(false)
+    const [salesInitialQuery, setSalesInitialQuery] = useState("")
     const [showMobileCart, setShowMobileCart] = useState(false)
     // ?encargo=<id> — "Cobrar" desde Pedidos: prellena cliente + pieza y
     // muestra la cotización/anticipo del encargo como referencia de cobro.
@@ -242,13 +245,26 @@ export default function VentasPage() {
         }
     }
 
-    // El QR de un apartado del cliente apunta a /verificar/<codigo>; si lo
-    // escaneado trae esa forma, se abre la verificación en vez de buscar
-    // producto. Un solo escáner, dos destinos.
+    // El QR de un apartado del cliente apunta a /verificar/<codigo>; un folio
+    // V-... o URL de ticket de venta abre el historial para devolución/reimpresión.
     const handleScan = async (code: string) => {
         const clean = code.trim()
         if (!clean) return
         setShowScanner(false)
+        if (/^V-\d+$/i.test(clean)) {
+            setSalesInitialQuery(clean)
+            setShowSalesHistory(true)
+            return
+        }
+        const saleTicketMatch = /\/admin\/tickets\/venta\/([^/?#\s]+)/.exec(clean)
+        if (saleTicketMatch) {
+            const ticketRef = decodeURIComponent(saleTicketMatch[1])
+            if (/^V-\d+$/i.test(ticketRef)) {
+                setSalesInitialQuery(ticketRef)
+            }
+            setShowSalesHistory(true)
+            return
+        }
         const verifyMatch = clean.match(/\/verificar\/([^/?#\s]+)/)
         if (scanMode === "qr" || verifyMatch) {
             const reservationCode = verifyMatch ? verifyMatch[1] : clean
@@ -301,8 +317,8 @@ export default function VentasPage() {
         }
     }, [autoTicket, clearTicket, encargoCtx])
 
-    // Atajos de mostrador: F2/Ctrl+Enter cobran, Esc limpia. +/−/Supr van en cada línea del ticket.
-    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showScanner || showMobileCart
+    // Atajos de mostrador: F2/Ctrl+Enter cobran, F4 abre tickets/devoluciones, Esc limpia. +/−/Supr van en cada línea del ticket.
+    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showSalesHistory || showScanner || showMobileCart
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const t = e.target as HTMLElement | null
@@ -311,6 +327,11 @@ export default function VentasPage() {
             // cobro — antes apilaban el checkout encima del diálogo activo.
             if (!anyOverlayOpen && (e.key === "F2" || ((e.ctrlKey || e.metaKey) && e.key === "Enter"))) {
                 if (e.key === "F2" || !typing) { e.preventDefault(); if (cart.length > 0 && !submitting.current) setShowCheckout(true) }
+                return
+            }
+            if (!anyOverlayOpen && e.key === "F4") {
+                e.preventDefault()
+                setShowSalesHistory(true)
                 return
             }
             if (e.key === "Escape" && !anyOverlayOpen && searchQuery) setSearchQuery("")
@@ -353,6 +374,9 @@ export default function VentasPage() {
                         </Select>
                     )}
                     <ExportButton type="sales" branchId={activeBranchId || undefined} />
+                    <Button onClick={() => setShowSalesHistory(true)} disabled={processing} variant="outline" title="Consultar tickets recientes y procesar devoluciones o anulaciones (F4)">
+                        <RotateCcw className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Devoluciones / Tickets</span>
+                    </Button>
                     <Button onClick={() => { setScanMode("qr"); setShowScanner(true) }} disabled={processing} variant="outline" title="Escanea el QR que muestra el cliente para entregar su apartado">
                         <QrCode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">QR apartado</span>
                     </Button>
@@ -428,6 +452,19 @@ export default function VentasPage() {
             <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
             <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={activeBranchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
             <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <SalesReturnsSheet
+                open={showSalesHistory}
+                onOpenChange={setShowSalesHistory}
+                branchId={activeBranchId}
+                refreshKey={docsRefreshKey}
+                initialQuery={salesInitialQuery}
+                onReturned={() => {
+                    setDocsRefreshKey(k => k + 1)
+                    if (activeBranchId) {
+                        fetch(`/api/caja?branchId=${activeBranchId}`).then(r => r.ok ? r.json() : null).then(d => setCajaOpen(!!d?.active)).catch(() => {})
+                    }
+                }}
+            />
         </div>
     )
 }

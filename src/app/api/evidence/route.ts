@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { readRepairPhoto } from "@/lib/repair-evidence"
 
 // Sirve una evidencia por id de RepairPhoto. Público a propósito: el cliente
@@ -9,10 +10,16 @@ import { readRepairPhoto } from "@/lib/repair-evidence"
 const HEADERS = {
   "Cache-Control": "private, max-age=300",
   "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; img-src 'self'; sandbox",
 } as const
+const READ_WINDOW_MS = 60 * 1000
+const MAX_READS = 120
 
 export async function GET(req: Request) {
   try {
+    if (!checkAndRecord("evidence-file", getClientIp(req), READ_WINDOW_MS, MAX_READS)) {
+      return new NextResponse(null, { status: 429, headers: HEADERS })
+    }
     const id = (new URL(req.url).searchParams.get("id") ?? "").trim()
     if (!/^[a-zA-Z0-9_-]{8,64}$/.test(id)) return new NextResponse(null, { status: 404, headers: HEADERS })
     const photo = await prisma.repairPhoto.findUnique({

@@ -3,12 +3,31 @@ import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { getPlatformBusinessDetail } from "@/lib/platform"
+import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
 
 type Params = { params: Promise<{ id: string }> }
 
 const patchSchema = z.object({
-  isActive: z.boolean(),
-})
+  isActive: z.boolean().optional(),
+  name: z.string().trim().min(2).max(80).optional(),
+  slug: z.string().trim().min(2).max(50).optional(),
+  category: z.string().trim().min(1).max(60).optional(),
+  businessKind: z.enum(["FULL", "REPAIR", "PARTNER", "PARTS"]).optional(),
+  phone: z.string().trim().max(30).nullable().optional(),
+  address: z.string().trim().max(300).nullable().optional(),
+  showInDirectory: z.boolean().optional(),
+}).refine(
+  data =>
+    data.isActive !== undefined ||
+    data.name !== undefined ||
+    data.slug !== undefined ||
+    data.category !== undefined ||
+    data.businessKind !== undefined ||
+    data.phone !== undefined ||
+    data.address !== undefined ||
+    data.showInDirectory !== undefined,
+  { message: "Datos inválidos" }
+)
 
 /**
  * GET /api/platform/businesses/[id] — Consola Reficio (solo superadmin).
@@ -75,19 +94,52 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const actor = auth.session.user
+    let cleanSlug: string | undefined
+    if (parsed.data.slug !== undefined) {
+      cleanSlug = normalizeSlug(parsed.data.slug)
+      if (!isValidSlug(cleanSlug)) {
+        return NextResponse.json({ error: "Slug inválido o reservado" }, { status: 400 })
+      }
+    }
+
+    const updateData = {
+      ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+      ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+      ...(cleanSlug !== undefined ? { slug: cleanSlug } : {}),
+      ...(parsed.data.category !== undefined ? { category: parsed.data.category } : {}),
+      ...(parsed.data.businessKind !== undefined ? { businessKind: parsed.data.businessKind } : {}),
+      ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone || null } : {}),
+      ...(parsed.data.address !== undefined ? { address: parsed.data.address || null } : {}),
+      ...(parsed.data.showInDirectory !== undefined ? { showInDirectory: parsed.data.showInDirectory } : {}),
+    }
+
+    const onlyToggleActive =
+      parsed.data.isActive !== undefined &&
+      parsed.data.name === undefined &&
+      parsed.data.slug === undefined &&
+      parsed.data.category === undefined &&
+      parsed.data.businessKind === undefined &&
+      parsed.data.phone === undefined &&
+      parsed.data.address === undefined &&
+      parsed.data.showInDirectory === undefined
+
+    const eventKind = onlyToggleActive
+      ? (parsed.data.isActive ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED")
+      : "TENANT_UPDATED"
+
     const [business] = await prisma.$transaction([
       prisma.business.update({
         where: { id },
-        data: { isActive: parsed.data.isActive },
+        data: updateData,
         select: { id: true, name: true, slug: true, isActive: true, updatedAt: true },
       }),
-      // Bitácora de plataforma: qué operador suspendió/reactivó qué empresa.
+      // Bitácora de plataforma: qué operador suspendió/reactivó/editó qué empresa.
       prisma.platformEvent.create({
         data: {
           businessId: existing.id,
-          businessSlug: existing.slug,
-          businessName: existing.name,
-          kind: parsed.data.isActive ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED",
+          businessSlug: cleanSlug ?? existing.slug,
+          businessName: parsed.data.name ?? existing.name,
+          kind: eventKind,
           actorId: actor.id,
           actorEmail: actor.email ?? null,
         },

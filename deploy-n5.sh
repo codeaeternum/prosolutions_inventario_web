@@ -22,18 +22,26 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}   PRO-SOLUTIONS INVENTARIO${NC}"
+echo -e "${CYAN}   REFICIO (PRO-SOLUTIONS INVENTARIO)${NC}"
 echo -e "${CYAN}   Deploy: Mac → GitHub → N5 Pro${NC}"
 echo -e "${CYAN}========================================${NC}"
 
-# --- PASO 1: Subir a GitHub ---
-echo -e "${BLUE}>>> [MAC] Guardando y subiendo cambios a GitHub...${NC}"
+# --- PASO 0: Verificación previa (Typecheck + Lint + Tests unitarios) ---
+if [ "${SKIP_VERIFY:-0}" != "1" ]; then
+    echo -e "${BLUE}>>> [MAC] Verificando calidad antes de desplegar (typecheck, lint, test)...${NC}"
+    npm run typecheck
+    npm run lint
+    npm test -- --run --exclude "src/__tests__/domain/*.integration.test.ts"
+fi
 
-# Verificar si hay cambios
+# --- PASO 1: Subir a GitHub ---
+echo -e "${BLUE}>>> [MAC] Verificando estado de Git y subiendo cambios a GitHub...${NC}"
+
+# Evitar commitear archivos no deseados con git add . ciego: solo actualiza archivos ya trackeados
 if git diff --quiet && git diff --staged --quiet; then
-    echo -e "${YELLOW}No hay cambios para commitear${NC}"
+    echo -e "${YELLOW}No hay cambios pendientes en archivos trackeados${NC}"
 else
-    git add .
+    git add -u
     git commit -m "deploy: update from Mac $(date '+%Y-%m-%d %H:%M')" || true
 fi
 

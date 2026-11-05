@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { cache } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { auth } from "@/lib/auth"
 import { getPlatformBusinessDetail } from "@/lib/platform"
 import { repairLabels } from "@/lib/workshop-labels"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
@@ -16,8 +17,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { BusinessStatusButton } from "@/components/platform/business-status-button"
+import { BusinessEditDialog, BusinessStatusButton } from "@/components/platform/business-status-button"
 import { BusinessDeleteButton } from "@/components/platform/business-delete-button"
+import {
+  CreatePlatformUserDialog,
+  EditPlatformUserDialog,
+  SupportAccessButton,
+  SuperAdminToggleButton,
+} from "@/components/platform/platform-header-actions"
 import {
   ArrowLeft,
   Building2,
@@ -64,9 +71,14 @@ const userStatusLabels: Record<string, string> = {
 
 const platformEventLabels: Record<string, string> = {
   TENANT_CREATED: "Empresa registrada",
+  TENANT_UPDATED: "Datos de empresa actualizados",
   TENANT_SUSPENDED: "Empresa suspendida",
   TENANT_REACTIVATED: "Empresa reactivada",
   TENANT_DELETED: "Empresa eliminada",
+  SUPERADMIN_GRANTED: "Permiso superadmin otorgado",
+  SUPERADMIN_REVOKED: "Permiso superadmin revocado",
+  USER_CREDENTIALS_UPDATED: "Credenciales de usuario actualizadas",
+  USER_CREATED_BY_PLATFORM: "Usuario creado por operador",
 }
 
 const userStatusVariants: Record<string, "success" | "warning" | "destructive"> = {
@@ -82,8 +94,9 @@ const saleStatusLabels: Record<string, string> = {
 
 export default async function PlatformBusinessPage({ params }: PageProps) {
   const { id } = await params
-  const business = await getDetail(id)
+  const [business, session] = await Promise.all([getDetail(id), auth()])
   if (!business) notFound()
+  const currentUserId = session?.user?.id
 
   const metrics = [
     { title: "Usuarios", value: business.counts.users, icon: Users },
@@ -154,7 +167,10 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
               </div>
             </div>
           </div>
-          <BusinessStatusButton business={business} variant={business.isActive ? "destructive" : "default"} />
+          <div className="flex items-center gap-2">
+            <BusinessEditDialog business={business} />
+            <BusinessStatusButton business={business} variant={business.isActive ? "destructive" : "default"} />
+          </div>
         </CardContent>
       </Card>
 
@@ -270,14 +286,17 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
 
       {/* Equipo */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Usuarios del equipo
-          </CardTitle>
-          <CardDescription>
-            Staff con acceso al panel (los {business.counts.users} usuarios incluyen también clientes).
-          </CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Usuarios del equipo
+            </CardTitle>
+            <CardDescription>
+              Staff con acceso al panel (los {business.counts.users} usuarios incluyen también clientes).
+            </CardDescription>
+          </div>
+          <CreatePlatformUserDialog businessId={business.id} businessName={business.name} />
         </CardHeader>
         <CardContent>
           {business.users.length > 0 ? (
@@ -289,6 +308,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                   <TableHead>Rol</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Registro</TableHead>
+                  <TableHead className="text-right">Soporte</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -316,6 +336,24 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {formatDay(u.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="inline-flex items-center justify-end gap-2">
+                        {u.status === "APPROVED" && (u.role === "ADMIN" || u.role === "EMPLOYEE") && (
+                          <>
+                            <SupportAccessButton userId={u.id} />
+                            <SuperAdminToggleButton
+                              userId={u.id}
+                              userName={u.name}
+                              isSuperAdmin={u.isSuperAdmin}
+                              isSelf={u.id === currentUserId}
+                            />
+                          </>
+                        )}
+                        <EditPlatformUserDialog
+                          user={{ id: u.id, name: u.name, email: u.email, status: u.status }}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

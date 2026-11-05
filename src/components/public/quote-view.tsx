@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { AlertCircle, BadgeCheck, TimerOff } from "lucide-react"
-import { repairFolio } from "@/lib/workshop-labels"
+import { parseReportedIssue, repairFolio } from "@/lib/workshop-labels"
 import { formatDate, formatPrice } from "@/lib/utils"
 import type { PublicQuote } from "@/lib/public-quote"
 import { serviceLinesMatchLabor } from "@/lib/quote-services"
@@ -14,31 +14,6 @@ import { QUOTE_VALIDITY_DAYS_DEFAULT, isQuoteExpiredAt } from "@/app/api/cotizac
 
 const TERMS =
   "Esta cotización es un estimado basado en el diagnóstico inicial. Si se detectan daños adicionales se le contactará antes de proceder."
-
-// Mismo criterio de limpieza que quote-ticket-view.tsx (documento impreso):
-// reportedIssue puede arrastrar "Servicio: X — Falla: Y", presupuestos
-// embebidos o el formato "Servicio · Detalle". Vive aquí porque la vista del
-// ticket no la exporta y esta página no puede importar de un client file.
-function parseIssue(raw: string): { service?: string; issue: string } {
-  const withoutBudget = raw
-    .replace(/presupuesto\s+estimado\s*:?\s*\$?\s*[\d.,]+/gi, "")
-    .replace(/\s{2,}/g, " ")
-
-  const legacy = withoutBudget.match(/servicio\s*:\s*(.+?)\s*[—–-]\s*falla\s*:\s*(.+)/i)
-  if (legacy) {
-    return { service: legacy[1].trim() || undefined, issue: legacy[2].trim() }
-  }
-
-  const segments = withoutBudget
-    .split("·")
-    .map(s => s.trim())
-    .filter(Boolean)
-
-  if (segments.length >= 2) {
-    return { service: segments[0], issue: segments.slice(1).join(" · ") }
-  }
-  return { service: undefined, issue: segments[0] ?? raw.trim() }
-}
 
 function Row({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null
@@ -133,7 +108,7 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
   terms?: string
 }) {
   const folio = repairFolio(order.number, folioDigits)
-  const { service, issue } = parseIssue(order.reportedIssue)
+  const { service, issue } = parseReportedIssue(order.reportedIssue)
   const laborCents = order.approvedQuoteCents ?? order.quoteCents
   const parts = order.parts.map(part => ({
     description: part.description,

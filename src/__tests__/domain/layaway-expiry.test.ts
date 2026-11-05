@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { payDocument, listDocuments } from "@/lib/domain/documents"
+import { payDocument, listDocuments, expireQuoteDocuments } from "@/lib/domain/documents"
 
 /**
  * Vigencia del apartado (LAYAWAY.expiresAt): antes no se leía en ningún lado
@@ -122,5 +122,23 @@ describe("listDocuments expone expiresAt y el badge `expired`", () => {
     const db = { sale: { findMany: vi.fn(async () => rows) } } as unknown as PrismaClient
     const docs = await listDocuments(db, BIZ, {})
     expect(docs.map(d => d.expired)).toEqual([false, false])
+  })
+})
+
+describe("expireQuoteDocuments — limpieza automática de cotizaciones POS vencidas", () => {
+  it("marca como VOIDED únicamente las cotizaciones DRAFT con expiresAt <= now", async () => {
+    const now = new Date("2026-11-04T12:00:00.000Z")
+    const updateMany = vi.fn(async () => ({ count: 3 }))
+    const db = { sale: { updateMany } } as unknown as PrismaClient
+    const result = await expireQuoteDocuments(db, now)
+    expect(result).toEqual({ expiredQuotesCount: 3 })
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        kind: "QUOTE",
+        status: "DRAFT",
+        expiresAt: { not: null, lte: now },
+      },
+      data: { status: "VOIDED" },
+    })
   })
 })

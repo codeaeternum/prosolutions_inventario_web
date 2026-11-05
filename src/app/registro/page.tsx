@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import Link from "next/link"
 import { CheckCircle2, Wrench } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SignupForm } from "@/components/registro/signup-form"
@@ -62,9 +63,19 @@ export default function RegistroPage() {
           </ul>
         </div>
 
-        <p className="relative text-xs opacity-70">
-          Del latín <em>reficere</em> — reparar, restaurar.
-        </p>
+        <div className="relative space-y-4">
+          <div className="rounded-xl bg-white/10 p-4 text-xs leading-relaxed backdrop-blur">
+            <p className="opacity-90">
+              ¿Solo buscas comprar refacciones o consultar tus pedidos como cliente?{" "}
+              <Link href="/register" className="font-semibold underline underline-offset-4 hover:opacity-100">
+                Solicita tu cuenta de cliente →
+              </Link>
+            </p>
+          </div>
+          <p className="text-xs opacity-70">
+            Del latín <em>reficere</em> — reparar, restaurar.
+          </p>
+        </div>
       </aside>
 
       {/* Columna del formulario */}

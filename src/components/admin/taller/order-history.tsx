@@ -11,8 +11,8 @@ function businessName() {
   if (!businessNamePromise) {
     businessNamePromise = fetch("/api/business")
       .then(res => res.json())
-      .then(data => typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "ProSolutions")
-      .catch(() => "ProSolutions")
+      .then(data => typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "Reficio")
+      .catch(() => "Reficio")
   }
   return businessNamePromise
 }

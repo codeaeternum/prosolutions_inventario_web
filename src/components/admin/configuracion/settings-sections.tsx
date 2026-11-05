@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { formatFolio } from "@/lib/workshop-labels"
 import { WorkshopConfigEditor } from "./taller-config"
 
 export interface GeneralSettings {
@@ -93,7 +94,7 @@ export function IdentityCard({ value, saving, onChange, onSave }: {
               id="businessName"
               value={value}
               onChange={(e) => onChange(e.target.value)}
-              placeholder="ProSolutions"
+              placeholder="Ej: Taller Central"
               maxLength={80}
             />
             <p className="text-xs text-muted-foreground">
@@ -345,7 +346,7 @@ export function FinanceCard({ settings, onNumber, onText }: {
                 id="bankTransferInfo"
                 value={settings.bankTransferInfo || ""}
                 onChange={(e) => onText("bankTransferInfo", e.target.value)}
-                placeholder={"Ej:\nBanco: BBVA\nTitular: ProSolutions SA\nCuenta: 0123456789"}
+                placeholder={"Ej:\nBanco: BBVA\nTitular: Taller Central SA\nCuenta: 0123456789"}
                 className="resize-none h-24"
               />
               <p className="text-xs text-muted-foreground mt-1">
@@ -378,6 +379,8 @@ export function TicketCard({ settings, onText, onNumber, onBool }: {
   onNumber: (field: NumericField, value: string) => void
   onBool: (field: BoolField, value: boolean) => void
 }) {
+  const previewFolio = formatFolio(settings.orderPrefix, 1, Number(settings.orderFolioDigits) || 6)
+
   return (
     <Card>
       <CardHeader>
@@ -389,83 +392,115 @@ export function TicketCard({ settings, onText, onNumber, onBool }: {
           Cambia el subtítulo y pie de página que aparecen en los tickets térmicos. El nombre del negocio se edita en «Identidad del negocio».
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-2">
-          <Label htmlFor="ticketSubtitle">Subtítulo / Giro</Label>
-          <Textarea
-            id="ticketSubtitle"
-            value={settings.ticketSubtitle || ""}
-            onChange={(e) => onText("ticketSubtitle", e.target.value)}
-            placeholder={"Venta de refacciones y\nReparación profesional"}
-            className="resize-none h-16"
-          />
-          <p className="text-xs text-muted-foreground">Aparece debajo del nombre. Usa saltos de línea para varias líneas.</p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="ticketFooter">Mensaje de Pie de Página</Label>
-          <Input
-            id="ticketFooter"
-            value={settings.ticketFooter || ""}
-            onChange={(e) => onText("ticketFooter", e.target.value)}
-            placeholder="¡Gracias por tu preferencia!"
-          />
-          <p className="text-xs text-muted-foreground">Aparece al final del ticket, debajo del total.</p>
-        </div>
-
-        <div className="border-t pt-4">
-          <h4 className="text-sm font-medium mb-3">Folio de órdenes de servicio</h4>
-          <div className="grid gap-6 sm:grid-cols-2">
+      <CardContent>
+        <div className="grid lg:grid-cols-[1fr_280px] gap-6 items-start">
+          <div className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="orderPrefix">Prefijo de folio</Label>
-              <Input
-                id="orderPrefix"
-                value={settings.orderPrefix || ""}
-                onChange={(e) => onText("orderPrefix", e.target.value)}
-                placeholder="OT"
-                maxLength={8}
-                className="w-28 uppercase"
+              <Label htmlFor="ticketSubtitle">Subtítulo / Giro</Label>
+              <Textarea
+                id="ticketSubtitle"
+                value={settings.ticketSubtitle || ""}
+                onChange={(e) => onText("ticketSubtitle", e.target.value)}
+                placeholder={"Venta de refacciones y\nReparación profesional"}
+                className="resize-none h-16"
               />
-              <p className="text-xs text-muted-foreground">
-                Letras y dígitos, máx. 8. Vacío = OT. Ejemplo: PS → PS-000001.
-              </p>
+              <p className="text-xs text-muted-foreground">Aparece debajo del nombre. Usa saltos de línea para varias líneas.</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="orderFolioDigits">Dígitos del folio</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="orderFolioDigits"
-                  type="number"
-                  inputMode="numeric"
-                  min={4}
-                  max={8}
-                  value={settings.orderFolioDigits ?? 6}
-                  onChange={(e) => onNumber("orderFolioDigits", e.target.value)}
-                  className="w-24"
-                />
-                <span className="text-muted-foreground text-sm">dígitos</span>
+              <Label htmlFor="ticketFooter">Mensaje de Pie de Página</Label>
+              <Input
+                id="ticketFooter"
+                value={settings.ticketFooter || ""}
+                onChange={(e) => onText("ticketFooter", e.target.value)}
+                placeholder="¡Gracias por tu preferencia!"
+              />
+              <p className="text-xs text-muted-foreground">Aparece al final del ticket, debajo del total.</p>
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium mb-3">Folio de órdenes de servicio</h4>
+              <div className="grid gap-6 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="orderPrefix">Prefijo de folio</Label>
+                  <Input
+                    id="orderPrefix"
+                    value={settings.orderPrefix || ""}
+                    onChange={(e) => onText("orderPrefix", e.target.value)}
+                    placeholder="OT"
+                    maxLength={8}
+                    className="w-28 uppercase"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Letras y dígitos, máx. 8. Vacío = OT. Ejemplo: PS → PS-000001.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="orderFolioDigits">Dígitos del folio</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="orderFolioDigits"
+                      type="number"
+                      inputMode="numeric"
+                      min={4}
+                      max={8}
+                      value={settings.orderFolioDigits ?? 6}
+                      onChange={(e) => onNumber("orderFolioDigits", e.target.value)}
+                      className="w-24"
+                    />
+                    <span className="text-muted-foreground text-sm">dígitos</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Longitud del consecutivo, entre 4 y 8 (6 → OT-000001).
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Longitud del consecutivo, entre 4 y 8 (6 → OT-000001).
-              </p>
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium mb-3">Impresión</h4>
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="saleAutoTicket"
+                  checked={settings.saleAutoTicket !== false}
+                  onCheckedChange={(checked) => onBool("saleAutoTicket", checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="saleAutoTicket" className="font-medium cursor-pointer">
+                    Abrir el ticket automáticamente al cobrar
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Al registrar una venta el ticket se abre en una pestaña nueva listo para imprimir. Si el pago incluye tarjeta se imprime también la copia para la caja.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="border-t pt-4">
-          <h4 className="text-sm font-medium mb-3">Impresión</h4>
-          <div className="flex items-start gap-3">
-            <Checkbox
-              id="saleAutoTicket"
-              checked={settings.saleAutoTicket !== false}
-              onCheckedChange={(checked) => onBool("saleAutoTicket", checked === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-1">
-              <Label htmlFor="saleAutoTicket" className="font-medium cursor-pointer">
-                Abrir el ticket automáticamente al cobrar
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Al registrar una venta el ticket se abre en una pestaña nueva listo para imprimir. Si el pago incluye tarjeta se imprime también la copia para la caja.
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Vista previa en vivo (80 mm)</p>
+            <div className="rounded-lg border bg-white text-neutral-900 p-4 font-mono text-xs shadow-sm space-y-2">
+              <div className="text-center space-y-1">
+                <p className="font-bold uppercase tracking-wide">
+                  {settings.ticketBusinessName || "Reficio"}
+                </p>
+                <p className="whitespace-pre-line text-[11px] text-neutral-600">
+                  {settings.ticketSubtitle || "Venta de refacciones y\nReparación profesional"}
+                </p>
+              </div>
+              <div className="border-t border-dashed border-neutral-300" />
+              <div className="text-center space-y-0.5">
+                <p className="font-semibold">COMPROBANTE DE RECEPCIÓN</p>
+                <p className="text-[11px] text-neutral-700">{"Folio: " + previewFolio}</p>
+              </div>
+              <div className="border-t border-dashed border-neutral-300" />
+              <div className="space-y-1">
+                <p className="whitespace-pre">{"1x Cambio de pantalla   $1,200.00"}</p>
+                <p className="whitespace-pre font-bold">{"TOTAL:                  $1,200.00"}</p>
+              </div>
+              <div className="border-t border-dashed border-neutral-300" />
+              <p className="text-center text-[11px] text-neutral-600 break-words">
+                {settings.ticketFooter || "¡Gracias por tu preferencia!"}
               </p>
             </div>
           </div>

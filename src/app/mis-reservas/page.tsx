@@ -7,7 +7,7 @@ import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { StoreHeader } from "@/components/storefront/store-header"
 import {
   Dialog,
   DialogContent,
@@ -33,14 +33,11 @@ import {
   CreditCard,
   XCircle,
   Loader2,
-  Home,
   ShoppingCart,
-  User,
-  LogOut,
   QrCode,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
-import { signOut, useSession } from "next-auth/react"
+import { useSession } from "next-auth/react"
 import { CountdownTimer } from "@/components/countdown-timer"
 import { ReservationQR } from "@/components/reservation-qr"
 import { Pagination } from "@/components/ui/pagination"
@@ -193,42 +190,7 @@ export default function MisReservasPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur">
-        <div className="container mx-auto max-w-7xl flex h-14 items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2">
-            <Image
-              src="/logo.jpg"
-              alt="Pro-Solutions"
-              width={36}
-              height={36}
-              className="rounded-lg"
-            />
-            <span className="font-bold text-lg hidden sm:inline">Pro-Solutions</span>
-          </Link>
-
-          <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/">
-                <Home className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/perfil">
-                <User className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => signOut({ callbackUrl: "/" })}
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </header>
+      <StoreHeader active="reservas" />
 
       <main id="main-content" className="container mx-auto max-w-2xl px-4 py-6" role="main">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">

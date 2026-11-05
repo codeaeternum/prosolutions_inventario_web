@@ -5,7 +5,7 @@ import { signOut } from "next-auth/react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { StoreHeader } from "@/components/storefront/store-header"
 import {
     User,
     LogOut,
@@ -14,7 +14,6 @@ import {
     CalendarCheck,
     Shield,
     Clock,
-    Home,
     CreditCard
 } from "lucide-react"
 import Link from "next/link"
@@ -81,18 +80,7 @@ export default function PerfilClient({ user, contact }: { user: UserData; contac
 
     return (
         <div className="min-h-screen bg-muted/40 pb-24">
-            {/* Header */}
-            <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                <div className="container mx-auto max-w-lg flex h-16 items-center justify-between px-4">
-                    <Link href="/" className="flex items-center gap-2">
-                        <Home className="h-5 w-5 text-primary" />
-                        <span className="font-bold text-lg tracking-tight">Pro-Solutions</span>
-                    </Link>
-                    <div className="flex items-center gap-3">
-                        <ThemeToggle />
-                    </div>
-                </div>
-            </header>
+            <StoreHeader active="perfil" />
 
             <main id="main-content" className="container mx-auto max-w-lg px-4 py-6 space-y-6" role="main">
                 {/* Welcome & Status */}

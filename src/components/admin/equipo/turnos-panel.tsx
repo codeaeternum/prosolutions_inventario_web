@@ -1,13 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Clock, History, RefreshCw } from "lucide-react"
+import { Clock, Download, History, RefreshCw, Search } from "lucide-react"
+import { csvCell } from "@/lib/csv"
 
 interface TurnoDia {
   dia: string
@@ -37,32 +39,75 @@ const fmtDuracion = (min: number) =>
 export function TurnosPanel() {
   const [turnos, setTurnos] = useState<TurnoDia[]>([])
   const [dias, setDias] = useState("14")
+  const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/actividad/turnos?dias=${dias}`)
+      const res = await fetch(`/api/actividad/turnos?dias=${dias}`, { signal })
+      if (signal?.aborted) return
       if (!res.ok) throw new Error()
       const data = await res.json()
+      if (signal?.aborted) return
       setTurnos(data.turnos ?? [])
     } catch {
-      setError("No se pudo cargar los turnos")
+      if (!signal?.aborted) setError("No se pudo cargar los turnos")
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }, [dias])
 
   useEffect(() => {
-    const t = setTimeout(() => { void load() }, 0)
-    return () => clearTimeout(t)
+    const controller = new AbortController()
+    const t = setTimeout(() => { void load(controller.signal) }, 0)
+    return () => {
+      clearTimeout(t)
+      controller.abort()
+    }
   }, [load])
+
+  const filteredTurnos = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return turnos
+    return turnos.filter(t => t.actorName.toLowerCase().includes(q))
+  }, [turnos, searchQuery])
+
+  const handleExportCsv = () => {
+    if (filteredTurnos.length === 0) return
+    const headers = [
+      "Fecha",
+      "Empleado",
+      "Primer Movimiento",
+      "Último Movimiento",
+      "Minutos Activo",
+      "Duración",
+      "Total Movimientos",
+    ]
+    const rows = filteredTurnos.map(t => [
+      t.dia,
+      t.actorName,
+      fmtHora(t.firstAt),
+      fmtHora(t.lastAt),
+      t.minutosActivo,
+      fmtDuracion(t.minutosActivo),
+      t.eventos,
+    ])
+    const lines = [headers.map(csvCell).join(","), ...rows.map(r => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `turnos-equipo-${dias}d-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Agrupar por día para encabezados
   const porDia = new Map<string, TurnoDia[]>()
-  for (const t of turnos) {
+  for (const t of filteredTurnos) {
     const list = porDia.get(t.dia) ?? []
     list.push(t)
     porDia.set(t.dia, list)
@@ -80,7 +125,17 @@ export function TurnosPanel() {
             De qué hora a qué hora se movió cada quien, reconstruido de su actividad real
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-52">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Filtrar por empleado..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              aria-label="Filtrar turnos por nombre de empleado"
+              className="pl-8 h-9"
+            />
+          </div>
           <Select value={dias} onValueChange={setDias}>
             <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -90,6 +145,17 @@ export function TurnosPanel() {
               <SelectItem value="60">60 días</SelectItem>
             </SelectContent>
           </Select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            disabled={loading || filteredTurnos.length === 0}
+            aria-label="Exportar turnos a CSV"
+          >
+            <Download className="h-4 w-4 mr-1.5" />
+            Exportar CSV
+          </Button>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
@@ -99,6 +165,9 @@ export function TurnosPanel() {
         {error && <p className="text-sm text-destructive">{error}</p>}
         {!error && !loading && turnos.length === 0 && (
           <p className="text-sm text-muted-foreground">Sin actividad registrada en el período.</p>
+        )}
+        {!error && !loading && turnos.length > 0 && filteredTurnos.length === 0 && (
+          <p className="text-sm text-muted-foreground">Sin resultados para &ldquo;{searchQuery.trim()}&rdquo;.</p>
         )}
         {[...porDia.entries()].map(([dia, rows]) => (
           <div key={dia} className="mb-6 last:mb-0">

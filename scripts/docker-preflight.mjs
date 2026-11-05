@@ -24,37 +24,55 @@ const { Pool } = require("pg")
 const CONNECT_ATTEMPTS = 15
 const CONNECT_RETRY_MS = 2000
 
-// Debe cubrir la migración más reciente; si se agregan migraciones nuevas,
-// añadir aquí un objeto que esa migración cree.
-const REQUIRED_TABLES = [
+// Debe cubrir TODOS los modelos de prisma/schema.prisma (respetando @@map).
+// Validado automáticamente en src/__tests__/lib/docker-preflight.test.ts.
+export const REQUIRED_TABLES = [
+  "Business",
+  "VerificationCode",
+  "InventoryMovement",
   "User",
   "Brand",
   "Model",
   "Category",
   "Product",
-  "ProductModel",
   "PriceHistory",
+  "ProductModel",
   "Reservation",
-  "InventoryMovement",
   "CreditMovement",
   "Settings",
-  "SystemSettings",
   "PushSubscription",
   "CashRegister",
   "CashMovement",
-  "BusinessOperation", // 20260911000000_transactional_operations
-  "WorkshopBranch", // 20260911020000_workshop_pilot
-  "RepairOrder", // 20260911020000_workshop_pilot
-  "RepairEvent", // 20260911020000_workshop_pilot
-  "RepairPart", // 20260912190000_multi_tenant_foundation
-  "Payment", // 20260913090000_workshop_money_cycle
-  "Notification", // 20261227090000_persistent_notifications
-  "Encargo", // 20261228160000_encargos
-  "Purchase", // 20261226090000_purchase_partial_receive
-  "PurchaseItem",
+  "SystemSettings",
+  "BusinessOperation",
+  "AuditEvent",
+  "WorkshopBranch", // model Branch @@map("WorkshopBranch")
+  "BranchStock",
+  "Sale",
+  "SaleItem",
+  "Payment",
+  "RepairOrder",
+  "RepairPart",
+  "RepairEvent",
+  "CashRequest",
+  "RepairPhoto",
+  "DeviceModel",
+  "WorkshopService",
+  "WorkshopServicePrice",
+  "MarketplaceRequest",
   "Supplier",
-  "MarketplaceRequest", // 20260916100000_marketplace_request
-  "PlatformEvent", // 20261001210000_platform_events
+  "Purchase",
+  "PurchaseItem",
+  "SupplierPayment",
+  "InventoryCount",
+  "InventoryCountItem",
+  "PartRequest",
+  "ShoppingItem",
+  "Encargo",
+  "DirectoryEvent",
+  "Notification",
+  "NotificationRead",
+  "PlatformEvent",
 ]
 
 const REQUIRED_COLUMNS = [
@@ -158,7 +176,14 @@ async function main() {
   await import(new URL("../server.js", import.meta.url))
 }
 
-main().catch((err) => {
-  console.error(`[preflight] ERROR inesperado: ${err?.stack || err}`)
-  process.exit(1)
-})
+const isDirectRun =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(`[preflight] ERROR inesperado: ${err?.stack || err}`)
+    process.exit(1)
+  })
+}

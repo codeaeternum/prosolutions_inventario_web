@@ -75,6 +75,22 @@ interface BranchOption {
     name: string
 }
 
+interface PriceHistoryEntry {
+    id: string
+    field: string
+    oldValue: number
+    newValue: number
+    createdAt: string
+    changedBy?: { name: string } | null
+}
+
+const PRICE_FIELD_LABELS: Record<string, string> = {
+    costPrice: "Costo",
+    retailPrice: "Precio público",
+    wholesalePrice: "Precio taller",
+    internalPrice: "Taller propio",
+}
+
 interface ProductDetail {
     id: string
     name: string
@@ -93,6 +109,8 @@ interface ProductDetail {
     isUniversal: boolean
     images: string[]
     models: Model[]
+    /** Solo llega para ADMIN en GET /api/products/[id]. */
+    priceHistory?: PriceHistoryEntry[]
 }
 
 interface ProductoFormDialogProps {
@@ -222,6 +240,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     const [selectedBrand, setSelectedBrand] = useState("")
     const [selectedModels, setSelectedModels] = useState<Model[]>([])
     const [images, setImages] = useState<string[]>([])
+    const [priceHistory, setPriceHistory] = useState<PriceHistoryEntry[]>([])
 
     // Altas rápidas de clasificación sin salir del diálogo.
     const [dialogCategory, setDialogCategory] = useState(false)
@@ -310,6 +329,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     if (cancelled) return
                     setSelectedModels(data.models ?? [])
                     setImages(data.images ?? [])
+                    setPriceHistory(Array.isArray(data.priceHistory) ? data.priceHistory : [])
                     setShowDescription(Boolean(data.description?.trim()))
                     setFormData({
                         name: data.name,
@@ -1110,23 +1130,77 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 ))}
 
                 {/* Ganancia estimada: solo con costo capturado (admin). */}
-                {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted px-3 py-2 text-sm">
-                        <span className="font-medium">Ganancia:</span>
-                        <span className="text-green-600">
-                            Público ${(parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.retailPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
-                        </span>
-                        {formData.wholesalePrice && (
-                            <span className="text-blue-600">
-                                Taller ${(parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.wholesalePrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
-                            </span>
-                        )}
-                        {formData.internalPrice && (
-                            <span className="text-violet-600">
-                                Taller propio ${(parseFloat(formData.internalPrice) - parseFloat(formData.costPrice)).toFixed(2)} ({((parseFloat(formData.internalPrice) - parseFloat(formData.costPrice)) / parseFloat(formData.costPrice) * 100).toFixed(0)}%)
-                            </span>
-                        )}
-                    </div>
+                {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (() => {
+                    const cost = parseFloat(formData.costPrice)
+                    const tiers = [
+                        { label: "Público", fieldLabel: "Precio público", raw: formData.retailPrice, color: "text-green-600" },
+                        ...(formData.wholesalePrice ? [{ label: "Taller", fieldLabel: "Precio taller", raw: formData.wholesalePrice, color: "text-blue-600" }] : []),
+                        ...(formData.internalPrice ? [{ label: "Taller propio", fieldLabel: "Taller propio", raw: formData.internalPrice, color: "text-violet-600" }] : []),
+                    ]
+                    const lossTiers = tiers.filter((t) => {
+                        const val = parseFloat(t.raw)
+                        return !Number.isNaN(val) && val < cost
+                    })
+                    return (
+                        <div className="space-y-1.5 rounded-md bg-muted px-3 py-2 text-sm">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                <span className="font-medium">Ganancia:</span>
+                                {tiers.map(({ label, raw, color }) => {
+                                    const price = parseFloat(raw)
+                                    if (Number.isNaN(price)) return null
+                                    const profit = price - cost
+                                    const markup = (profit / cost) * 100
+                                    const margin = price > 0 ? (profit / price) * 100 : -100
+                                    const isLoss = price < cost
+                                    return (
+                                        <span
+                                            key={label}
+                                            className={isLoss ? "text-destructive font-medium" : color}
+                                        >
+                                            {label} ${profit.toFixed(2)} ({markup.toFixed(0)}% s/costo · {margin.toFixed(0)}% margen{isLoss ? " · Pérdida" : ""})
+                                        </span>
+                                    )
+                                })}
+                            </div>
+                            {lossTiers.length > 0 && (
+                                <p className="flex items-center gap-1.5 text-xs text-destructive font-medium">
+                                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                    Alerta de pérdida: {lossTiers.map((t) => t.fieldLabel).join(", ")} por debajo del costo (${cost.toFixed(2)}).
+                                </p>
+                            )}
+                        </div>
+                    )
+                })()}
+
+                {/* Historial reciente de cambios de costo y precio (solo ADMIN en edición). */}
+                {editing && isAdmin && priceHistory.length > 0 && (
+                    <details className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                        <summary className="cursor-pointer font-medium select-none">
+                            Historial reciente de cambios de costo y precio ({priceHistory.length})
+                        </summary>
+                        <ul className="mt-2 space-y-1.5 border-t pt-2">
+                            {priceHistory.map((entry) => (
+                                <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground">
+                                    <span>
+                                        <span className="font-medium text-foreground">
+                                            {PRICE_FIELD_LABELS[entry.field] ?? entry.field}:
+                                        </span>{" "}
+                                        ${Number(entry.oldValue).toFixed(2)} → ${Number(entry.newValue).toFixed(2)}
+                                    </span>
+                                    <span>
+                                        {entry.changedBy?.name ?? "Sistema"} ·{" "}
+                                        {new Date(entry.createdAt).toLocaleDateString("es-MX", {
+                                            day: "2-digit",
+                                            month: "short",
+                                            year: "numeric",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                        })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </details>
                 )}
 
                 {/* Visibilidad en el mercado: publicar fuera del taller es

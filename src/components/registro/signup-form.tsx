@@ -199,6 +199,12 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
           <Button className="w-full" asChild>
             <Link href="/login">Ir a iniciar sesión</Link>
           </Button>
+          <p className="text-xs text-muted-foreground text-center">
+            ¿Solo buscas comprar refacciones o consultar tus pedidos como cliente?{" "}
+            <Link href="/register" className="font-medium text-primary hover:underline">
+              Solicita tu cuenta de cliente →
+            </Link>
+          </p>
         </CardFooter>
       </Card>
     )
@@ -255,6 +261,12 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
   }
 
   // ── Formulario de alta ─────────────────────────────────────────────────
+  const slugInvalid = slugInfo.state === "invalid" || slugInfo.state === "reserved"
+  const passwordTouched = form.password.length > 0
+  const passwordValid = form.password.length >= 8
+  const emailInvalid = form.email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+  const businessNameInvalid = form.businessName.length > 0 && form.businessName.trim().length < 2
+
   const slugMessage =
     slugInfo.state === "ok"
       ? `Tu vitrina quedará en reficio.app/${slugInfo.value}`
@@ -279,6 +291,13 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
 
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+            ¿Solo buscas comprar refacciones o consultar tus pedidos como cliente?{" "}
+            <Link href="/register" className="font-semibold text-primary hover:underline">
+              Solicita tu cuenta de cliente →
+            </Link>
+          </div>
+
           {error && (
             <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md" role="alert">
               {error}
@@ -299,6 +318,7 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
               maxLength={80}
               disabled={isLoading}
               autoComplete="organization"
+              aria-invalid={businessNameInvalid}
             />
           </div>
 
@@ -318,17 +338,20 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 disabled={isLoading}
                 className={cn(
                   "rounded-l-none",
-                  (slugInfo.state === "invalid" || slugInfo.state === "reserved") &&
+                  slugInvalid &&
                     "border-destructive focus-visible:ring-destructive"
                 )}
                 autoComplete="off"
                 maxLength={50}
+                aria-invalid={slugInvalid}
+                aria-describedby="signup-slug-help"
               />
             </div>
             <p
+              id="signup-slug-help"
               className={cn(
                 "text-xs",
-                slugInfo.state === "invalid" || slugInfo.state === "reserved"
+                slugInvalid
                   ? "text-destructive"
                   : "text-muted-foreground"
               )}
@@ -345,7 +368,11 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 setForm((f) => ({ ...f, businessKind: value as BusinessKindOption }))
               }
             >
-              <SelectTrigger id="businessKind" disabled={isLoading}>
+              <SelectTrigger
+                id="businessKind"
+                disabled={isLoading}
+                aria-describedby="signup-business-kind-help"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -356,7 +383,7 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p id="signup-business-kind-help" className="text-xs text-muted-foreground">
               {BUSINESS_KINDS.find((kind) => kind.value === form.businessKind)?.description}
             </p>
           </div>
@@ -389,8 +416,10 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
               required
               disabled={isLoading}
               autoComplete="email"
+              aria-invalid={emailInvalid}
+              aria-describedby="signup-email-help"
             />
-            <p className="text-xs text-muted-foreground">
+            <p id="signup-email-help" className="text-xs text-muted-foreground">
               Será tu usuario para entrar al panel de administración.
             </p>
           </div>
@@ -413,7 +442,25 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Contraseña</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Contraseña</Label>
+              <span
+                className={cn(
+                  "text-xs font-medium transition-colors",
+                  !passwordTouched
+                    ? "text-muted-foreground"
+                    : passwordValid
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-amber-600 dark:text-amber-400"
+                )}
+              >
+                {passwordValid
+                  ? "✓ 8+ caracteres"
+                  : passwordTouched
+                    ? `${form.password.length}/8 caracteres`
+                    : "8+ caracteres"}
+              </span>
+            </div>
             <div className="relative">
               <Input
                 id="password"
@@ -426,6 +473,8 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 minLength={8}
                 disabled={isLoading}
                 autoComplete="new-password"
+                aria-invalid={passwordTouched && !passwordValid}
+                aria-describedby="signup-password-help"
               />
               <Button
                 type="button"
@@ -433,6 +482,7 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 size="icon"
                 className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
               >
                 {showPassword ? (
                   <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -441,6 +491,19 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
                 )}
               </Button>
             </div>
+            <p
+              id="signup-password-help"
+              className={cn(
+                "text-xs",
+                passwordTouched && !passwordValid
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground"
+              )}
+            >
+              {passwordTouched && !passwordValid
+                ? `Te faltan ${8 - form.password.length} caracteres para alcanzar el mínimo de 8.`
+                : "Debe contener al menos 8 caracteres."}
+            </p>
           </div>
         </CardContent>
 

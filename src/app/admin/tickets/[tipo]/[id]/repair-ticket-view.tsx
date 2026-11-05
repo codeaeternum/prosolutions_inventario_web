@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ArrowLeft, Printer } from "lucide-react"
+import { ArrowLeft, Check, Copy, MessageCircle, Printer } from "lucide-react"
 import QRCode from "qrcode"
 import { Button } from "@/components/ui/button"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
@@ -59,6 +59,7 @@ const CONDITIONS =
 
 export function RepairTicketView({ data }: { data: RepairTicketData }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   // El ticket suele abrirse en pestaña nueva (target="_blank"): ahí
   // history.back() es un callejón sin salida, así que cerramos la pestaña.
@@ -73,6 +74,36 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
     }
   }
 
+  async function copyTrackingLink() {
+    if (!data.qrCode) return
+    try {
+      await navigator.clipboard.writeText(data.qrCode)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback silencioso si el navegador bloquea el portapapeles
+    }
+  }
+
+  const businessName = data.businessName || "Reficio"
+  const equipmentType = data.equipment.find(r => r.label === "Tipo")?.value
+  const brandModel = data.equipment.find(r => r.label === "Marca / Modelo")?.value
+  const equipmentSummary =
+    [equipmentType, brandModel].filter(Boolean).join(" · ") ||
+    data.equipment.map(r => `${r.label}: ${r.value}`).slice(0, 2).join(" · ")
+
+  const whatsappLines = [
+    `*${businessName}* — ${data.title}`,
+    `Folio: *${data.folio}*`,
+    ...(data.client ? [`Cliente: ${data.client}`] : []),
+    ...(equipmentSummary ? [`Equipo: ${equipmentSummary}`] : []),
+    ...(data.issue ? [`Falla reportada: ${data.issue}`] : []),
+    ...(data.totalOrder !== undefined ? [`Total: ${formatPrice(data.totalOrder)}`] : []),
+    ...(data.balance !== undefined ? [`Saldo: ${formatPrice(data.balance)}`] : []),
+    ...(data.qrCode ? ["", `Sigue tu reparación en tiempo real:\n${data.qrCode}`] : []),
+  ]
+  const whatsappHref = `https://wa.me/?text=${encodeURIComponent(whatsappLines.join("\n"))}`
+
   useEffect(() => {
     if (data.qrCode) {
       QRCode.toDataURL(data.qrCode, { width: 160, margin: 1 })
@@ -84,15 +115,33 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
   return (
     <div className="min-h-screen bg-neutral-100 dark:bg-neutral-900 p-4 sm:p-8 font-mono">
       {/* Controles NO imprimibles */}
-      <div className="max-w-sm mx-auto mb-6 flex items-center justify-between gap-2 print:hidden bg-background p-4 rounded-xl shadow-sm">
+      <div className="max-w-md mx-auto mb-6 flex flex-wrap items-center justify-between gap-2 print:hidden bg-background p-4 rounded-xl shadow-sm">
         <Button variant="outline" size="sm" onClick={goBack}>
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>
-        <Button size="sm" onClick={() => window.print()}>
-          <Printer className="w-4 h-4 mr-2" />
-          Imprimir
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {data.qrCode && (
+            <Button variant="outline" size="sm" onClick={copyTrackingLink}>
+              {copied ? (
+                <Check className="w-4 h-4 mr-1.5 text-emerald-600" />
+              ) : (
+                <Copy className="w-4 h-4 mr-1.5" />
+              )}
+              {copied ? "¡Copiado!" : "Copiar link"}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" asChild>
+            <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
+              <MessageCircle className="w-4 h-4 mr-1.5" />
+              WhatsApp
+            </a>
+          </Button>
+          <Button size="sm" onClick={() => window.print()}>
+            <Printer className="w-4 h-4 mr-2" />
+            Imprimir
+          </Button>
+        </div>
       </div>
 
       {/* COMPROBANTE (Formato térmico 58mm/80mm) */}
@@ -100,7 +149,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
 
         {/* Cabecera */}
         <div className="text-center mb-4">
-          <h1 className="font-bold text-lg leading-tight uppercase">{data.businessName || "PROSOLUTIONS"}</h1>
+          <h1 className="font-bold text-lg leading-tight uppercase">{data.businessName || "Reficio"}</h1>
           <p className="text-[10px] uppercase text-gray-600" style={{ whiteSpace: "pre-line" }}>{data.subtitle || "Venta de refacciones y\nReparación profesional"}</p>
           <div className="border-b-2 border-dashed border-gray-300 my-2"></div>
           <h2 className="font-bold text-sm">{data.title}</h2>
@@ -237,7 +286,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
 
         <div className="text-center text-[10px] text-gray-500 mt-4">
           <p>{data.footer || "¡Gracias por tu preferencia!"}</p>
-          <p className="mt-1">{data.businessName || "ProSolutions"} - {new Date().getFullYear()}</p>
+          <p className="mt-1">{data.businessName || "Reficio"} - {new Date().getFullYear()}</p>
         </div>
 
         {/* Espacio extra abajo para que la térmica corte bien */}

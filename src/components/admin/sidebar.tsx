@@ -22,9 +22,10 @@ import {
   Store,
   Shield,
   Handshake,
-  History,
+  UsersRound,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import type { BusinessKind } from "@prisma/client"
 
 interface NavItem {
   name: string
@@ -51,30 +52,38 @@ const navigationGroups: NavGroup[] = [
     name: "Día a día",
     items: [
       { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
+      { name: "Taller", href: "/admin/taller", icon: Wrench },
       { name: "Inventario", href: "/admin/inventario", icon: Boxes },
-      { name: "Servicio", href: "/admin/taller", icon: Wrench },
-      { name: "Mercado", href: "/admin/mercado", icon: Store },
+      { name: "Caja", href: "/admin/caja", icon: Wallet },
     ]
   },
   {
-    name: "Tu gente",
+    name: "Comunidad y Red",
     items: [
       { name: "Clientes", href: "/admin/clientes", icon: Users },
-      { name: "Caja", href: "/admin/caja", icon: Wallet },
+      { name: "Mercado", href: "/admin/mercado", icon: Store },
     ]
   },
   {
     name: "Negocio",
     items: [
-      { name: "Equipo", href: "/admin/equipo", icon: History, adminOnly: true },
+      { name: "Equipo", href: "/admin/equipo", icon: UsersRound, adminOnly: true },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
     ]
   }
 ]
 
-// Bottom bar items for mobile quick access
+// Bottom bar items for mobile quick access (4 pilares operativos)
 const bottomBarItems: NavItem[] = [
+  { name: "Inicio", href: "/admin", icon: LayoutDashboard },
+  { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
+  { name: "Taller", href: "/admin/taller", icon: Wrench },
+  { name: "Inventario", href: "/admin/inventario", icon: Boxes },
+]
+
+// Bottom bar para negocios exclusivamente de refacciones (PARTS, sin Taller)
+const partsBottomBarItems: NavItem[] = [
   { name: "Inicio", href: "/admin", icon: LayoutDashboard },
   { name: "Vender", href: "/admin/ventas", icon: ShoppingCart },
   { name: "Inventario", href: "/admin/inventario", icon: Boxes },
@@ -139,10 +148,11 @@ interface AdminSidebarProps {
   }
   // El negocio tiene taller asociado configurado (repair_partner_business_id).
   hasPartner?: boolean
+  businessKind?: BusinessKind | null
   collapsed?: boolean
 }
 
-export function AdminSidebar({ user, hasPartner = false, collapsed = false }: AdminSidebarProps) {
+export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
@@ -154,6 +164,11 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
       // salvo los marcados adminOnly (no son módulo asignable).
       items: group.items.filter(item => {
         if (item.adminOnly && user.role !== "ADMIN") return false
+        // Si el negocio es exclusivamente de venta de refacciones (PARTS),
+        // ocultamos "Servicio" (Taller) salvo que el usuario ya esté en esa ruta.
+        if (businessKind === "PARTS" && item.href === "/admin/taller" && !pathname.startsWith("/admin/taller")) {
+          return false
+        }
         if (user.role === "ADMIN" || !user.allowedModules?.length) return true
         const required = moduleForAdminPath(item.href)
         return !required || adminPathAllowed(user.allowedModules!, required)
@@ -181,10 +196,15 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
     filteredNavigation.push(platformGroup)
   }
 
-  // Bottom bar móvil: el taller aliado necesita su portal y el Mercado
+  // Bottom bar móvil: el taller aliado necesita su portal y el Mercado;
+  // en negocios PARTS (sin Taller) se muestran Inicio, Vender, Inventario y Caja;
+  // en el resto (REPAIR, FULL o sin especificar) los 4 pilares operativos:
+  // Inicio, Vender, Taller e Inventario.
   const visibleBottomBarItems = user.role === "WORKSHOP"
     ? [{ name: "Portal", href: "/aliado", icon: Handshake }, { name: "Mercado", href: "/admin/mercado", icon: Store }]
-    : bottomBarItems
+    : businessKind === "PARTS"
+      ? partsBottomBarItems
+      : bottomBarItems
 
   return (
     <>
@@ -192,6 +212,7 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
       <Button
         variant="outline"
         size="icon"
+        aria-label="Abrir menú de navegación"
         className="fixed top-4 left-4 z-[100] lg:hidden bg-background shadow-md"
         onClick={() => setMobileMenuOpen(true)}
       >
@@ -220,12 +241,13 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
             </div>
             <div className="flex flex-col">
               <span className="font-bold text-lg leading-tight">Reficio</span>
-              <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
+              <BusinessName fallback="Mi taller" className="text-[10px] text-muted-foreground leading-tight" />
             </div>
           </div>
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Cerrar menú de navegación"
             onClick={() => setMobileMenuOpen(false)}
           >
             <X className="h-5 w-5" />
@@ -294,6 +316,8 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
             )
           })}
           <button
+            type="button"
+            aria-label="Abrir más módulos"
             onClick={() => setMobileMenuOpen(true)}
             className="flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
           >
@@ -318,7 +342,7 @@ export function AdminSidebar({ user, hasPartner = false, collapsed = false }: Ad
             {!collapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="font-bold text-lg leading-tight">Reficio</span>
-                <BusinessName fallback="ProSolutions" className="text-[10px] text-muted-foreground leading-tight" />
+                <BusinessName fallback="Mi taller" className="text-[10px] text-muted-foreground leading-tight" />
               </div>
             )}
           </div>

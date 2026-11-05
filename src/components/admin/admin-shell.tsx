@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Undo2, Loader2 } from "lucide-react"
 import { toast } from "sonner"
-import type { UserRole, CustomerType, UserStatus } from "@prisma/client"
+import type { UserRole, CustomerType, UserStatus, BusinessKind } from "@prisma/client"
 
 const SIDEBAR_STORAGE_KEY = "reficio-sidebar-collapsed"
 // Evento propio porque "storage" no se dispara en la pestaña que modifica localStorage.
@@ -48,10 +48,12 @@ interface AdminShellProps {
   homeBranchId?: string | null
   // El negocio tiene taller asociado configurado → muestra "Portal aliado".
   hasPartner?: boolean
+  // Giro principal del negocio (FULL, REPAIR, PARTNER, PARTS) para adaptar navegación.
+  businessKind?: BusinessKind | null
   children: React.ReactNode
 }
 
-export function AdminShell({ user, homeBranchId, hasPartner, children }: AdminShellProps) {
+export function AdminShell({ user, homeBranchId, hasPartner, businessKind, children }: AdminShellProps) {
   const collapsed = useSyncExternalStore(subscribeCollapsed, getCollapsedSnapshot, () => false)
   const [restoring, setRestoring] = useState(false)
 
@@ -72,8 +74,7 @@ export function AdminShell({ user, homeBranchId, hasPartner, children }: AdminSh
       const data = await res.json().catch(() => ({}))
       if (res.ok) {
         // Recarga completa: el switch reescribe la cookie de sesión JWT.
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.assign("/admin")
+        window.location.assign(data?.user?.isSuperAdmin ? "/platform" : "/admin")
       } else {
         toast.error(data.error || "No se pudo volver a tu cuenta")
         setRestoring(false)
@@ -86,7 +87,7 @@ export function AdminShell({ user, homeBranchId, hasPartner, children }: AdminSh
 
   return (
     <div className="min-h-screen bg-background">
-      <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }} hasPartner={hasPartner} collapsed={collapsed} />
+      <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }} hasPartner={hasPartner} businessKind={businessKind} collapsed={collapsed} />
       <div className={cn("transition-all duration-300", collapsed ? "lg:pl-20" : "lg:pl-64")}>
         <AdminHeader
           user={user}

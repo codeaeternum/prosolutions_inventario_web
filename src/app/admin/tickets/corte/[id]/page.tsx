@@ -84,12 +84,15 @@ export default async function CorteTicketPage({
         .sort((a, b) => parseFloat(b.key) - parseFloat(a.key))
     : []
 
-  const ticketSettings = await getBusinessSettingsMap(businessId, ["ticket_business_name", "ticket_subtitle", "ticket_footer"])
+  const [ticketSettings, businessRow] = await Promise.all([
+    getBusinessSettingsMap(businessId, ["ticket_business_name", "ticket_subtitle", "ticket_footer"]),
+    prisma.business.findUnique({ where: { id: businessId }, select: { name: true } }).catch(() => null),
+  ])
 
   const data: CorteTicketData = {
     title: "CORTE DE CAJA",
     folio: `C-${register.id.slice(-8).toUpperCase()}`,
-    businessName: ticketSettings.get("ticket_business_name") || "PROSOLUTIONS",
+    businessName: ticketSettings.get("ticket_business_name") || businessRow?.name || "Reficio",
     subtitle: ticketSettings.get("ticket_subtitle") || "Venta de refacciones y\nReparación profesional",
     footer: ticketSettings.get("ticket_footer") || "¡Gracias por tu preferencia!",
     branch: register.branch?.name ?? "Sin sucursal",

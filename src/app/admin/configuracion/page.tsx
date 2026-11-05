@@ -92,7 +92,7 @@ export default function ConfiguracionPage() {
           exchangeRate: Number(data.exchangeRate) ?? DEFAULTS.exchangeRate,
           bankTransferInfo: data.bankTransferInfo ?? DEFAULTS.bankTransferInfo,
           bankCashInfo: data.bankCashInfo ?? DEFAULTS.bankCashInfo,
-          ticketBusinessName: data.ticketBusinessName ?? "PROSOLUTIONS",
+          ticketBusinessName: data.ticketBusinessName ?? "Reficio",
           ticketSubtitle: data.ticketSubtitle ?? "Venta de refacciones y\nReparación profesional",
           ticketFooter: data.ticketFooter ?? "¡Gracias por tu preferencia!",
           orderPrefix: data.orderPrefix ?? "OT",

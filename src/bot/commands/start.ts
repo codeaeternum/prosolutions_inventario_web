@@ -106,7 +106,7 @@ ${user.role === "ADMIN" ? "/admin - Panel de administración\n" : ""}/ayuda - Ve
 
     registrationSessions[telegramId] = { step: "NAME", data: { telegramId } }
     await ctx.reply(
-      `👋 *¡Bienvenido a ProSolutions!*
+      `👋 *¡Bienvenido a Reficio!*
 
 Para atenderte y darte los mejores precios, necesito registrarte. Es muy rápido.
 

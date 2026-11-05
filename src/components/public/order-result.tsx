@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { waMeHref } from "@/components/public/whatsapp-button"
-import { repairLabels, type RepairStage } from "@/lib/workshop-labels"
+import { parseReportedIssue, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { cn, formatDate, formatDay, formatPrice } from "@/lib/utils"
 
 export interface PublicEvent {
@@ -204,16 +204,6 @@ function buildTimeline(order: PublicOrder): { current: number; doneThrough: numb
   return { current: -1, doneThrough: Math.min(FLOW.length, reached + 1) }
 }
 
-// reportedIssue puede venir como "Servicio · Detalle" o el legado
-// "Servicio: X — Falla: Y" (mismo criterio que /cotizacion/[token]).
-function splitIssue(raw: string): { service?: string; issue: string } {
-  const legacy = raw.match(/servicio\s*:\s*(.+?)\s*[—–-]\s*falla\s*:\s*(.+)/i)
-  if (legacy) return { service: legacy[1].trim() || undefined, issue: legacy[2].trim() }
-  const segments = raw.split("·").map(s => s.trim()).filter(Boolean)
-  if (segments.length >= 2) return { service: segments[0], issue: segments.slice(1).join(" · ") }
-  return { service: undefined, issue: raw.trim() }
-}
-
 // Folios válidos: "OT-000001", "PS-000001" (prefijo configurable), "000001" o
 // "1" (ver /api/seguimiento). 17 chars cubren prefijo de 8 + guion + 8 dígitos
 // (order_folio_digits llega hasta 8).
@@ -228,7 +218,7 @@ export function OrderResult({ order, business }: { order: PublicOrder; business:
   const timeline = buildTimeline(order)
   const special = SPECIAL[order.status]
   const equipment = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")
-  const { service: legacyService, issue } = splitIssue(order.reportedIssue)
+  const { service: legacyService, issue } = parseReportedIssue(order.reportedIssue)
   // El servicio del catálogo ya viaja estructurado en serviceName; el split
   // de reportedIssue solo cubre órdenes anteriores a ese campo.
   const service = order.serviceName ?? legacyService

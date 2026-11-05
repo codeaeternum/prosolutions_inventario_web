@@ -7,227 +7,37 @@ import { listDirectoryBusinesses, type DirectoryBusiness } from "@/lib/directory
 import { directoryCategoryLabel } from "@/lib/directory-categories"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { LandingFooter } from "@/components/landing/landing-footer"
 import { Reveal } from "@/components/landing/reveal"
 import {
+  audiences,
+  features,
+  navLinks,
+  pains,
+  pipeline,
+  steps,
+  vitrinaPoints,
+  workflow,
+} from "@/components/landing/landing-data"
+import {
   ArrowRight,
-  ArrowLeftRight,
-  BarChart3,
   Bell,
   CalendarCheck,
   CheckCircle2,
   ChevronRight,
-  ClipboardList,
   CreditCard,
-  FileCheck,
   Globe,
-  Handshake,
-  KeyRound,
   LayoutDashboard,
-  Link2,
   Lock,
   Package,
-  PackageSearch,
-  Printer,
   QrCode,
-  Receipt,
-  Rocket,
-  Search,
   Send,
-  Settings2,
-  ShieldCheck,
   Smartphone,
   Store,
-  UserPlus,
-  Users,
   Wallet,
   Wrench,
   Zap,
 } from "lucide-react"
-
-const pipeline = [
-  "Recepción",
-  "Diagnóstico",
-  "Presupuesto",
-  "Autorización",
-  "Reparación",
-  "Listo",
-  "Entregado",
-]
-
-const pains = [
-  {
-    icon: KeyRound,
-    title: "“¿Y el patrón del equipo?”",
-    desc: "Olvidar el PIN o el patrón cuesta piezas, tiempo y discusiones. Reficio lo captura al recibir — oculto hasta que el técnico lo necesita.",
-  },
-  {
-    icon: PackageSearch,
-    title: "Stock que “desaparece”",
-    desc: "Si no sabes cuántas pantallas te quedan ni en qué sucursal están, no sabes cuánto estás perdiendo. Inventario por local, siempre exacto.",
-  },
-  {
-    icon: Wallet,
-    title: "Cobros que no entran a caja",
-    desc: "Anticipos en un cuaderno, saldos en la memoria, fiados sin folio. Aquí cada peso queda registrado en caja y ligado a su orden.",
-  },
-]
-
-// Bento de módulos: los "wide" caen en las posiciones 1, 6 y 11 para que el
-// grid de 3 columnas quede en filas completas (2+1 | 1+1+1 | 2+1 | 1+1+1 | 2+1).
-const features = [
-  {
-    icon: Lock,
-    title: "Recepción blindada",
-    desc: "Captura patrón, PIN, accesorios y evidencia fotográfica del estado físico al ingresar el equipo. Nadie discute cómo llegó ni cómo se desbloquea.",
-    tags: ["Patrón y PIN", "Evidencia", "Accesorios"],
-    wide: true,
-  },
-  {
-    icon: ClipboardList,
-    title: "Pipeline de órdenes (OT)",
-    desc: "Cada reparación avanza por un pipeline visual de recepción a entrega, con técnico asignado e historial completo.",
-    wide: false,
-  },
-  {
-    icon: ArrowLeftRight,
-    title: "Inventario por sucursal",
-    desc: "Stock separado por local, traspasos auditados entre sucursales y alertas de mínimos para que nunca falte la refacción.",
-    wide: false,
-  },
-  {
-    icon: Store,
-    title: "Punto de venta y caja",
-    desc: "Ventas con folio, pagos divididos (efectivo, tarjeta, transferencia, crédito), una caja por local y corte diario sin mezclar efectivo.",
-    wide: false,
-  },
-  {
-    icon: CreditCard,
-    title: "Crédito y fiado con folios",
-    desc: "Límite por cliente, saldo vivo y abonos auditados. Vender a crédito deja de ser un volado.",
-    wide: false,
-  },
-  {
-    icon: Link2,
-    title: "Cotizaciones que se autorizan solas",
-    desc: "Envía el presupuesto por link y el cliente autoriza o rechaza desde su celular. Sin llamadas, sin malentendidos.",
-    wide: true,
-  },
-  {
-    icon: QrCode,
-    title: "Rastreo público por folio",
-    desc: "QR de mostrador y rastreo en línea: tu cliente consulta el estado de su equipo cuando quiera — cero mensajes de “¿ya quedó?”.",
-    wide: false,
-  },
-  {
-    icon: CalendarCheck,
-    title: "Reservas con depósito y QR",
-    desc: "Tus clientes apartan refacciones desde tu vitrina: reserva temporal o con anticipo, con QR para recoger en mostrador.",
-    wide: false,
-  },
-  {
-    icon: Users,
-    title: "Mercado entre talleres",
-    desc: "Tus talleres aliados compran refacciones de tu stock con precio de taller. Tú decides qué productos ven.",
-    wide: false,
-  },
-  {
-    icon: BarChart3,
-    title: "Reportes del negocio",
-    desc: "Ventas, piezas más movidas y desempeño por sucursal en gráficas claras, exportables para tus números de fin de mes.",
-    wide: false,
-  },
-  {
-    icon: Send,
-    title: "Avisos por Telegram",
-    desc: "El bot avisa a tu equipo sin abrir el panel: nueva orden, cotización autorizada, reserva por recoger. Todo el taller se entera al momento.",
-    wide: true,
-  },
-  {
-    icon: Printer,
-    title: "Tickets y etiquetas con tu marca",
-    desc: "Tickets de venta, etiquetas de equipos y comprobantes imprimibles con tu logo — tu nombre en cada papel que sale del mostrador.",
-    wide: false,
-  },
-]
-
-const workflow = [
-  {
-    icon: Search,
-    title: "Diagnostica",
-    desc: "Registra la falla, adjunta evidencia y presupuesta con precio real.",
-  },
-  {
-    icon: FileCheck,
-    title: "El cliente autoriza",
-    desc: "Recibe la cotización por link y aprueba el trabajo desde su celular.",
-  },
-  {
-    icon: ArrowLeftRight,
-    title: "Descuenta del stock",
-    desc: "Las refacciones usadas salen del inventario del local correcto.",
-  },
-  {
-    icon: Receipt,
-    title: "Cobra y documenta",
-    desc: "Ticket imprimible, caja por sucursal y cierre con folio auditable.",
-  },
-]
-
-const vitrinaPoints = [
-  "Vitrina pública con tu logo, catálogo de servicios y refacciones",
-  "Rastreo de reparaciones por folio para tus clientes",
-  "QR de mostrador para que cualquiera llegue a tu vitrina",
-  "Mercado B2B: tus talleres aliados compran a tu stock",
-]
-
-// Los 3 tipos de negocio que soporta BusinessKind (REPAIR, PARTNER, PARTS);
-// el modo completo (FULL) se menciona como nota al pie de la sección.
-const audiences = [
-  {
-    icon: Wrench,
-    title: "Taller de reparación",
-    desc: "Recibe equipos con patrón y evidencia, cotiza por link, descuenta refacciones del stock y cobra en caja. El flujo completo de la orden de servicio.",
-    tags: ["Órdenes y pipeline", "Refacciones", "Caja y crédito"],
-  },
-  {
-    icon: Handshake,
-    title: "Captador / punto de recepción",
-    desc: "Recibes equipos en tu mostrador y los mandas a tu taller asociado — el modelo de las cadenas. Cada pieza con folio y estatus visible para tu cliente.",
-    tags: ["Recepción propia", "Taller asociado", "Rastreo por folio"],
-  },
-  {
-    icon: Package,
-    title: "Tienda de refacciones",
-    desc: "Sin mesa de reparación: vende por mostrador con punto de venta, aparta piezas con reservas y surte a talleres aliados en el mercado B2B.",
-    tags: ["Punto de venta", "Reservas", "Mercado B2B"],
-  },
-]
-
-const steps = [
-  {
-    icon: UserPlus,
-    title: "Crea tu cuenta",
-    desc: "Registra el nombre de tu negocio y aparta tu dirección reficio.app/tu-negocio. Sin tarjeta ni instalaciones.",
-  },
-  {
-    icon: Settings2,
-    title: "Configura lo básico",
-    desc: "Define tu sucursal, tus servicios con precio y tus primeras refacciones. Tu vitrina se publica sola.",
-  },
-  {
-    icon: Rocket,
-    title: "Recibe tu primera orden",
-    desc: "Imprime el QR de mostrador, comparte tu link y registra el primer equipo con patrón, anticipo y folio.",
-  },
-]
-
-const navLinks = [
-  { href: "#funciones", label: "Funciones" },
-  { href: "#para-quien", label: "Para quién" },
-  { href: "#flujo", label: "Cómo funciona" },
-  { href: "#vitrina", label: "Tu vitrina" },
-  { href: "#precio", label: "Precio" },
-]
 
 export default async function HomePage() {
   const session = await auth()
@@ -1047,91 +857,9 @@ export default async function HomePage() {
             </div>
           </section>
         )}
-
-        {/* ===================== CTA final ===================== */}
-        <section className="border-t">
-          <div className="container mx-auto max-w-6xl px-4 py-16 sm:py-24">
-            <Reveal>
-            <div className="relative overflow-hidden rounded-3xl border bg-gradient-to-br from-primary via-indigo-500 to-violet-600 px-6 py-14 sm:px-12 text-center text-primary-foreground">
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-0 opacity-30"
-                style={{
-                  backgroundImage:
-                    "radial-gradient(circle at 20% 20%, rgba(255,255,255,0.4), transparent 45%), radial-gradient(circle at 85% 80%, rgba(0,0,0,0.35), transparent 50%)",
-                }}
-              />
-              <div className="relative max-w-2xl mx-auto space-y-6">
-                <ShieldCheck className="h-11 w-11 mx-auto opacity-90" />
-                <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-                  Tu taller ya tiene sistema operativo
-                </h2>
-                <p className="text-base sm:text-lg opacity-90">
-                  Registra tu negocio, recibe tu primera orden con patrón y folio,
-                  y mira tu vitrina en línea hoy mismo.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-                  <Button
-                    size="lg"
-                    variant="secondary"
-                    className="h-12 px-8 text-base gap-2 shadow-lg"
-                    asChild
-                  >
-                    <Link href="/registro">
-                      Crea tu negocio gratis
-                      <ArrowRight className="h-5 w-5" />
-                    </Link>
-                  </Button>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="h-12 px-8 text-base gap-2 border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                    asChild
-                  >
-                    <Link href="/mercado">Explorar el mercado</Link>
-                  </Button>
-                </div>
-              </div>
-            </div>
-            </Reveal>
-          </div>
-        </section>
       </main>
 
-      {/* ===================== Footer ===================== */}
-      <footer className="border-t">
-        <div className="container mx-auto max-w-6xl px-4 py-10">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
-                <Wrench className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <span className="font-bold tracking-tight">Reficio</span>
-              <span className="text-sm text-muted-foreground">· reficio.app</span>
-            </Link>
-
-            <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-muted-foreground" aria-label="Pie de página">
-              {navLinks.map((link) => (
-                <Link key={link.href} href={link.href} className="hover:text-foreground transition-colors">
-                  {link.label}
-                </Link>
-              ))}
-              <Link href="/seguimiento" className="hover:text-foreground transition-colors">
-                Rastrea tu reparación
-              </Link>
-              <Link href="/login" className="hover:text-foreground transition-colors">
-                Iniciar sesión
-              </Link>
-            </nav>
-          </div>
-          <div className="mt-8 pt-6 border-t text-center sm:text-left text-xs text-muted-foreground">
-            <p>
-              © {new Date().getFullYear()} Reficio — del latín <em>reficere</em>,
-              reparar. Software para talleres de reparación.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <LandingFooter />
     </div>
   )
 }

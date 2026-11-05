@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle } from "lucide-react"
-import { hasWhatsAppPhone, openWhatsApp } from "@/lib/whatsapp"
+import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle, Link2 } from "lucide-react"
+import { hasWhatsAppPhone, openWhatsApp, waLink } from "@/lib/whatsapp"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -138,6 +138,45 @@ function DeliverySignature({ data }: { data: string }) {
   return <img src={data} alt="Firma de quien recibió el equipo" className="mt-1 h-20 rounded border bg-white object-contain" />
 }
 
+function whatsappNotifyUrl(order: Order, businessName: string): string {
+  const folio = order.folio ?? repairFolio(order.number)
+  const equipo = [order.brand, order.model].filter(Boolean).join(" ") || order.equipmentType
+  const origin = typeof window === "undefined" ? "" : window.location.origin
+  const phone4 = (order.customerPhone ?? "").replace(/\D/g, "").slice(-4)
+  const trackingUrl = `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+  const quoteAmountCents = order.approvedQuoteCents ?? order.quoteCents
+
+  let body: string
+  if (order.status === "WAITING_APPROVAL") {
+    const budgetPart = quoteAmountCents !== null ? ` El presupuesto es de ${money(quoteAmountCents)}.` : ""
+    const quoteLinkPart = order.quoteToken
+      ? `\n\nRevisa y autoriza tu cotización aquí: ${origin}/cotizacion/${order.quoteToken}`
+      : ""
+    body = `Hola ${order.customerName}, tenemos lista la cotización de tu equipo ${equipo} (folio ${folio}) en ${businessName}.${budgetPart}${quoteLinkPart}\n\nSigue el avance de tu orden en 1 toque: ${trackingUrl}`
+  } else if (order.status === "READY") {
+    const balanceCents = orderBalanceCents(order)
+    const balancePart =
+      balanceCents > 0
+        ? `Saldo pendiente por liquidar: ${money(balanceCents)}.`
+        : "Tu orden ya está liquidada (sin saldo pendiente)."
+    body = `Hola ${order.customerName}, tu equipo ${equipo} (folio ${folio}) ya está listo en ${businessName}. ${balancePart} ¡Ya puedes pasar a recoger tu equipo!\n\nConsulta el seguimiento de tu orden en 1 toque: ${trackingUrl}`
+  } else if (order.status === "RECEIVED") {
+    body = `Hola ${order.customerName}, recibimos tu equipo ${equipo} en ${businessName} con el folio ${folio}. Sigue tu reparación en 1 toque: ${trackingUrl}`
+  } else if (order.status === "DIAGNOSIS") {
+    body = `Hola ${order.customerName}, tu equipo ${equipo} (folio ${folio}) está en diagnóstico en ${businessName}. Consulta el avance en 1 toque: ${trackingUrl}`
+  } else if (order.status === "WAITING_PARTS") {
+    body = `Hola ${order.customerName}, tu equipo ${equipo} (folio ${folio}) se encuentra en espera de refacción en ${businessName}. Consulta el avance en 1 toque: ${trackingUrl}`
+  } else if (order.status === "IN_REPAIR" || order.status === "EXTERNAL_LAB") {
+    body = `Hola ${order.customerName}, tu equipo ${equipo} (folio ${folio}) está en reparación en ${businessName}. Sigue el avance en 1 toque: ${trackingUrl}`
+  } else if (order.status === "QUALITY_CHECK") {
+    body = `Hola ${order.customerName}, tu equipo ${equipo} (folio ${folio}) está en pruebas finales de calidad en ${businessName}. Consulta el avance en 1 toque: ${trackingUrl}`
+  } else {
+    body = `Hola ${order.customerName}, te compartimos el estado de tu equipo ${equipo} (folio ${folio} · ${repairLabels[order.status]}) en ${businessName}. Consulta el avance en 1 toque: ${trackingUrl}`
+  }
+
+  return waLink(order.customerPhone, body)
+}
+
 function BoardColumn({ title, style, orders, total, dimmed, showStage, slaHours, onOpen, onAvisar }: { title: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; slaHours: SlaHours; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
   return <section aria-label={title} className={`flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3 ${dimmed ? "opacity-70" : ""}`}>
     <header className="mb-3 flex items-center gap-2 px-1">
@@ -165,7 +204,7 @@ function BoardColumn({ title, style, orders, total, dimmed, showStage, slaHours,
         </button>
         {/* "Avisar" en un toque: la tarjeta entera es <button>, así que el chip
             va como overlay hermano (botón dentro de botón no es HTML válido). */}
-        {order.status === "READY" && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); onAvisar(order) }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={14} /></button>}
+        {(order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); onAvisar(order) }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={14} /></button>}
       </div>)}
       {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
     </div>
@@ -183,11 +222,28 @@ export default function WorkshopPage() {
   const [board, setBoard] = useState<{ orders: Record<RepairStage, Order[]>; totals: Record<RepairStage, number> } | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
   const [staff, setStaff] = useState<Branch[]>([])
-  const [branch, setBranch] = useState(() => typeof window === "undefined" ? "" : localStorage.getItem("reficio-branch") ?? "")
-  const [stage, setStage] = useState("")
-  const [view, setView] = useState<BoardView>("board")
+  const [branch, setBranch] = useState(() => {
+    if (typeof window === "undefined") return ""
+    const params = new URLSearchParams(window.location.search)
+    return params.get("branch") ?? params.get("branchId") ?? localStorage.getItem("reficio-branch") ?? ""
+  })
+  const [stage, setStage] = useState(() => {
+    if (typeof window === "undefined") return ""
+    const params = new URLSearchParams(window.location.search)
+    const raw = params.get("stage") ?? params.get("status") ?? ""
+    return raw && Object.hasOwn(repairLabels, raw) ? raw : ""
+  })
+  const [view, setView] = useState<BoardView>(() => {
+    if (typeof window === "undefined") return "board"
+    const raw = new URLSearchParams(window.location.search).get("view")
+    return viewTabs.some(tabItem => tabItem.value === raw) ? (raw as BoardView) : "board"
+  })
   const [search, setSearch] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("q")?.slice(0, 100) ?? "")
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(() => {
+    if (typeof window === "undefined") return 1
+    const raw = Number.parseInt(new URLSearchParams(window.location.search).get("page") ?? "1", 10)
+    return Number.isFinite(raw) && raw > 0 ? Math.min(1000, raw) : 1
+  })
   const [pages, setPages] = useState(1)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -217,6 +273,7 @@ export default function WorkshopPage() {
   // para no repetir la consulta al alternar Mostrar/Ocultar.
   const [accessSecret, setAccessSecret] = useState<{ loading: boolean; fetched: boolean; value: string | null }>({ loading: false, fetched: false, value: null })
   const [discardDialog, setDiscardDialog] = useState(false)
+  const [rotateTokenDialog, setRotateTokenDialog] = useState(false)
   const [opening, setOpening] = useState(false)
   // Nombre del negocio para el WhatsApp de "Avisar" (orden lista). Mismo
   // endpoint que <BusinessName />, cuyo default también es "ProSolutions".
@@ -232,10 +289,11 @@ export default function WorkshopPage() {
   const tab: "ordenes" | "precios" =
     searchParams.get("tab") === "precios" ? "precios" : "ordenes"
   const selectTab = (next: "ordenes" | "precios") => {
-    const params = new URLSearchParams(searchParams.toString())
+    const params = new URLSearchParams(typeof window === "undefined" ? searchParams.toString() : window.location.search)
     if (next === "ordenes") params.delete("tab")
     else params.set("tab", next)
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
   }
   const kanbanMode = view === "board" && !stage && !search
   const selectedParts = selected?.parts ?? []
@@ -264,12 +322,25 @@ export default function WorkshopPage() {
       total: (labor + approved.reduce((sum, p) => sum + p.unitPriceCents * p.qty, 0)) / 100,
     }
   }
-  // "Avisar": un toque abre WhatsApp con el aviso de orden lista. Los chips
-  // solo se renderizan en READY con teléfono — el guard es doble seguridad.
+  // "Avisar": un toque abre WhatsApp con el mensaje contextual según la etapa
+  // (incluyendo link de seguimiento, saldo o link de cotización).
   const avisarCliente = (order: Order) => {
     if (!hasWhatsAppPhone(order.customerPhone)) return
-    const equipo = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" ")
-    openWhatsApp(order.customerPhone, `Hola ${order.customerName}, tu equipo ${equipo} (orden ${folioOf(order)}) está listo en ${businessName}.`)
+    window.open(whatsappNotifyUrl(order, businessName), "_blank", "noopener,noreferrer")
+  }
+  const enviarCotizacionWhatsApp = (order: Order) => {
+    if (!order.quoteToken || !hasWhatsAppPhone(order.customerPhone)) return
+    const folio = folioOf(order)
+    const equipo = [order.brand, order.model].filter(Boolean).join(" ") || order.equipmentType
+    const origin = typeof window === "undefined" ? "" : window.location.origin
+    const quoteUrl = `${origin}/cotizacion/${order.quoteToken}`
+    const phone4 = (order.customerPhone ?? "").replace(/\D/g, "").slice(-4)
+    const trackingUrl = `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+    const q = quoteShare(order)
+    const linesText = q ? `\n\n${q.lines.map(l => `• ${l.label}: ${money(Math.round(l.amount * 100))}`).join("\n")}\nTotal estimado: ${money(Math.round(q.total * 100))}` : ""
+    const diagText = order.diagnosis ? `\nDiagnóstico: ${order.diagnosis}` : ""
+    const message = `Hola ${order.customerName}, te compartimos la cotización de reparación de tu equipo ${equipo} (folio ${folio}) en ${businessName}.${diagText}${linesText}\n\nRevisa y autoriza tu cotización aquí: ${quoteUrl}\nSeguimiento en 1 toque: ${trackingUrl}`
+    openWhatsApp(order.customerPhone, message)
   }
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== "" || paymentForm.reference !== ""
   const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
@@ -321,7 +392,7 @@ export default function WorkshopPage() {
     setOpening(false); setSelected(null); setAction("NOTE")
     setDrafts({}); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setFeeDraft(""); setSettleForm(emptySettleForm)
     setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
-    setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null }); setDiscardDialog(false)
+    setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null }); setDiscardDialog(false); setRotateTokenDialog(false)
     setPartnerConfigured(false); setDelegateOpen(false); setDelegateForm({ price: "", note: "" }); setMirrorLive(null)
   }
 
@@ -329,25 +400,45 @@ export default function WorkshopPage() {
     closeOrder()
     if (new URLSearchParams(window.location.search).get("orden")) syncOrderUrl(null)
   }
+
+  // Sincroniza filtros activos en la URL conservando otros parámetros como `orden` o `tab`.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (view && view !== "board") url.searchParams.set("view", view)
+    else url.searchParams.delete("view")
+    if (stage) url.searchParams.set("stage", stage)
+    else url.searchParams.delete("stage")
+    url.searchParams.delete("status")
+    if (branch) url.searchParams.set("branch", branch)
+    else url.searchParams.delete("branch")
+    url.searchParams.delete("branchId")
+    if (page > 1) url.searchParams.set("page", String(page))
+    else url.searchParams.delete("page")
+    if (search.trim()) url.searchParams.set("q", search.trim())
+    else url.searchParams.delete("q")
+    window.history.replaceState(null, "", url)
+  }, [view, stage, branch, page, search])
+
   const load = useCallback(async () => {
     const version = ++requestVersion.current
     setLoading(true); setError("")
     try {
       if (view === "board" && !stage && !search) {
-        const results = await Promise.all(boardStages.map(async status => {
-          const params = new URLSearchParams({ branchId: branch, status, page: "1" })
-          const response = await fetch(`/api/workshop?${params}`)
-          const data = await response.json()
-          if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
-          return data
-        }))
+        const params = new URLSearchParams({ board: "1", branchId: branch })
+        const response = await fetch(`/api/workshop?${params}`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || "No se pudieron cargar las órdenes")
         if (version !== requestVersion.current) return
         const boardOrders = {} as Record<RepairStage, Order[]>
         const boardTotals = {} as Record<RepairStage, number>
-        boardStages.forEach((status, index) => { boardOrders[status] = results[index].orders; boardTotals[status] = results[index].total })
+        boardStages.forEach(status => {
+          boardOrders[status] = data.board?.[status]?.orders ?? []
+          boardTotals[status] = data.board?.[status]?.total ?? 0
+        })
         setBoard({ orders: boardOrders, totals: boardTotals })
-        setBranches(results[0].branches); setStaff(results[0].staff)
-        setTotal(results.reduce((sum, data) => sum + data.total, 0))
+        setBranches(data.branches ?? [])
+        setStaff(data.staff ?? [])
+        setTotal(boardStages.reduce((sum, status) => sum + boardTotals[status], 0))
       } else {
         const params = new URLSearchParams({ q: search, branchId: branch, status: stage, page: String(page) })
         if (view !== "board") params.set("view", view)
@@ -578,10 +669,10 @@ export default function WorkshopPage() {
   // admin — el dominio rota el token y los enlaces/QR anteriores mueren.
   async function rotateUploadToken() {
     if (inFlight.current || opening || !selected || !isAdmin) return
-    if (!window.confirm("¿Regenerar el link de evidencias? Los códigos QR y enlaces anteriores dejarán de funcionar.")) return
     inFlight.current = true; setSaving(true)
     try {
       await post(`/api/workshop/${selected.id}`, { action: "ROTATE_UPLOAD_TOKEN", expectedVersion: selected.version })
+      setRotateTokenDialog(false)
       await openOrder(selected.id, true); await load()
       toast.success("Link de evidencias regenerado")
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
@@ -645,100 +736,898 @@ export default function WorkshopPage() {
     }
   }
 
-  const emptyList = <div className="rounded-xl border border-dashed p-12 text-center"><ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">{total === 0 && !search && !stage && !branch && view === "board" ? "Todo listo para la primera recepción" : "No hay órdenes con estos filtros"}</h2><p className="mt-2 text-muted-foreground">{branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}</p></div>
+  const emptyList = (
+    <div className="rounded-xl border border-dashed p-12 text-center">
+      <ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+      <h2 className="text-lg font-semibold">
+        {total === 0 && !search && !stage && !branch && view === "board"
+          ? "Todo listo para la primera recepción"
+          : "No hay órdenes con estos filtros"}
+      </h2>
+      <p className="mt-2 text-muted-foreground">
+        {branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}
+      </p>
+    </div>
+  )
 
   // Chip del tablero: rojos del semáforo entre las órdenes cargadas (hasta 20
   // por columna); el conteo exacto de todas las atrasadas vive en la vista
   // "Atrasadas".
-  const boardOverdueCount = board ? boardStages.reduce((sum, stageKey) => sum + (board.orders[stageKey] ?? []).filter(order => semaforo(order, new Date(), slaHours) === "rojo").length, 0) : 0
+  const boardOverdueCount = board
+    ? boardStages.reduce(
+        (sum, stageKey) =>
+          sum + (board.orders[stageKey] ?? []).filter(order => semaforo(order, new Date(), slaHours) === "rojo").length,
+        0,
+      )
+    : 0
 
-  return <div className="mx-auto max-w-6xl space-y-6 pb-20">
-    <div className="flex flex-wrap items-center justify-between gap-4">
-      <div><p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p><h1 className="mt-1 text-3xl font-bold">{selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}</h1><p className="mt-2 text-muted-foreground">{selected ? `${selected.customerName} · ${selected.equipmentType}` : tab === "precios" ? "Precios sugeridos por servicio, modelos de equipo y listas del taller." : "De la recepción a la entrega, con un historial por equipo."}</p></div>
-      {selected || opening ? <div className="flex flex-wrap items-center gap-2">
-        {selected && <><ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} />{selected.status === "READY" && hasWhatsAppPhone(selected.customerPhone) && <Button variant="outline" onClick={() => avisarCliente(selected)} title="Avisar al cliente por WhatsApp"><MessageCircle className="mr-2 h-4 w-4" />Avisar</Button>}<Button variant="outline" asChild><Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><Printer className="mr-2 h-4 w-4" />Ticket cliente</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer"><Wrench className="mr-2 h-4 w-4" />Hoja de taller</Link></Button><Button variant="outline" asChild><Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer"><FileText className="mr-2 h-4 w-4" />Cotización</Link></Button>{isAdmin && partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}><Send className="mr-2 h-4 w-4" />Enviar a taller</Button>}</>}
-        <Button variant="outline" disabled={saving} onClick={() => { if (hasUnsavedChanges) setDiscardDialog(true); else backToOrders() }}><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Button>
+  return (
+    <div className="mx-auto max-w-6xl space-y-6 pb-20">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-primary">
+            <BusinessName fallback="ProSolutions" /> · Taller
+          </p>
+          <h1 className="mt-1 text-3xl font-bold">
+            {selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            {selected
+              ? `${selected.customerName} · ${selected.equipmentType}`
+              : tab === "precios"
+                ? "Precios sugeridos por servicio, modelos de equipo y listas del taller."
+                : "De la recepción a la entrega, con un historial por equipo."}
+          </p>
+        </div>
+        {selected || opening ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {selected && (
+              <>
+                <ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} />
+                {hasWhatsAppPhone(selected.customerPhone) && (
+                  <Button variant="outline" onClick={() => avisarCliente(selected)} title="Avisar al cliente por WhatsApp">
+                    <MessageCircle className="mr-2 h-4 w-4" />
+                    Avisar
+                  </Button>
+                )}
+                <Button variant="outline" asChild>
+                  <Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                    <Printer className="mr-2 h-4 w-4" />
+                    Ticket cliente
+                  </Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                    <Wrench className="mr-2 h-4 w-4" />
+                    Hoja de taller
+                  </Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                    <FileText className="mr-2 h-4 w-4" />
+                    Cotización
+                  </Link>
+                </Button>
+                {isAdmin && partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && (
+                  <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}>
+                    <Send className="mr-2 h-4 w-4" />
+                    Enviar a taller
+                  </Button>
+                )}
+              </>
+            )}
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                if (hasUnsavedChanges) setDiscardDialog(true)
+                else backToOrders()
+              }}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Volver a órdenes
+            </Button>
+          </div>
+        ) : tab === "ordenes" ? (
+          <div className="flex items-center gap-2">
+            <ExportButton type="orders" branchId={branch || undefined} />
+            <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}>
+              <Plus className="mr-2 h-4 w-4" />
+              Recibir equipo
+            </Button>
+          </div>
+        ) : null}
       </div>
-        : tab === "ordenes" ? <div className="flex items-center gap-2"><ExportButton type="orders" branchId={branch || undefined} /><Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}><Plus className="mr-2 h-4 w-4" />Recibir equipo</Button></div> : null}
+      {opening && (
+        <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+          Abriendo orden…
+        </p>
+      )}
+      {error && (
+        <div role="alert" className="rounded-lg border p-4 text-destructive">
+          {error}
+          <Button variant="outline" className="ml-3" onClick={() => void load()}>
+            Reintentar
+          </Button>
+        </div>
+      )}
+      {!selected && (
+        <>
+          {/* Pestañas raíz: Órdenes (tablero/lista) | Precios (catálogo) */}
+          <Tabs value={tab} onValueChange={value => selectTab(value as "ordenes" | "precios")}>
+            <TabsList>
+              <TabsTrigger value="ordenes" className="px-4">
+                <ClipboardList className="h-4 w-4" />
+                Órdenes
+              </TabsTrigger>
+              <TabsTrigger value="precios" className="px-4">
+                <BookOpen className="h-4 w-4" />
+                Precios
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {tab === "precios" ? (
+            <CatalogoPanel />
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vistas del taller">
+                {viewTabs.map(vista => (
+                  <button
+                    key={vista.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={view === vista.value}
+                    onClick={() => {
+                      setView(vista.value)
+                      setPage(1)
+                    }}
+                    className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                      view === vista.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                    }`}
+                  >
+                    {vista.label}
+                  </button>
+                ))}
+              </div>
+              <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3">
+                <label className="text-sm">
+                  Buscar folio, cliente, teléfono, modelo o serie
+                  <div className="relative mt-2">
+                    <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      value={search}
+                      className="pl-9"
+                      placeholder="OT-000001, teléfono o modelo…"
+                      onChange={e => {
+                        setSearch(e.target.value)
+                        setPage(1)
+                      }}
+                    />
+                  </div>
+                </label>
+                <label className="text-sm">
+                  Ubicación actual
+                  <select
+                    className={`${inputClass} mt-2`}
+                    value={branch}
+                    onChange={e => {
+                      setBranch(e.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="">Todas las sucursales</option>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-sm">
+                  Etapa
+                  <select
+                    className={`${inputClass} mt-2`}
+                    value={stage}
+                    onChange={e => {
+                      setStage(e.target.value)
+                      setPage(1)
+                    }}
+                  >
+                    <option value="">Todas las etapas</option>
+                    {Object.entries(repairLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {loading ? (
+                <p role="status">Cargando órdenes…</p>
+              ) : kanbanMode ? (
+                total === 0 ? (
+                  emptyList
+                ) : (
+                  <div className="space-y-3">
+                    {boardOverdueCount > 0 && (
+                      <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-rose-600 dark:text-rose-400">
+                        <span aria-hidden className="h-2 w-2 rounded-full bg-rose-500" />
+                        {boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}
+                      </p>
+                    )}
+                    <div className="flex items-start gap-3 overflow-x-auto pb-2">
+                      {activeBoardStages.map(value => (
+                        <BoardColumn
+                          key={value}
+                          title={repairLabels[value]}
+                          style={stageStyles[value]}
+                          orders={board?.orders[value] ?? []}
+                          total={board?.totals[value] ?? 0}
+                          slaHours={slaHours}
+                          onOpen={id => void openOrder(id)}
+                          onAvisar={avisarCliente}
+                        />
+                      ))}
+                      <BoardColumn
+                        title="Cerradas"
+                        style={closedColumnStyle}
+                        dimmed
+                        showStage
+                        slaHours={slaHours}
+                        onOpen={id => void openOrder(id)}
+                        onAvisar={avisarCliente}
+                        orders={
+                          board
+                            ? closedColumnStages
+                                .flatMap(value => board.orders[value] ?? [])
+                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                .slice(0, 20)
+                            : []
+                        }
+                        total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {total} órdenes
+                      {board && boardStages.some(value => board.totals[value] > board.orders[value].length)
+                        ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto."
+                        : ""}
+                    </p>
+                  </div>
+                )
+              ) : orders.length === 0 ? (
+                emptyList
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {orders.map(order => (
+                    <div key={order.id} className="relative">
+                      <button
+                        onClick={() => void openOrder(order.id)}
+                        className={`h-full w-full space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary${
+                          (order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) ? " pr-12" : ""
+                        }`}
+                      >
+                        <div className="flex justify-between gap-3">
+                          <strong>{folioOf(order)}</strong>
+                          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">
+                            {repairLabels[order.status]}
+                          </span>
+                        </div>
+                        <div>
+                          <h2 className="font-semibold">
+                            {[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}
+                          </h2>
+                          <p className="text-sm text-muted-foreground">{order.customerName}</p>
+                        </div>
+                        <p className="line-clamp-2 text-sm">{order.reportedIssue}</p>
+                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <MapPin size={14} />
+                            {order.currentBranch.name}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Wrench size={14} />
+                            {order.assignedTo?.name ?? "Sin asignar"}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock3 size={14} />
+                            {date(order.createdAt)}
+                          </span>
+                          <PromisedAt order={order} />
+                          <SemaforoBadge order={order} slaHours={slaHours} />
+                          {(order.originBusiness || order.originBusinessName) && (
+                            <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300">
+                              <Store size={11} />
+                              {order.originBusiness?.name ?? order.originBusinessName}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {/* "Avisar" en un toque: overlay hermano porque la tarjeta ya es <button>. */}
+                      {(order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) && (
+                        <button
+                          type="button"
+                          title={`Avisar a ${order.customerName} por WhatsApp`}
+                          aria-label={`Avisar a ${order.customerName} por WhatsApp`}
+                          onClick={event => {
+                            event.stopPropagation()
+                            avisarCliente(order)
+                          }}
+                          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"
+                        >
+                          <MessageCircle size={15} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!kanbanMode && (
+                <div className="flex items-center justify-between text-sm">
+                  <span>
+                    {total} órdenes · Página {page} de {pages}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>
+                      Anterior
+                    </Button>
+                    <Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <details className="rounded-xl border bg-card p-4">
+                <summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary>
+                <p className="my-3 text-sm text-muted-foreground">
+                  {branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.
+                </p>
+                <form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2">
+                  <Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" />
+                  <Button disabled={saving}>Agregar</Button>
+                </form>
+              </details>
+            </>
+          )}
+        </>
+      )}
+      {selected && (
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
+          <div className="space-y-5">
+            <section className="space-y-4 rounded-xl border bg-card p-5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-semibold">Equipo y recepción</h2>
+                <span className="flex items-center gap-2">
+                  {selected.status === "WARRANTY" && (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>
+                      Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}
+                      {selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}
+                    </span>
+                  )}
+                  <span className="text-sm text-primary">{repairLabels[selected.status]}</span>
+                </span>
+              </div>
+              <p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>
+              {(selected.originBusiness || selected.originBusinessName) && (
+                <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                    <Store size={12} />
+                    Origen: {selected.originBusiness?.name ?? selected.originBusinessName}
+                    {selected.originContact ? ` · ${selected.originContact}` : ""}
+                  </span>
+                  {selected.partnerPriceCents != null && (
+                    <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">
+                      Convenio: {money(selected.partnerPriceCents)}
+                    </span>
+                  )}
+                </p>
+              )}
+              {selected.delegatedOrderId && (
+                <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                    <Send size={12} />
+                    Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}
+                  </span>
+                  {mirrorLive && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      Folio espejo {mirrorLive.folio}
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>
+                        {mirrorLive.statusLabel}
+                      </span>
+                    </span>
+                  )}
+                  {selected.delegatedAt && (
+                    <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>
+                  )}
+                  <Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">
+                    Ver en portal aliado
+                  </Link>
+                </p>
+              )}
+              <dl className="grid gap-3 text-sm">
+                <div>
+                  <dt className="text-muted-foreground">Servicio</dt>
+                  <dd>{selected.serviceName || "Sin registrar"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Falla reportada</dt>
+                  <dd>{selected.reportedIssue}</dd>
+                </div>
+                {[
+                  ["Serie / IMEI", selected.serialNumber],
+                  ["Color", selected.equipmentColor],
+                  ["Estado físico", selected.intakeCondition],
+                  ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null],
+                  ["Accesorios", selected.accessories],
+                  ["Contacto", `${selected.customerName} · ${selected.customerPhone}`],
+                  ["Recibido en", selected.intakeBranch.name],
+                  ["Recibió", selected.createdBy?.name ?? null],
+                  ["Ubicación actual", selected.currentBranch.name],
+                  ["Responsable", selected.assignedTo?.name ?? "Sin asignar"],
+                  ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null],
+                  ...(selected.deliveredTo
+                    ? [
+                        ["Entregado a", selected.deliveredTo],
+                        ["Identificación", selected.deliveredToDoc ?? ""],
+                        ["Entregó (staff)", selected.deliveredBy?.name ?? ""],
+                        ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""],
+                      ]
+                    : []),
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd>{value || "Sin registrar"}</dd>
+                  </div>
+                ))}
+                <div>
+                  <dt className="text-muted-foreground">Condiciones</dt>
+                  <dd>
+                    {selected.functionalConditions ? (
+                      <span className="mt-1 flex flex-wrap gap-1.5">
+                        {selected.functionalConditions
+                          .split(",")
+                          .filter(Boolean)
+                          .map(flag => (
+                            <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                              {conditionLabels[flag] ?? flag}
+                            </span>
+                          ))}
+                      </span>
+                    ) : (
+                      "Sin registrar"
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Bloqueo</dt>
+                  <dd>
+                    {accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}
+                    {canRevealAccess && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={accessSecret.loading}
+                          onClick={() => void toggleAccessSecret()}
+                          className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                        >
+                          {accessSecret.loading ? (
+                            "Consultando…"
+                          ) : showAccess ? (
+                            <>
+                              <EyeOff size={12} />
+                              Ocultar
+                            </>
+                          ) : (
+                            <>
+                              <Eye size={12} />
+                              Mostrar
+                            </>
+                          )}
+                        </button>
+                        {showAccess && accessSecret.fetched && (
+                          <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">
+                            {accessSecret.value ?? "Sin registrar"}
+                          </code>
+                        )}
+                        {showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && (
+                          <PatternDots value={accessSecret.value} />
+                        )}
+                      </>
+                    )}
+                  </dd>
+                </div>
+                {selected.deliverySignatureData && (
+                  <div>
+                    <dt className="text-muted-foreground">Firma de quien recibió</dt>
+                    <dd>
+                      <DeliverySignature data={selected.deliverySignatureData} />
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </section>
+            <PartsSection
+              order={{ id: selected.id, version: selected.version, parts: selectedParts }}
+              canDecide={isAdmin}
+              currentUserId={currentUserId}
+              busy={saving || opening}
+              branches={branches}
+              currentBranchId={selected.currentBranch.id}
+              readOnly={partsClosedStages.includes(selected.status) || Boolean(selected.delegatedOrderId)}
+              onAction={async payload => {
+                await handlePartAction(payload)
+              }}
+            />
+            <section className="space-y-3 rounded-xl border bg-card p-5">
+              <h2 className="font-semibold">Diagnóstico y presupuesto</h2>
+              <p className="whitespace-pre-wrap text-sm">{selected.diagnosis || "Pendiente de diagnóstico"}</p>
+              <p className="text-2xl font-semibold">
+                {selected.quoteCents === null ? "Sin cotizar" : money(selected.quoteCents)}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {selected.approvedQuoteCents === null
+                  ? "Sin autorización registrada"
+                  : `Autorizado: ${money(selected.approvedQuoteCents)}`}
+              </p>
+              {selected.quoteToken && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      const url = `${window.location.origin}/cotizacion/${selected.quoteToken}`
+                      try {
+                        await navigator.clipboard.writeText(url)
+                        toast.success("Link de cotización copiado")
+                      } catch {
+                        toast.error("No se pudo copiar el enlace")
+                      }
+                    }}
+                  >
+                    <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                    Copiar link de cotización
+                  </Button>
+                  {hasWhatsAppPhone(selected.customerPhone) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => enviarCotizacionWhatsApp(selected)}
+                    >
+                      <MessageCircle className="mr-1.5 h-3.5 w-3.5" />
+                      Enviar cotización por WhatsApp
+                    </Button>
+                  )}
+                </div>
+              )}
+            </section>
+            <PaymentsPanel
+              status={selected.status}
+              quoteCents={selected.quoteCents}
+              approvedQuoteCents={selected.approvedQuoteCents}
+              diagnosticFeeCents={selected.diagnosticFeeCents}
+              closedWithoutRepair={selected.closedWithoutRepair}
+              parts={selectedParts}
+              payments={selected.payments}
+              // Una orden delegada no mueve dinero ni refacciones aquí (el dominio
+              // también lo rechaza): el cobro al cliente va por POS y el trabajo se
+              // gestiona en el portal aliado.
+              canCharge={!terminalStages.includes(selected.status) && !selected.delegatedOrderId}
+              canDeliver={repairDeliverableStages.includes(selected.status) && !selected.delegatedOrderId}
+              canRefund={isAdmin && !selected.delegatedOrderId}
+              disabled={saving || opening}
+              paymentForm={paymentForm}
+              onPaymentChange={setPaymentForm}
+              onPaymentSubmit={e => void submitPayment(e)}
+              settleOpen={settleOpen}
+              onSettleOpenChange={open => {
+                if (open) setSettleForm({ ...emptySettleForm, deliveredTo: selected.customerName })
+                setSettleOpen(open)
+              }}
+              settleForm={settleForm}
+              onSettleChange={handleSettleChange}
+              onSettleSubmit={e => void submitSettle(e)}
+              feeDraft={feeDraft}
+              onFeeChange={setFeeDraft}
+              onFeeSubmit={e => void submitFee(e)}
+              refundForm={refundForm}
+              onRefundChange={setRefundForm}
+              onRefundSubmit={e => void submitRefund(e)}
+            />
+            <WorkPlan
+              scheduledAt={selected.scheduledAt}
+              location={selected.location}
+              editable={!terminalStages.includes(selected.status)}
+              disabled={saving || opening}
+              form={planForm}
+              onChange={setPlanForm}
+              onSubmit={e => void submitPlan(e)}
+            />
+            <EvidenceSection
+              order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
+              // El enlace público solo sube en órdenes abiertas: la ruta rechaza
+              // los mismos estados que cierran refacciones; si el token venció el
+              // admin puede regenerarlo desde la misma sección.
+              linkState={
+                partsClosedStages.includes(selected.status)
+                  ? "closed"
+                  : evidenceLinkExpired
+                    ? "expired"
+                    : "active"
+              }
+              onRotateLink={isAdmin ? () => setRotateTokenDialog(true) : undefined}
+              rotateBusy={saving || opening}
+              onChanged={() => void openOrder(selected.id, true)}
+            />
+            {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && (
+              <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5">
+                <h2 className="font-semibold">
+                  {selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}
+                </h2>
+                <fieldset disabled={saving || opening} className="space-y-4">
+                  {quickStages.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Avance rápido:</span>
+                      {quickStages.map(next => (
+                        <button
+                          key={next}
+                          type="button"
+                          onClick={() => void quickAdvance(next)}
+                          className={`rounded-full border px-3 py-1 text-xs font-medium transition hover:border-primary ${stageStyles[next].badge}`}
+                        >
+                          → {repairLabels[next]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {selected.status === "DELIVERED" && (
+                    <>
+                      <input type="hidden" name="action" value="STATUS" />
+                      <input type="hidden" name="status" value="WARRANTY" />
+                    </>
+                  )}
+                  {selected.status !== "DELIVERED" && (
+                    <label className="block text-sm">
+                      Acción
+                      <select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}>
+                        <option value="NOTE">Agregar nota interna</option>
+                        {repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}
+                        {["DIAGNOSIS", "WAITING_APPROVAL"].includes(selected.status) && (
+                          <option value="QUOTE">Registrar diagnóstico y presupuesto</option>
+                        )}
+                        {selected.status === "WAITING_APPROVAL" && (
+                          <option value="APPROVE">Registrar autorización del cliente</option>
+                        )}
+                        <option value="ASSIGN">Asignar responsable</option>
+                        <option value="TRANSFER">Registrar llegada a otra sucursal</option>
+                      </select>
+                    </label>
+                  )}
+                  {selected.status !== "DELIVERED" && action === "STATUS" && (
+                    <label className="block text-sm">
+                      Nueva etapa
+                      <select
+                        name="status"
+                        value={draft.status ?? repairNextStages[selected.status][0] ?? ""}
+                        onChange={e => updateDraft({ status: e.target.value })}
+                        className={`${inputClass} mt-2`}
+                      >
+                        {repairNextStages[selected.status].map(value => (
+                          <option key={value} value={value}>
+                            {repairLabels[value]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {action === "QUOTE" && (
+                    <label className="block text-sm">
+                      Importe total en MXN
+                      <Input
+                        name="quote"
+                        type="number"
+                        min={0}
+                        max={1000000}
+                        step="0.01"
+                        required
+                        value={
+                          draft.quote ??
+                          (selected.quoteCents !== null
+                            ? String(selected.quoteCents / 100)
+                            : selected.suggestedQuoteCents != null
+                              ? String(selected.suggestedQuoteCents / 100)
+                              : "")
+                        }
+                        onChange={e => updateDraft({ quote: e.target.value })}
+                      />
+                      {selected.suggestedQuoteCents != null && selected.suggestedQuoteCents !== selected.quoteCents && (
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Precio de catálogo para este equipo: {money(selected.suggestedQuoteCents)}
+                        </span>
+                      )}
+                    </label>
+                  )}
+                  {action === "ASSIGN" && (
+                    <label className="block text-sm">
+                      Responsable técnico
+                      <select
+                        name="assignedToId"
+                        required
+                        value={draft.assignedToId ?? ""}
+                        onChange={e => updateDraft({ assignedToId: e.target.value })}
+                        className={`${inputClass} mt-2`}
+                      >
+                        <option value="">Selecciona una persona</option>
+                        {staff.map(person => (
+                          <option key={person.id} value={person.id}>
+                            {person.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {action === "TRANSFER" && (
+                    <label className="block text-sm">
+                      Sucursal donde se recibió el equipo
+                      <select
+                        name="branchId"
+                        required
+                        value={draft.branchId ?? ""}
+                        onChange={e => updateDraft({ branchId: e.target.value })}
+                        className={`${inputClass} mt-2`}
+                      >
+                        <option value="">Selecciona la sucursal destino</option>
+                        {branches
+                          .filter(b => b.id !== selected.currentBranch.id)
+                          .map(b => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
+                  <label className="block text-sm">
+                    {action === "APPROVE"
+                      ? "Quién autorizó y por qué medio"
+                      : action === "QUOTE"
+                        ? "Diagnóstico y alcance del trabajo"
+                        : "Detalle de la acción"}
+                    <textarea
+                      name="detail"
+                      value={draft.detail ?? ""}
+                      onChange={e => updateDraft({ detail: e.target.value })}
+                      required={action !== "STATUS" && selected.status !== "DELIVERED"}
+                      maxLength={2000}
+                      rows={3}
+                      className={`${inputClass} mt-2`}
+                      placeholder={
+                        action === "STATUS"
+                          ? "Para entregar: quién recibe. Para listo: resultado de la revisión final."
+                          : "Deja contexto para la siguiente persona que atienda la orden."
+                      }
+                    />
+                  </label>
+                  {action === "NOTE" && (
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        name="noteIsPublic"
+                        checked={draft.noteIsPublic ?? false}
+                        onChange={e => updateDraft({ noteIsPublic: e.target.checked })}
+                        className="h-4 w-4 rounded border"
+                      />
+                      Visible para el cliente en el rastreo
+                    </label>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Cada acción conserva su propio borrador hasta guardarlo o salir de la orden.
+                  </p>
+                  <Button disabled={saving || opening}>{saving ? "Guardando…" : "Guardar cambio"}</Button>
+                  <Button variant="outline" type="button" disabled={saving || opening} onClick={() => void openOrder(selected.id, true)}>
+                    Actualizar orden
+                  </Button>
+                </fieldset>
+              </form>
+            )}
+          </div>
+          <OrderHistory events={selected.events} folio={folioOf(selected)} phone={selected.customerPhone} />
+        </div>
+      )}
+      <AlertDialog open={discardDialog} onOpenChange={setDiscardDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Descartar los cambios sin guardar?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Los borradores de acciones y de refacciones que no guardaste se perderán al volver a la lista.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Seguir editando</AlertDialogCancel>
+            <AlertDialogAction onClick={backToOrders}>Descartar y volver</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={rotateTokenDialog} onOpenChange={open => { if (!saving) setRotateTokenDialog(open) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Regenerar el link de evidencias?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Los códigos QR y enlaces anteriores dejarán de funcionar inmediatamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={saving}
+              onClick={event => {
+                event.preventDefault()
+                void rotateUploadToken()
+              }}
+            >
+              {saving ? "Regenerando…" : "Regenerar link"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={delegateOpen}
+        onOpenChange={open => {
+          if (!saving) {
+            setDelegateOpen(open)
+            if (!open) setDelegateForm({ price: "", note: "" })
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Enviar al taller asociado</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se crea una orden espejo en el taller reparador y esta orden queda en laboratorio externo. El cobro a tu cliente lo registras por POS; el trabajo se gestiona en el portal aliado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <label className="block text-sm">
+              Precio convenio en MXN (opcional)
+              <Input
+                type="number"
+                min={0}
+                max={1000000}
+                step="0.01"
+                inputMode="decimal"
+                value={delegateForm.price}
+                onChange={e => setDelegateForm(previous => ({ ...previous, price: e.target.value }))}
+                placeholder="0.00"
+                className="mt-1"
+              />
+            </label>
+            <label className="block text-sm">
+              Nota interna para el taller (opcional)
+              <textarea
+                rows={2}
+                maxLength={500}
+                value={delegateForm.note}
+                onChange={e => setDelegateForm(previous => ({ ...previous, note: e.target.value }))}
+                className={`${inputClass} mt-1`}
+                placeholder="Contexto para quien repara — el cliente nunca la ve."
+              />
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={saving}
+              onClick={event => {
+                event.preventDefault()
+                void submitDelegate()
+              }}
+            >
+              {saving ? "Enviando…" : "Delegar orden"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
-    {opening && <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Abriendo orden…</p>}
-    {error && <div role="alert" className="rounded-lg border p-4 text-destructive">{error}<Button variant="outline" className="ml-3" onClick={() => void load()}>Reintentar</Button></div>}
-    {!selected && <>
-      {/* Pestañas raíz: Órdenes (tablero/lista) | Precios (catálogo) */}
-      <Tabs value={tab} onValueChange={value => selectTab(value as "ordenes" | "precios")}>
-        <TabsList>
-          <TabsTrigger value="ordenes" className="px-4"><ClipboardList className="h-4 w-4" />Órdenes</TabsTrigger>
-          <TabsTrigger value="precios" className="px-4"><BookOpen className="h-4 w-4" />Precios</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      {tab === "precios" ? <CatalogoPanel /> : <>
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vistas del taller">{viewTabs.map(vista => <button key={vista.value} type="button" role="tab" aria-selected={view === vista.value} onClick={() => { setView(vista.value); setPage(1) }} className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${view === vista.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}>{vista.label}</button>)}</div>
-      <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3">
-        <label className="text-sm">Buscar folio, cliente, teléfono, modelo o serie<div className="relative mt-2"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input value={search} className="pl-9" placeholder="OT-000001, teléfono o modelo…" onChange={e => { setSearch(e.target.value); setPage(1) }} /></div></label>
-        <label className="text-sm">Ubicación actual<select className={`${inputClass} mt-2`} value={branch} onChange={e => { setBranch(e.target.value); setPage(1) }}><option value="">Todas las sucursales</option>{branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
-        <label className="text-sm">Etapa<select className={`${inputClass} mt-2`} value={stage} onChange={e => { setStage(e.target.value); setPage(1) }}><option value="">Todas las etapas</option>{Object.entries(repairLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      </div>
-      {loading ? <p role="status">Cargando órdenes…</p> : kanbanMode ? (total === 0 ? emptyList : <div className="space-y-3">
-        {boardOverdueCount > 0 && <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-rose-600 dark:text-rose-400"><span aria-hidden className="h-2 w-2 rounded-full bg-rose-500" />{boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}</p>}
-        <div className="flex items-start gap-3 overflow-x-auto pb-2">{activeBoardStages.map(value => <BoardColumn key={value} title={repairLabels[value]} style={stageStyles[value]} orders={board?.orders[value] ?? []} total={board?.totals[value] ?? 0} slaHours={slaHours} onOpen={id => void openOrder(id)} onAvisar={avisarCliente} />)}
-          <BoardColumn title="Cerradas" style={closedColumnStyle} dimmed showStage slaHours={slaHours} onOpen={id => void openOrder(id)} onAvisar={avisarCliente}
-            orders={board ? closedColumnStages.flatMap(value => board.orders[value] ?? []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20) : []}
-            total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0} />
-        </div>
-        <p className="text-xs text-muted-foreground">{total} órdenes{board && boardStages.some(value => board.totals[value] > board.orders[value].length) ? " · Cada columna muestra hasta 20; usa el filtro de etapa para ver el resto." : ""}</p>
-      </div>) : orders.length === 0 ? emptyList : <div className="grid gap-3 md:grid-cols-2">{orders.map(order => <div key={order.id} className="relative"><button onClick={() => void openOrder(order.id)} className={`h-full w-full space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary${order.status === "READY" && hasWhatsAppPhone(order.customerPhone) ? " pr-12" : ""}`}><div className="flex justify-between gap-3"><strong>{folioOf(order)}</strong><span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">{repairLabels[order.status]}</span></div><div><h2 className="font-semibold">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</h2><p className="text-sm text-muted-foreground">{order.customerName}</p></div><p className="line-clamp-2 text-sm">{order.reportedIssue}</p><div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span className="flex items-center gap-1"><MapPin size={14} />{order.currentBranch.name}</span><span className="flex items-center gap-1"><Wrench size={14} />{order.assignedTo?.name ?? "Sin asignar"}</span><span className="flex items-center gap-1"><Clock3 size={14} />{date(order.createdAt)}</span><PromisedAt order={order} /><SemaforoBadge order={order} slaHours={slaHours} />{(order.originBusiness || order.originBusinessName) && <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300"><Store size={11} />{order.originBusiness?.name ?? order.originBusinessName}</span>}</div></button>{/* "Avisar" en un toque: overlay hermano porque la tarjeta ya es <button>. */}{order.status === "READY" && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); avisarCliente(order) }} className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={15} /></button>}</div>)}</div>}
-      {!kanbanMode && <div className="flex items-center justify-between text-sm"><span>{total} órdenes · Página {page} de {pages}</span><div className="flex gap-2"><Button variant="outline" disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>Anterior</Button><Button variant="outline" disabled={page >= pages || loading} onClick={() => setPage(p => p + 1)}>Siguiente</Button></div></div>}
-      <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary><p className="my-3 text-sm text-muted-foreground">{branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.</p><form onSubmit={e => void submit(e, "branch")} className="flex max-w-md gap-2"><Input name="name" aria-label="Nombre de la sucursal" required minLength={2} maxLength={80} placeholder="Nombre de la sucursal" /><Button disabled={saving}>Agregar</Button></form></details>
-      </>}
-    </>}
-    {selected && <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]"><div className="space-y-5"><section className="space-y-4 rounded-xl border bg-card p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Equipo y recepción</h2><span className="flex items-center gap-2">{selected.status === "WARRANTY" && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stageStyles.WARRANTY.badge}`}>Garantía{selected.warrantyCount ? ` ${selected.warrantyCount}` : ""}{selected.warrantyUntil ? ` · vence ${day(selected.warrantyUntil)}` : ""}</span>}<span className="text-sm text-primary">{repairLabels[selected.status]}</span></span></div><p>{[selected.equipmentType, selected.brand, selected.model].filter(Boolean).join(" · ")}</p>{(selected.originBusiness || selected.originBusinessName) && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Store size={12} />Origen: {selected.originBusiness?.name ?? selected.originBusinessName}{selected.originContact ? ` · ${selected.originContact}` : ""}</span>{selected.partnerPriceCents != null && <span className="text-xs font-medium text-indigo-700/80 dark:text-indigo-300/80">Convenio: {money(selected.partnerPriceCents)}</span>}</p>}{selected.delegatedOrderId && <p className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-indigo-500/5 px-3 py-2 text-sm dark:border-indigo-500/30"><span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300"><Send size={12} />Delegada a {selected.delegatedToBusiness?.name ?? "taller asociado"}</span>{mirrorLive && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">Folio espejo {mirrorLive.folio}<span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[mirrorLive.status as RepairStage]?.badge ?? closedColumnStyle.badge}`}>{mirrorLive.statusLabel}</span></span>}{selected.delegatedAt && <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>}<Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">Ver en portal aliado</Link></p>}<dl className="grid gap-3 text-sm"><div><dt className="text-muted-foreground">Servicio</dt><dd>{selected.serviceName || "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Falla reportada</dt><dd>{selected.reportedIssue}</dd></div>{[["Serie / IMEI", selected.serialNumber], ["Color", selected.equipmentColor], ["Estado físico", selected.intakeCondition], ["Estética", aestheticsLabels[selected.aesthetics ?? ""] ?? null], ["Accesorios", selected.accessories], ["Contacto", `${selected.customerName} · ${selected.customerPhone}`], ["Recibido en", selected.intakeBranch.name], ["Recibió", selected.createdBy?.name ?? null], ["Ubicación actual", selected.currentBranch.name], ["Responsable", selected.assignedTo?.name ?? "Sin asignar"], ["Entrega prometida", selected.promisedAt ? date(selected.promisedAt) : null], ...(selected.deliveredTo ? [["Entregado a", selected.deliveredTo], ["Identificación", selected.deliveredToDoc ?? ""], ["Entregó (staff)", selected.deliveredBy?.name ?? ""], ["Fecha de entrega", deliveredAt ? date(deliveredAt) : ""]] : [])].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value || "Sin registrar"}</dd></div>)}<div><dt className="text-muted-foreground">Condiciones</dt><dd>{selected.functionalConditions ? <span className="mt-1 flex flex-wrap gap-1.5">{selected.functionalConditions.split(",").filter(Boolean).map(flag => <span key={flag} className="rounded-full bg-muted px-2 py-0.5 text-xs">{conditionLabels[flag] ?? flag}</span>)}</span> : "Sin registrar"}</dd></div><div><dt className="text-muted-foreground">Bloqueo</dt><dd>{accessLabels[selected.deviceAccessType ?? ""] ?? "Sin registrar"}{canRevealAccess && <><button type="button" disabled={accessSecret.loading} onClick={() => void toggleAccessSecret()} className="ml-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60">{accessSecret.loading ? "Consultando…" : showAccess ? <><EyeOff size={12} />Ocultar</> : <><Eye size={12} />Mostrar</>}</button>{showAccess && accessSecret.fetched && <code className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs">{accessSecret.value ?? "Sin registrar"}</code>}{showAccess && accessSecret.fetched && accessSecret.value && selected.deviceAccessType === "PATTERN" && <PatternDots value={accessSecret.value} />}</>}</dd></div>{selected.deliverySignatureData && <div><dt className="text-muted-foreground">Firma de quien recibió</dt><dd><DeliverySignature data={selected.deliverySignatureData} /></dd></div>}</dl></section>
-      <PartsSection order={{ id: selected.id, version: selected.version, parts: selectedParts }}
-        canDecide={isAdmin} currentUserId={currentUserId} busy={saving || opening} branches={branches} currentBranchId={selected.currentBranch.id}
-        readOnly={partsClosedStages.includes(selected.status) || Boolean(selected.delegatedOrderId)}
-        onAction={async payload => { await handlePartAction(payload) }} />
-      <section className="space-y-3 rounded-xl border bg-card p-5"><h2 className="font-semibold">Diagnóstico y presupuesto</h2><p className="whitespace-pre-wrap text-sm">{selected.diagnosis || "Pendiente de diagnóstico"}</p><p className="text-2xl font-semibold">{selected.quoteCents === null ? "Sin cotizar" : money(selected.quoteCents)}</p><p className="text-sm text-muted-foreground">{selected.approvedQuoteCents === null ? "Sin autorización registrada" : `Autorizado: ${money(selected.approvedQuoteCents)}`}</p></section>
-      <PaymentsPanel status={selected.status} quoteCents={selected.quoteCents} approvedQuoteCents={selected.approvedQuoteCents} diagnosticFeeCents={selected.diagnosticFeeCents}
-        closedWithoutRepair={selected.closedWithoutRepair} parts={selectedParts} payments={selected.payments}
-        // Una orden delegada no mueve dinero ni refacciones aquí (el dominio
-        // también lo rechaza): el cobro al cliente va por POS y el trabajo se
-        // gestiona en el portal aliado.
-        canCharge={!terminalStages.includes(selected.status) && !selected.delegatedOrderId} canDeliver={repairDeliverableStages.includes(selected.status) && !selected.delegatedOrderId} canRefund={isAdmin && !selected.delegatedOrderId} disabled={saving || opening}
-        paymentForm={paymentForm} onPaymentChange={setPaymentForm} onPaymentSubmit={e => void submitPayment(e)}
-        settleOpen={settleOpen} onSettleOpenChange={open => { if (open) setSettleForm({ ...emptySettleForm, deliveredTo: selected.customerName }); setSettleOpen(open) }}
-        settleForm={settleForm} onSettleChange={handleSettleChange} onSettleSubmit={e => void submitSettle(e)}
-        feeDraft={feeDraft} onFeeChange={setFeeDraft} onFeeSubmit={e => void submitFee(e)}
-        refundForm={refundForm} onRefundChange={setRefundForm} onRefundSubmit={e => void submitRefund(e)} />
-      <WorkPlan scheduledAt={selected.scheduledAt} location={selected.location} editable={!terminalStages.includes(selected.status)} disabled={saving || opening}
-        form={planForm} onChange={setPlanForm} onSubmit={e => void submitPlan(e)} />
-      <EvidenceSection order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
-        // El enlace público solo sube en órdenes abiertas: la ruta rechaza
-        // los mismos estados que cierran refacciones; si el token venció el
-        // admin puede regenerarlo desde la misma sección.
-        linkState={partsClosedStages.includes(selected.status) ? "closed" : (evidenceLinkExpired ? "expired" : "active")}
-        onRotateLink={isAdmin ? () => void rotateUploadToken() : undefined}
-        rotateBusy={saving || opening}
-        onChanged={() => void openOrder(selected.id, true)} />
-      {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5"><h2 className="font-semibold">{selected.status === "DELIVERED" ? "Reabrir por garantía" : "Siguiente acción"}</h2><fieldset disabled={saving || opening} className="space-y-4">{quickStages.length > 0 && <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">Avance rápido:</span>{quickStages.map(next => <button key={next} type="button" onClick={() => void quickAdvance(next)} className={`rounded-full border px-3 py-1 text-xs font-medium transition hover:border-primary ${stageStyles[next].badge}`}>→ {repairLabels[next]}</button>)}</div>}{selected.status === "DELIVERED" && <><input type="hidden" name="action" value="STATUS" /><input type="hidden" name="status" value="WARRANTY" /> </>}{selected.status !== "DELIVERED" && <label className="block text-sm">Acción<select value={action} onChange={e => setAction(e.target.value)} className={`${inputClass} mt-2`}><option value="NOTE">Agregar nota interna</option>{repairNextStages[selected.status].length > 0 && <option value="STATUS">Cambiar etapa</option>}{['DIAGNOSIS', 'WAITING_APPROVAL'].includes(selected.status) && <option value="QUOTE">Registrar diagnóstico y presupuesto</option>}{selected.status === 'WAITING_APPROVAL' && <option value="APPROVE">Registrar autorización del cliente</option>}<option value="ASSIGN">Asignar responsable</option><option value="TRANSFER">Registrar llegada a otra sucursal</option></select></label>}
-      {selected.status !== "DELIVERED" && action === "STATUS" && <label className="block text-sm">Nueva etapa<select name="status" value={draft.status ?? repairNextStages[selected.status][0] ?? ""} onChange={e => updateDraft({ status: e.target.value })} className={`${inputClass} mt-2`}>{repairNextStages[selected.status].map(value => <option key={value} value={value}>{repairLabels[value]}</option>)}</select></label>}      {action === "QUOTE" && <label className="block text-sm">Importe total en MXN<Input name="quote" type="number" min={0} max={1000000} step="0.01" required value={draft.quote ?? (selected.quoteCents !== null ? String(selected.quoteCents / 100) : selected.suggestedQuoteCents != null ? String(selected.suggestedQuoteCents / 100) : "")} onChange={e => updateDraft({ quote: e.target.value })} />{selected.suggestedQuoteCents != null && selected.suggestedQuoteCents !== selected.quoteCents && <span className="mt-1 block text-xs text-muted-foreground">Precio de catálogo para este equipo: {money(selected.suggestedQuoteCents)}</span>}</label>}
-      {action === "ASSIGN" && <label className="block text-sm">Responsable técnico<select name="assignedToId" required value={draft.assignedToId ?? ""} onChange={e => updateDraft({ assignedToId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona una persona</option>{staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>}
-      {action === "TRANSFER" && <label className="block text-sm">Sucursal donde se recibió el equipo<select name="branchId" required value={draft.branchId ?? ""} onChange={e => updateDraft({ branchId: e.target.value })} className={`${inputClass} mt-2`}><option value="">Selecciona la sucursal destino</option>{branches.filter(b => b.id !== selected.currentBranch.id).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>}
-      <label className="block text-sm">{action === "APPROVE" ? "Quién autorizó y por qué medio" : action === "QUOTE" ? "Diagnóstico y alcance del trabajo" : "Detalle de la acción"}<textarea name="detail" value={draft.detail ?? ""} onChange={e => updateDraft({ detail: e.target.value })} required={action !== "STATUS" && selected.status !== "DELIVERED"} maxLength={2000} rows={3} className={`${inputClass} mt-2`} placeholder={action === "STATUS" ? "Para entregar: quién recibe. Para listo: resultado de la revisión final." : "Deja contexto para la siguiente persona que atienda la orden."} /></label>{action === "NOTE" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noteIsPublic" checked={draft.noteIsPublic ?? false} onChange={e => updateDraft({ noteIsPublic: e.target.checked })} className="h-4 w-4 rounded border" />Visible para el cliente en el rastreo</label>}<p className="text-xs text-muted-foreground">Cada acción conserva su propio borrador hasta guardarlo o salir de la orden.</p><Button disabled={saving || opening}>{saving ? "Guardando…" : "Guardar cambio"}</Button><Button variant="outline" type="button" disabled={saving || opening} onClick={() => void openOrder(selected.id, true)}>Actualizar orden</Button></fieldset></form>}
-      </div><OrderHistory events={selected.events} folio={folioOf(selected)} phone={selected.customerPhone} /></div>}
-    <AlertDialog open={discardDialog} onOpenChange={setDiscardDialog}>
-      <AlertDialogContent>
-        <AlertDialogHeader><AlertDialogTitle>¿Descartar los cambios sin guardar?</AlertDialogTitle><AlertDialogDescription>Los borradores de acciones y de refacciones que no guardaste se perderán al volver a la lista.</AlertDialogDescription></AlertDialogHeader>
-        <AlertDialogFooter><AlertDialogCancel>Seguir editando</AlertDialogCancel><AlertDialogAction onClick={backToOrders}>Descartar y volver</AlertDialogAction></AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-    <AlertDialog open={delegateOpen} onOpenChange={open => { if (!saving) { setDelegateOpen(open); if (!open) setDelegateForm({ price: "", note: "" }) } }}>
-      <AlertDialogContent>
-        <AlertDialogHeader><AlertDialogTitle>Enviar al taller asociado</AlertDialogTitle><AlertDialogDescription>Se crea una orden espejo en el taller reparador y esta orden queda en laboratorio externo. El cobro a tu cliente lo registras por POS; el trabajo se gestiona en el portal aliado.</AlertDialogDescription></AlertDialogHeader>
-        <div className="space-y-3">
-          <label className="block text-sm">Precio convenio en MXN (opcional)<Input type="number" min={0} max={1000000} step="0.01" inputMode="decimal" value={delegateForm.price} onChange={e => setDelegateForm(previous => ({ ...previous, price: e.target.value }))} placeholder="0.00" className="mt-1" /></label>
-          <label className="block text-sm">Nota interna para el taller (opcional)<textarea rows={2} maxLength={500} value={delegateForm.note} onChange={e => setDelegateForm(previous => ({ ...previous, note: e.target.value }))} className={`${inputClass} mt-1`} placeholder="Contexto para quien repara — el cliente nunca la ve." /></label>
-        </div>
-        <AlertDialogFooter><AlertDialogCancel disabled={saving}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={saving} onClick={event => { event.preventDefault(); void submitDelegate() }}>{saving ? "Enviando…" : "Delegar orden"}</AlertDialogAction></AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  </div>
+  )
 }

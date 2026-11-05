@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { useSearchParams } from "next/navigation"
 import Link from "next/link"
@@ -26,9 +26,12 @@ import {
   Pencil,
   ExternalLink,
   History,
+  Search,
+  Download,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
+import { csvCell } from "@/lib/csv"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -92,6 +95,7 @@ export function UsuariosPanel() {
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("all")
+  const [searchQuery, setSearchQuery] = useState("")
   // ?filter=pending (link "Revisar" del dashboard) aterriza directo en Pendientes.
   const [activeTab, setActiveTab] = useState<string>(() =>
     searchParams.get("filter") === "pending" ? "pendientes" : "clientes"
@@ -462,6 +466,69 @@ export function UsuariosPanel() {
     REJECTED: "Rechazado",
   }
 
+  const roleLabels: Record<User["role"], string> = {
+    ADMIN: "Administrador",
+    EMPLOYEE: "Empleado",
+    WORKSHOP: "Taller aliado",
+    CUSTOMER: "Cliente",
+  }
+
+  const customerTypeLabels: Record<User["customerType"], string> = {
+    NORMAL: "Particular",
+    TECHNICIAN: "Técnico",
+    STORE: "Tienda",
+  }
+
+  const filteredUsers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return users
+    return users.filter(
+      (u) =>
+        u.name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.phone ?? "").toLowerCase().includes(q) ||
+        (u.jobTitle ?? "").toLowerCase().includes(q)
+    )
+  }, [users, searchQuery])
+
+  const handleExportCsv = () => {
+    if (filteredUsers.length === 0) return
+    const headers = [
+      "Nombre",
+      "Correo",
+      "Teléfono",
+      "Rol",
+      "Tipo Cliente",
+      "Estado",
+      "Sucursal Base",
+      "Puesto",
+      "Saldo Crédito",
+      "Límite Crédito",
+      "Fecha Registro",
+    ]
+    const rows = filteredUsers.map((u) => [
+      u.name,
+      u.email,
+      u.phone ?? "",
+      roleLabels[u.role] ?? u.role,
+      customerTypeLabels[u.customerType] ?? u.customerType,
+      statusLabels[u.status] ?? u.status,
+      u.homeBranch?.name ?? "",
+      u.jobTitle ?? "",
+      u.creditBalance ?? 0,
+      u.creditLimit ?? "",
+      formatDate(u.createdAt),
+    ])
+    const lines = [headers.map(csvCell).join(","), ...rows.map((r) => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `usuarios-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -484,7 +551,19 @@ export function UsuariosPanel() {
             Ver solo clientes →
           </Link>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={filteredUsers.length === 0}
+            aria-label="Exportar usuarios a CSV"
+            onClick={handleExportCsv}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Exportar CSV
+          </Button>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>
               <UserPlus className="mr-2 h-4 w-4" />
@@ -691,6 +770,19 @@ export function UsuariosPanel() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
+      </div>
+
+      {/* Instant Search Bar */}
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Buscar por nombre, correo, teléfono o puesto..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="Buscar usuarios por nombre, correo, teléfono o puesto"
+          className="pl-9"
+        />
       </div>
 
       {/* Filter Tabs */}
@@ -755,10 +847,10 @@ export function UsuariosPanel() {
 
       {/* Users List */}
       <div className="space-y-4">
-        {users.length > 0 ? (
+        {filteredUsers.length > 0 ? (
           <>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {users.map((user) => {
+              {filteredUsers.map((user) => {
             const StatusIcon = statusIcons[user.status]
             return (
               <Card key={user.id}>

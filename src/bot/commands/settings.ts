@@ -50,7 +50,7 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
         const businessId = await businessIdOfTelegramUser(ctx.from.id.toString())
         const usd = await getSetting(businessId, 'usd_rate', '20.00')
         const hours = await getSetting(businessId, 'reservation_hours', '24')
-        const bank = await getSetting(businessId, 'bank_info', 'BBVA | ProSolutions SA | 0123456789')
+        const bank = await getSetting(businessId, 'bank_info', 'BBVA | Taller Central SA | 0123456789')
 
         await ctx.reply(`⚙️ *Ajustes del Sistema*
 

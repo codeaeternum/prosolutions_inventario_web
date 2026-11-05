@@ -1,9 +1,14 @@
 import { sell } from "../../lib/domain/sales"
 import { actor, BusinessError, transaction } from "../../lib/domain/operations"
-import { Markup } from 'telegraf'
+import { Input, Markup } from 'telegraf'
+import * as QRCode from 'qrcode'
 import type { BotContext, CartItem } from '../lib/types'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { notifyAdmins } from '../lib/notify'
+
+function escapeMarkdown(text?: string | null): string {
+    return (text ?? '').replace(/([*_`\[])/g, '\\$1')
+}
 
 export function registerSales({ bot, prisma, sessions, isDev }: BotContext) {
     // /vender
@@ -54,7 +59,7 @@ _O usa /agregarc para vender varios en el carrito._`, { parse_mode: 'Markdown' }
                     quantity: 1
                 }
 
-                return ctx.reply(`📦 *${products[0].name}*
+                return ctx.reply(`📦 *${escapeMarkdown(products[0].name)}*
 
 📊 Stock: ${products[0].stock} unidades
 💰 Precio: $${products[0].retailPrice.toLocaleString()}
@@ -65,7 +70,7 @@ _O usa /agregarc para vender varios en el carrito._`, { parse_mode: 'Markdown' }
             sessions.sale[telegramId] = { step: 'SELECT_PRODUCT', products }
 
             const productList = products.map((p: { name: string; stock: number; retailPrice: number }, i: number) =>
-                `${i + 1}. *${p.name}*\n   Stock: ${p.stock} | $${p.retailPrice.toLocaleString()}`
+                `${i + 1}. *${escapeMarkdown(p.name)}*\n   Stock: ${p.stock} | $${p.retailPrice.toLocaleString()}`
             ).join('\n\n')
 
             await ctx.reply(`📦 *Productos encontrados:*
@@ -123,7 +128,7 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
 
             const successMsg = `✅ *¡Venta registrada!*
 
-📦 ${product.name}
+📦 ${escapeMarkdown(product.name)}
 🔢 Cantidad: ${number}
 💰 Total: $${total.toLocaleString()}
 📊 Stock restante: ${product.stock - number}`
@@ -163,7 +168,7 @@ ${successMsg}`)
             quantity: 1
         }
 
-        await ctx.reply(`📦 *Venta Rápida: ${product.name}*
+        await ctx.reply(`📦 *Venta Rápida: ${escapeMarkdown(product.name)}*
 
 Precio: $${product.retailPrice}
 Cantidad: 1
@@ -187,10 +192,10 @@ Cantidad: 1
             }
             const p = qrSession.products[number - 1]
             const qrData = p.barcode || p.id
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`
+            const qrBuffer = await QRCode.toBuffer(qrData)
             delete sessions.qr[telegramId]
-            await ctx.replyWithPhoto({ url: qrUrl }, {
-                caption: `📱 *${p.name}*\n\nCódigo: \`${qrData}\``,
+            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), {
+                caption: `📱 *${escapeMarkdown(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``,
                 parse_mode: 'Markdown'
             })
             return
@@ -221,7 +226,7 @@ Cantidad: 1
             const total = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity * item.price, 0)
             return ctx.reply(`✅ *Agregado al carrito*
 
-📦 ${pending.name} × ${number}
+📦 ${escapeMarkdown(pending.name)} × ${number}
 💰 Subtotal: $${(pending.price * number).toLocaleString()}
 
 🛒 *Total carrito: $${total.toLocaleString()}*
@@ -240,7 +245,7 @@ Cantidad: 1
                 }
                 const selected = session.products[number - 1]
                 sessions.sale[telegramId] = { step: 'CONFIRM', selectedProduct: selected, quantity: 1 }
-                return ctx.reply(`📦 *${selected.name}*
+                return ctx.reply(`📦 *${escapeMarkdown(selected.name)}*
 
 📊 Stock: ${selected.stock} unidades
 💰 Precio: $${selected.retailPrice.toLocaleString()}
@@ -256,7 +261,7 @@ Cantidad: 1
                 const total = session.selectedProduct.retailPrice * number
                 return ctx.reply(`📦 *Resumen de venta*
 
-Producto: ${session.selectedProduct.name}
+Producto: ${escapeMarkdown(session.selectedProduct.name)}
 Cantidad: ${number}
 Total: *$${total.toLocaleString()}*
 
@@ -280,7 +285,7 @@ Total: *$${total.toLocaleString()}*
             sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: selected }
             return ctx.reply(`🗑️ *¿Eliminar este producto?*
 
-📦 *${selected.name}*
+📦 *${escapeMarkdown(selected.name)}*
 📊 Stock: ${selected.stock}
 🔗 Reservas: ${selected._count?.reservations ?? 0}
 📋 Movimientos: ${selected._count?.movements ?? 0}
@@ -314,7 +319,7 @@ Total: *$${total.toLocaleString()}*
                 })
                 const productName = deleteSession.selectedProduct.name
                 delete sessions.deleteProduct[telegramId]
-                return ctx.reply(`✅ *Producto archivado*\n\n📦 ${productName}\n\nSus existencias, reservas y movimientos se conservaron.`, { parse_mode: 'Markdown' })
+                return ctx.reply(`✅ *Producto archivado*\n\n📦 ${escapeMarkdown(productName)}\n\nSus existencias, reservas y movimientos se conservaron.`, { parse_mode: 'Markdown' })
             } catch (e) {
                 if (isDev) console.error('Error archiving product:', e)
                 delete sessions.deleteProduct[telegramId]

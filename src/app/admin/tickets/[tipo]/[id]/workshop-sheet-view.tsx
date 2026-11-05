@@ -146,7 +146,7 @@ function FullSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheet
       <div className="p-5 space-y-4">
         {/* Cabecera */}
         <div className="text-center">
-          <h1 className="text-base font-bold uppercase leading-tight">{data.businessName || "PROSOLUTIONS"}</h1>
+          <h1 className="text-base font-bold uppercase leading-tight">{data.businessName || "Reficio"}</h1>
           <h2 className="mt-1 text-sm font-bold uppercase">Hoja de servicio — Uso interno</h2>
           <p className="mt-1 text-sm font-bold">
             Folio: {data.folio}
@@ -381,7 +381,7 @@ function ThermalSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSh
 
       {/* Cabecera */}
       <div className="text-center mt-2 mb-2">
-        <h1 className="font-bold text-sm uppercase leading-tight">{data.businessName || "PROSOLUTIONS"}</h1>
+        <h1 className="font-bold text-sm uppercase leading-tight">{data.businessName || "Reficio"}</h1>
         <p className="font-bold text-base">Folio: {data.folio}</p>
         <p className="text-[10px]">{data.status} · Recibido {formatDate(data.receivedAt)}</p>
         {data.promisedAt && <p className="text-[10px]">Prometido: {formatDate(data.promisedAt)}</p>}

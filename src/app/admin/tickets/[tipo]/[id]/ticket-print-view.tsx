@@ -43,7 +43,7 @@ function TicketBody({ data, qrDataUrl, copyLabel }: { data: TicketData; qrDataUr
             {copyLabel}
           </p>
         )}
-        <h1 className="font-bold text-lg leading-tight uppercase">{data.businessName || "PROSOLUTIONS"}</h1>
+        <h1 className="font-bold text-lg leading-tight uppercase">{data.businessName || "Reficio"}</h1>
         <p className="text-[10px] uppercase text-gray-600" style={{ whiteSpace: 'pre-line' }}>{data.subtitle || "Venta de refacciones y\nReparación profesional"}</p>
         <div className="border-b-2 border-dashed border-gray-300 my-2"></div>
         <h2 className="font-bold text-sm">{data.title}</h2>
@@ -129,12 +129,13 @@ function TicketBody({ data, qrDataUrl, copyLabel }: { data: TicketData; qrDataUr
         <div className="text-center mb-4">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={qrDataUrl} alt="QR" className="w-32 h-32 mx-auto" />
+          <p className="text-[9px] text-gray-500 mt-1">Folio: {data.folio}</p>
         </div>
       )}
 
       <div className="text-center text-[10px] text-gray-500 mt-6">
         <p>{data.footer || "¡Gracias por tu preferencia!"}</p>
-        <p className="mt-1">{data.businessName || "ProSolutions"} - {new Date().getFullYear()}</p>
+        <p className="mt-1">{data.businessName || "Reficio"} - {new Date().getFullYear()}</p>
       </div>
 
       {/* Espacio extra abajo para que la térmica corte bien */}
@@ -199,7 +200,7 @@ export function TicketPrintView({ data }: { data: TicketData }) {
           Volver
         </Button>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={handleShareWa}>
+          <Button variant="outline" size="sm" onClick={handleShareWa}>
             <Share2 className="w-4 h-4 mr-2" />
             WhatsApp
           </Button>

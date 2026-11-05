@@ -5,12 +5,24 @@ import { useCart } from "@/components/cart-context"
 import { useCurrency } from "@/components/currency-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Trash2, ShoppingCart, ArrowLeft, Upload, CheckCircle2, CreditCard } from "lucide-react"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { Trash2, ShoppingCart, ArrowLeft, Upload, CheckCircle2, CreditCard, CalendarCheck } from "lucide-react"
 import { toast } from "sonner"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { ImageUpload } from "@/components/image-upload"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 
@@ -129,11 +141,52 @@ export default function CartPage() {
                         Carrito ({items.length})
                     </h1>
                 </div>
-                <Button variant="ghost" size="sm" asChild className="text-primary">
-                    <Link href="/catalogo">
-                        Continuar comprando
-                    </Link>
-                </Button>
+                <div className="flex items-center gap-1">
+                    <ThemeToggle />
+                    <Button variant="ghost" size="icon" asChild>
+                        <Link href="/mis-reservas" aria-label="Mis reservas">
+                            <CalendarCheck className="h-5 w-5" />
+                        </Link>
+                    </Button>
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                disabled={loading}
+                            >
+                                <Trash2 className="h-4 w-4 mr-1" />
+                                Vaciar
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>¿Vaciar carrito?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    Se eliminarán todos los productos agregados al carrito.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction
+                                    variant="destructive"
+                                    onClick={() => {
+                                        clearCart()
+                                        toast.success("Carrito vaciado")
+                                    }}
+                                >
+                                    Vaciar
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
+                    <Button variant="ghost" size="sm" asChild className="text-primary">
+                        <Link href="/catalogo">
+                            Continuar comprando
+                        </Link>
+                    </Button>
+                </div>
             </header>
 
             <main id="main-content" className="container max-w-lg mx-auto p-4 space-y-6" role="main">
@@ -159,18 +212,18 @@ export default function CartPage() {
                                         <p className="text-primary font-bold">{formatPrice(item.price)}</p>
                                     </div>
                                     <div className="flex items-center justify-between mt-2">
-                                        <div className="flex items-center gap-2 border rounded-md">
+                                        <div className="flex items-center gap-1 border rounded-md">
                                             <button
                                                 type="button"
-                                                className="px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                                                className="h-9 w-9 flex items-center justify-center hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => updateQuantity(item.productId, item.quantity - 1)}
                                                 disabled={loading || item.quantity <= 1}
                                                 aria-label="Reducir cantidad"
                                             >-</button>
-                                            <span className="text-sm font-medium w-4 text-center">{item.quantity}</span>
+                                            <span className="text-sm font-medium min-w-6 text-center px-1">{item.quantity}</span>
                                             <button
                                                 type="button"
-                                                className="px-2 py-1 hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                                                className="h-9 w-9 flex items-center justify-center hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                                                 onClick={() => updateQuantity(item.productId, item.quantity + 1)}
                                                 disabled={loading || item.quantity >= item.maxStock}
                                                 aria-label="Aumentar cantidad"
@@ -179,7 +232,7 @@ export default function CartPage() {
                                         <Button
                                             variant="ghost"
                                             size="icon"
-                                            className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                            className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
                                             onClick={() => removeItem(item.productId)}
                                             disabled={loading}
                                             aria-label={`Eliminar ${item.name} del carrito`}

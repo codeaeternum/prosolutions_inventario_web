@@ -21,7 +21,8 @@
     "typecheck": "tsc --noEmit",
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
-    "bot:build": "esbuild src/bot/index.ts --bundle --platform=node --packages=external --outfile=dist/bot.cjs"
+    "bot:build": "esbuild src/bot/index.ts --bundle --platform=node --packages=external --outfile=dist/bot.cjs",
+    "platform:superadmin": "node --env-file=.env scripts/manage-superadmin.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

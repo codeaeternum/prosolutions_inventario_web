@@ -93,7 +93,23 @@ export async function GET(
       })),
     }
 
-    return NextResponse.json(productDto(transformedProduct, viewer), { headers: catalogResponseHeaders })
+    const dto = productDto(transformedProduct, viewer)
+    if (viewerSession?.user?.role === "ADMIN") {
+      const priceHistory =
+        typeof prisma.priceHistory?.findMany === "function"
+          ? (await prisma.priceHistory
+              .findMany({
+                where: { productId: id, businessId },
+                orderBy: { createdAt: "desc" },
+                take: 10,
+                include: { changedBy: { select: { name: true } } },
+              })
+              .catch(() => [])) ?? []
+          : []
+      return NextResponse.json({ ...dto, priceHistory }, { headers: catalogResponseHeaders })
+    }
+
+    return NextResponse.json(dto, { headers: catalogResponseHeaders })
   } catch (error) {
     console.error("Error fetching product:", error)
     return NextResponse.json(

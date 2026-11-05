@@ -10,6 +10,12 @@ import { operation, operationKeySchema } from "@/lib/domain/operations"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels } from "@/lib/workshop-labels"
 
+const boardStages: (keyof typeof repairLabels)[] = [
+  "RECEIVED", "DIAGNOSIS", "WAITING_APPROVAL", "WAITING_PARTS", "EXTERNAL_LAB",
+  "IN_REPAIR", "QUALITY_CHECK", "READY", "WARRANTY", "NOT_REPAIRED",
+  "NOT_AUTHORIZED", "DELIVERED", "CANCELLED",
+]
+
 // Internal pilot. Open staff access only after branch/technician permissions are implemented.
 export async function GET(req: Request) {
   try {
@@ -34,6 +40,7 @@ export async function GET(req: Request) {
     const branchScope = branchId ?? (allowed?.length ? { in: allowed } : undefined)
     const status = query.get("status")
     const view = query.get("view")
+    const isBoard = query.get("board") === "1"
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     if (view && !["debt", "today", "overdue", "mine", "partner"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
     const now = new Date()
@@ -84,6 +91,22 @@ export async function GET(req: Request) {
     // respuesta ya trae el folio formateado para no recalcularlo en cliente.
     const folioDigits = parseFolioDigits(await getBusinessSetting(businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null))
     const withFolio = <T extends { number: number }>(order: T) => ({ ...order, folio: repairFolio(order.number, folioDigits) })
+    if (isBoard && !status && !view) {
+      const [stageOrders, counts, branches, staff] = await Promise.all([
+        Promise.all(boardStages.map(stage => prisma.repairOrder.findMany({ where: { ...where, status: stage }, take: 20, orderBy, include: orderInclude, omit: listOmit }))),
+        prisma.repairOrder.groupBy({ by: ["status"], where, _count: { _all: true } }),
+        prisma.branch.findMany({ where: { isActive: true, businessId }, orderBy: { name: "asc" } }),
+        prisma.user.findMany({ where: { status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId }, select: { id: true, name: true } }),
+      ])
+      const countByStage = new Map(counts.map(row => [row.status, row._count._all]))
+      const board = Object.fromEntries(
+        boardStages.map((stage, index) => [
+          stage,
+          { orders: stageOrders[index].map(withFolio), total: countByStage.get(stage) ?? 0 },
+        ]),
+      )
+      return NextResponse.json({ board, branches, staff }, { headers: { "Cache-Control": "private, no-store" } })
+    }
     if (view === "debt") {
       // El adeudo = total de la orden (mano de obra + refacciones autorizadas,
       // o cargo de diagnóstico) − lo retenido. No cabe en un `where` de Prisma

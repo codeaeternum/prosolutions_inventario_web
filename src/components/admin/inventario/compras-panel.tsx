@@ -1,8 +1,9 @@
 "use client"
 
 import { useSession } from "next-auth/react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
+import { csvCell } from "@/lib/csv"
 import { guardedClose } from "@/lib/dialog-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -44,7 +45,7 @@ import { EmptyState } from "@/components/admin/empty-state"
 import { SugerirCompraPanel } from "@/components/admin/inventario/sugerir-compra-panel"
 import { CompraDialog } from "@/components/admin/inventario/compra-dialog"
 import { PagoProveedorDialog, SUPPLIER_METHOD_LABELS, type PendingPurchase } from "@/components/admin/inventario/pago-proveedor-dialog"
-import { Banknote, CheckCircle2, Eye, Loader2, PackageCheck, Pencil, Plus, Send, ShoppingCart, X, XCircle } from "lucide-react"
+import { Banknote, CheckCircle2, Download, Eye, Loader2, PackageCheck, Pencil, Plus, Search, Send, ShoppingCart, X, XCircle } from "lucide-react"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -149,6 +150,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [statusFilter, setStatusFilter] = useState("ALL")
+    const [searchQuery, setSearchQuery] = useState("")
 
     const [suppliers, setSuppliers] = useState<SupplierOption[]>([])
     const [branches, setBranches] = useState<BranchOption[]>([])
@@ -239,6 +241,58 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
     const unitsOf = (p: PurchaseRow) => p.items.reduce((sum, i) => sum + i.quantity, 0)
     const receivedOf = (p: PurchaseRow) => p.items.reduce((sum, i) => sum + i.receivedQty, 0)
 
+    const filteredPurchases = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase()
+        if (!q) return purchases
+        return purchases.filter(p =>
+            folio(p.number).toLowerCase().includes(q) ||
+            (p.supplier?.name ?? "").toLowerCase().includes(q) ||
+            p.branch.name.toLowerCase().includes(q) ||
+            (p.notes ?? "").toLowerCase().includes(q) ||
+            p.items.some(item =>
+                item.product.name.toLowerCase().includes(q) ||
+                (item.product.barcode ?? "").toLowerCase().includes(q),
+            ),
+        )
+    }, [purchases, searchQuery])
+
+    const handleExportCsv = () => {
+        if (filteredPurchases.length === 0) return
+        const headers = [
+            "Folio",
+            "Estado",
+            "Proveedor",
+            "Sucursal",
+            "Artículos",
+            "Total",
+            "Pagado",
+            "Saldo Pendiente",
+            "Vencimiento",
+            "Fecha Creación",
+        ]
+        const centsToPesos = (cents: number) => (cents / 100).toFixed(2)
+        const csvRows = filteredPurchases.map(p => [
+            folio(p.number),
+            (STATUS_CONFIG[p.status] ?? STATUS_CONFIG.DRAFT).label,
+            p.supplier?.name ?? "Sin proveedor",
+            p.branch.name,
+            p.items.map(i => `${i.product.name} (${i.quantity})`).join("; "),
+            centsToPesos(p.totalCents),
+            centsToPesos(p.paidCents),
+            centsToPesos(Math.max(0, p.totalCents - p.paidCents)),
+            p.dueAt ? p.dueAt.slice(0, 10) : "",
+            formatDate(p.createdAt),
+        ])
+        const lines = [headers.map(csvCell).join(","), ...csvRows.map(r => r.map(csvCell).join(","))]
+        const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = `ordenes-compra-${new Date().toISOString().slice(0, 10)}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
+    }
+
     /** Recepción parcial: POST { action: "RECEIVE_PARTIAL", items: […] } con la captura de UNA línea. */
     const submitPartialReceive = async (purchase: PurchaseRow, purchaseItemId: string, pendingQty: number) => {
         if (receiving) return
@@ -283,12 +337,32 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
             {/* Qué conviene pedir: stock bajo + encargos pendientes → lista de compras */}
             <SugerirCompraPanel onChanged={onNeedsChanged} />
 
-            {/* Toolbar: acción primaria primero; el filtro queda como control secundario */}
+            {/* Toolbar: acción primaria primero; buscador, filtro de estado y exportación */}
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <Button onClick={() => setCreateOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Nueva compra
                 </Button>
+                <div className="relative flex-1 min-w-[220px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        placeholder="Buscar por folio, proveedor, sucursal, notas o producto…"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        aria-label="Buscar órdenes de compra"
+                        className="pl-9 pr-8"
+                    />
+                    {searchQuery && (
+                        <button
+                            type="button"
+                            onClick={() => setSearchQuery("")}
+                            aria-label="Limpiar búsqueda"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    )}
+                </div>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-full sm:w-44">
                         <SelectValue placeholder="Estado" />
@@ -299,6 +373,17 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                         ))}
                     </SelectContent>
                 </Select>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loading || filteredPurchases.length === 0}
+                    aria-label="Exportar órdenes de compra a CSV"
+                    onClick={handleExportCsv}
+                >
+                    <Download className="mr-1.5 h-4 w-4" />
+                    Exportar OCs CSV
+                </Button>
             </div>
 
             {error ? (
@@ -310,13 +395,15 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                 <div className="flex items-center justify-center h-64">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-            ) : purchases.length === 0 ? (
+            ) : filteredPurchases.length === 0 ? (
                 <EmptyState
                     icon={ShoppingCart}
                     title="No hay órdenes de compra"
-                    description={statusFilter !== "ALL"
-                        ? "Prueba con otro filtro de estado."
-                        : "Registra la primera orden de compra para dar entrada al stock del proveedor al recibirla."}
+                    description={searchQuery.trim()
+                        ? "No se encontraron órdenes que coincidan con la búsqueda."
+                        : statusFilter !== "ALL"
+                            ? "Prueba con otro filtro de estado."
+                            : "Registra la primera orden de compra para dar entrada al stock del proveedor al recibirla."}
                 />
             ) : (
                 <Card>
@@ -347,7 +434,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {purchases.map(p => {
+                                    {filteredPurchases.map(p => {
                                         const config = STATUS_CONFIG[p.status] ?? STATUS_CONFIG.DRAFT
                                         return (
                                             <TableRow key={p.id} className={loading ? "opacity-60" : ""}>

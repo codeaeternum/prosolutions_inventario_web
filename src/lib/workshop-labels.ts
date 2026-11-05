@@ -57,3 +57,24 @@ export const formatFolio = (prefix: string | null | undefined, number: number, d
   return `${clean || DEFAULT_ORDER_PREFIX}-${String(number).padStart(clampFolioDigits(digits), "0")}`
 }
 export const repairFolio = (number: number, digits?: number) => formatFolio(DEFAULT_ORDER_PREFIX, number, digits)
+
+export function parseReportedIssue(raw: string): { service?: string; issue: string } {
+  const withoutBudget = raw
+    .replace(/presupuesto\s+estimado\s*:?\s*\$?\s*[\d.,]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+
+  const legacy = withoutBudget.match(/servicio\s*:\s*(.+?)\s*[—–-]\s*falla\s*:\s*(.+)/i)
+  if (legacy) {
+    return { service: legacy[1].trim() || undefined, issue: legacy[2].trim() }
+  }
+
+  const segments = withoutBudget
+    .split("·")
+    .map(s => s.trim())
+    .filter(Boolean)
+
+  if (segments.length >= 2) {
+    return { service: segments[0], issue: segments.slice(1).join(" · ") }
+  }
+  return { service: undefined, issue: segments[0] ?? raw.trim() }
+}

@@ -15,20 +15,27 @@ export default async function AdminLayout({
     redirect("/login")
   }
 
-  // Sucursal base del usuario: fallback inicial del selector de sucursal.
-  const dbUser = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { homeBranchId: true },
-  })
-
-  // ¿El negocio tiene taller asociado? Habilita "Portal aliado" en el menú
-  // para mandar/seguir órdenes delegadas (modelo captador).
-  const partnerLink = session.user.businessId
-    ? await getBusinessSetting(session.user.businessId, "repair_partner_business_id")
-    : null
+  // Consultamos en paralelo la sucursal base, el tipo de negocio y el vínculo de taller aliado.
+  const [dbUser, partnerLink] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        homeBranchId: true,
+        business: { select: { businessKind: true } },
+      },
+    }),
+    session.user.businessId
+      ? getBusinessSetting(session.user.businessId, "repair_partner_business_id")
+      : Promise.resolve(null),
+  ])
 
   return (
-    <AdminShell user={session.user} homeBranchId={dbUser?.homeBranchId} hasPartner={Boolean(partnerLink)}>
+    <AdminShell
+      user={session.user}
+      homeBranchId={dbUser?.homeBranchId}
+      hasPartner={Boolean(partnerLink)}
+      businessKind={dbUser?.business?.businessKind}
+    >
       {children}
     </AdminShell>
   )

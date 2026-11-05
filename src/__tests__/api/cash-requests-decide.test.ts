@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   cashRequestFindUnique: vi.fn(),
   cashRequestFindUniqueOrThrow: vi.fn(),
   cashRequestUpdateMany: vi.fn(),
+  cashRequestUpdate: vi.fn(),
+  cashRegisterFindFirst: vi.fn(),
+  cashRegisterFindUniqueOrThrow: vi.fn(),
+  cashMovementGroupBy: vi.fn(),
   cashMovementCreate: vi.fn(),
 }))
 
@@ -29,8 +33,16 @@ const tx = {
     findUnique: mocks.cashRequestFindUnique,
     findUniqueOrThrow: mocks.cashRequestFindUniqueOrThrow,
     updateMany: mocks.cashRequestUpdateMany,
+    update: mocks.cashRequestUpdate,
   },
-  cashMovement: { create: mocks.cashMovementCreate },
+  cashRegister: {
+    findFirst: mocks.cashRegisterFindFirst,
+    findUniqueOrThrow: mocks.cashRegisterFindUniqueOrThrow,
+  },
+  cashMovement: {
+    groupBy: mocks.cashMovementGroupBy,
+    create: mocks.cashMovementCreate,
+  },
 }
 
 const session = (id: string, role: string, extra: Record<string, unknown> = {}) => ({
@@ -115,5 +127,72 @@ describe("decisión", () => {
     expect((await res.json()).error).toContain("propio gasto")
     expect(mocks.cashRequestUpdateMany).not.toHaveBeenCalled()
     expect(mocks.cashMovementCreate).not.toHaveBeenCalled()
+  })
+
+  it("rechaza APPROVE con 409 cuando la sucursal no tiene caja abierta", async () => {
+    mocks.cashRequestFindUnique.mockResolvedValue({
+      id: "cr-1",
+      businessId: "biz-1",
+      branchId: "branch-1",
+      requestedById: "u-emp",
+      amountCents: 15000,
+      concept: "Compra de cinta",
+      status: "PENDING",
+    })
+    mocks.cashRegisterFindFirst.mockResolvedValue(null)
+    const res = await post({ decision: "APPROVE" })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toContain("Abre la caja")
+    expect(mocks.cashMovementCreate).not.toHaveBeenCalled()
+  })
+
+  it("rechaza APPROVE con 409 INSUFFICIENT_CASH cuando el monto supera el efectivo disponible", async () => {
+    mocks.cashRequestFindUnique.mockResolvedValue({
+      id: "cr-1",
+      businessId: "biz-1",
+      branchId: "branch-1",
+      requestedById: "u-emp",
+      amountCents: 50000,
+      concept: "Insumos",
+      status: "PENDING",
+    })
+    mocks.cashRegisterFindFirst.mockResolvedValue({ id: "reg-1" })
+    mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 100 })
+    mocks.cashMovementGroupBy.mockResolvedValue([])
+    const res = await post({ decision: "APPROVE" })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toContain("no alcanza para autorizar")
+    expect(mocks.cashMovementCreate).not.toHaveBeenCalled()
+  })
+
+  it("aprueba y crea CashMovement OUT cuando hay saldo suficiente en caja", async () => {
+    mocks.cashRequestFindUnique.mockResolvedValue({
+      id: "cr-1",
+      businessId: "biz-1",
+      branchId: "branch-1",
+      requestedById: "u-emp",
+      amountCents: 12000,
+      concept: "Insumos de limpieza",
+      status: "PENDING",
+    })
+    mocks.cashRegisterFindFirst.mockResolvedValue({ id: "reg-1" })
+    mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 500 })
+    mocks.cashMovementGroupBy.mockResolvedValue([])
+    mocks.cashMovementCreate.mockResolvedValue({ id: "mov-1" })
+    mocks.cashRequestUpdate.mockResolvedValue({ id: "cr-1", status: "APPROVED", cashMovementId: "mov-1" })
+
+    const res = await post({ decision: "APPROVE", note: "Autorizado" })
+    expect(res.status).toBe(200)
+    expect(mocks.cashMovementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        businessId: "biz-1",
+        registerId: "reg-1",
+        userId: "u-emp",
+        type: "OUT",
+        amount: 120,
+        referenceType: "EXPENSE",
+        referenceId: "cr-1",
+      }),
+    })
   })
 })

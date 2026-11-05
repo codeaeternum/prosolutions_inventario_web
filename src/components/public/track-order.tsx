@@ -6,7 +6,7 @@
  * pulido de /seguimiento; si esa página mejora, esta mejora sola.
  * Debe renderizarse dentro de <Suspense> (useSearchParams).
  */
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   AlertCircle, FileText, Loader2, PackageSearch, Phone, Search, Ticket,
@@ -28,29 +28,39 @@ type Result =
   | { kind: "notfound" }
   | { kind: "error"; message: string }
 
-export function TrackOrder({ brandName }: { brandName: string }) {
+export function TrackOrder({ brandName }: { brandName?: string }) {
   const searchParams = useSearchParams()
   // ?folio= prellena la orden y ?t= los últimos 4 dígitos: los links que el
-  // taller comparte por WhatsApp llegan casi listos para consultar.
-  const [folio, setFolio] = useState(() => sanitizeFolio(searchParams.get("folio")))
-  const [phone, setPhone] = useState(() => sanitizePhone4(searchParams.get("t")))
-  const [result, setResult] = useState<Result>({ kind: "idle" })
+  // taller comparte por WhatsApp o QR llegan listos para consultar en 0 clics.
+  const initialFolio = sanitizeFolio(searchParams.get("folio"))
+  const initialPhone = sanitizePhone4(searchParams.get("t"))
+  const hasInitialQuery = initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone)
+
+  const [folio, setFolio] = useState(initialFolio)
+  const [phone, setPhone] = useState(initialPhone)
+  const [result, setResult] = useState<Result>(() =>
+    hasInitialQuery ? { kind: "loading" } : { kind: "idle" }
+  )
+  const autoQueriedRef = useRef(false)
 
   const canSubmit = folio.trim().length > 0 && /^\d{4}$/.test(phone) && result.kind !== "loading"
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!canSubmit) return
+  const runQuery = useCallback(async (folioValue: string, phoneValue: string) => {
     setResult({ kind: "loading" })
     try {
-      const res = await fetch(`/api/seguimiento?folio=${encodeURIComponent(folio.trim())}&phone=${encodeURIComponent(phone)}`)
+      const res = await fetch(
+        `/api/seguimiento?folio=${encodeURIComponent(folioValue.trim())}&phone=${encodeURIComponent(phoneValue)}`
+      )
       if (res.status === 404) {
         setResult({ kind: "notfound" })
         return
       }
       if (!res.ok) {
         const data = await res.json().catch(() => null)
-        setResult({ kind: "error", message: data?.error ?? "No pudimos consultar la orden. Intenta más tarde." })
+        setResult({
+          kind: "error",
+          message: data?.error ?? "No pudimos consultar la orden. Intenta más tarde.",
+        })
         return
       }
       const data = await res.json()
@@ -59,11 +69,28 @@ export function TrackOrder({ brandName }: { brandName: string }) {
         order: data.order,
         // El negocio que opera la orden es quien recibe el WhatsApp; el slug
         // del taller solo brandea la página.
-        business: data.business ?? { name: brandName, phone: null },
+        business: data.business ?? { name: brandName ?? null, phone: null },
       })
     } catch {
       setResult({ kind: "error", message: "Sin conexión. Revisa tu internet e intenta de nuevo." })
     }
+  }, [brandName])
+
+  useEffect(() => {
+    if (autoQueriedRef.current) return
+    if (initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone)) {
+      const timer = setTimeout(() => {
+        autoQueriedRef.current = true
+        void runQuery(initialFolio, initialPhone)
+      }, 0)
+      return () => clearTimeout(timer)
+    }
+  }, [initialFolio, initialPhone, runQuery])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!canSubmit) return
+    await runQuery(folio, phone)
   }
 
   return (
@@ -75,7 +102,9 @@ export function TrackOrder({ brandName }: { brandName: string }) {
         </div>
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">Rastrea tu reparación</h1>
         <p className="text-muted-foreground max-w-md mx-auto">
-          Ingresa el folio de tu ticket de {brandName} y los últimos 4 dígitos del teléfono que registraste al dejar tu equipo.
+          {brandName
+            ? `Ingresa el folio de tu ticket de ${brandName} y los últimos 4 dígitos del teléfono que registraste al dejar tu equipo.`
+            : "Consulta el estado de tu equipo en tiempo real con el folio de tu ticket — sin cuenta ni llamadas."}
         </p>
       </div>
 
@@ -143,7 +172,11 @@ export function TrackOrder({ brandName }: { brandName: string }) {
       )}
 
       {result.kind === "loading" && (
-        <div className="mt-6 rounded-2xl border bg-card p-6 sm:p-7 space-y-7 animate-pulse" role="status">
+        <div
+          className="mt-6 rounded-2xl border bg-card p-6 sm:p-7 space-y-7 animate-pulse"
+          role="status"
+          aria-busy="true"
+        >
           <span className="sr-only">Consultando tu orden…</span>
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-2.5">

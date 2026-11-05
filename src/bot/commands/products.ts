@@ -474,7 +474,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             const searchBusinessId = userObj?.businessId ?? (await getDefaultBusinessId())
 
             if (intent === 'greeting') return await ctx.reply(`¡Hola ${userName}! 👋 ¿En qué puedo ayudarte? Escribe el nombre de un producto para buscar.\n\nTambién puedes usar /categorias o /ofertas.`)
-            if (intent === 'help') return await ctx.reply(`📋 *Ayuda — ProSolutions*\n\n🔍 Escribe el nombre de un producto para buscar.\n   Ej: Pantalla iPhone 15\n\n/start - Reiniciar\n/perfil - Tu perfil\n/categorias - Catálogo por categoría\n/ofertas - Productos destacados`, { parse_mode: 'Markdown' })
+            if (intent === 'help') return await ctx.reply(`📋 *Ayuda — Reficio*\n\n🔍 Escribe el nombre de un producto para buscar.\n   Ej: Pantalla iPhone 15\n\n/start - Reiniciar\n/perfil - Tu perfil\n/categorias - Catálogo por categoría\n/ofertas - Productos destacados`, { parse_mode: 'Markdown' })
             if (intent === 'profile') return await ctx.reply('Usa /perfil para ver tus datos.')
             if (intent === 'categories') return await ctx.reply('Usa /categorias para explorar los productos.')
             if (intent === 'offers') return await ctx.reply('Usa /ofertas para ver productos destacados.')

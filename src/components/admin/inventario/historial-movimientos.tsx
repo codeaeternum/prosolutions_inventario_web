@@ -394,7 +394,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
 
     const handleShareWhatsApp = (mov: Movement) => {
         const config = typeVisual(mov)
-        let text = `*PROSOLUTIONS - ${config.label}*\n`
+        let text = `*Reficio - ${config.label}*\n`
         text += `Folio: ${mov.id.substring(0, 8)}\n`
         text += `Fecha: ${formatDate(mov.createdAt)}\n`
         if (mov.user?.name) text += `Atendió: ${displayUser(mov)}\n`

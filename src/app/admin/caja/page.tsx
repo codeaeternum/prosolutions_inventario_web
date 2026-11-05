@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useState, useEffect, useRef, useCallback } from "react"
+import dynamic from "next/dynamic"
 import { useSession } from "next-auth/react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
@@ -13,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
-import { formatPrice, formatDate, formatDay } from "@/lib/utils"
+import { formatPrice, formatDate } from "@/lib/utils"
 import {
     Wallet,
     ArrowUpCircle,
@@ -22,16 +23,25 @@ import {
     Unlock,
     History,
     ReceiptText,
-    Check,
-    X,
     Printer,
     Coins,
     Banknote,
     CalendarDays,
-    ExternalLink,
     Truck
 } from "lucide-react"
-import { LesDeboPanel } from "@/components/admin/caja/les-debo-panel"
+
+const CashRequestsPanel = dynamic(
+    () => import("@/components/admin/caja/cash-requests-panel").then((m) => m.CashRequestsPanel),
+    { ssr: false }
+)
+const WeekPanel = dynamic(
+    () => import("@/components/admin/caja/week-panel").then((m) => m.WeekPanel),
+    { ssr: false }
+)
+const LesDeboPanel = dynamic(
+    () => import("@/components/admin/caja/les-debo-panel").then((m) => m.LesDeboPanel),
+    { ssr: false }
+)
 
 type PaymentMethod = "CASH" | "CARD" | "TRANSFER" | "CREDIT"
 
@@ -39,9 +49,16 @@ const METHOD_LABELS: Record<string, string> = {
     CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia", CREDIT: "Crédito",
 }
 
-// Centro de dinero: pestañas controladas por ?tab= (deep-link). Sin param = Caja.
-const CAJA_TABS = ["caja", "solicitudes", "proveedores"] as const
+// Centro de dinero: pestañas controladas por ?tab= (deep-link). Sin param = Turno actual.
+const CAJA_TABS = ["caja", "semana", "solicitudes", "proveedores"] as const
 type CajaTab = (typeof CAJA_TABS)[number]
+
+const CAJA_TAB_DESCRIPTIONS: Record<CajaTab, string> = {
+    caja: "Apertura de turno, movimientos de efectivo, cobros del día y arqueo de cierre.",
+    semana: "Historial de cortes cerrados en los últimos 7 días con efectivo contado, esperado y diferencia.",
+    solicitudes: "Salidas de efectivo por gastos sujetas a autorización de un administrador.",
+    proveedores: "Cuentas por pagar a proveedores, antigüedad de saldos y registro de abonos.",
+}
 
 // Misma whitelist que el servidor (domain/cash.ts): denominaciones MXN del
 // conteo físico. Se duplica aquí porque la página es cliente y el dominio
@@ -83,272 +100,11 @@ interface Register {
     movements: Movement[]
 }
 
-interface WeekRegister {
-    id: string
-    branch: { id: string; name: string } | null
-    openedAt: string
-    closedAt: string
-    openedBy: { name: string }
-    closedBy: { name: string } | null
-    initialAmount: number
-    finalAmount: number | null
-    expectedCash: number
-    difference: number | null
-    notes: string | null
-}
-
 interface ClosureResult {
     registerId: string
     counted: number
     expected: number
     difference: number
-}
-
-interface CashRequestItem {
-    id: string
-    amountCents: number
-    concept: string
-    status: "PENDING" | "APPROVED" | "REJECTED"
-    decisionNote: string | null
-    createdAt: string
-    branch: { id: string; name: string }
-    requestedBy: { id: string; name: string }
-    decidedBy: { id: string; name: string } | null
-}
-
-const requestStatusMeta: Record<CashRequestItem["status"], { label: string; variant: "warning" | "success" | "destructive" }> = {
-    PENDING: { label: "Pendiente", variant: "warning" },
-    APPROVED: { label: "Autorizado", variant: "success" },
-    REJECTED: { label: "Rechazado", variant: "destructive" },
-}
-
-/** Gastos de caja con autorización: el staff solicita; solo un admin distinto decide. */
-function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; userId: string; onChanged: () => void }) {
-    const [requests, setRequests] = useState<CashRequestItem[]>([])
-    const [loadingRequests, setLoadingRequests] = useState(true)
-    const [amount, setAmount] = useState("")
-    const [concept, setConcept] = useState("")
-    const [busy, setBusy] = useState(false)
-    const createKey = useRef<ClientOperationKey | null>(null)
-    const decideKeys = useRef<Record<string, ClientOperationKey | null>>({})
-
-    const fetchRequests = async () => {
-        try {
-            const res = await fetch(`/api/cash-requests${props.branchId ? `?branchId=${props.branchId}` : ""}`)
-            const data = await res.json()
-            if (res.ok) setRequests(data.requests ?? [])
-        } catch {
-            // silencioso: el historial de caja sigue funcionando aunque falle esta lista
-        }
-    }
-
-    useEffect(() => {
-        let cancelled = false
-        fetch(`/api/cash-requests${props.branchId ? `?branchId=${props.branchId}` : ""}`)
-            .then(res => (res.ok ? res.json() : null))
-            .then(data => { if (!cancelled && data) setRequests(data.requests ?? []) })
-            .catch(() => {})
-            .finally(() => { if (!cancelled) setLoadingRequests(false) })
-        return () => { cancelled = true }
-    }, [props.branchId])
-
-    const pending = requests.filter(r => r.status === "PENDING")
-    const history = requests.filter(r => r.status !== "PENDING").slice(0, 10)
-
-    const submitRequest = async (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault()
-        if (busy) return
-        const value = parseFloat(amount)
-        if (!Number.isFinite(value) || value <= 0) return toast.error("Indica un monto mayor a cero")
-        if (Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) return toast.error("El monto admite hasta dos decimales")
-        if (concept.trim().length < 3) return toast.error("Describe el concepto (mínimo 3 caracteres)")
-        if (!props.branchId) return toast.error("Selecciona la sucursal")
-        setBusy(true)
-        try {
-            const payload = { branchId: props.branchId, amountCents: Math.round(value * 100), concept: concept.trim() }
-            createKey.current = getClientOperationKey(createKey.current, payload)
-            const res = await fetch("/api/cash-requests", {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...payload, idempotencyKey: createKey.current.key }),
-            })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error || "No se pudo registrar la solicitud")
-            createKey.current = null
-            setAmount("")
-            setConcept("")
-            toast.success(data.duplicate ? "Ya tenías una solicitud igual registrada" : "Solicitud enviada. Pendiente de autorización.")
-            await fetchRequests()
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
-        } finally {
-            setBusy(false)
-        }
-    }
-
-    const decide = async (id: string, decision: "APPROVE" | "REJECT") => {
-        if (busy) return
-        let note: string | undefined
-        if (decision === "REJECT") {
-            const value = window.prompt("Motivo del rechazo (opcional):")
-            if (value === null) return
-            note = value.trim() || undefined
-        }
-        setBusy(true)
-        try {
-            const payload = { decision, note }
-            decideKeys.current[id] = getClientOperationKey(decideKeys.current[id] ?? null, payload)
-            const res = await fetch(`/api/cash-requests/${id}`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...payload, idempotencyKey: decideKeys.current[id]!.key }),
-            })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error || "No se pudo decidir la solicitud")
-            decideKeys.current[id] = null
-            toast.success(decision === "APPROVE" ? "Gasto autorizado y asentado en caja" : "Solicitud rechazada")
-            await fetchRequests()
-            props.onChanged()
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
-        } finally {
-            setBusy(false)
-        }
-    }
-
-    return (
-        <Card>
-            <CardHeader>
-                <CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Gastos y solicitudes</CardTitle>
-                <CardDescription>Las salidas de efectivo por gastos requieren autorización del administrador.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-                <form onSubmit={e => void submitRequest(e)} className="grid gap-3 sm:grid-cols-[9rem_1fr_auto] sm:items-end">
-                    <div className="space-y-2">
-                        <Label>Monto</Label>
-                        <Input type="number" min="0" step="0.01" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Concepto</Label>
-                        <Input maxLength={200} placeholder="Ej. Pago de luz, mensajería…" value={concept} onChange={e => setConcept(e.target.value)} />
-                    </div>
-                    <Button type="submit" disabled={busy}>Solicitar gasto</Button>
-                </form>
-
-                {loadingRequests ? (
-                    <p className="text-sm text-muted-foreground">Cargando solicitudes…</p>
-                ) : (
-                    <>
-                        {pending.length > 0 && (
-                            <div className="space-y-2">
-                                <p className="text-sm font-medium">Pendientes de autorización</p>
-                                {pending.map(req => (
-                                    <div key={req.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
-                                        <div>
-                                            <p className="font-medium">{formatPrice(req.amountCents / 100)} · {req.concept}</p>
-                                            <p className="text-xs text-muted-foreground">{req.requestedBy.name} · {req.branch.name} · {formatDate(req.createdAt)}</p>
-                                        </div>
-                                        {props.isAdmin && req.requestedBy.id !== props.userId ? (
-                                            <div className="flex gap-2">
-                                                <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void decide(req.id, "APPROVE")}>
-                                                    <Check className="w-4 h-4 mr-1" /> Autorizar
-                                                </Button>
-                                                <Button size="sm" variant="destructive" disabled={busy} onClick={() => void decide(req.id, "REJECT")}>
-                                                    <X className="w-4 h-4 mr-1" /> Rechazar
-                                                </Button>
-                                            </div>
-                                        ) : (
-                                            <Badge variant="warning">{props.isAdmin ? "Tu solicitud · pendiente de otro admin" : "Pendiente de autorización"}</Badge>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {history.length > 0 && (
-                            <div className="space-y-2">
-                                <p className="text-sm font-medium">Historial reciente</p>
-                                {history.map(req => (
-                                    <div key={req.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 last:border-0 text-sm">
-                                        <div>
-                                            <p className="font-medium">{formatPrice(req.amountCents / 100)} · {req.concept}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                                {req.requestedBy.name} · {req.branch.name} · {formatDate(req.createdAt)}
-                                                {req.decidedBy ? ` · ${req.status === "APPROVED" ? "autorizado" : "rechazado"} por ${req.decidedBy.name}` : ""}
-                                                {req.decisionNote ? ` — ${req.decisionNote}` : ""}
-                                            </p>
-                                        </div>
-                                        <Badge variant={requestStatusMeta[req.status].variant}>{requestStatusMeta[req.status].label}</Badge>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {requests.length === 0 && <p className="text-sm text-muted-foreground">Sin solicitudes en esta sucursal.</p>}
-                    </>
-                )}
-            </CardContent>
-        </Card>
-    )
-}
-
-/** Cortes cerrados de los últimos 7 días (GET /api/caja?view=week). */
-function WeekPanel(props: { branchId: string; refreshKey: number }) {
-    const [registers, setRegisters] = useState<WeekRegister[]>([])
-    const [loading, setLoading] = useState(true)
-
-    useEffect(() => {
-        let cancelled = false
-        fetch(`/api/caja?view=week${props.branchId ? `&branchId=${props.branchId}` : ""}`)
-            .then(res => (res.ok ? res.json() : null))
-            .then(data => { if (!cancelled) setRegisters(data?.registers ?? []) })
-            .catch(() => { if (!cancelled) toast.error("Error al cargar la semana") })
-            .finally(() => { if (!cancelled) setLoading(false) })
-        return () => { cancelled = true }
-    }, [props.branchId, props.refreshKey])
-
-    if (loading) return <p className="text-sm text-muted-foreground text-center py-8">Cargando cortes…</p>
-    if (registers.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">Sin cortes en los últimos 7 días.</p>
-
-    return (
-        <div className="space-y-3">
-            {registers.map(reg => (
-                <div key={reg.id} className="rounded-lg border p-4 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                            <p className="font-medium flex items-center gap-2">
-                                <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                                {formatDay(reg.closedAt)} · {reg.branch?.name ?? "Sin sucursal"}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                Abrió {reg.openedBy.name} · cerró {reg.closedBy?.name ?? "—"}
-                            </p>
-                        </div>
-                        <Button size="sm" variant="outline" onClick={() => window.open(`/admin/tickets/corte/${reg.id}`, "_blank")}>
-                            <ExternalLink className="w-4 h-4 mr-1" /> Ver corte
-                        </Button>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                        <div>
-                            <p className="text-xs text-muted-foreground">Fondo inicial</p>
-                            <p className="font-semibold">{formatPrice(reg.initialAmount)}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">Contado</p>
-                            <p className="font-semibold">{reg.finalAmount == null ? "—" : formatPrice(reg.finalAmount)}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">Esperado</p>
-                            <p className="font-semibold">{formatPrice(reg.expectedCash)}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-muted-foreground">Diferencia</p>
-                            <p className={`font-semibold ${reg.difference == null ? "" : reg.difference > 0 ? "text-green-600" : reg.difference < 0 ? "text-destructive" : ""}`}>
-                                {reg.difference == null ? "—" : reg.difference === 0 ? "Cuadrada" : `${reg.difference > 0 ? "+" : ""}${formatPrice(reg.difference)}`}
-                            </p>
-                        </div>
-                    </div>
-                    {reg.notes && <p className="text-xs text-muted-foreground border-t pt-2">Notas: {reg.notes}</p>}
-                </div>
-            ))}
-        </div>
-    )
 }
 
 export default function CajaPage() {
@@ -374,7 +130,7 @@ function CajaPanel() {
     const [lastClosure, setLastClosure] = useState<ClosureResult | null>(null)
     const [weekRefresh, setWeekRefresh] = useState(0)
 
-    // Pestaña activa desde la URL (?tab=caja|solicitudes|proveedores).
+    // Pestaña activa desde la URL (?tab=caja|semana|solicitudes|proveedores).
     const searchParams = useSearchParams()
     const pathname = usePathname()
     const router = useRouter()
@@ -768,44 +524,45 @@ function CajaPanel() {
 
     return (
         <Tabs value={tab} onValueChange={handleTabChange} className="space-y-6">
-            <div className="overflow-x-auto pb-2">
-                <TabsList className="flex-nowrap min-w-max">
-                    <TabsTrigger value="caja" className="flex items-center gap-2">
-                        <Wallet className="h-4 w-4" /> Caja
-                    </TabsTrigger>
-                    <TabsTrigger value="solicitudes" className="flex items-center gap-2">
-                        <ReceiptText className="h-4 w-4" /> Solicitudes
-                    </TabsTrigger>
-                    <TabsTrigger value="proveedores" className="flex items-center gap-2">
-                        <Truck className="h-4 w-4" /> Les debo
-                    </TabsTrigger>
-                </TabsList>
+            <div className="space-y-2">
+                <div className="overflow-x-auto pb-2">
+                    <TabsList className="flex-nowrap min-w-max">
+                        <TabsTrigger value="caja" className="flex items-center gap-2">
+                            <Wallet className="h-4 w-4" /> Turno actual
+                        </TabsTrigger>
+                        <TabsTrigger value="semana" className="flex items-center gap-2">
+                            <CalendarDays className="h-4 w-4" /> Cortes (7 días)
+                        </TabsTrigger>
+                        <TabsTrigger value="solicitudes" className="flex items-center gap-2">
+                            <ReceiptText className="h-4 w-4" /> Solicitudes de gasto
+                        </TabsTrigger>
+                        <TabsTrigger value="proveedores" className="flex items-center gap-2">
+                            <Truck className="h-4 w-4" /> Les debo (Proveedores)
+                        </TabsTrigger>
+                    </TabsList>
+                </div>
+                <p className="text-sm text-muted-foreground">{CAJA_TAB_DESCRIPTIONS[tab]}</p>
             </div>
 
             <TabsContent value="caja">
                 {loading ? (
                     <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
                 ) : (
-                    <Tabs defaultValue="turno" className="space-y-6">
-                        <TabsList>
-                            <TabsTrigger value="turno">Turno actual</TabsTrigger>
-                            <TabsTrigger value="semana">Semana</TabsTrigger>
-                        </TabsList>
-                        <TabsContent value="turno">{shiftView}</TabsContent>
-                        <TabsContent value="semana">
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> Cortes de los últimos 7 días</CardTitle>
-                                    <CardDescription>Cada cierre con su efectivo contado, esperado y diferencia.</CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    {branchSelector && <div className="w-full sm:w-56">{branchSelector}</div>}
-                                    <WeekPanel branchId={branchId} refreshKey={weekRefresh} />
-                                </CardContent>
-                            </Card>
-                        </TabsContent>
-                    </Tabs>
+                    shiftView
                 )}
+            </TabsContent>
+
+            <TabsContent value="semana">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> Cortes de los últimos 7 días</CardTitle>
+                        <CardDescription>Cada cierre con su efectivo contado, esperado y diferencia.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {branchSelector && <div className="w-full sm:w-56">{branchSelector}</div>}
+                        <WeekPanel branchId={branchId} refreshKey={weekRefresh} />
+                    </CardContent>
+                </Card>
             </TabsContent>
 
             <TabsContent value="solicitudes" className="space-y-4">

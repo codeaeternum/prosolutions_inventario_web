@@ -73,15 +73,25 @@ export default function RegisterPage() {
   const [showCountryDropdown, setShowCountryDropdown] = useState(false)
   const countryDropdownRef = useRef<HTMLDivElement>(null)
 
-  // Click outside to close dropdowns
+  // Click outside or Escape key to close dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (countryDropdownRef.current && !countryDropdownRef.current.contains(e.target as Node)) {
         setShowCountryDropdown(false)
       }
     }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowCountryDropdown(false)
+        setShowEmailSuggestions(false)
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
   }, [])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,8 +167,8 @@ export default function RegisterPage() {
       return
     }
 
-    if (formData.password.length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres")
+    if (formData.password.length < 8) {
+      setError("La contraseña debe tener al menos 8 caracteres")
       setIsLoading(false)
       return
     }
@@ -210,9 +220,6 @@ export default function RegisterPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-muted-foreground">
-              El administrador revisará tu solicitud y te notificará cuando sea aprobada.
-            </p>
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm font-medium">Tipo de cuenta solicitada:</p>
               <p className="text-primary font-bold">
@@ -221,6 +228,23 @@ export default function RegisterPage() {
               <p className="text-xs text-muted-foreground mt-1">
                 El administrador determinará el tipo final de tu cuenta
               </p>
+            </div>
+            <div className="rounded-lg border p-4 text-left space-y-2">
+              <p className="text-sm font-semibold text-foreground">Siguientes pasos:</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground">
+                <li>
+                  <span className="font-medium text-foreground">Revisión por el administrador:</span>{" "}
+                  validaremos tus datos y asignaremos los precios de tu nivel de cuenta.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Aviso de aprobación:</span>{" "}
+                  recibirás una notificación por <span className="font-medium text-foreground">correo electrónico</span> o <span className="font-medium text-foreground">Telegram</span> cuando tu cuenta esté activa.
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">Inicio de sesión:</span>{" "}
+                  una vez aprobada, entra con tu {contactMethod === "email" ? "correo" : "teléfono"} y contraseña.
+                </li>
+              </ol>
             </div>
           </CardContent>
           <CardFooter>
@@ -252,6 +276,13 @@ export default function RegisterPage() {
 
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+              ¿Tienes un taller o negocio de refacciones y quieres usar Reficio?{" "}
+              <Link href="/registro" className="font-semibold text-primary hover:underline">
+                Crea la cuenta de tu negocio aquí →
+              </Link>
+            </div>
+
             {error && (
               <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md" role="alert">
                 {error}
@@ -337,16 +368,32 @@ export default function RegisterPage() {
                   onChange={handleChange}
                   onFocus={() => formData.email.includes("@") && setShowEmailSuggestions(emailSuggestions.length > 0)}
                   onBlur={() => setTimeout(() => setShowEmailSuggestions(false), 200)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setShowEmailSuggestions(false)
+                    }
+                  }}
                   required={contactMethod === "email"}
                   disabled={isLoading}
                   autoComplete="off"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={showEmailSuggestions && emailSuggestions.length > 0}
+                  aria-controls="register-email-suggestions"
                 />
                 {showEmailSuggestions && emailSuggestions.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-auto">
+                  <div
+                    id="register-email-suggestions"
+                    role="listbox"
+                    aria-label="Sugerencias de dominio de correo"
+                    className="absolute z-10 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-auto"
+                  >
                     {emailSuggestions.map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
+                        role="option"
+                        aria-selected={formData.email === suggestion}
                         className="w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors"
                         onMouseDown={() => selectEmailSuggestion(suggestion)}
                       >
@@ -368,19 +415,35 @@ export default function RegisterPage() {
                     <button
                       type="button"
                       onClick={() => setShowCountryDropdown(!showCountryDropdown)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setShowCountryDropdown(false)
+                        }
+                      }}
                       className="flex items-center gap-1 h-10 px-3 border rounded-md bg-muted hover:bg-accent transition-colors min-w-[100px]"
                       disabled={isLoading}
+                      aria-label="Seleccionar código de país"
+                      aria-haspopup="listbox"
+                      aria-expanded={showCountryDropdown}
+                      aria-controls="register-country-listbox"
                     >
                       <span className="text-lg">{selectedCountry?.flag}</span>
                       <span className="text-sm font-medium">{formData.countryCode}</span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
                     </button>
                     {showCountryDropdown && (
-                      <div className="absolute z-20 w-56 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto">
+                      <div
+                        id="register-country-listbox"
+                        role="listbox"
+                        aria-label="Códigos de país"
+                        className="absolute z-20 w-56 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto"
+                      >
                         {countryCodes.map((country) => (
                           <button
                             key={country.code}
                             type="button"
+                            role="option"
+                            aria-selected={country.code === formData.countryCode}
                             className="w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors flex items-center gap-2"
                             onClick={() => selectCountryCode(country.code)}
                           >
@@ -476,11 +539,13 @@ export default function RegisterPage() {
                   id="password"
                   name="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Mínimo 8 caracteres"
                   value={formData.password}
                   onChange={handleChange}
                   required
+                  minLength={8}
                   disabled={isLoading}
+                  aria-describedby="register-password-help"
                 />
                 <Button
                   type="button"
@@ -488,6 +553,7 @@ export default function RegisterPage() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -496,6 +562,9 @@ export default function RegisterPage() {
                   )}
                 </Button>
               </div>
+              <p id="register-password-help" className="text-xs text-muted-foreground">
+                Usa al menos 8 caracteres.
+              </p>
             </div>
 
             <div className="space-y-2">

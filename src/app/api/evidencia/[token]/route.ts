@@ -13,6 +13,8 @@ const INVALID = { error: "Enlace no válido o expirado." }
 const EXPIRED = { error: "Este link ya no está vigente." }
 const WINDOW_MS = 60 * 60 * 1000
 const MAX_UPLOADS = 20 // fotos por hora por IP
+const READ_WINDOW_MS = 60 * 1000
+const MAX_READS = 60 // consultas por minuto por IP
 // Margen para el framing multipart (boundary, headers de parte, campo label):
 // el Content-Length declara archivo + empaque, no solo la imagen.
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024
@@ -26,7 +28,13 @@ function expired(uploadTokenExpiresAt: Date | null): boolean {
   return uploadTokenExpiresAt !== null && uploadTokenExpiresAt.getTime() < Date.now()
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ token: string }> }) {
+  if (!checkAndRecord("evidencia-read", getClientIp(req), READ_WINDOW_MS, MAX_READS)) {
+    return NextResponse.json(
+      { error: "Demasiadas consultas. Intenta de nuevo en un momento." },
+      { status: 429, headers: NO_STORE },
+    )
+  }
   const { token } = await params
   const order = await prisma.repairOrder.findUnique({
     where: { uploadToken: token },
