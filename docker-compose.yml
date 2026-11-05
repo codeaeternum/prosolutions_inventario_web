@@ -8,6 +8,11 @@ services:
       dockerfile: Dockerfile
     container_name: prosolutions-app
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "3005:3000"
     environment:
@@ -56,6 +61,11 @@ services:
       dockerfile: Dockerfile.bot
     container_name: prosolutions-bot
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}
@@ -74,6 +84,11 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     container_name: prosolutions-db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     # No host port: only app/bot and explicitly attached maintenance jobs can connect.
     environment:
       POSTGRES_USER: prosolutions

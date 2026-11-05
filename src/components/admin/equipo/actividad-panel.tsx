@@ -7,7 +7,7 @@
 // de `changes` ya vienen formateados desde el servidor (montos incluidos).
 // Vive dentro del hub /admin/equipo; ?actor=<id>&anombre=<nombre> pre-filtra
 // el feed a una persona (enlace "Ver actividad" desde el tab de Usuarios).
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
   AlertTriangle,
@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { formatDate, formatDay } from "@/lib/utils"
+import { csvCell } from "@/lib/csv"
 
 type ActivitySource = "audit" | "operation" | "repair"
 
@@ -289,6 +290,9 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
   const [debouncedQ, setDebouncedQ] = useState("")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
+  // Filtro instantáneo de lo YA cargado (sin pegarle al servidor): complementa
+  // el "Buscar" de la barra, que sí consulta /api/activity con `q`.
+  const [searchQuery, setSearchQuery] = useState("")
 
   const requestVersion = useRef(0)
 
@@ -407,16 +411,47 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
     setTo("")
   }
 
-  // Mismos filtros activos que el feed, sin paginación: el servidor arma el
-  // archivo con el tope de filas del export (Content-Disposition: attachment).
-  const exportParams = new URLSearchParams()
-  if (actorId) exportParams.set("actorId", actorId)
-  if (source) exportParams.set("source", source)
-  if (entity) exportParams.set("entity", entity)
-  if (from) exportParams.set("from", from)
-  if (to) exportParams.set("to", to)
-  if (debouncedQ) exportParams.set("q", debouncedQ)
-  const exportUrl = `/api/activity/export?${exportParams}`
+  // Filtrado instantáneo sobre las entradas ya cargadas: empalma por resumen,
+  // etiqueta, actor o entidad sin tocar el feed del servidor.
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return items
+    return items.filter(item =>
+      [item.summary, item.label, item.actorName, item.entityLabel].some(field =>
+        field?.toLowerCase().includes(q)
+      )
+    )
+  }, [items, searchQuery])
+
+  // Exporta lo visible en pantalla (lo cargado, respetando el filtro
+  // instantáneo) con la convención de los demás paneles del equipo:
+  // BOM UTF-8 para Excel, \r\n por fila y csvCell anti CSV-injection.
+  const handleExportCsv = () => {
+    if (filteredItems.length === 0) return
+    const headers = ["Fecha", "Hora", "Fuente", "Actor", "Rol", "Acción", "Etiqueta", "Entidad", "Resumen"]
+    const rows = filteredItems.map(item => {
+      const when = new Date(item.createdAt)
+      return [
+        when.toLocaleDateString("es-MX"),
+        when.toLocaleTimeString("es-MX"),
+        sourceMeta[item.source]?.filterLabel ?? item.source,
+        item.actorName,
+        ACTOR_ROLE_LABELS[item.actorRole] ?? item.actorRole,
+        item.action,
+        item.label,
+        item.entityLabel ?? (item.entity ? (ENTITY_LABELS[item.entity] ?? item.entity) : ""),
+        item.summary,
+      ]
+    })
+    const lines = [headers.map(csvCell).join(","), ...rows.map(r => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `actividad-equipo-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   if (forbidden) {
     return (
@@ -437,15 +472,15 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
         </p>
         <div className="flex items-center gap-2 shrink-0">
           <Button
+            type="button"
             variant="outline"
             size="sm"
-            asChild
-            className={demoMode ? "pointer-events-none opacity-50" : undefined}
+            onClick={handleExportCsv}
+            disabled={filteredItems.length === 0}
+            aria-label="Exportar la actividad cargada a CSV"
           >
-            <a href={exportUrl} download aria-disabled={demoMode} tabIndex={demoMode ? -1 : undefined}>
-              <Download className="h-4 w-4 mr-2" />
-              Exportar CSV
-            </a>
+            <Download className="h-4 w-4 mr-2" />
+            Exportar CSV
           </Button>
           <Button onClick={() => void load(null, false)} variant="outline" size="sm" disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
@@ -564,11 +599,23 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
 
       {/* Timeline */}
       <Card>
-        <CardHeader>
-          <CardTitle>Actividad reciente</CardTitle>
-          <CardDescription>
-            Ediciones con detalle de cambios, operaciones de negocio y eventos del taller, ordenadas de lo más nuevo a lo más viejo
-          </CardDescription>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 space-y-0">
+          <div>
+            <CardTitle>Actividad reciente</CardTitle>
+            <CardDescription>
+              Ediciones con detalle de cambios, operaciones de negocio y eventos del taller, ordenadas de lo más nuevo a lo más viejo
+            </CardDescription>
+          </div>
+          <div className="relative w-full sm:w-64 shrink-0">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Filtrar lo cargado..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              aria-label="Filtrar la actividad ya cargada"
+              className="pl-8 h-9"
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {loading && items.length === 0 ? (
@@ -588,10 +635,14 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
             <p className="text-sm text-muted-foreground py-10 text-center">
               Sin actividad registrada en el periodo
             </p>
+          ) : filteredItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-10 text-center">
+              Nada de lo cargado coincide con “{searchQuery.trim()}”
+            </p>
           ) : (
             <>
               <ol className="relative ml-3 sm:ml-4 space-y-6 border-l border-border">
-                {items.map(item => {
+                {filteredItems.map(item => {
                   const meta = sourceMeta[item.source] ?? fallbackSourceMeta
                   return (
                     <li key={item.id} className="relative pl-7">
