@@ -41,6 +41,7 @@ import {
   Building2,
   ExternalLink,
   Eye,
+  HeartPulse,
   Loader2,
   Plus,
   RefreshCw,
@@ -267,6 +268,15 @@ function PlatformBusinessesSection() {
           >
             <RefreshCw className="mr-1.5 h-4 w-4" />
             Actualizar
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link
+              href="/platform/health"
+              aria-label="Abrir panel de salud global de la plataforma"
+            >
+              <HeartPulse className="mr-1.5 h-4 w-4" />
+              Salud global
+            </Link>
           </Button>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>

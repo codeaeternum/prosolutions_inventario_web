@@ -154,11 +154,16 @@ El compose usa `${VAR:?...}`: sin estas variables el despliegue falla al validar
 
 `GET/POST /api/reservations/check-expiring` expira reservas temporales vencidas y avisa al staff. Está protegido por `CRON_SECRET` (header `Authorization: Bearer <CRON_SECRET>` o `x-cron-secret`) pero **nada lo invoca desde el stack**: el bot de Telegram ya corre su propia expiración periódica sobre la misma tabla, así que el endpoint queda como respaldo/manual.
 
+`GET/POST /api/cron/purge-events` aplica la retención de bitácoras: borra `AuditEvent` con más de `AUDIT_RETENTION_DAYS` días (default 90, clamp 30–365) y `PlatformEvent` con más de `PLATFORM_RETENTION_DAYS` días (default 365, clamp 90–730). Mismo guard de `CRON_SECRET`. Sugerido: **diario** (p. ej. de madrugada, junto al backup).
+
 Si se quiere un disparo externo (p. ej. cron del host o un scheduler como cron-job.org):
 
 ```bash
 # En el N5, cada 5 minutos (crontab -e):
 */5 * * * * curl -fsS -m 10 -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3005/api/reservations/check-expiring >/dev/null 2>&1
+
+# Retención de bitácoras, diaria a las 04:00:
+0 4 * * * curl -fsS -m 30 -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3005/api/cron/purge-events >/dev/null 2>&1
 ```
 
 ### Volúmenes (primera vez)

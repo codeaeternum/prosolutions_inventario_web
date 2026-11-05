@@ -17,7 +17,10 @@ CMD ["npx", "prisma", "migrate", "deploy"]
 FROM node:24-alpine AS runner
 RUN apk add --no-cache wget
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 HOSTNAME="0.0.0.0"
+# SHA del commit compilado: la consola /platform lo muestra para saber qué
+# build corre en producción sin entrar al servidor (deploy-n5 lo inyecta).
+ARG GIT_SHA=unknown
+ENV NODE_ENV=production PORT=3000 HOSTNAME="0.0.0.0" APP_BUILD_SHA=${GIT_SHA}
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

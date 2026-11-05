@@ -33,6 +33,12 @@ export default async function PlatformLayout({
               <span className="font-bold text-lg leading-tight truncate">Reficio Platform</span>
               <span className="text-[10px] text-muted-foreground leading-tight">
                 Consola de operador — {session.user.name}
+                {/* Build desplegado (ARG GIT_SHA del Dockerfile vía deploy-n5). */}
+                {process.env.APP_BUILD_SHA && process.env.APP_BUILD_SHA !== "unknown" && (
+                  <span className="ml-1 font-mono" title={`Commit ${process.env.APP_BUILD_SHA}`}>
+                    · build {process.env.APP_BUILD_SHA}
+                  </span>
+                )}
               </span>
             </div>
           </div>
