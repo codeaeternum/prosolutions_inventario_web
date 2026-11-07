@@ -1,9 +1,10 @@
-import { submitRegistration, escapeHtml } from "../lib/registration"
+import { submitRegistration } from "../lib/registration"
 import { Markup } from 'telegraf'
 import type { BotContext } from '../lib/types'
 import { isAdmin } from '../lib/notify'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { normalizePhone } from '../lib/utils'
+import { escapeHtml, escapeMarkdownV1 } from '../lib/format'
 
 export function registerUsers({ bot, prisma, sessions }: BotContext) {
     // /admin panel
@@ -75,7 +76,7 @@ _Usa /cancelar para salir de cualquier proceso._`, { parse_mode: 'Markdown' })
             }
 
             if (user.role === 'ADMIN') {
-                return ctx.reply(`⚠️ *${escapeHtml(user.name)}* ya es administrador.`, { parse_mode: 'Markdown' })
+                return ctx.reply(`⚠️ *${escapeMarkdownV1(user.name)}* ya es administrador.`, { parse_mode: 'Markdown' })
             }
 
             await prisma.user.update({
@@ -83,10 +84,10 @@ _Usa /cancelar para salir de cualquier proceso._`, { parse_mode: 'Markdown' })
                 data: { role: 'ADMIN' }
             })
 
-            await ctx.reply(`✅ *${escapeHtml(user.name)}* ahora es administrador. 👑
+            await ctx.reply(`✅ *${escapeMarkdownV1(user.name)}* ahora es administrador. 👑
 
-📱 Tel: ${user.phone || 'N/A'}
-🆔 Telegram: ${user.telegramId || 'N/A'}`, { parse_mode: 'Markdown' })
+📱 Tel: ${escapeMarkdownV1(user.phone || 'N/A')}
+🆔 Telegram: ${escapeMarkdownV1(user.telegramId || 'N/A')}`, { parse_mode: 'Markdown' })
 
             if (user.telegramId) {
                 bot.telegram.sendMessage(user.telegramId, `👑 *¡Ahora eres Administrador!*
@@ -134,7 +135,7 @@ Usa /admin para ver el panel de administración.`, { parse_mode: 'Markdown' }).c
             }
 
             if (user.role !== 'ADMIN') {
-                return ctx.reply(`⚠️ *${escapeHtml(user.name)}* no es administrador.`, { parse_mode: 'Markdown' })
+                return ctx.reply(`⚠️ *${escapeMarkdownV1(user.name)}* no es administrador.`, { parse_mode: 'Markdown' })
             }
 
             if (user.telegramId === telegramId) {
@@ -146,10 +147,10 @@ Usa /admin para ver el panel de administración.`, { parse_mode: 'Markdown' }).c
                 data: { role: 'CUSTOMER' }
             })
 
-            await ctx.reply(`✅ *${escapeHtml(user.name)}* ya no es administrador.
+            await ctx.reply(`✅ *${escapeMarkdownV1(user.name)}* ya no es administrador.
 
-📱 Tel: ${user.phone || 'N/A'}
-🆔 Telegram: ${user.telegramId || 'N/A'}`, { parse_mode: 'Markdown' })
+📱 Tel: ${escapeMarkdownV1(user.phone || 'N/A')}
+🆔 Telegram: ${escapeMarkdownV1(user.telegramId || 'N/A')}`, { parse_mode: 'Markdown' })
 
             if (user.telegramId) {
                 bot.telegram.sendMessage(user.telegramId, `ℹ️ *Tu rol de administrador ha sido removido.*
@@ -219,7 +220,14 @@ Ahora tienes acceso como cliente regular.`, { parse_mode: 'Markdown' }).catch(()
         const telegramId = ctx.from.id.toString()
         const regSession = sessions.registration[telegramId]
         if (!regSession || regSession.step !== 'PHONE') return
-        const phone = ctx.message.contact.phone_number
+        const contact = ctx.message.contact
+        // Solo aceptar el contacto PROPIO del usuario: una tarjeta reenviada
+        // de un tercero (user_id distinto o ausente) no es su teléfono.
+        if (contact.user_id !== ctx.from.id) {
+            await ctx.reply('❌ Comparte tu propio contacto con el botón de Telegram, o escribe tu teléfono, ej: 5512345678')
+            return
+        }
+        const phone = contact.phone_number
         if (!phone) {
             await ctx.reply('❌ No se pudo leer el número. Escribe tu teléfono, ej: 5512345678')
             return
@@ -265,11 +273,11 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
             await ctx.editMessageText(`✅ <b>Usuario Aprobado</b>\n\n📛 ${escapeHtml(user.name)}\n📱 ${escapeHtml(user.phone)}`, { parse_mode: 'HTML' })
 
             if (user.telegramId) {
-                bot.telegram.sendMessage(user.telegramId, `🎉 <b>¡Tu cuenta ha sido aprobada!</b>\n\nYa puedes ver precios, buscar productos y realizar reservas en nuestro bot.\n\nEscribe "Hola" o el nombre de un producto para comenzar.`, { parse_mode: 'HTML' })
+                bot.telegram.sendMessage(user.telegramId, `🎉 <b>¡Tu cuenta ha sido aprobada!</b>\n\nYa puedes ver precios, buscar productos y realizar reservas en nuestro bot.\n\nEscribe "Hola" o el nombre de un producto para comenzar.`, { parse_mode: 'HTML' }).catch(() => { })
             }
         } catch (e) {
             console.error(e)
-            ctx.answerCbQuery('Error al aprobar')
+            ctx.answerCbQuery('Error al aprobar').catch(() => { })
         }
     })
 
@@ -299,7 +307,7 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
             await ctx.editMessageText(`❌ <b>Usuario Rechazado</b>\n\n📛 ${escapeHtml(user.name)}\n📱 ${escapeHtml(user.phone)}`, { parse_mode: 'HTML' })
         } catch (e) {
             console.error(e)
-            ctx.answerCbQuery('Error al rechazar')
+            ctx.answerCbQuery('Error al rechazar').catch(() => { })
         }
     })
 }

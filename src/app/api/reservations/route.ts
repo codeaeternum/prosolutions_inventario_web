@@ -4,7 +4,14 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS, createReservations } from "@/lib/domain/reservations"
 import { businessFailure } from "@/lib/domain/http"
+import { checkAndRecord } from "@/lib/rate-limit"
 import type { Prisma, ReservationStatus } from "@prisma/client"
+
+// Crear una reserva descuenta existencias reales (takeStock): sin tope, un
+// cliente podía inmovilizar el inventario creando reservas en ráfaga. El
+// límite es por usuario (mismo patrón que cotizacion-decision por IP).
+const RESERVATION_WINDOW_MS = 60 * 60 * 1000
+const MAX_RESERVATIONS = 10
 
 export const reservationInclude = {
   product: { select: { id: true, name: true, images: true, category: { select: { name: true } }, models: { select: { model: { select: { name: true, brand: { select: { name: true } } } } } } } },
@@ -59,6 +66,9 @@ export async function POST(req: Request) {
     if (["ADMIN", "EMPLOYEE"].includes(session.user.role)) {
       const denied = assertModuleAllowed(session, "reservas")
       if (denied) return denied
+    }
+    if (!checkAndRecord("reservations", session.user.id, RESERVATION_WINDOW_MS, MAX_RESERVATIONS)) {
+      return NextResponse.json({ error: "Demasiadas reservas. Intenta de nuevo en una hora." }, { status: 429 })
     }
     const body = await req.json()
     const result = await createReservations(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") })

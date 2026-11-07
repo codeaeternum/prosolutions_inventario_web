@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client"
 import type { WizardState } from "../lib/types"
 import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
 import { sendWelcomeEmail } from "../../lib/mailer"
+import { escapeMarkdownV1 } from "../lib/format"
 
 export type { WizardState }
 
@@ -88,7 +89,7 @@ export function registerStart(
       if (user) {
         const adminBadge = user.role === "ADMIN" ? " 👑" : ""
         return ctx.reply(
-          `👋 *Hola de nuevo ${user.name}!*${adminBadge}
+          `👋 *Hola de nuevo ${escapeMarkdownV1(user.name)}!*${adminBadge}
 
 ✅ Sistema: ONLINE
 

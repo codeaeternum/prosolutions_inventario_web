@@ -7,6 +7,7 @@ import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { escapeMarkdownV1 } from '../lib/format'
 
 function generateProgressBar(percent: number): string {
     const filled = Math.min(10, Math.floor(percent / 10))
@@ -60,7 +61,7 @@ export function registerReports({ bot, prisma }: BotContext) {
                 }],
             })
             const movement = result.movements[0]
-            await ctx.reply(`✅ Stock actualizado en *${branch.name}*:\n📦 ${product.name}\n📊 ${current?.quantity ?? 0} → ${newStock} unidades (total: ${movement?.newStock ?? '—'})`, { parse_mode: 'Markdown' })
+            await ctx.reply(`✅ Stock actualizado en *${escapeMarkdownV1(branch.name)}*:\n📦 ${escapeMarkdownV1(product.name)}\n📊 ${current?.quantity ?? 0} → ${newStock} unidades (total: ${movement?.newStock ?? '—'})`, { parse_mode: 'Markdown' })
         } catch (error) {
             const msg = error instanceof Error ? error.message : 'Error desconocido'
             await ctx.reply(`❌ No se pudo ajustar: ${msg}`)
@@ -90,8 +91,8 @@ export function registerReports({ bot, prisma }: BotContext) {
             reservations.forEach((r, i) => {
                 const exp = r.expiresAt ? new Date(r.expiresAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '—'
                 const statusLabel = r.status === 'PENDING_PAYMENT' ? '⏳ Pago' : '🛒 Tienda'
-                msg += `${i + 1}. *${r.product.name}*\n`
-                msg += `   👤 ${r.user.name} | 📊 ${r.quantity} uds | 💰 $${r.totalPrice.toLocaleString()}\n`
+                msg += `${i + 1}. *${escapeMarkdownV1(r.product.name)}*\n`
+                msg += `   👤 ${escapeMarkdownV1(r.user.name)} | 📊 ${r.quantity} uds | 💰 $${r.totalPrice.toLocaleString()}\n`
                 msg += `   📅 Expira: ${exp} | ${statusLabel}\n\n`
             })
             msg += '_Gestiona en la web: Admin → Reservas_'
@@ -138,14 +139,14 @@ export function registerReports({ bot, prisma }: BotContext) {
             msg += `📈 Entradas: $${totalIn.toLocaleString()}\n`
             msg += `📉 Salidas: $${totalOut.toLocaleString()}\n`
             msg += `💵 Total esperado: $${(register.initialAmount + totalIn - totalOut).toLocaleString()}\n`
-            msg += `👤 Abrió: ${register.openedBy?.name || 'N/A'}\n`
+            msg += `👤 Abrió: ${escapeMarkdownV1(register.openedBy?.name || 'N/A')}\n`
             msg += `🕐 Desde: ${new Date(register.openedAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}\n`
 
             if (register.movements.length > 0) {
                 msg += `\n📋 *Últimos movimientos:*\n`
                 register.movements.forEach((m) => {
                     const icon = m.type === 'IN' ? '🟢' : '🔴'
-                    msg += `${icon} $${m.amount.toLocaleString()} — ${m.description?.substring(0, 30) || 'Sin desc.'}\n`
+                    msg += `${icon} $${m.amount.toLocaleString()} — ${escapeMarkdownV1(m.description?.substring(0, 30) || 'Sin desc.')}\n`
                 })
             }
 
@@ -179,7 +180,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             let msg = `💳 *Créditos Pendientes* (${debtors.length} deudor${debtors.length > 1 ? 'es' : ''})\n\n`
             debtors.forEach((d, i) => {
                 const pct = d.creditLimit ? Math.round(((d.creditBalance ?? 0) / d.creditLimit) * 100) : 0
-                msg += `${i + 1}. *${d.name}*\n`
+                msg += `${i + 1}. *${escapeMarkdownV1(d.name)}*\n`
                 msg += `   💰 Saldo: $${(d.creditBalance ?? 0).toLocaleString()}`
                 msg += d.creditLimit ? ` / $${d.creditLimit.toLocaleString()} (${pct}%)` : ''
                 msg += `\n`
@@ -237,7 +238,7 @@ export function registerReports({ bot, prisma }: BotContext) {
                     .sort((a, b) => b[1] - a[1])
                     .slice(0, 5)
                     .forEach(([name, qty]) => {
-                        msg += `   • ${name}: ${qty} uds\n`
+                        msg += `   • ${escapeMarkdownV1(name)}: ${qty} uds\n`
                     })
             }
 
@@ -274,7 +275,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             let msg = `📜 *Historial de Compras:*\n\n`
             history.forEach((r, i) => {
                 const statusIcon = r.status === 'COMPLETED' ? '✅' : r.status === 'CANCELLED' ? '❌' : '📦'
-                msg += `${i + 1}. ${statusIcon} *${r.product.name}*\n`
+                msg += `${i + 1}. ${statusIcon} *${escapeMarkdownV1(r.product.name)}*\n`
                 msg += `   📅 ${new Date(r.createdAt).toLocaleDateString()} | 💰 $${r.totalPrice}\n`
                 msg += `   📊 ${r.quantity} uds\n\n`
             })
@@ -322,23 +323,23 @@ ${progressBar} ${progress.toFixed(0)}%
 
         try {
             const qrBuffer = await QRCode.toBuffer(qrDisplay)
-            ctx.replyWithPhoto({ source: qrBuffer }, {
+            await ctx.replyWithPhoto({ source: qrBuffer }, {
                 caption: `👤 *Tu Perfil*
 
-📛 *Nombre:* ${user.name}
-${user.businessName ? `🏢 *Negocio:* ${user.businessName}\n` : ''}📱 *Teléfono:* ${user.phone || 'No registrado'}
-🏷️ *Tipo:* ${tipoCliente}
+📛 *Nombre:* ${escapeMarkdownV1(user.name)}
+${user.businessName ? `🏢 *Negocio:* ${escapeMarkdownV1(user.businessName)}\n` : ''}📱 *Teléfono:* ${escapeMarkdownV1(user.phone || 'No registrado')}
+🏷️ *Tipo:* ${escapeMarkdownV1(tipoCliente)}
 ${progressMsg}
 ${creditMsg}
 
-🔲 *Código: ${qrDisplay}*
+🔲 *Código: ${escapeMarkdownV1(qrDisplay)}*
 _Muestra este código en tienda para identificarte._`,
                 parse_mode: 'Markdown'
             })
         } catch {
             await ctx.reply(`👤 *Tu Perfil* (Error gen QR)
         
-Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
+Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
         }
     })
 
@@ -379,7 +380,7 @@ Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
                 if (r.status === 'CANCELLED' || r.status === 'EXPIRED') statusEmoji = '❌'
                 if (r.status === 'PENDING_PAYMENT') statusEmoji = '⏳'
 
-                const msg = `${statusEmoji} *${r.product.name}*
+                const msg = `${statusEmoji} *${escapeMarkdownV1(r.product.name)}*
 📊 ${r.quantity} uds | 💰 $${r.totalPrice.toLocaleString()}
 📅 ${new Date(r.createdAt).toLocaleDateString()}
 🔖 ${statusLabels[r.status] ?? r.status}`
@@ -425,7 +426,7 @@ Código: ${qrDisplay}`, { parse_mode: 'Markdown' })
 
             await changeReservation(prisma, user.id, user.businessId, reservationId, { action: 'cancel' })
 
-            await ctx.editMessageText(`❌ *Reserva Cancelada*\n\n📦 ${reservation.product.name}\nEstado: Cancelado por usuario`, { parse_mode: 'Markdown' })
+            await ctx.editMessageText(`❌ *Reserva Cancelada*\n\n📦 ${escapeMarkdownV1(reservation.product.name)}\nEstado: Cancelado por usuario`, { parse_mode: 'Markdown' })
 
         } catch (e) {
             console.error(e)

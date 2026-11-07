@@ -387,13 +387,18 @@ describe("vigencia de la cotización (\"Válida por 15 días\")", () => {
     expect(data.quoteTokenExpiresAt).toEqual(data.quoteExpiresAt)
     // ~15 días (margen de un día para no depender del milisegundo exacto).
     expect((data.quoteExpiresAt as Date).getTime()).toBeGreaterThan(Date.now() + 14 * 24 * 60 * 60 * 1000)
+    // El token es un UUID generado por el dominio (no el cuid() del schema).
+    expect(data.quoteToken).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
 
-  it("re-presentar la cotización renueva la vigencia", async () => {
-    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WAITING_APPROVAL", quoteCents: 150000, quoteExpiresAt: new Date(Date.now() - 1000) }))
+  it("re-presentar la cotización renueva la vigencia Y rota el token: el link anterior muere", async () => {
+    const tokenAnterior = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WAITING_APPROVAL", quoteCents: 150000, quoteToken: tokenAnterior, quoteExpiresAt: new Date(Date.now() - 1000) }))
     await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "QUOTE", quoteCents: 180000, detail: "Cotización actualizada" }))
     const data = (tx.repairOrder.updateMany.mock.calls[0][0] as { data: Record<string, unknown> }).data
     expect((data.quoteExpiresAt as Date).getTime()).toBeGreaterThan(Date.now())
+    expect(data.quoteToken).toMatch(/^[0-9a-f]{8}-/)
+    expect(data.quoteToken).not.toBe(tokenAnterior)
   })
 })
 

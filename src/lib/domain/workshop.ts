@@ -5,7 +5,7 @@ import { linkCustomerByPhone } from "./customers"
 import { syncLowStockAlerts } from "../low-stock"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
-import { quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
+import { newQuoteToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
@@ -133,7 +133,7 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // omitir las firmas (~300 KB en base64) y el desbloqueo cifrado evita
     // duplicar datos pesados/sensibles que nadie consume de esta respuesta —
     // la ficha los sirve aparte con ?signatures=1 / ?reveal=1.
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), quoteToken: newQuoteToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Sin firma digital capturada, el evento asienta la forma alternativa de
     // confirmación configurada: "pin" = terminación telefónica (el pin nunca
     // se persiste); "ticket" = firma en el comprobante impreso.
@@ -370,7 +370,10 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // El documento promete "Válida por 15 días": la vigencia se fija al
       // (re)presentar la cotización y el link público muere con ella.
       const expires = quoteExpiry()
-      Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL", quoteExpiresAt: expires, quoteTokenExpiresAt: expires })
+      // Al (re)presentar la cotización se ROTA el quoteToken: el link que el
+      // cliente recibe corresponde a ESTA presentación — cualquier copia del
+      // enlace anterior (un WhatsApp viejo reenviado, un sticker) muere aquí.
+      Object.assign(data, { diagnosis: input.detail, quoteCents: input.quoteCents, approvedQuoteCents: null, quoteApprovedAt: null, status: "WAITING_APPROVAL", quoteExpiresAt: expires, quoteToken: newQuoteToken(), quoteTokenExpiresAt: expires })
       detail = `Presupuesto ${(input.quoteCents / 100).toFixed(2)} MXN. ${input.detail}`
       eventPublic = true
     } else if (input.action === "APPROVE") {

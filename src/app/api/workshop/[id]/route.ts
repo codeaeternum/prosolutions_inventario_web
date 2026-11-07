@@ -77,15 +77,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const { id } = await params
+    const isAdmin = session.user.role === "ADMIN"
     // Las firmas (PNG base64, hasta ~300 KB c/u) ni siquiera se leen en esta
     // consulta — viajan solo con ?signatures=1 para ADMIN (ver más abajo).
-    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, omit: { signatureData: true, deliverySignatureData: true }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, originBusiness: { select: { id: true, name: true } }, delegatedToBusiness: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } }, sourceBranch: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
+    // quoteToken tampoco se lee fuera de ADMIN: con ese token se autoriza la
+    // cotización pública por sí solo — un técnico comparte evidencias
+    // (uploadToken, que sí viaja), no la decisión del cliente.
+    const order = await prisma.repairOrder.findUnique({ where: { id, businessId: businessIdOf(session) }, omit: { signatureData: true, deliverySignatureData: true, ...(isAdmin ? {} : { quoteToken: true }) }, include: { currentBranch: true, intakeBranch: true, assignedTo: { select: { id: true, name: true } }, deliveredBy: { select: { id: true, name: true } }, createdBy: { select: { id: true, name: true } }, originBusiness: { select: { id: true, name: true } }, delegatedToBusiness: { select: { id: true, name: true } }, events: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200, include: { actor: { select: { name: true } } } }, parts: { include: { createdBy: { select: { name: true } }, product: { select: { id: true, name: true, barcode: true, retailPrice: true } }, sourceBranch: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }, payments: { where: { status: { in: ["CONFIRMED", "REFUNDED"] } }, orderBy: { createdAt: "asc" }, include: { createdBy: { select: { name: true } } } }, photos: { orderBy: { createdAt: "asc" }, include: { uploadedBy: { select: { name: true } } } } } })
     if (!order) return NextResponse.json({ error: "Orden no encontrada" }, { status: 404, headers: { "Cache-Control": "private, no-store" } })
     // La sucursal actual de la orden también se valida: un empleado con
     // sucursales restringidas no lee el detalle de órdenes ajenas.
     const deniedBranch = assertBranchAllowed(session, order.currentBranchId)
     if (deniedBranch) return deniedBranch
-    const isAdmin = session.user.role === "ADMIN"
     const searchParams = new URL(req.url).searchParams
     // El PIN/patrón viaja cifrado en BD y solo sale con ?reveal=1; sin el
     // parámetro la ficha recibe null (deviceAccessType sigue indicando que
@@ -124,11 +127,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // prellena cuando aún no hay importe capturado. null si algún servicio
     // no resuelve — "se cotiza al recibir" — o el lookup falla.
     const suggestedQuoteCents = suggestedServiceLinesTotal(await loadQuoteServiceLines(order).catch(() => []))
-    // quoteToken/uploadToken sí viajan en la ficha normal: todo el staff del
-    // taller los necesita (link de cotización por WhatsApp y link público de
-    // evidencias para el técnico). Las firmas llegaron null salvo ?signatures=1
-    // y deviceAccessValue salvo ?reveal=1.
-    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents, signatureData, deliverySignatureData }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
+    // uploadToken sí viaja en la ficha normal (el técnico lo necesita para el
+    // link público de evidencias); quoteToken solo se leyó para ADMIN — con
+    // él se aprueba/rechaza la cotización como el cliente y por eso ya no sale
+    // en la ficha del empleado. Las firmas llegaron null salvo ?signatures=1
+    // y deviceAccessValue salvo ?reveal=1. La respuesta lo fija a null para
+    // no-admin aunque la fila lo trajera (omit es la primera línea, este
+    // null es la segunda).
+    const quoteTokenForViewer = isAdmin ? ((order as { quoteToken?: string | null }).quoteToken ?? null) : null
+    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents, signatureData, deliverySignatureData, quoteToken: quoteTokenForViewer }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {

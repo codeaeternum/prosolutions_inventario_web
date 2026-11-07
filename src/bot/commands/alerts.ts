@@ -1,6 +1,7 @@
 import * as cron from 'node-cron'
 import type { BotContext } from '../lib/types'
 import { notifyAdmins } from '../lib/notify'
+import { escapeHtml } from '../lib/format'
 
 /**
  * Stock Alert Module
@@ -58,7 +59,7 @@ export function registerAlerts({ bot, prisma, isDev }: BotContext) {
                 let msg = `🚨 <b>¡Alerta de Stock Agotado!</b>\n\n`
                 msg += `${products.length} producto(s) sin stock:\n\n`
                 products.forEach((p, i) => {
-                    msg += `${i + 1}. ❌ <b>${p.name}</b>\n`
+                    msg += `${i + 1}. ❌ <b>${escapeHtml(p.name)}</b>\n`
                 })
                 msg += `\n⚠️ <i>Reponer inventario desde el panel web.</i>`
                 await notifyAdmins(bot, businessId, msg)

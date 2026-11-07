@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { payDocument, listDocuments, expireQuoteDocuments } from "@/lib/domain/documents"
+import { payDocument, cancelDocument, listDocuments, expireQuoteDocuments } from "@/lib/domain/documents"
 
 /**
  * Vigencia del apartado (LAYAWAY.expiresAt): antes no se leía en ningún lado
@@ -48,6 +48,13 @@ function fakeDb(sale: Record<string, unknown> | null, confirmedPayments: Record<
     payment: {
       findMany: vi.fn(async () => confirmedPayments),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.payments.push(data); return { id: "pay-1", ...data } }),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      aggregate: vi.fn(async () => ({ _sum: { amount: null } })),
+    },
+    // resolveBranch del openRegister: eco del branchId pedido (caja del cobrador).
+    branch: {
+      findFirst: vi.fn(async ({ where }: { where?: { id?: string } }) =>
+        where?.id ? { id: where.id, name: where.id, isActive: true, businessId: BIZ } : { id: "branch-1", name: "S1", isActive: true, businessId: BIZ }),
     },
     cashRegister: {
       findMany: vi.fn(async () => [{ id: "reg-1" }]),
@@ -100,6 +107,64 @@ describe("apartado vencido — abonos congelados para staff", () => {
     const result = await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), ...abono })
     expect(result.paid).toBe(50)
     expect(created.payments).toHaveLength(1)
+  })
+})
+
+describe("abono de apartado — caja del cobrador (cross-branch)", () => {
+  const efectivo = { payments: [{ method: "EFECTIVO", amount: 50 }] }
+
+  it("el efectivo entra a la caja de cashierBranchId, no a la del documento", async () => {
+    const { db, tx, created } = fakeDb(layaway({ expiresAt: null }), [])
+    await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), cashierBranchId: "branch-2", ...efectivo })
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ branchId: "branch-2" }),
+    }))
+    expect(created.cash[0]).toMatchObject({ type: "IN", amount: 50 })
+    // El pago queda ligado al documento en su sucursal original.
+    expect(created.payments[0]).toMatchObject({ saleId: "doc-1", method: "CASH", amount: 50 })
+  })
+
+  it("sin cashierBranchId el efectivo cae a la sucursal del documento (regresión)", async () => {
+    const { db, tx } = fakeDb(layaway({ expiresAt: null }), [])
+    // emp-1 no tiene homeBranchId → último respaldo: la sucursal del apartado.
+    await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), ...efectivo })
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ branchId: "branch-1" }),
+    }))
+  })
+
+  it("la sucursal base del cobrador tiene prioridad sobre la del documento", async () => {
+    const { db, tx } = fakeDb(layaway({ expiresAt: null }), [])
+    tx.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "emp-1" ? { ...users["emp-1"], homeBranchId: "branch-3" } : users[where.id] ?? null)
+    await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), ...efectivo })
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ branchId: "branch-3" }),
+    }))
+  })
+})
+
+describe("cancelar apartado — ajenos exigen admin (vector de robo)", () => {
+  const sinDinero = () => layaway({ expiresAt: null, items: [], payments: [] })
+
+  it("EMPLOYEE no cancela el apartado de un compañero", async () => {
+    const { db, tx } = fakeDb(layaway({ expiresAt: null, sellerId: "admin-1", items: [], payments: [] }))
+    await expect(cancelDocument(db, "emp-1", BIZ, { saleId: "doc-1", reason: "Cliente no volvió", idempotencyKey: key() }))
+      .rejects.toMatchObject({ status: 403 })
+    expect(tx.sale.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("EMPLOYEE sí cancela su propio apartado", async () => {
+    const { db, tx } = fakeDb(sinDinero())
+    const result = await cancelDocument(db, "emp-1", BIZ, { saleId: "doc-1", reason: "Cliente no volvió", idempotencyKey: key() })
+    expect(result.saleId).toBe("doc-1")
+    expect(tx.sale.updateMany).toHaveBeenCalledWith({ where: { id: "doc-1", status: "OPEN" }, data: { status: "VOIDED" } })
+  })
+
+  it("ADMIN sí cancela el apartado de un empleado", async () => {
+    const { db } = fakeDb(sinDinero())
+    const result = await cancelDocument(db, "admin-1", BIZ, { saleId: "doc-1", reason: "Cliente no volvió", idempotencyKey: key() })
+    expect(result.saleId).toBe("doc-1")
   })
 })
 

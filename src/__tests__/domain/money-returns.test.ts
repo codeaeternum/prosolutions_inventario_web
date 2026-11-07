@@ -8,7 +8,7 @@ vi.mock("@/lib/low-stock", () => ({
   syncLowStockAlerts: vi.fn(async () => {}),
 }))
 
-import { sell, returnSaleItems } from "@/lib/domain/sales"
+import { sell, returnSaleItems, voidSale } from "@/lib/domain/sales"
 import { moveInventory } from "@/lib/domain/inventory"
 import { changeCredit } from "@/lib/domain/credit"
 
@@ -42,6 +42,8 @@ interface SaleFixture {
   total?: number
   discountCents?: number
   returnedQuantity?: number
+  sellerId?: string
+  payments?: Record<string, unknown>[]
 }
 const saleFixture = (over: SaleFixture) => ({
   id: "sale-1",
@@ -50,11 +52,12 @@ const saleFixture = (over: SaleFixture) => ({
   kind: "RETAIL",
   branchId: "branch-1",
   customerId: null,
-  sellerId: "admin-1",
+  sellerId: over.sellerId ?? "admin-1",
   status: over.status,
   total: over.total ?? 200,
   discountCents: over.discountCents ?? 0,
   discountReason: over.discountCents ? "Cliente frecuente" : null,
+  payments: over.payments ?? [],
   items: [{
     id: "si-1", businessId: BIZ, saleId: "sale-1", productId: "prod-1",
     quantity: 2, returnedQuantity: over.returnedQuantity ?? 0,
@@ -101,6 +104,7 @@ function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMove
       // paid sum para refund(): $100 cobrados en el medio consultado.
       aggregate: vi.fn(async ({ where }: { where: { amount?: { gt?: number } } }) => ({ _sum: { amount: where.amount?.gt != null ? 100 : null } })),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.payments.push(data); return { id: "pay-1", ...data } }),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     creditMovement: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.credit.push(data); return { id: "cm-1", ...data } }) },
     cashRegister: {
@@ -261,6 +265,58 @@ describe("reembolso con descuento — precio efectivamente cobrado", () => {
     // Segunda unidad: línea efectiva $100 − $50 ya devueltos = $50.
     expect(created.payments[0]).toMatchObject({ amount: -50 })
     expect(result.refunded).toBe(50)
+  })
+})
+
+describe("ventas ajenas — anular/devolver exige admin (vector de robo)", () => {
+  const voidInput = (over: Record<string, unknown> = {}) => ({
+    saleId: "sale-1", reason: "Venta capturada por error", idempotencyKey: key(), ...over,
+  })
+
+  it("EMPLOYEE no puede devolver la venta de un compañero", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await expect(returnSaleItems(db, "emp-1", BIZ, returnInput())).rejects.toMatchObject({ status: 403 })
+    expect(created.payments).toHaveLength(0)
+  })
+
+  it("el RETURN del historial tampoco devuelve la venta de un compañero (ledger compartido)", async () => {
+    const { db } = fakeDb({
+      sale: saleFixture({ status: "COMPLETED" }),
+      sourceMovement: { id: "mv-out", businessId: BIZ, type: "OUT", paymentMethod: "EFECTIVO", saleId: "sale-1", productId: "prod-1", quantity: 2, businessVersion: 1, branchId: "branch-1" },
+    })
+    await expect(moveInventory(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type: "RETURN", quantity: 1, reason: "Devolución ajena", relatedId: "mv-out" }],
+    })).rejects.toMatchObject({ status: 403 })
+  })
+
+  it("EMPLOYEE sí devuelve de su propia venta", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED", sellerId: "emp-1" }) })
+    const result = await returnSaleItems(db, "emp-1", BIZ, returnInput())
+    expect(created.payments[0]).toMatchObject({ method: "CARD", amount: -100, status: "REFUNDED" })
+    expect(result.refunded).toBe(100)
+  })
+
+  it("EMPLOYEE no puede anular la venta de un compañero", async () => {
+    const { db, tx, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await expect(voidSale(db, "emp-1", BIZ, voidInput())).rejects.toMatchObject({ status: 403 })
+    expect(tx.sale.updateMany).not.toHaveBeenCalled()
+    expect(created.cash).toHaveLength(0)
+  })
+
+  it("EMPLOYEE sí anula su propia venta y reembolsa el neto cobrado", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED", sellerId: "emp-1", payments: [{ method: "CASH", amount: 100, status: "CONFIRMED" }] }) })
+    const result = await voidSale(db, "emp-1", BIZ, voidInput())
+    expect(result.saleId).toBe("sale-1")
+    expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 100 })
+    expect(created.payments[0]).toMatchObject({ method: "CASH", amount: -100, status: "REFUNDED" })
+  })
+
+  it("ADMIN sí anula la venta de un empleado", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED", sellerId: "emp-1", payments: [{ method: "CARD", amount: 100, status: "CONFIRMED" }] }) })
+    const result = await voidSale(db, "admin-1", BIZ, voidInput())
+    expect(result.saleId).toBe("sale-1")
+    expect(created.payments[0]).toMatchObject({ method: "CARD", amount: -100, status: "REFUNDED" })
   })
 })
 

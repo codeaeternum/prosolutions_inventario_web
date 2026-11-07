@@ -2,6 +2,8 @@ import { sell } from "../../lib/domain/sales"
 import { Markup } from 'telegraf'
 import type { BotContext, CartItem } from '../lib/types'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { isAdmin } from '../lib/notify'
+import { escapeMarkdownV1 } from '../lib/format'
 
 export function registerCart({ bot, prisma, sessions }: BotContext) {
     // /carrito
@@ -20,7 +22,7 @@ Ejemplo:
         }
 
         const itemsList = cart.items.map((item: CartItem, i: number) =>
-            `${i + 1}. *${item.name}*\n   📦 ${item.quantity} × $${item.price.toLocaleString()} = $${(item.quantity * item.price).toLocaleString()}`
+            `${i + 1}. *${escapeMarkdownV1(item.name)}*\n   📦 ${item.quantity} × $${item.price.toLocaleString()} = $${(item.quantity * item.price).toLocaleString()}`
         ).join('\n\n')
 
         const total = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity * item.price, 0)
@@ -85,7 +87,7 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
             if (products.length === 1) {
                 const p = products[0]
                 sessions.cart[telegramId].pendingAdd = { id: p.id, name: p.name, price: p.retailPrice, stock: p.stock }
-                return ctx.reply(`📦 *${products[0].name}*
+                return ctx.reply(`📦 *${escapeMarkdownV1(products[0].name)}*
 
 📊 Stock: ${products[0].stock} unidades
 💰 Precio: $${products[0].retailPrice.toLocaleString()}
@@ -97,7 +99,7 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
             sessions.sale[telegramId] = { step: 'SELECT_PRODUCT', products }
 
             const productList = products.map((p: { name: string; stock: number; retailPrice: number }, i: number) =>
-                `${i + 1}. *${p.name}*\n   Stock: ${p.stock} | $${p.retailPrice.toLocaleString()}`
+                `${i + 1}. *${escapeMarkdownV1(p.name)}*\n   Stock: ${p.stock} | $${p.retailPrice.toLocaleString()}`
             ).join('\n\n')
 
             await ctx.reply(`📦 *Productos encontrados:*
@@ -201,10 +203,12 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
         await ctx.reply('🗑️ Carrito vaciado.')
     })
 
-    // addtocart action (from catalog)
+    // addtocart action (from catalog) — el carrito es herramienta de venta
+    // (admin); igual que fastsell_, el rol se revalida en el callback.
     bot.action(/^addtocart_(.+)$/, async (ctx) => {
-        const productId = ctx.match[1]
         const telegramId = ctx.from.id.toString()
+        if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
+        const productId = ctx.match[1]
 
         const actor = await getBotAccount(prisma, telegramId)
         if (!actor) return ctx.answerCbQuery('❌ Cuenta no disponible')

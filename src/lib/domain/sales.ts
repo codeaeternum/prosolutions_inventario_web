@@ -236,8 +236,10 @@ export async function refund(tx: Transaction, input: {
   saleId: string; actorId: string; businessId: string; branchId: string; customerId: string | null;
   refundCents: number; channel: MethodInput; note: string;
 }) {
-  const paid = await tx.payment.aggregate({ where: { saleId: input.saleId, method: METHOD_MAP[input.channel], amount: { gt: 0 } }, _sum: { amount: true } })
-  const refunded = await tx.payment.aggregate({ where: { saleId: input.saleId, method: METHOD_MAP[input.channel], amount: { lt: 0 } }, _sum: { amount: true } })
+  // Solo los cobros CONFIRMED son dinero reembolsable: un pago VOIDED (la
+  // venta ya se anuló) no representa efectivo y contarlo inflaría el tope.
+  const paid = await tx.payment.aggregate({ where: { saleId: input.saleId, method: METHOD_MAP[input.channel], status: "CONFIRMED", amount: { gt: 0 } }, _sum: { amount: true } })
+  const refunded = await tx.payment.aggregate({ where: { saleId: input.saleId, method: METHOD_MAP[input.channel], status: "REFUNDED", amount: { lt: 0 } }, _sum: { amount: true } })
   const toCents = (value: number | null) => (value == null ? 0 : Math.round(value * 100))
   const netCents = toCents(paid._sum.amount) + toCents(refunded._sum.amount)
   if (input.refundCents > netCents) throw new BusinessError("El reembolso supera lo cobrado por ese medio de pago.", 409)
@@ -300,6 +302,9 @@ const returnSchema = z.object({
  * `items` admite dos selectores: saleItemId (flujo del POS) o productId —
  * este último reparte la cantidad entre los renglones del producto, que es
  * como el movimiento OUT del historial referencia su venta.
+ *
+ * Control de acceso: el reembolso saca dinero del negocio — un EMPLOYEE solo
+ * devuelve de ventas que él mismo registró (sellerId); ajenas exigen ADMIN.
  */
 export async function returnSaleItemsTx(tx: Transaction, input: {
   saleId: string
@@ -317,6 +322,15 @@ export async function returnSaleItemsTx(tx: Transaction, input: {
 }) {
   const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true } })
   if (!sale || sale.businessId !== input.businessId || sale.status !== "COMPLETED") throw new BusinessError("La venta no existe o ya fue anulada.", 409)
+  // Devolver reembolsa dinero (efectivo del cajón incluido): un EMPLOYEE solo
+  // opera devoluciones de ventas que él mismo registró; las ajenas exigen
+  // ADMIN — devolver la venta de un compañero y embolsar el reembolso es un
+  // vector de robo interno. El gate vive en el núcleo compartido para cubrir
+  // el POS (SALE_RETURN) y el RETURN del historial, que convergen aquí.
+  const me = await tx.user.findUnique({ where: { id: input.actorId }, select: { role: true } })
+  if (me?.role !== "ADMIN" && sale.sellerId !== input.actorId) {
+    throw new BusinessError("Devolver la venta de otra persona requiere un administrador.", 403)
+  }
 
   // Expande los renglones referidos por productId a saleItemId concretos,
   // respetando lo ya devuelto de cada línea en ambos ledgers.
@@ -406,6 +420,9 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, busines
 }
 
 const voidSchema = z.object({ saleId: z.string().min(1), reason: z.string().trim().min(1).max(500), idempotencyKey: operationKeySchema })
+/** Anula una venta COMPLETED: repone stock y reembolsa el neto cobrado por
+ *  cada medio. Un EMPLOYEE solo anula sus propias ventas; las ajenas exigen
+ *  ADMIN (embolsar el reembolso de una venta ajena es robo interno). */
 export async function voidSale(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = voidSchema.parse(raw)
   const touchedProductIds = new Set<string>()
@@ -413,6 +430,14 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
     const sale = await tx.sale.findUnique({ where: { id: input.saleId }, include: { items: true, payments: true } })
     if (!sale || sale.businessId !== businessId) throw new BusinessError("Venta no encontrada.", 404)
     if (sale.status !== "COMPLETED") throw new BusinessError("La venta ya fue anulada.", 409)
+    // Anular repone el stock y reembolsa TODO lo cobrado (efectivo incluido):
+    // un EMPLOYEE solo anula ventas que él mismo registró; las ajenas son
+    // solo-admin. Anular la venta de un compañero para embolsar el reembolso
+    // es el vector de robo interno que cierra este gate.
+    const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+    if (me?.role !== "ADMIN" && sale.sellerId !== actorId) {
+      throw new BusinessError("Anular la venta de otra persona requiere un administrador.", 403)
+    }
     for (const item of sale.items) {
       const pending = item.quantity - item.returnedQuantity
       if (pending <= 0) continue

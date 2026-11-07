@@ -29,7 +29,7 @@ type Branch = { id: string; name: string }
 type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?: string; assignedToId?: string; noteIsPublic?: boolean }
 type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; status: "REQUESTED" | "APPROVED" | "REJECTED"; createdById?: string; decisionNote?: string | null; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
 type Order = {
-  id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string; quoteToken?: string;
+  id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string; quoteToken?: string | null;
   // Folio formateado por el servidor con los dígitos del negocio (si viene).
   folio?: string;
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;

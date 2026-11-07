@@ -48,9 +48,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const body = await req.json().catch(() => ({}))
     // Cancelar reembolsa dinero en la sucursal DEL documento: sin este assert
     // un empleado restringido podía vaciar la caja de una sucursal ajena.
-    const doc = await prisma.sale.findUnique({ where: { id, businessId }, select: { branchId: true, businessId: true } })
+    const doc = await prisma.sale.findUnique({ where: { id, businessId }, select: { branchId: true, businessId: true, status: true, sellerId: true } })
     const deniedBranch = assertBranchAllowed(session, doc?.businessId === businessId ? doc.branchId : null)
     if (deniedBranch) return deniedBranch
+    // Corte temprano del mismo gate del dominio: un EMPLOYEE solo cancela los
+    // documentos con dinero que él mismo registró; los ajenos requieren ADMIN.
+    // El DRAFT no movió dinero ni stock: anularlo sigue siendo de mostrador.
+    if (doc?.businessId === businessId && doc.status !== "DRAFT" && session.user.role !== "ADMIN" && doc.sellerId !== session.user.id) {
+      return NextResponse.json({ error: "Cancelar el apartado de otra persona requiere un administrador." }, { status: 403 })
+    }
     return NextResponse.json(await cancelDocument(prisma, session.user.id, businessId, {
       saleId: id, reason: body.reason ?? "Cancelado desde el mostrador",
       idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),

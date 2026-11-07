@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { agingBuckets, supplierAging } from "@/lib/domain/supplier-payments"
+import { agingBuckets, paySupplier, supplierAging } from "@/lib/domain/supplier-payments"
 
 const NOW = new Date("2025-06-15T12:00:00Z")
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000)
@@ -100,5 +100,73 @@ describe("supplierAging", () => {
         const { suppliers, totals } = await supplierAging(db, "biz-1", NOW)
         expect(suppliers).toEqual([])
         expect(totals.total).toBe(0)
+    })
+})
+
+describe("paySupplier — cashFromRegister", () => {
+    const BIZ = "biz-supplier-pay"
+    let seq = 0
+    const key = () => `supplier-pay-${++seq}`
+
+    /** Réplica del tx de operation() + paySupplier; caja con $10 registrados. */
+    function fakeDb(opts: { registerOpen?: boolean; cashInCents?: number } = {}) {
+        const created = { payments: [] as Record<string, unknown>[], cash: [] as Record<string, unknown>[] }
+        const tx = {
+            user: {
+                findUnique: vi.fn(async () => ({ id: "admin-1", role: "ADMIN", status: "APPROVED", businessId: BIZ, homeBranchId: "branch-1" })),
+            },
+            supplier: { findFirst: vi.fn(async () => ({ id: "sup-1", name: "Proveedor", businessId: BIZ })) },
+            supplierPayment: {
+                create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.payments.push(data); return { id: "sp-1", ...data } }),
+            },
+            branch: {
+                findFirst: vi.fn(async ({ where }: { where?: { id?: string } }) => ({ id: where?.id ?? "branch-1", name: "S1", isActive: true, businessId: BIZ })),
+            },
+            cashRegister: {
+                findMany: vi.fn(async () => (opts.registerOpen === false ? [] : [{ id: "reg-1" }])),
+                findUniqueOrThrow: vi.fn(async () => ({ id: "reg-1", initialAmount: 0 })),
+                updateMany: vi.fn(async () => ({ count: 1 })),
+            },
+            cashMovement: {
+                create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.cash.push(data); return { id: "cash-1", ...data } }),
+                groupBy: vi.fn(async () => [{ type: "IN", _sum: { amount: (opts.cashInCents ?? 1000) / 100 } }]),
+            },
+            businessOperation: {
+                findUnique: vi.fn(async () => null),
+                create: vi.fn(async () => ({ id: "op-1" })),
+                update: vi.fn(async () => ({})),
+            },
+        }
+        const db = { $transaction: async (work: (t: unknown) => Promise<unknown>) => work(tx) }
+        return { db: db as unknown as PrismaClient, tx, created }
+    }
+
+    it("CASH sin la marca solo documenta la salida (comportamiento histórico)", async () => {
+        const { db, created } = fakeDb()
+        const result = await paySupplier(db, "admin-1", BIZ, { supplierId: "sup-1", amountCents: 800, method: "CASH", idempotencyKey: key() })
+        expect(created.cash).toHaveLength(0)
+        expect(result.cashMovementId).toBeNull()
+    })
+
+    it("CASH con cashFromRegister asienta su OUT en la caja del cobrador", async () => {
+        const { db, created } = fakeDb()
+        const result = await paySupplier(db, "admin-1", BIZ, { supplierId: "sup-1", amountCents: 800, method: "CASH", cashFromRegister: true, idempotencyKey: key() })
+        expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 8, registerId: "reg-1", referenceType: "SUPPLIER_PAYMENT", referenceId: "sp-1" })
+        expect(result.cashMovementId).toBe("cash-1")
+    })
+
+    it("la marca exige caja abierta y efectivo suficiente", async () => {
+        const { db: noRegister } = fakeDb({ registerOpen: false })
+        await expect(paySupplier(noRegister, "admin-1", BIZ, { supplierId: "sup-1", amountCents: 800, method: "CASH", cashFromRegister: true, idempotencyKey: key() }))
+            .rejects.toMatchObject({ status: 409, code: "REGISTER_REQUIRED" })
+        const { db: short } = fakeDb({ cashInCents: 500 })
+        await expect(paySupplier(short, "admin-1", BIZ, { supplierId: "sup-1", amountCents: 800, method: "CASH", cashFromRegister: true, idempotencyKey: key() }))
+            .rejects.toMatchObject({ status: 409, code: "INSUFFICIENT_CASH" })
+    })
+
+    it("la marca no aplica a medios no-efectivo", async () => {
+        const { db, created } = fakeDb()
+        await paySupplier(db, "admin-1", BIZ, { supplierId: "sup-1", amountCents: 800, method: "TRANSFER", cashFromRegister: true, idempotencyKey: key() })
+        expect(created.cash).toHaveLength(0)
     })
 })

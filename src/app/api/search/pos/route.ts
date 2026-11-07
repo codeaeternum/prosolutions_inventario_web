@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth"
-import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
+import { productDto, isCatalogStaff, catalogResponseHeaders, catalogVisibilityLevels } from "@/lib/product-dto"
 import { hasBranchAccess } from "@/lib/access"
 import { NextResponse } from "next/server"
 import { businessIdOf } from "@/lib/tenant"
@@ -14,8 +14,14 @@ export async function GET(req: Request) {
     const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
         const { searchParams } = new URL(req.url)
         const query = searchParams.get("q")?.trim()
-        const publicOnly = searchParams.get("publicOnly") === "true"
+        // publicOnly se FUERZA sin sesión: el visitante anónimo siempre
+        // queda limitado a piezas publicadas con existencia — no es una
+        // bandera que el cliente pueda omitir (fuga auditada).
+        const publicOnly = searchParams.get("publicOnly") === "true" || !viewerSession
         const branchId = searchParams.get("branchId") || undefined
+        // Misma matriz de audiencia que /api/products: anónimo PUBLIC,
+        // aliado con cuenta ALLIES+PUBLIC, staff/CUSTOMER sin filtro.
+        const visibilityLevels = catalogVisibilityLevels(viewer)
 
         if (!query || query.length < 2) {
             return NextResponse.json({ products: [] })
@@ -38,7 +44,8 @@ export async function GET(req: Request) {
     const baseWhere = {
         businessId,
         isActive: true,
-        ...(publicOnly ? { stock: { gt: 0 } } : {})
+        ...(publicOnly ? { stock: { gt: 0 } } : {}),
+        ...(visibilityLevels ? { marketVisibility: { in: visibilityLevels } } : {})
     }
 
         let products = await prisma.product.findMany({
@@ -78,6 +85,11 @@ export async function GET(req: Request) {
                 const limit = 10
                 
                 // raw query parameters
+                // El mismo filtro de audiencia del WHERE de Prisma, aquí en
+                // SQL crudo: los niveles vienen de un enum fijo (sin inyección).
+                const visibilitySql = visibilityLevels
+                    ? Prisma.raw(`AND p."marketVisibility" IN (${visibilityLevels.map(l => `'${l}'`).join(",")})`)
+                    : Prisma.raw("")
                 const results = await prisma.$queryRaw<Array<{
                     id: string; name: string; barcode: string | null; stock: number
                     retailPrice: number; wholesalePrice: number; images: string[]; categoryName: string | null
@@ -89,6 +101,7 @@ export async function GET(req: Request) {
                     WHERE p."isActive" = true
                       AND p."businessId" = ${businessId}
                       ${publicOnly ? Prisma.raw('AND p.stock > 0') : Prisma.raw('')}
+                      ${visibilitySql}
                       AND similarity(p.name, ${fuzzyQuery}) > 0.3
                     ORDER BY similarity(p.name, ${fuzzyQuery}) DESC
                     LIMIT ${limit}

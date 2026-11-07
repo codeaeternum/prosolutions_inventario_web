@@ -5,9 +5,10 @@ import { generateQRCode } from "./utils"
 import { notifyAdmins } from "./notify"
 import { getDefaultBusinessId } from "../../lib/settings"
 
-export function escapeHtml(value: unknown): string {
-  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
-}
+// La implementación vive en lib/format (fuente única de escapes del bot);
+// se re-exporta aquí para no romper importadores existentes.
+import { escapeHtml } from "./format"
+export { escapeHtml }
 /** Both typed amounts and inline buttons submit the same pending approval request. */
 export async function submitRegistration({ prisma, bot, sessions }: Pick<BotContext, "prisma" | "bot" | "sessions">, ctx: Context, goal: number): Promise<void> {
   const telegramId = ctx.from?.id.toString()

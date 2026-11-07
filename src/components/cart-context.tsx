@@ -52,6 +52,12 @@ function readCart(key: string): CartItem[] | null {
 export function CartProvider({ children }: { children: ReactNode }) {
     const { data: session, status } = useSession()
     const [items, setItems] = useState<CartItem[]>([])
+    // `itemsScope` recuerda A QUÉ clave pertenece el contenido actual de
+    // `items`. Sin él, al cerrar sesión el scope pasa de `cart:{businessId}`
+    // a `cart:public` en un render donde `items` AÚN contiene el carrito
+    // privado y el efecto de guardado lo volcaba dentro de `cart:public`
+    // (fuga entre usuarios del mismo dispositivo, cerrada por la auditoría).
+    const [itemsScope, setItemsScope] = useState("")
     const [isInitialized, setIsInitialized] = useState(false)
 
     const scope = status === "authenticated" && session?.user?.businessId ? session.user.businessId : PUBLIC_CART_SCOPE
@@ -76,18 +82,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
             (adoptSources && !isPublic ? readCart(cartKey(PUBLIC_CART_SCOPE)) : null) ??
             (adoptSources ? readCart(LEGACY_CART_KEY) : null)
         setItems(stored ?? [])
+        setItemsScope(scope)
         if (adoptSources) localStorage.removeItem(LEGACY_CART_KEY)
         if (adoptSources && !isPublic) localStorage.removeItem(cartKey(PUBLIC_CART_SCOPE))
         setIsInitialized(true)
     }, [scope, status, isCustomer])
     /* eslint-enable react-hooks/set-state-in-effect */
 
-    // Save to localStorage on change (clave segmentada por negocio)
+    // Save to localStorage on change (clave segmentada por negocio). Solo se
+    // persiste lo que PERTENECE al scope activo: en el render de transición
+    // (logout o cambio de usuario/negocio) `items` todavía es del scope
+    // anterior y no debe copiarse a la clave nueva.
     useEffect(() => {
-        if (isInitialized) {
+        if (isInitialized && itemsScope === scope) {
             localStorage.setItem(cartKey(scope), JSON.stringify(items))
         }
-    }, [items, isInitialized, scope])
+    }, [items, isInitialized, scope, itemsScope])
 
     const addItem = (newItem: CartItem) => {
         setItems((currentItems) => {

@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth"
-import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
+import { productDto, isCatalogStaff, catalogResponseHeaders, catalogVisibilityLevels } from "@/lib/product-dto"
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
@@ -52,8 +52,16 @@ export async function GET(
     const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
     const { id } = await params
 
+    // Misma regla de audiencia que el listado: un id directo de una pieza
+    // ALLIES/HIDDEN responde 404 para público (y ALLIES para no-aliados),
+    // en vez de filtrar su existencia y su precio.
+    const visibilityLevels = catalogVisibilityLevels(viewer)
     const product = await prisma.product.findUnique({
-      where: { id, businessId },
+      where: {
+        id,
+        businessId,
+        ...(visibilityLevels ? { marketVisibility: { in: visibilityLevels } } : {}),
+      },
       include: {
         models: {
           include: {

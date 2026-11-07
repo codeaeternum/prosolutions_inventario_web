@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth"
-import { productDto, isCatalogStaff, catalogResponseHeaders } from "@/lib/product-dto"
+import { productDto, isCatalogStaff, catalogResponseHeaders, catalogVisibilityLevels } from "@/lib/product-dto"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
@@ -94,10 +94,20 @@ export async function GET(req: Request) {
       ...(sinCompat ? [{ isUniversal: false }, { models: { none: {} } }] : []),
     ]
 
+    // Visibilidad por audiencia (fuga cerrada): sin sesión o cuenta sin
+    // aprobar solo sale lo PUBLIC; el aliado con cuenta (WORKSHOP o cliente
+    // STORE/TECHNICIAN aprobado) ve ALLIES+PUBLIC; staff y CUSTOMER ven el
+    // catálogo completo del negocio. El ?visibilidad= del panel solo aplica
+    // a staff y pisa el filtro de audiencia.
+    const visibilityLevels = catalogVisibilityLevels(viewer)
     const where = {
       businessId,
       isActive: true,
-      ...(visibilidad && { marketVisibility: visibilidad }),
+      ...(visibilidad
+        ? { marketVisibility: visibilidad }
+        : visibilityLevels
+          ? { marketVisibility: { in: visibilityLevels } }
+          : {}),
       ...(categoryId && { categoryId }),
       ...(brandId && {
         models: { some: { model: { brandId } } },

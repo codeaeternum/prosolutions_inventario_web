@@ -1,6 +1,6 @@
 import type { PrismaClient, PurchaseStatus } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema } from "./operations"
+import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { purchaseFolio } from "./purchasing"
 
 /** Medios documentados para pagos a proveedor (solo informativo; ver paySupplier). */
@@ -17,6 +17,10 @@ const paymentSchema = z.object({
   amountCents: z.number().int().min(1).max(100000000),
   method: z.enum(SUPPLIER_PAYMENT_METHODS),
   notes: z.string().trim().max(1000).optional(),
+  // Marca explícita del mostrador: el CASH se entrega DESDE el cajón de la
+  // sucursal del cobrador. Con ella el pago asienta su CashMovement OUT para
+  // que el corte cuadre; ausente, CASH solo documenta la salida (ver paySupplier).
+  cashFromRegister: z.boolean().optional(),
 })
 
 /**
@@ -28,9 +32,13 @@ const paymentSchema = z.object({
  * Sin purchaseId queda a cuenta general: se permite aunque supere la deuda
  * derivada — representa anticipo o saldo a favor del negocio.
  *
- * NOTA: method="CASH" NO crea CashMovement OUT. El dinero que se entrega al
- * proveedor (transferencia bancaria, efectivo pagado fuera de mostrador) no es
- * efectivo de la caja del local; este registro solo documenta la salida.
+ * NOTA: method="CASH" NO crea CashMovement OUT por defecto. El dinero que se
+ * entrega al proveedor (transferencia bancaria, efectivo pagado fuera de
+ * mostrador) no es efectivo de la caja del local; este registro solo documenta
+ * la salida. Con `cashFromRegister: true` —marca explícita del cobrador— el
+ * pago SÍ sale del cajón: asienta su CashMovement OUT en la caja abierta de la
+ * sucursal base del cobrador para que el corte cuadre, y como toda salida de
+ * caja exige que el efectivo disponible lo cubra.
  */
 export async function paySupplier(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = paymentSchema.parse(raw)
@@ -76,6 +84,25 @@ export async function paySupplier(db: PrismaClient, actorId: string, businessId:
       },
     })
 
+    // Salida real del cajón: solo cuando el cobrador declara que el efectivo
+    // sale de su caja (cashFromRegister). openRegister exige caja abierta en
+    // su sucursal base — declarar la salida sin caja sería inconsistente — y
+    // el tope es el efectivo disponible, igual que una devolución.
+    let cashMovement: { id: string } | null = null
+    if (input.method === "CASH" && input.cashFromRegister) {
+      const cashier = await actor(tx, actorId, "admin", businessId)
+      const register = await openRegister(tx, cashier.homeBranchId, businessId)
+      const availableCents = await registerCashCents(tx, register.id)
+      if (input.amountCents > availableCents) {
+        throw new BusinessError(`El pago supera el efectivo en caja (${((input.amountCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
+      }
+      cashMovement = await tx.cashMovement.create({ data: {
+        businessId, registerId: register.id, userId: actorId, type: "OUT",
+        amount: input.amountCents / 100, referenceType: "SUPPLIER_PAYMENT", referenceId: payment.id,
+        description: `Pago a proveedor ${supplier.name}`,
+      } })
+    }
+
     let purchasePaid: { paidCents: number; totalCents: number; settled: boolean } | null = null
     if (purchase) {
       const paidCents = purchase.paidCents + input.amountCents
@@ -92,6 +119,7 @@ export async function paySupplier(db: PrismaClient, actorId: string, businessId:
       payment,
       folio: purchase ? purchaseFolio(purchase.number) : null,
       purchasePaid,
+      cashMovementId: cashMovement?.id ?? null,
     }
   })
 }

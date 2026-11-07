@@ -40,8 +40,15 @@ console.log('🤖 ProSolutions Bot Starting...')
 bot.use(async (ctx, next) => {
     if (ctx.chat?.type !== 'private' || !ctx.from) return
     if (!_prisma) return next()
-    const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
-    if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
+    try {
+        const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
+        if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
+    } catch (e) {
+        // Fail-open: si Prisma (o el reply) falla, el update pasa y cada
+        // comando aplica sus propios guards. Un throw aquí era unhandled
+        // rejection y abortaba el proceso (Node ≥22).
+        console.error('Error en gate de cuenta:', e)
+    }
     return next()
 })
 
@@ -69,7 +76,6 @@ const sessionTimestamps = new Map<Record<string, unknown>, Map<string, number>>(
 function createBoundedStore<T extends Record<string, unknown>>(): T {
     const target = {} as T
     const touched = new Map<string, number>()
-    sessionTimestamps.set(target, touched)
     const proxy = new Proxy(target, {
         get(obj, prop, receiver) {
             if (typeof prop === 'string' && Object.prototype.hasOwnProperty.call(obj, prop)) {
@@ -95,6 +101,8 @@ function createBoundedStore<T extends Record<string, unknown>>(): T {
             return Reflect.deleteProperty(obj, prop)
         },
     })
+    // Solo el proxy se registra: pruneStaleSessions itera los stores (que son
+    // proxies), nunca el target interno.
     sessionTimestamps.set(proxy, touched)
     return proxy
 }
@@ -207,6 +215,12 @@ cron.schedule('25 4 * * *', async () => {
 
 // ======= LAUNCH =======
 
+// Node ≥22 aborta ante unhandled rejection: todo error que escape de un
+// middleware/handler pasa por aquí en vez de tumbar el proceso.
+bot.catch(err => {
+    console.error('Bot error', err)
+})
+
 bot.launch(async () => {
     console.log('🚀 Bot is running!')
 
@@ -227,6 +241,9 @@ bot.launch(async () => {
     } catch (e) {
         console.error('Error configurando menú:', e)
     }
+}).catch(err => {
+    console.error('❌ Error fatal al iniciar el bot:', err)
+    process.exit(1)
 })
 
 process.once('SIGINT', () => bot.stop('SIGINT'))

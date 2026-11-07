@@ -7,13 +7,13 @@ import { message } from 'telegraf/filters'
 import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as https from 'https'
 import type { Product } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { createProduct } from '../../lib/domain/products'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { getDefaultBusinessId } from '../../lib/settings'
 import { normalizePhone } from '../lib/utils'
+import { escapeMarkdownV1 } from '../lib/format'
 
 type Intent = 'greeting' | 'help' | 'profile' | 'categories' | 'offers'
     | 'price_check' | 'stock_check' | 'reservation_status' | 'cancel'
@@ -90,7 +90,7 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
                 sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: p }
                 return ctx.reply(`🗑️ *¿Eliminar este producto?*
 
-📦 *${p.name}*
+📦 *${escapeMarkdownV1(p.name)}*
 📊 Stock: ${p.stock}
 🔗 Reservas: ${p._count?.reservations ?? 0}
 📋 Movimientos: ${p._count?.movements ?? 0}
@@ -106,7 +106,7 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
 
             sessions.deleteProduct[telegramId] = { step: 'SELECT', products }
             const productList = products.map((p, i) =>
-                `${i + 1}. *${p.name}* (Stock: ${p.stock})`
+                `${i + 1}. *${escapeMarkdownV1(p.name)}* (Stock: ${p.stock})`
             ).join('\n')
 
             await ctx.reply(`🗑️ *Productos encontrados:*
@@ -159,12 +159,12 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                 const p = products[0]
                 const qrData = p.barcode || p.id
                 const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`
-                await ctx.replyWithPhoto({ url: qrUrl }, { caption: `📱 *${p.name}*\n\nCódigo: \`${qrData}\``, parse_mode: 'Markdown' })
+                await ctx.replyWithPhoto({ url: qrUrl }, { caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
                 return
             }
 
             sessions.qr[telegramId] = { step: 'SELECT', products }
-            const productList = products.map((p: { name: string }, i: number) => `${i + 1}. *${p.name}*`).join('\n')
+            const productList = products.map((p: { name: string }, i: number) => `${i + 1}. *${escapeMarkdownV1(p.name)}*`).join('\n')
             await ctx.reply(`📱 *Productos encontrados:*\n\n${productList}\n\nResponde con el número (1-${products.length}) para obtener el QR`, { parse_mode: 'Markdown' })
         } catch (e) {
             console.error('Error in /qr:', e)
@@ -190,37 +190,35 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                 const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'products')
                 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
 
-                const filePath = path.join(uploadDir, fileName)
-                const fileStream = fs.createWriteStream(filePath)
-                https.get(fileUrl, (response) => {
-                    response.pipe(fileStream)
-                    fileStream.on('finish', async () => {
-                        fileStream.close()
-                        adminSession.data.imageUrl = `/uploads/products/${fileName}`
+                // downloadTelegramImage valida origen (https://api.telegram.org),
+                // status 2xx, límite de 5 MB y timeout — antes el stream por
+                // https.get escribía cuerpos de error y los throws del callback
+                // 'finish' quedaban como unhandled rejection.
+                const bytes = await downloadTelegramImage(fileUrl)
+                await fs.promises.writeFile(path.join(uploadDir, fileName), bytes)
+                adminSession.data.imageUrl = `/uploads/products/${fileName}`
 
-                        const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
-                        const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
-                            name: adminSession.data.name!,
-                            categoryId: adminSession.data.categoryId!,
-                            costPrice: adminSession.data.costPrice || null,
-                            retailPrice: adminSession.data.retailPrice!,
-                            wholesalePrice: adminSession.data.wholesalePrice!,
-                            stock: adminSession.data.stock!,
-                            images: [adminSession.data.imageUrl],
-                        })
+                const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
+                const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
+                    name: adminSession.data.name!,
+                    categoryId: adminSession.data.categoryId!,
+                    costPrice: adminSession.data.costPrice || null,
+                    retailPrice: adminSession.data.retailPrice!,
+                    wholesalePrice: adminSession.data.wholesalePrice!,
+                    stock: adminSession.data.stock!,
+                    images: [adminSession.data.imageUrl],
+                })
 
-                        delete sessions.adminProduct[telegramId]
-                        await ctx.reply(`✅ *Producto creado exitosamente!*
+                delete sessions.adminProduct[telegramId]
+                await ctx.reply(`✅ *Producto creado exitosamente!*
 
-📦 *${newProduct.name}*
+📦 *${escapeMarkdownV1(newProduct.name)}*
 💰 Público: $${newProduct.retailPrice}
 💰 Taller: $${newProduct.wholesalePrice}
 📊 Stock: ${newProduct.stock}
 📷 Imagen: ✅
 
 ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
-                    })
-                })
             } catch (e) {
                 console.error('Error uploading photo:', e)
                 await ctx.reply('❌ Error al subir la imagen. Intenta de nuevo.')
@@ -362,7 +360,14 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         return
                     }
                     if (regSession.step === 'PHONE') {
-                        regSession.data.phone = normalizePhone(ctx.message.text)
+                        // El teléfono también puede llegar como contacto (users.ts);
+                        // la misma regla aplica: 7–15 dígitos tras normalizar.
+                        const normalized = normalizePhone(ctx.message.text)
+                        if (!/^\d{7,15}$/.test(normalized.replace(/\D/g, ''))) {
+                            await ctx.reply('❌ Número inválido. Escribe tu teléfono (7 a 15 dígitos), ej: 5512345678')
+                            return
+                        }
+                        regSession.data.phone = normalized
                         regSession.step = 'GOAL'
                         await ctx.reply(`5️⃣ <b>¿Cuánto esperas comprar al mes aproximadamente?</b>\n\nEsto nos ayuda a darte mejor atención. Selecciona una opción:`, {
                             parse_mode: 'HTML',
@@ -451,7 +456,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                         stock: adminSession.data.stock!,
                     })
                     delete sessions.adminProduct[telegramId]
-                    await ctx.reply(`✅ *Producto creado exitosamente!*\n\n📦 *${newProduct.name}*\n💰 Público: $${newProduct.retailPrice}\n💰 Taller: $${newProduct.wholesalePrice}\n📊 Stock: ${newProduct.stock}\n\nID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
+                    await ctx.reply(`✅ *Producto creado exitosamente!*\n\n📦 *${escapeMarkdownV1(newProduct.name)}*\n💰 Público: $${newProduct.retailPrice}\n💰 Taller: $${newProduct.wholesalePrice}\n📊 Stock: ${newProduct.stock}\n\nID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     return
                 }
                 return
@@ -483,7 +488,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
 
             // --- PRODUCT SEARCH ---
             try {
-                ctx.sendChatAction('typing')
+                ctx.sendChatAction('typing').catch(() => { })
                 const query = ctx.message.text.trim()
                 const words = queryLower.split(/\s+/).filter(w => w.length >= 2 || /^\d+$/.test(w))
                 if (words.length === 0) return await ctx.reply(`🔍 ${userName}, escribe al menos una palabra para buscar.`)
@@ -548,9 +553,9 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 if (usedFuzzy) await ctx.reply(`🤔 ${userName}, no encontré exactamente eso, pero quizás buscas alguno de estos:`)
 
                 const buttons = products.map((p) => [Markup.button.callback(`📦 ${p.name.substring(0, 35)}`, `prod_${p.id}`)])
-                let msg = `🔎 *${products.length} resultado(s) para "${query}"*\n\n`
+                let msg = `🔎 *${products.length} resultado(s) para "${escapeMarkdownV1(query)}"*\n\n`
                 products.forEach((p, i) => {
-                    msg += `${i + 1}. *${p.name}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n\n`
+                    msg += `${i + 1}. *${escapeMarkdownV1(p.name)}*\n   💰 $${p.retailPrice} | ✅ ${p.stock} uds\n\n`
                 })
                 msg += '_Selecciona un producto:_'
 

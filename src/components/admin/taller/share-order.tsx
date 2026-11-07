@@ -36,7 +36,7 @@ export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }:
   className?: string
   /** Slug público del negocio, si la página ya lo conoce; sin él se resuelve solo. */
   publicSlug?: string
-  quote?: { equipment: string; token?: string; lines: { label: string; amount: number }[]; total: number }
+  quote?: { equipment: string; token?: string | null; lines: { label: string; amount: number }[]; total: number }
 }) {
   const [open, setOpen] = useState(false)
   const [fetchedSlug, setFetchedSlug] = useState<string | undefined>(undefined)

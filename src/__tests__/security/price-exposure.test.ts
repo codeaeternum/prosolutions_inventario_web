@@ -459,6 +459,124 @@ describe("GET /api/search/pos (auth opcional)", () => {
   })
 })
 
+/* ------------- marketVisibility por audiencia (fuga auditada) ------------- */
+
+describe("marketVisibility en /api/products — matriz por audiencia", () => {
+  const url = "https://app.invalid/api/products"
+  const whereOf = () => mocks.prisma.product.findMany.mock.calls[0][0].where
+  const seed = () => {
+    mocks.prisma.product.findMany.mockResolvedValue([productRow])
+    mocks.prisma.product.count.mockResolvedValue(1)
+    mocks.prisma.$queryRaw.mockResolvedValue([{ productos: 1, unidades: 4, bajoMinimo: 0, sinStock: 0 }])
+  }
+
+  it("anónimo: el where exige PUBLIC — nunca ALLIES ni HIDDEN en la vitrina", async () => {
+    seed()
+    await listProducts(req(url))
+    expect(whereOf().marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it("anónimo con ?visibilidad=ocultos: el parámetro NO puede saltarse el filtro", async () => {
+    seed()
+    await listProducts(req(`${url}?visibilidad=ocultos`))
+    expect(whereOf().marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it("cuenta sin aprobar (STORE pendiente): igual que anónimo, solo PUBLIC", async () => {
+    mocks.auth.mockResolvedValue({ user: { ...customerStore.user, status: "PENDING" } })
+    seed()
+    await listProducts(req(url))
+    expect(whereOf().marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it.each([
+    ["CUSTOMER STORE", customerStore],
+    ["CUSTOMER TECHNICIAN", customerTech],
+    ["WORKSHOP", workshop],
+  ])("%s aprobado (aliado): ve ALLIES+PUBLIC, nunca HIDDEN", async (_label, session) => {
+    mocks.auth.mockResolvedValue(session)
+    seed()
+    await listProducts(req(url))
+    expect(whereOf().marketVisibility).toEqual({ in: ["ALLIES", "PUBLIC"] })
+  })
+
+  it.each([
+    ["CUSTOMER normal", customer],
+    ["EMPLOYEE", employee],
+    ["ADMIN", admin],
+  ])("%s: catálogo completo del negocio, sin filtro de visibilidad", async (_label, session) => {
+    mocks.auth.mockResolvedValue(session)
+    seed()
+    await listProducts(req(url))
+    expect(whereOf()).not.toHaveProperty("marketVisibility")
+  })
+
+  it("staff con ?visibilidad=ocultos: el filtro de gestión sí aplica", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    seed()
+    await listProducts(req(`${url}?visibilidad=ocultos`))
+    expect(whereOf().marketVisibility).toBe("HIDDEN")
+  })
+})
+
+describe("marketVisibility en /api/products/[id]", () => {
+  it("anónimo: el where exige PUBLIC — el id directo de una pieza ALLIES da 404", async () => {
+    mocks.prisma.product.findUnique.mockResolvedValue(productRow)
+    await getProduct(new NextRequest("https://app.invalid/api/products/p1"), paramsOf({ id: "p1" }))
+    expect(mocks.prisma.product.findUnique.mock.calls[0][0].where.marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it("aliado WORKSHOP: el where admite ALLIES+PUBLIC", async () => {
+    mocks.auth.mockResolvedValue(workshop)
+    mocks.prisma.product.findUnique.mockResolvedValue(productRow)
+    await getProduct(new NextRequest("https://app.invalid/api/products/p1"), paramsOf({ id: "p1" }))
+    expect(mocks.prisma.product.findUnique.mock.calls[0][0].where.marketVisibility).toEqual({ in: ["ALLIES", "PUBLIC"] })
+  })
+
+  it("staff: sin filtro — el POS interno abre cualquier pieza por id", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    mocks.prisma.product.findUnique.mockResolvedValue(productRow)
+    await getProduct(new NextRequest("https://app.invalid/api/products/p1"), paramsOf({ id: "p1" }))
+    expect(mocks.prisma.product.findUnique.mock.calls[0][0].where).not.toHaveProperty("marketVisibility")
+  })
+})
+
+describe("marketVisibility en /api/search/pos", () => {
+  it("anónimo: siempre publicOnly (stock>0) + PUBLIC aunque no pida la bandera", async () => {
+    mocks.prisma.product.findMany.mockResolvedValue([productRow])
+    await searchPos(req("https://app.invalid/api/search/pos?q=pant"))
+    const where = mocks.prisma.product.findMany.mock.calls[0][0].where
+    expect(where.stock).toEqual({ gt: 0 })
+    expect(where.marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it("anónimo pidiendo publicOnly=false: no puede apagar ni stock ni visibilidad", async () => {
+    mocks.prisma.product.findMany.mockResolvedValue([productRow])
+    await searchPos(req("https://app.invalid/api/search/pos?q=pant&publicOnly=false"))
+    const where = mocks.prisma.product.findMany.mock.calls[0][0].where
+    expect(where.stock).toEqual({ gt: 0 })
+    expect(where.marketVisibility).toEqual({ in: ["PUBLIC"] })
+  })
+
+  it("staff: catálogo completo con existencias incluidas (sin ambos filtros)", async () => {
+    mocks.auth.mockResolvedValue(employee)
+    mocks.prisma.product.findMany.mockResolvedValue([productRow])
+    await searchPos(req("https://app.invalid/api/search/pos?q=pant"))
+    const where = mocks.prisma.product.findMany.mock.calls[0][0].where
+    expect(where).not.toHaveProperty("marketVisibility")
+    expect(where).not.toHaveProperty("stock")
+  })
+
+  it("aliado WORKSHOP: ALLIES+PUBLIC, stock sin forzar (tiene sesión)", async () => {
+    mocks.auth.mockResolvedValue(workshop)
+    mocks.prisma.product.findMany.mockResolvedValue([productRow])
+    await searchPos(req("https://app.invalid/api/search/pos?q=pant"))
+    const where = mocks.prisma.product.findMany.mock.calls[0][0].where
+    expect(where.marketVisibility).toEqual({ in: ["ALLIES", "PUBLIC"] })
+    expect(where).not.toHaveProperty("stock")
+  })
+})
+
 /* ---------------- mercado B2B ---------------- */
 
 const marketRow = { ...productRow, marketVisibility: "ALLIES" }

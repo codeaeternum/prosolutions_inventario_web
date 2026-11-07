@@ -191,6 +191,47 @@ describe.skipIf(!enabled)("PostgreSQL sales documents (suspendida, cotización, 
     expect(await db.cashMovement.count({ where: { referenceId: doc.sale.id, type: "OUT", amount: 80 } })).toBe(1)
   })
 
+  it("el abono en efectivo cae a la caja del cobrador, no a la del apartado", async () => {
+    const branchB = (await db.branch.create({ data: { businessId: biz, name: `${prefix}-payB` } })).id
+    const cashierB = (await db.user.create({ data: { businessId: biz, name: `${prefix}-cashierB`, role: "EMPLOYEE", status: "APPROVED", homeBranchId: branchB } })).id
+    const registerB = (await changeCash(db, cashierB, biz, { action: "OPEN", amount: 0, branchId: branchB, idempotencyKey: key() })).id
+    const p = await product(2, 100)
+    const doc = await parkDocument(db, admin, biz, {
+      kind: "LAYAWAY", customerId: customer, branchId: branchA, idempotencyKey: key(),
+      items: [{ productId: p.id, quantity: 1 }], payments: [{ method: "TARJETA", amount: 30 }],
+    })
+    // Sin cashierBranchId: la sucursal base del cobrador manda sobre la del doc.
+    await payDocument(db, cashierB, biz, { saleId: doc.sale.id, payments: [{ method: "EFECTIVO", amount: 20 }], idempotencyKey: key() })
+    const cashIn = await db.cashMovement.findFirstOrThrow({ where: { referenceId: doc.sale.id, type: "IN" } })
+    expect(cashIn.registerId).toBe(registerB)
+    // Con cashierBranchId explícita el asiento va a ESA caja (la del documento).
+    await payDocument(db, cashierB, biz, { saleId: doc.sale.id, cashierBranchId: branchA, payments: [{ method: "EFECTIVO", amount: 10 }], idempotencyKey: key() })
+    const registerA = await db.cashRegister.findFirstOrThrow({ where: { branchId: branchA, businessId: biz, status: "OPEN" } })
+    const ins = await db.cashMovement.findMany({ where: { referenceId: doc.sale.id, type: "IN" }, orderBy: { createdAt: "asc" } })
+    expect(ins.map(m => m.registerId)).toEqual([registerB, registerA.id])
+    // La venta conserva su sucursal contable original.
+    expect((await db.sale.findUniqueOrThrow({ where: { id: doc.sale.id } })).branchId).toBe(branchA)
+    await changeCash(db, cashierB, biz, { action: "CLOSE", registerId: registerB, amount: 20, branchId: branchB, idempotencyKey: key() })
+  })
+
+  it("cancelar un apartado ajeno exige admin; el propio sí lo cancela el empleado", async () => {
+    const p = await product(3, 100)
+    const docAdmin = await parkDocument(db, admin, biz, {
+      kind: "LAYAWAY", customerId: customer, branchId: branchA, idempotencyKey: key(),
+      items: [{ productId: p.id, quantity: 1 }], payments: [{ method: "TARJETA", amount: 20 }],
+    })
+    await expect(cancelDocument(db, employee, biz, { saleId: docAdmin.sale.id, reason: "Apartado ajeno", idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    const docEmp = await parkDocument(db, employee, biz, {
+      kind: "LAYAWAY", customerId: customer, branchId: branchA, idempotencyKey: key(),
+      items: [{ productId: p.id, quantity: 1 }], payments: [{ method: "TARJETA", amount: 20 }],
+    })
+    await cancelDocument(db, employee, biz, { saleId: docEmp.sale.id, reason: "Cliente se arrepintió", idempotencyKey: key() })
+    expect((await db.sale.findUniqueOrThrow({ where: { id: docEmp.sale.id } })).status).toBe("VOIDED")
+    // El admin cierra el apartado del compañero sin restricción.
+    await cancelDocument(db, admin, biz, { saleId: docAdmin.sale.id, reason: "Limpieza de prueba", idempotencyKey: key() })
+    expect(await stockAt(p.id)).toBe(3)
+  })
+
   it("el reintento idempotente de parkDocument devuelve el mismo documento", async () => {
     const p = await product(2)
     const quotesBefore = await db.sale.count({ where: { businessId: biz, kind: "QUOTE", status: "DRAFT" } })

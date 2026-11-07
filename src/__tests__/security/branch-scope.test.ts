@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   cashRegisterFindMany: vi.fn(),
   paymentGroupBy: vi.fn(),
   branchFindMany: vi.fn(),
+  branchFindFirst: vi.fn(),
   userFindUnique: vi.fn(),
   systemSettingsFindUnique: vi.fn(),
   transaction: vi.fn(),
@@ -58,7 +59,7 @@ vi.mock("@/lib/prisma", () => {
     encargo: { findMany: mocks.encargoFindMany, findUnique: mocks.encargoFindUnique },
     cashRegister: { findFirst: mocks.cashRegisterFindFirst, findMany: mocks.cashRegisterFindMany },
     payment: { groupBy: mocks.paymentGroupBy },
-    branch: { findMany: mocks.branchFindMany },
+    branch: { findMany: mocks.branchFindMany, findFirst: mocks.branchFindFirst },
     user: { findUnique: mocks.userFindUnique },
     systemSettings: { findUnique: mocks.systemSettingsFindUnique },
     $transaction: mocks.transaction,
@@ -129,6 +130,7 @@ beforeEach(() => {
   mocks.cashRegisterFindMany.mockResolvedValue([])
   mocks.paymentGroupBy.mockResolvedValue([])
   mocks.branchFindMany.mockResolvedValue([])
+  mocks.branchFindFirst.mockResolvedValue(null)
   mocks.userFindUnique.mockResolvedValue(null)
   mocks.systemSettingsFindUnique.mockResolvedValue(null)
   // Tx falso para las operaciones que PASAN el assert de sucursal: el actor
@@ -231,7 +233,9 @@ describe("lecturas: ?branchId= ajena es 403 y la lista sin filtro se recorta", (
 })
 
 describe("operaciones: la sucursal efectiva es la del documento/venta/encargo", () => {
-  const doc = (branchId: string) => ({ id: "doc-1", businessId: "biz-test", branchId })
+  // sellerId = el empleado de la sesión: los caminos "propios" ejercitan el
+  // dominio real (404 controlado del tx falso), no el corte temprano de rol.
+  const doc = (branchId: string) => ({ id: "doc-1", businessId: "biz-test", branchId, sellerId: "employee-1", status: "OPEN" })
 
   it("checkout de documento ajeno es 403 aunque el body omita branchId", async () => {
     mocks.auth.mockResolvedValue(restricted())
@@ -255,6 +259,25 @@ describe("operaciones: la sucursal efectiva es la del documento/venta/encargo", 
     const res = await payDocument(post("https://app.invalid/api/pos/documents/doc-1/pay", { payments: [{ method: "EFECTIVO", amount: 10 }], idempotencyKey: "op-branch-0003" }), params("doc-1"))
     expect(res.status).toBe(403)
     expect(mocks.transaction).not.toHaveBeenCalled()
+  })
+
+  it("abono en efectivo con caja de cobrador en sucursal ajena es 403", async () => {
+    mocks.auth.mockResolvedValue(restricted())
+    mocks.saleFindUnique.mockResolvedValue(doc("b1"))
+    // cashierBranchId existe y es del negocio, pero no está asignada al empleado.
+    mocks.branchFindFirst.mockResolvedValue({ id: "b2" })
+    const res = await payDocument(post("https://app.invalid/api/pos/documents/doc-1/pay", { payments: [{ method: "EFECTIVO", amount: 10 }], cashierBranchId: "b2", idempotencyKey: "op-branch-0012" }), params("doc-1"))
+    expect(res.status).toBe(403)
+    expect(mocks.transaction).not.toHaveBeenCalled()
+  })
+
+  it("abono en efectivo sobre doc propio con caja propia llega al dominio", async () => {
+    mocks.auth.mockResolvedValue(restricted())
+    mocks.saleFindUnique.mockResolvedValue(doc("b1"))
+    mocks.userFindUnique.mockResolvedValue({ homeBranchId: "b1" })
+    const res = await payDocument(post("https://app.invalid/api/pos/documents/doc-1/pay", { payments: [{ method: "EFECTIVO", amount: 10 }], idempotencyKey: "op-branch-0013" }), params("doc-1"))
+    expect(res.status).toBe(404) // el tx falso no encuentra el documento
+    expect(mocks.transaction).toHaveBeenCalled()
   })
 
   it("DELETE de documento ajeno es 403; el propio llega al dominio", async () => {

@@ -205,7 +205,7 @@ describe("GET /api/workshop/[id] (detalle)", () => {
     expect(mocks.eventCreate).not.toHaveBeenCalled()
   })
 
-  it("la ficha no lee ni devuelve firmas — ni siquiera al ADMIN; los tokens siguen saliendo", async () => {
+  it("la ficha no lee ni devuelve firmas — ni siquiera al ADMIN; quoteToken solo sale al ADMIN", async () => {
     mocks.auth.mockResolvedValue(session("EMPLOYEE"))
     mocks.orderFindUnique.mockResolvedValue(detailOrder)
     const res = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
@@ -213,18 +213,21 @@ describe("GET /api/workshop/[id] (detalle)", () => {
     const json = await res.json()
     expect(json.order.signatureData).toBeNull()
     expect(json.order.deliverySignatureData).toBeNull()
-    // Sin ?reveal=1 el desbloqueo nunca sale; los tokens sí: la UI del staff
-    // arma el link de cotización por WhatsApp y el de evidencias del técnico.
+    // Sin ?reveal=1 el desbloqueo nunca sale. uploadToken sí: el técnico lo
+    // usa para el link público de evidencias. quoteToken NO — con ese token
+    // se aprueba/rechaza la cotización como el cliente: solo ADMIN lo recibe
+    // (la respuesta lo fija a null, no depende de que la fila lo traiga).
     expect(json.order.deviceAccessValue).toBeNull()
-    expect(json.order.quoteToken).toBe("qt-detalle")
+    expect(json.order.quoteToken).toBeNull()
     expect(json.order.uploadToken).toBe("ut-detalle")
-    // La consulta base ni siquiera lee las columnas (~300 KB c/u): omit real,
-    // no un null cosmético sobre el campo ya traído.
+    // La consulta base ni siquiera lee las columnas (~300 KB c/u) ni el
+    // quoteToken para no-admin: omit real, no un null cosmético.
     const detailArgs = mocks.orderFindUnique.mock.calls[0][0] as { omit?: Record<string, boolean> }
-    expect(detailArgs.omit).toMatchObject({ signatureData: true, deliverySignatureData: true })
+    expect(detailArgs.omit).toMatchObject({ signatureData: true, deliverySignatureData: true, quoteToken: true })
 
     // El ADMIN tampoco recibe las firmas en la ficha normal: las pide aparte
-    // con ?signatures=1 (la UI solo lo hace si hay constancia de entrega).
+    // con ?signatures=1. Su consulta SÍ trae quoteToken — él arma el link de
+    // cotización por WhatsApp para mandárselo al cliente.
     mocks.auth.mockResolvedValue(session("ADMIN"))
     const adminRes = await workshopDetail(new Request("https://app.invalid/api/workshop/order-1"), idParams)
     expect(adminRes.status).toBe(200)
@@ -232,6 +235,8 @@ describe("GET /api/workshop/[id] (detalle)", () => {
     expect(adminJson.order.signatureData).toBeNull()
     expect(adminJson.order.deliverySignatureData).toBeNull()
     expect(adminJson.order.quoteToken).toBe("qt-detalle")
+    const adminArgs = mocks.orderFindUnique.mock.calls.at(-1)?.[0] as { omit?: Record<string, boolean> }
+    expect(adminArgs.omit).not.toHaveProperty("quoteToken")
   })
 
   it("?signatures=1 devuelve ambas firmas al ADMIN con una lectura proyectada", async () => {

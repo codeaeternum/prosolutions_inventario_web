@@ -48,6 +48,11 @@ const paySchema = z.object({
   saleId: z.string().min(1),
   idempotencyKey: operationKeySchema,
   payments: z.array(abonoInput).min(1).max(6),
+  // Sucursal donde entra físicamente el efectivo (la caja del cobrador, que
+  // puede estar cobrando un apartado radicado en otra sucursal). Sin ella el
+  // dominio cae a la sucursal base del cobrador y luego a la del documento.
+  // La ruta la valida con assertOperationBranch, igual que el abono de crédito.
+  cashierBranchId: z.string().min(1).optional(),
 })
 
 const cancelSchema = z.object({
@@ -236,7 +241,11 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
   return result
 }
 
-/** Registra un abono sobre un apartado OPEN; al cubrir el saldo el documento se liquida a COMPLETED. */
+/** Registra un abono sobre un apartado OPEN; al cubrir el saldo el documento se
+ *  liquida a COMPLETED. El efectivo se asienta en la caja del cobrador
+ *  (cashierBranchId → sucursal base → sucursal del documento), no en la del
+ *  apartado: un abono cobrado en otra sucursal cuadra contra el corte de quien
+ *  lo recibió. */
 export async function payDocument(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = paySchema.parse(raw)
   if (input.payments.length > 1 && input.payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
@@ -245,12 +254,14 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
     const sale = await tx.sale.findUnique({ where: { id: input.saleId } })
     if (!sale || sale.businessId !== businessId) throw new BusinessError("Documento no encontrado.", 404)
     if (sale.kind !== "LAYAWAY" || sale.status !== "OPEN") throw new BusinessError("Solo los apartados vivos admiten abonos.", 409)
+    // El cobrador resuelve la caja que recibe el efectivo (abono cross-branch)
+    // y su rol manda en la regla del apartado vencido.
+    const collector = await actor(tx, actorId, "staff", businessId)
     // Apartado vencido: congela los abonos del mostrador sin liberar stock ni
     // cancelar nada — seguir cobrando (o darlo por perdido) es decisión de un
     // ADMIN, nunca automática.
     if (sale.expiresAt && sale.expiresAt.getTime() <= Date.now()) {
-      const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
-      if (me?.role !== "ADMIN") {
+      if (collector.role !== "ADMIN") {
         const fecha = sale.expiresAt.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })
         throw new BusinessError(`El apartado venció el ${fecha}; pide autorización al administrador para seguir cobrando.`, 409)
       }
@@ -267,8 +278,11 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
     const incomingCents = settled.reduce((sum, p) => sum + p.cents, 0)
     if (incomingCents <= 0) throw new BusinessError("El abono debe ser mayor a cero.", 409)
     if (incomingCents > balanceCents) throw new BusinessError(`El abono supera el saldo del apartado (${amount(balanceCents)}).`, 409)
+    // El efectivo entra a la caja del COBRADOR (cashierBranchId validada en
+    // ruta, su sucursal base o, en último término, la del documento), no a la
+    // caja del apartado — el documento conserva su sucursal contable.
     const created = await settlePayments(tx, {
-      sale, businessId, actorId, branchId: sale.branchId, customerId: sale.customerId,
+      sale, businessId, actorId, branchId: input.cashierBranchId ?? collector.homeBranchId ?? sale.branchId, customerId: sale.customerId,
       payments: settled, description: `Abono apartado V-${sale.number}`,
     })
     const completed = incomingCents === balanceCents
@@ -281,7 +295,9 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
   })
 }
 
-/** Anula un documento vivo: DRAFT solo se sella; apartado OPEN repone stock y reembolsa lo cobrado. */
+/** Anula un documento vivo: DRAFT solo se sella (cualquier staff — no movió
+ *  dinero ni stock); apartado OPEN repone stock y reembolsa lo cobrado, así
+ *  que un EMPLOYEE solo cancela los que registró — ajenos exigen ADMIN. */
 export async function cancelDocument(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = cancelSchema.parse(raw)
   const touchedProductIds = new Set<string>()
@@ -297,6 +313,15 @@ export async function cancelDocument(db: PrismaClient, actorId: string, business
     if (sale.status === "VOIDED") throw new BusinessError("El documento ya está anulado.", 409)
     if (sale.status === "COMPLETED") throw new BusinessError("El documento ya está cobrado; usa la anulación de venta.", 409)
     if (sale.kind !== "LAYAWAY") throw new BusinessError("Este documento no admite cancelación.", 409)
+    // Cancelar un apartado vivo reembolsa anticipos/abonos (efectivo incluido):
+    // un EMPLOYEE solo cancela los que él mismo registró; los ajenos exigen
+    // ADMIN — cancelar el apartado de un compañero y embolsar el reembolso es
+    // el mismo vector de robo que anular su venta. El DRAFT de arriba no movió
+    // dinero ni stock: anularlo sigue siendo tarea de mostrador.
+    const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+    if (me?.role !== "ADMIN" && sale.sellerId !== actorId) {
+      throw new BusinessError("Cancelar el apartado de otra persona requiere un administrador.", 403)
+    }
     // Apartado vivo: regresa la mercancía comprometida a su sucursal.
     for (const item of sale.items) {
       const pending = item.quantity - item.returnedQuantity

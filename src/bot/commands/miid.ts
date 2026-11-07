@@ -1,9 +1,9 @@
 import type { Telegraf } from "telegraf"
 
 export function registerMiid(bot: Telegraf) {
-  bot.command("miid", (ctx) => {
+  bot.command("miid", async (ctx) => {
     const telegramId = ctx.from.id.toString()
-    ctx.reply(
+    await ctx.reply(
       `🆔 *Tu Telegram ID:*
 
 \`${telegramId}\`

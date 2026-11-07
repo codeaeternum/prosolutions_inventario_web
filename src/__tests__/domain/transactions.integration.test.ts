@@ -327,6 +327,21 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     expect((await db.sale.findUniqueOrThrow({ where: { id: sale.sale.id } })).status).toBe("VOIDED")
   })
 
+  it("an employee cannot void or return another staffer's sale, only their own", async () => {
+    const employee = (await db.user.create({ data: { businessId: biz, name: `${prefix}-emp3`, role: "EMPLOYEE", status: "APPROVED", homeBranchId: branchA } })).id
+    const p = await product(3)
+    const foreign = await sell(db, admin, biz, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", branchId: branchA, idempotencyKey: key() })
+    // Venta de un compañero: anular y devolver son vectores de robo → 403.
+    await expect(voidSale(db, employee, biz, { saleId: foreign.sale.id, reason: "Ajena", idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    await expect(returnSaleItems(db, employee, biz, { saleId: foreign.sale.id, items: [{ saleItemId: foreign.items[0].id, quantity: 1 }], refundMethod: "TARJETA", reason: "Ajena", idempotencyKey: key() })).rejects.toMatchObject({ status: 403 })
+    expect((await db.sale.findUniqueOrThrow({ where: { id: foreign.sale.id } })).status).toBe("COMPLETED")
+    // La venta propia sí la opera: devolución por tarjeta sin tocar caja.
+    const own = await sell(db, employee, biz, { items: [{ productId: p.id, quantity: 1 }], paymentMethod: "TARJETA", branchId: branchA, idempotencyKey: key() })
+    const returned = await returnSaleItems(db, employee, biz, { saleId: own.sale.id, items: [{ saleItemId: own.items[0].id, quantity: 1 }], refundMethod: "TARJETA", reason: "Propia", idempotencyKey: key() })
+    expect(returned.refund.method).toBe("CARD")
+    expect((await db.saleItem.findUniqueOrThrow({ where: { id: own.items[0].id } })).returnedQuantity).toBe(1)
+  })
+
   it("a cash credit payment posts to the register of the branch where it was collected", async () => {
     const registerB = await changeCash(db, admin, biz, { action: "OPEN", amount: 50, branchId: branchB, idempotencyKey: key() })
     await changeCredit(db, admin, biz, "DEBT", { userId: customer, amount: 30, idempotencyKey: key() })
