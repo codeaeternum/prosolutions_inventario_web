@@ -27,6 +27,10 @@ export interface CartItem {
 export interface CartSession {
     items: CartItem[]
     pendingAdd?: { id: string; name: string; price: number; stock: number }
+    /** Multi-match de /agregarc: el número entrante elige índice → pendingAdd.
+     *  Paso propio del carrito; NO se reutiliza sessions.sale (antes el número
+     *  elegido lo consumía el hears de ventas y lo cobraba como venta). */
+    selecting?: { id: string; name: string; stock: number; retailPrice: number }[]
 }
 
 export interface QRSession {

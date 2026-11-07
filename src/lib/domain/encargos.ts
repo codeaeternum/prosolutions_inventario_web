@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema, type Transaction } from "./operations"
+import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
 import { recordAudit } from "../audit"
 
 /**
@@ -108,12 +108,19 @@ export async function listEncargos(db: PrismaClient, businessId: string, filters
   return encargos
 }
 
+// Medios de cobro/devolución del anticipo y de pago al proveedor (mismo
+// vocabulario que Payment.method y SupplierPayment.method).
+const ENCARGO_MONEY_METHODS = ["CASH", "CARD", "TRANSFER"] as const
+
 const createSchema = z.object({
   idempotencyKey: operationKeySchema,
   description: z.string().trim().max(300).optional().default(""),
   quantity: z.number().int().min(1).max(9999).default(1),
   // Anticipo en pesos (Float histórico del esquema), máximo 2 decimales.
   deposit: z.number().min(0).max(100000000).default(0),
+  // Medio del anticipo; omitido = CASH (mostrador). Con deposit > 0 el
+  // anticipo asienta su Payment — y su CashMovement IN cuando es efectivo.
+  depositMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
   // Precio cotizado al cliente en pesos; opcional — se puede registrar sin precio.
   priceQuoted: z.number().min(0).max(100000000).optional(),
   customerId: z.string().min(1).nullish(),
@@ -172,6 +179,37 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
       include: encargoInclude,
     })
 
+    // El anticipo es dinero real del cliente y queda en el ledger: siempre
+    // deja su Payment (comprobante); cuando es efectivo además entra como
+    // CashMovement IN a la caja de la sucursal del encargo — misma regla
+    // que los cobros de taller: efectivo exige caja abierta, tarjeta y
+    // transferencia no pasan por el cajón.
+    let depositPaymentId: string | null = null
+    if (input.deposit > 0) {
+      const method = input.depositMethod ?? "CASH"
+      const register = method === "CASH" ? await openRegister(tx, branch.id, businessId) : null
+      const payment = await tx.payment.create({
+        data: {
+          businessId, encargoId: encargo.id, purpose: "ADVANCE", method,
+          amount: input.deposit, createdById: actorId,
+          notes: `Anticipo de encargo: ${description}`,
+        },
+        select: { id: true },
+      })
+      depositPaymentId = payment.id
+      if (register) {
+        const movement = await tx.cashMovement.create({
+          data: {
+            businessId, registerId: register.id, userId: actorId, type: "IN",
+            amount: input.deposit, description: `Encargo · anticipo — ${description}`,
+            referenceType: "ENCARGO_DEPOSIT", referenceId: payment.id,
+          },
+          select: { id: true },
+        })
+        await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
+      }
+    }
+
     await recordAudit(tx, {
       businessId,
       actorId,
@@ -184,7 +222,7 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
       ...(input.priceQuoted != null ? { changes: { priceQuoted: { before: null, after: input.priceQuoted } } } : {}),
     })
 
-    return { encargo }
+    return { encargo, depositPaymentId }
   })
 }
 
@@ -195,6 +233,16 @@ const transitionSchema = z.object({
   action: z.enum(["ORDERED", "READY", "DELIVERED", "CANCELLED"]),
   marketplaceRequestId: z.string().min(1).nullish(),
   supplierNote: z.string().trim().max(500).optional(),
+  // Medio para devolver el anticipo al cancelar; omitido se usa el método
+  // del anticipo registrado (o CASH en encargos anteriores al ledger).
+  refundMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
+  // Pago al proveedor al marcar ORDERED (mismo patrón que paySupplier):
+  // solo ADMIN lo asienta; CASH documenta la salida salvo que se declare
+  // cashFromRegister, que la asienta como CashMovement OUT del cajón.
+  supplierId: z.string().min(1).nullish(),
+  supplierAmountCents: z.number().int().min(1).max(100000000).optional(),
+  supplierMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
+  cashFromRegister: z.boolean().optional(),
 })
 
 /**
@@ -216,6 +264,11 @@ export async function transitionEncargoTx(
     action: EncargoAction
     marketplaceRequestId?: string | null
     supplierNote?: string
+    refundMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
+    supplierId?: string | null
+    supplierAmountCents?: number
+    supplierMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
+    cashFromRegister?: boolean
   },
 ) {
   const encargo = await tx.encargo.findFirst({ where: { id: input.id, businessId: input.businessId }, include: encargoInclude })
@@ -234,6 +287,93 @@ export async function transitionEncargoTx(
   })
   if (changed.count !== 1) throw new BusinessError("El encargo cambió durante la operación; reintenta.", 409)
 
+  // Pago al proveedor al pedir la pieza: queda como SupplierPayment a cuenta
+  // general ligado al encargo. Registrar salidas de dinero del negocio es
+  // decisión de ADMIN — misma regla que paySupplier (supplier-payments.ts).
+  let supplierPaymentId: string | null = null
+  if (input.action === "ORDERED" && (input.supplierId != null || input.supplierAmountCents != null || input.supplierMethod != null)) {
+    if (!input.supplierId || input.supplierAmountCents == null || !input.supplierMethod) {
+      throw new BusinessError("Captura proveedor, monto y método del pago.", 400)
+    }
+    const payer = await actor(tx, input.actorId, "admin", input.businessId)
+    const supplier = await tx.supplier.findFirst({ where: { id: input.supplierId, businessId: input.businessId } })
+    if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
+    const payment = await tx.supplierPayment.create({
+      data: {
+        businessId: input.businessId, supplierId: supplier.id, encargoId: encargo.id,
+        amountCents: input.supplierAmountCents, method: input.supplierMethod,
+        notes: `Encargo: ${encargo.description}`, createdById: input.actorId,
+      },
+      select: { id: true },
+    })
+    supplierPaymentId = payment.id
+    // Salida real del cajón: solo cuando el cobrador declara que el efectivo
+    // sale de su caja (cashFromRegister) — igual que en paySupplier, el tope
+    // es el efectivo disponible y el registro cae en SU sucursal base.
+    if (input.supplierMethod === "CASH" && input.cashFromRegister) {
+      const register = await openRegister(tx, payer.homeBranchId, input.businessId)
+      const availableCents = await registerCashCents(tx, register.id)
+      if (input.supplierAmountCents > availableCents) {
+        throw new BusinessError(`El pago supera el efectivo en caja (${((input.supplierAmountCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
+      }
+      await tx.cashMovement.create({
+        data: {
+          businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT",
+          amount: input.supplierAmountCents / 100, referenceType: "SUPPLIER_PAYMENT", referenceId: payment.id,
+          description: `Pago a proveedor ${supplier.name} (encargo: ${encargo.description})`,
+        },
+      })
+    }
+  }
+
+  // Cancelación con anticipo: se devuelve lo que el cliente dejó — Payment
+  // negativo con status REFUNDED y CashMovement OUT cuando es efectivo,
+  // mismo patrón que el reembolso de taller. Encargos anteriores al ledger
+  // no tienen asientos: se devuelve el `deposit` de la ficha con el método
+  // pedido (default CASH). Un anticipo ya devuelto (REFUND previo) descuenta
+  // del retenido — nunca se paga dos veces.
+  let refundPaymentId: string | null = null
+  if (input.action === "CANCELLED" && encargo.deposit > 0) {
+    const [advances, priorRefunds] = await Promise.all([
+      tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "ADVANCE" }, select: { method: true, amount: true } }),
+      tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "REFUND" }, select: { amount: true } }),
+    ])
+    // Los REFUND se guardan con amount negativo: el retenido = anticipos +
+    // devoluciones (ya vienen en negativo). Sin ledger, cae al deposit.
+    const heldCents = advances.length
+      ? Math.round(advances.reduce((sum, p) => sum + p.amount, 0) * 100) + Math.round(priorRefunds.reduce((sum, p) => sum + p.amount, 0) * 100)
+      : Math.round(encargo.deposit * 100)
+    if (heldCents > 0) {
+      const method = input.refundMethod ?? advances[0]?.method ?? "CASH"
+      const refund = await tx.payment.create({
+        data: {
+          businessId: input.businessId, encargoId: encargo.id, purpose: "REFUND", method,
+          amount: -heldCents / 100, status: "REFUNDED", createdById: input.actorId,
+          notes: `Devolución de anticipo por cancelación: ${encargo.description}`,
+        },
+        select: { id: true },
+      })
+      refundPaymentId = refund.id
+      if (method === "CASH") {
+        const register = await openRegister(tx, encargo.branchId, input.businessId)
+        // La caja no queda en negativo — igual que las devoluciones de venta.
+        const availableCents = await registerCashCents(tx, register.id)
+        if (heldCents > availableCents) {
+          throw new BusinessError(`El efectivo en caja no alcanza para devolver el anticipo (${((heldCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
+        }
+        const movement = await tx.cashMovement.create({
+          data: {
+            businessId: input.businessId, registerId: register.id, userId: input.actorId, type: "OUT",
+            amount: heldCents / 100, description: `Encargo · devolución de anticipo — ${encargo.description}`,
+            referenceType: "ENCARGO_REFUND", referenceId: refund.id,
+          },
+          select: { id: true },
+        })
+        await tx.payment.update({ where: { id: refund.id }, data: { cashMovementId: movement.id } })
+      }
+    }
+  }
+
   await recordAudit(tx, {
     businessId: input.businessId,
     actorId: input.actorId,
@@ -241,7 +381,7 @@ export async function transitionEncargoTx(
     entity: "encargo",
     entityId: encargo.id,
     entityName: encargo.description,
-    summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}`,
+    summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}${supplierPaymentId ? " · pago a proveedor registrado" : ""}${refundPaymentId ? " · anticipo devuelto" : ""}`,
     changes: { status: { before: encargo.status, after: input.action } },
   })
 
@@ -257,6 +397,8 @@ export async function transitionEncargoTx(
     // este id; null = encargo sin cuenta, no hay a quién escribir.
     customerId: encargo.customerId,
     marketplaceRequestId: input.action === "ORDERED" ? (input.marketplaceRequestId ?? encargo.marketplaceRequestId) : encargo.marketplaceRequestId,
+    supplierPaymentId,
+    refundPaymentId,
   }
 }
 
@@ -268,5 +410,11 @@ export async function transitionEncargoTx(
 export async function transitionEncargo(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = transitionSchema.parse(raw)
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_STATUS", permission: "staff", payload: { id, ...input } },
-    tx => transitionEncargoTx(tx, { actorId, businessId, id, action: input.action, marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote }))
+    tx => transitionEncargoTx(tx, {
+      actorId, businessId, id, action: input.action,
+      marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote,
+      refundMethod: input.refundMethod, supplierId: input.supplierId,
+      supplierAmountCents: input.supplierAmountCents, supplierMethod: input.supplierMethod,
+      cashFromRegister: input.cashFromRegister,
+    }))
 }

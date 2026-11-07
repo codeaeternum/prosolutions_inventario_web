@@ -1,23 +1,62 @@
 import { NextResponse } from "next/server"
+import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, formatFolio, parseFolioDigits } from "@/lib/workshop-labels"
 import { orderTotalCents, orderHeldCents } from "@/lib/workshop-money"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 
-// Rastreo público de órdenes de reparación. Sin sesión: la identidad se prueba
-// con folio + últimos 4 dígitos del teléfono para no exponer datos a cualquiera
-// que adivine un folio consecutivo.
+// Rastreo público de órdenes de reparación. Sin sesión. Dos credenciales:
 //
-// Rate limit en memoria por IP (20 req/min). Es un proceso único: si el
-// despliegue escala a multi-instancia hace falta un limiter compartido.
+//   1. ?t=<trackingToken> — UUID por orden (RepairOrder.trackingToken). Es el
+//      link que se genera hoy (WhatsApp, QR del ticket, Telegram): basta solo.
+//   2. ?folio=<folio>&phone=<4 dígitos> — LEGACY para tickets ya impresos:
+//      credencial débil (folio secuencial × 10⁴ terminaciones) con rate limit
+//      más estricto. Ambas responden el MISMO 404 genérico para no revelar
+//      si el folio existe ni qué parte falló.
+//
+// Rate limit en memoria por IP (20 req/min token, 10 req/min legacy). Es un
+// proceso único: si el despliegue escala a multi-instancia hace falta un
+// limiter compartido.
 const WINDOW_MS = 60_000
 const MAX_ATTEMPTS = 20
+const LEGACY_MAX_ATTEMPTS = 10
 
 const NOT_FOUND = { error: "No encontramos una orden con esos datos." }
 const NO_STORE = { "Cache-Control": "no-store" } as const
 
 const onlyDigits = (value: string) => value.replace(/\D/g, "")
+
+// Misma proyección para ambos caminos: solo datos que el propio cliente ya
+// conoce o puede ver en mostrador. Ver la whitelist en la respuesta de abajo.
+const ORDER_INCLUDE: Prisma.RepairOrderInclude = {
+  currentBranch: { select: { name: true } },
+  events: {
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 100,
+    select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
+  },
+  // Evidencias: se sirven por /api/evidence?id= (cuid no adivinable).
+  photos: {
+    orderBy: { createdAt: "asc" },
+    select: { id: true, label: true, createdAt: true },
+  },
+  // Abonos que el cliente conoce (CONFIRMED) menos reembolsos
+  // (REFUNDED, amount negativo): lo retenido por el negocio, sirve
+  // para mostrar el saldo que restaría al recoger el equipo.
+  payments: {
+    where: { status: { in: ["CONFIRMED", "REFUNDED"] } },
+    select: { amount: true, status: true },
+  },
+  // Refacciones autorizadas: se cobran además de la mano de obra.
+  parts: {
+    where: { status: "APPROVED" },
+    select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true },
+  },
+  // Branding del negocio dueño de la orden (encabezado + CTA WhatsApp)
+  // e isActive: un tenant suspendido no sirve seguimiento.
+  business: { select: { name: true, phone: true, isActive: true } },
+}
 
 // El detalle de cada evento lo escribe el personal: antes de exponerlo se
 // eliminan montos (el presupuesto aún no es público), nombres internos y la
@@ -53,60 +92,52 @@ function publicIssue(raw: string): string {
 
 export async function GET(req: Request) {
   try {
-    if (!checkAndRecord("seguimiento", getClientIp(req), WINDOW_MS, MAX_ATTEMPTS)) {
+    const query = new URL(req.url).searchParams
+    // ?t= con exactamente 4 dígitos NO es token: es el prefill telefónico de
+    // los links legacy (la página lo manda como &phone=); cualquier otro valor
+    // se trata como trackingToken y su existencia la decide la base de datos.
+    const rawToken = (query.get("t") ?? "").trim()
+    const token = rawToken.length > 0 && !/^\d{4}$/.test(rawToken) ? rawToken : null
+
+    // Buckets separados: el path legacy (credencial enumerable) aguanta menos
+    // intentos por IP que el path de token (credencial de 122 bits).
+    if (!checkAndRecord(token ? "seguimiento" : "seguimiento-legacy", getClientIp(req), WINDOW_MS, token ? MAX_ATTEMPTS : LEGACY_MAX_ATTEMPTS)) {
       return NextResponse.json(
         { error: "Demasiadas consultas. Intenta de nuevo en un minuto." },
         { status: 429, headers: NO_STORE },
       )
     }
 
-    const query = new URL(req.url).searchParams
-    // Acepta "OT-000001", "PS-000001" (prefijo configurable con order_prefix),
-    // "000001" o "1": cualquier prefijo corto de letras/dígitos se ignora.
-    const folioMatch = /^(?:[A-Z0-9]{1,8}-)?0*(\d+)$/i.exec((query.get("folio") ?? "").trim())
-    const number = folioMatch ? Number(folioMatch[1]) : NaN
-    // Últimos 4 dígitos del teléfono registrado — obligatorio.
-    const phone4 = onlyDigits((query.get("phone") ?? "").trim())
+    let order
+    if (token) {
+      order = await prisma.repairOrder.findUnique({
+        where: { trackingToken: token },
+        include: ORDER_INCLUDE,
+      })
+    } else {
+      // Acepta "OT-000001", "PS-000001" (prefijo configurable con order_prefix),
+      // "000001" o "1": cualquier prefijo corto de letras/dígitos se ignora.
+      const folioMatch = /^(?:[A-Z0-9]{1,8}-)?0*(\d+)$/i.exec((query.get("folio") ?? "").trim())
+      const number = folioMatch ? Number(folioMatch[1]) : NaN
+      // Últimos 4 dígitos del teléfono registrado — obligatorio en el path legacy.
+      const phone4 = onlyDigits((query.get("phone") ?? "").trim())
 
-    if (!Number.isSafeInteger(number) || number > 2147483647 || !/^\d{4}$/.test(phone4)) {
-      return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
+      if (!Number.isSafeInteger(number) || number > 2147483647 || !/^\d{4}$/.test(phone4)) {
+        return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
+      }
+
+      const found = await prisma.repairOrder.findUnique({
+        where: { number },
+        include: ORDER_INCLUDE,
+      })
+      // El teléfono es medio secreto de la credencial legacy: si no coincide,
+      // se responde el mismo 404 que si el folio no existiera.
+      order = found && onlyDigits(found.customerPhone).endsWith(phone4) ? found : null
     }
 
-    const order = await prisma.repairOrder.findUnique({
-      where: { number },
-        include: {
-          currentBranch: { select: { name: true } },
-          events: {
-            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-            take: 100,
-            select: { id: true, type: true, detail: true, isPublic: true, createdAt: true },
-          },
-          // Evidencias: se sirven por /api/evidence?id= (cuid no adivinable).
-          photos: {
-            orderBy: { createdAt: "asc" },
-            select: { id: true, label: true, createdAt: true },
-          },
-          // Abonos que el cliente conoce (CONFIRMED) menos reembolsos
-          // (REFUNDED, amount negativo): lo retenido por el negocio, sirve
-          // para mostrar el saldo que restaría al recoger el equipo.
-          payments: {
-            where: { status: { in: ["CONFIRMED", "REFUNDED"] } },
-            select: { amount: true, status: true },
-          },
-          // Refacciones autorizadas: se cobran además de la mano de obra.
-          parts: {
-            where: { status: "APPROVED" },
-            select: { qty: true, unitCostCents: true, unitPriceCents: true, status: true },
-          },
-          // Branding del negocio dueño de la orden (encabezado + CTA WhatsApp)
-          // e isActive: un tenant suspendido no sirve seguimiento.
-          business: { select: { name: true, phone: true, isActive: true } },
-        },
-      })
-
-    // Respuesta genérica: no revelar si falló el folio, el teléfono o si el
-    // negocio está suspendido.
-    if (!order || !order.business.isActive || !onlyDigits(order.customerPhone).endsWith(phone4)) {
+    // Respuesta genérica: no revelar si falló el token, el folio, el teléfono
+    // o si el negocio está suspendido.
+    if (!order || !order.business.isActive) {
       return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
     }
 
@@ -127,8 +158,9 @@ export async function GET(req: Request) {
     // interna). Solo salen eventos isPublic: notas que el taller marcó para
     // el cliente y mensajes públicos del flujo (listo, aprobada, rechazada);
     // el resto es bitácora interna. quoteToken NUNCA sale por aquí: autoriza
-    // la cotización por sí solo y esta credencial es débil (folio + 4 dígitos)
-    // — el link de autorización llega al cliente por el WhatsApp del staff.
+    // la cotización por sí solo — el link de autorización llega al cliente por
+    // el WhatsApp del staff. Tampoco sale trackingToken (ya lo tiene quien
+    // consulta) ni uploadToken.
     return NextResponse.json(
       {
         order: {

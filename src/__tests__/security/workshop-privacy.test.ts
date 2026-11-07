@@ -306,6 +306,44 @@ describe("GET /api/seguimiento (timeline público)", () => {
     expect(json.order).not.toHaveProperty("quoteToken")
     expect(JSON.stringify(json)).not.toContain("token-secreto-cotizacion")
   })
+
+  it("?t=<trackingToken> resuelve por token sin pedir teléfono", async () => {
+    mocks.orderFindUnique.mockResolvedValue(order)
+    const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?t=9b0f4e2a-1111-4222-8333-abcdefghijkl", { headers: { "x-real-ip": nextIp() } }))
+    expect(res.status).toBe(200)
+    // El lookup fue por trackingToken, no por folio/teléfono.
+    const args = mocks.orderFindUnique.mock.calls[0][0] as { where?: Record<string, unknown> }
+    expect(args.where).toEqual({ trackingToken: "9b0f4e2a-1111-4222-8333-abcdefghijkl" })
+    const json = await res.json()
+    expect(json.order.folio).toBeTruthy()
+    expect(json.order.events).toHaveLength(1) // mismo whitelist isPublic
+  })
+
+  it("?t=<token desconocido> responde el MISMO 404 genérico que el legacy", async () => {
+    mocks.orderFindUnique.mockResolvedValue(null)
+    const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?t=token-que-no-existe", { headers: { "x-real-ip": nextIp() } }))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: "No encontramos una orden con esos datos." })
+  })
+
+  it("un t= de 4 dígitos NO es token: cae al path legacy y exige folio+phone", async () => {
+    // Los links viejos llevan ?t=<4 dígitos> como prefill; en la API ese
+    // valor solo no basta — sin folio+phone válidos es 404 genérico.
+    const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?t=1234", { headers: { "x-real-ip": nextIp() } }))
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: "No encontramos una orden con esos datos." })
+  })
+
+  it("el path legacy tiene rate limit más estricto (10/min) y no consume el bucket del token", async () => {
+    mocks.orderFindUnique.mockResolvedValue(order)
+    const ip = "10.77.0.99"
+    const legacy = () => seguimiento(new Request("https://app.invalid/api/seguimiento?folio=OT-000007&phone=1234", { headers: { "x-real-ip": ip } }))
+    for (let i = 0; i < 10; i++) expect((await legacy()).status).toBe(200)
+    expect((await legacy()).status).toBe(429)
+    // El path por token tiene su propio bucket (20/min): sigue respondiendo.
+    const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?t=9b0f4e2a-1111-4222-8333-abcdefghijkl", { headers: { "x-real-ip": ip } }))
+    expect(res.status).toBe(200)
+  })
 })
 
 describe("POST /api/cotizacion/[token]/approve", () => {

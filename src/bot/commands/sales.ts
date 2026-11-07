@@ -82,12 +82,19 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         }
     })
 
-    // cancel_sale action
+    // cancel_sale action — el mismo botón "❌ Cancelar" acompaña la venta,
+    // la confirmación de borrado y la selección de QR. Debe limpiar TODAS las
+    // sesiones pendientes: antes solo borraba sessions.sale y un "SI" o número
+    // posterior retomaba un deleteProduct en CONFIRM (archivaba el producto).
     bot.action('cancel_sale', async (ctx) => {
         const telegramId = ctx.from!.id.toString()
         delete sessions.sale[telegramId]
+        delete sessions.deleteProduct[telegramId]
+        delete sessions.qr[telegramId]
+        const cart = sessions.cart[telegramId]
+        if (cart) { cart.pendingAdd = undefined; cart.selecting = undefined }
         await ctx.answerCbQuery()
-        await ctx.editMessageText('❌ Venta cancelada.')
+        await ctx.editMessageText('❌ Operación cancelada.')
     })
 
     // confirm_sale action
@@ -240,6 +247,24 @@ Cantidad: 1
 /carrito - Ver carrito
 /agregarc <producto> - Agregar más
 /confirmarc - Confirmar venta`, { parse_mode: 'Markdown' })
+        }
+
+        // Cart multi-select (de /agregarc con >1 coincidencia): el número elige
+        // el producto y queda pendingAdd para la cantidad — nunca sale session.
+        if (cart?.selecting?.length) {
+            const options = cart.selecting
+            if (number < 1 || number > options.length) {
+                return ctx.reply(`Ingresa un número entre 1 y ${options.length}`)
+            }
+            const chosen = options[number - 1]
+            cart.selecting = undefined
+            cart.pendingAdd = { id: chosen.id, name: chosen.name, price: chosen.retailPrice, stock: chosen.stock }
+            return ctx.reply(`📦 *${escapeMarkdownV1(chosen.name)}*
+
+📊 Stock: ${chosen.stock} unidades
+💰 Precio: $${chosen.retailPrice.toLocaleString()}
+
+¿Cuántas unidades agregar? (escribe un número)`, { parse_mode: 'Markdown' })
         }
 
         // Sale session

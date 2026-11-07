@@ -928,6 +928,28 @@ describe("GET /api/seguimiento (folio + 4 dígitos del teléfono)", () => {
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: "No encontramos una orden con esos datos." })
   })
+
+  it("?t=<trackingToken> entrega el mismo DTO saneado, sin teléfono en la URL", async () => {
+    mocks.prisma.repairOrder.findUnique.mockResolvedValue({
+      number: 5, businessId: BIZ, status: "IN_REPAIR",
+      trackingToken: "tk-uuid-1",
+      customerPhone: "+52 8112345678", customerName: "Ana",
+      equipmentType: "Celular", brand: "Apple", model: "iPhone 15",
+      reportedIssue: "No enciende", serviceName: "Diagnóstico",
+      promisedAt: null, createdAt: new Date(),
+      quoteCents: 50000, approvedQuoteCents: null, diagnosticFeeCents: null,
+      closedWithoutRepair: false, warrantyUntil: null, quoteToken: "qtok",
+      currentBranch: { name: "Centro" },
+      events: [], photos: [], payments: [], parts: [],
+      business: { name: "Taller Uno", phone: "8122334455", isActive: true },
+    })
+    const res = await seguimientoGet(req("https://app.invalid/api/seguimiento?t=tk-uuid-1"))
+    const json = await res.json()
+    expect(res.status).toBe(200)
+    expect(mocks.prisma.repairOrder.findUnique.mock.calls[0][0].where).toEqual({ trackingToken: "tk-uuid-1" })
+    expectNoInternalKeys(json, ["customerPhone", "customerName", "quoteCents", "businessId", "parts", "quoteToken", "uploadToken", "trackingToken"])
+    expect(JSON.stringify(json)).not.toContain("8112345678")
+  })
 })
 
 /* ---------------- filtraciones corregidas ---------------- */

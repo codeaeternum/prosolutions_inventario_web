@@ -3,7 +3,7 @@ import { productDto, isCatalogStaff, catalogResponseHeaders, catalogVisibilityLe
 import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { getDefaultBusinessId } from "@/lib/settings"
+import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, releaseStock, takeStock } from "@/lib/domain/operations"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reservations"
@@ -49,7 +49,10 @@ export async function GET(
   try {
     const viewerSession = await auth()
     const viewer = viewerSession?.user
-    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
+    // Anónimo: tenant por ?biz=<slug> (o header x-tenant-slug); slug
+    // explícito inválido responde 404, no cae al default de otro negocio.
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await resolvePublicBusinessId(req)
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
     const { id } = await params
 
     // Misma regla de audiencia que el listado: un id directo de una pieza

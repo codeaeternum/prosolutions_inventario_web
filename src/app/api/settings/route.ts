@@ -4,7 +4,8 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, getDefaultBusinessId, setBusinessSetting } from "@/lib/settings"
+import { DEFAULT_SETTINGS as DEFAULTS, getBusinessSettingsMap, setBusinessSetting } from "@/lib/settings"
+import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { diffChanges, maskSensitiveChanges, recordAudit } from "@/lib/audit"
 
 const DEFAULT_SETTINGS = {
@@ -71,10 +72,13 @@ function parseFolioDigits(raw: string | undefined): number {
 // pantalla de configuración.
 // El GET es de solo lectura: si el negocio no tiene fila Settings todavía se
 // responde con los defaults sin crearla (un GET anónimo no debe escribir).
-export async function GET() {
+export async function GET(req?: Request) {
   try {
     const session = await auth()
-    const businessId = session ? businessIdOf(session) : await getDefaultBusinessId()
+    // Anónimo: ?biz=<slug> (o header x-tenant-slug) fija el tenant de la
+    // vitrina; slug explícito inválido → 404, no el default ajeno.
+    const businessId = session ? businessIdOf(session) : await resolvePublicBusinessId(req)
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
     const settings = await prisma.settings.findFirst({
       where: { businessId },
     })

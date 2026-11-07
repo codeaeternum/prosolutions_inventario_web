@@ -52,6 +52,10 @@ export async function GET() {
         customerName: true, customerPhone: true,
         equipmentType: true, brand: true, model: true, reportedIssue: true,
         createdAt: true, promisedAt: true,
+        // El aliado comparte el link de rastreo con SU cliente: necesita el
+        // token (solo lectura pública; sin él el link caería al formato
+        // enumerable folio+4 dígitos).
+        trackingToken: true,
       },
     })
     // El folio se imprime con el order_prefix y los dígitos del taller
@@ -83,6 +87,7 @@ export async function GET() {
         reportedIssue: order.reportedIssue,
         createdAt: order.createdAt,
         promisedAt: order.promisedAt,
+        trackingToken: order.trackingToken,
       })),
     }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }

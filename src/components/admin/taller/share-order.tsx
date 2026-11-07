@@ -30,9 +30,12 @@ function fetchPublicSlug(): Promise<string | undefined> {
   return publicSlugRequest
 }
 
-export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }: {
+export function ShareRepairOrder({ folio, phone, trackingToken, className, quote, publicSlug }: {
   folio: string
   phone?: string
+  /** Token UUID de rastreo (RepairOrder.trackingToken): el link público lo
+   *  lleva en ?t= en vez del folio + dígitos del teléfono. */
+  trackingToken?: string | null
   className?: string
   /** Slug público del negocio, si la página ya lo conoce; sin él se resuelve solo. */
   publicSlug?: string
@@ -51,13 +54,16 @@ export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }:
     return () => { active = false }
   }, [publicSlug])
 
-  // Los últimos 4 dígitos del teléfono viajan en ?t=: quien abre el link (o
-  // escanea el QR del ticket) encuentra el formulario casi listo para
-  // consultar, sin escribir nada.
+  // Los últimos 4 dígitos del teléfono viajaban en ?t= (credencial débil,
+  // enumerable). El link nuevo lleva el trackingToken UUID: quien lo abre
+  // consulta en 0 clics y el teléfono ya no se expone en la URL. El formato
+  // viejo queda como respaldo si la orden no trajera token.
   const phone4 = (phone ?? "").replace(/\D/g, "").slice(-4)
 
   const trackingUrl = () => {
-    const query = `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+    const query = trackingToken
+      ? `t=${encodeURIComponent(trackingToken)}`
+      : `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
     return `${window.location.origin}${slug ? `/${slug}/order-status` : "/seguimiento"}?${query}`
   }
 
@@ -65,7 +71,7 @@ export function ShareRepairOrder({ folio, phone, className, quote, publicSlug }:
     `${window.location.origin}${slug ? `/${slug}/cotizacion/${token}` : `/cotizacion/${token}`}`
 
   const message = () =>
-    `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en este link (ya lleva tus datos): ${trackingUrl()}`
+    `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en este link: ${trackingUrl()}`
 
   const mxn = (n: number) => n.toLocaleString("es-MX", { style: "currency", currency: "MXN" })
 

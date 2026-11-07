@@ -1,5 +1,6 @@
 import { changeReservation } from "../../lib/domain/reservations"
 import { moveInventory } from "../../lib/domain/inventory"
+import { resolveBranch } from "../../lib/domain/operations"
 import { randomUUID } from "crypto"
 import { Markup } from 'telegraf'
 import type { InlineKeyboardButton } from 'telegraf/types'
@@ -40,16 +41,17 @@ export function registerReports({ bot, prisma }: BotContext) {
             })
             if (!adminUser) return ctx.reply('Cuenta no disponible.')
 
-            // El stock ahora vive por sucursal: /stock fija la existencia de la
-            // sucursal del administrador (o la principal) mediante un ajuste.
-            const branchId = adminUser.homeBranchId ?? 'branch-principal'
-            const branch = await prisma.branch.findUnique({ where: { id: branchId } })
-            if (!branch) return ctx.reply('❌ Sucursal no disponible.')
-            const current = await prisma.branchStock.findUnique({
-                where: { productId_branchId: { productId, branchId: branch.id } }
-            })
+            // El producto se valida ANTES de tocar sucursal/existencias, y
+            // siempre dentro del negocio del admin (multi-tenant).
             const product = await prisma.product.findUnique({ where: { id: productId, businessId: adminUser.businessId }, select: { id: true, name: true, stock: true } })
             if (!product) return ctx.reply('❌ Producto no encontrado.')
+            // El stock vive por sucursal: se ajusta la homeBranchId del admin;
+            // sin ella, la principal activa o la más antigua activa DEL MISMO
+            // NEGOCIO — nunca el id global 'branch-principal' de otro tenant.
+            const branch = await resolveBranch(prisma, adminUser.homeBranchId, adminUser.businessId)
+            const current = await prisma.branchStock.findUnique({
+                where: { productId_branchId: { productId, branchId: branch.id }, businessId: adminUser.businessId }
+            })
             const diff = newStock - (current?.quantity ?? 0)
             if (diff === 0) return ctx.reply(`ℹ️ ${product.name} ya tiene ${newStock} en ${branch.name}.`)
             const result = await moveInventory(prisma, adminUser.id, adminUser.businessId, {
@@ -390,9 +392,11 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
                     buttons.push(Markup.button.callback('❌ Cancelar', `cancel_res_${r.id}`))
                 }
 
+                // inline_keyboard vacío → Telegram 400. Sin botones se omite
+                // el markup por completo.
                 await ctx.reply(msg, {
                     parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([buttons])
+                    ...(buttons.length ? Markup.inlineKeyboard([buttons]) : {})
                 })
             }
         } catch (e) {
@@ -449,14 +453,25 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
         try {
             const actor = await getBotAccount(prisma, ctx.from!.id.toString())
             if (!actor) return ctx.reply('Cuenta no disponible.')
-            const reservation = await prisma.reservation.findFirst({
+            // El prefijo puede coincidir con varias reservas: entregar la
+            // primera coincidencia era un riesgo de entregar la equivocada.
+            const matches = await prisma.reservation.findMany({
                 where: { businessId: actor.businessId, id: { startsWith: reservationIdStart } },
-                include: { user: true, product: true }
+                include: { user: true, product: true },
+                orderBy: { createdAt: 'desc' },
+                take: 6
             })
 
-            if (!reservation) {
+            if (matches.length === 0) {
                 return ctx.reply('❌ No encontré ninguna reserva con ese ID.')
             }
+
+            if (matches.length > 1) {
+                const list = matches.map(r => `\`${r.id.substring(0, 12)}\` — ${r.status}`).join('\n')
+                return ctx.reply(`⚠️ *Prefijo ambiguo:* ${matches.length} reservas empiezan por "${escapeMarkdownV1(reservationIdStart)}".\n\n${list}\n\nEscribe más dígitos del ID para desambiguar.`, { parse_mode: 'Markdown' })
+            }
+
+            const reservation = matches[0]
 
             if (reservation.status === 'COMPLETED') {
                 return ctx.reply('⚠️ Esta reserva ya fue entregada anteriormente.')

@@ -42,6 +42,22 @@ describe("convenioTotals", () => {
     ])
     expect(totals).toEqual({ pendingCents: 4000, settledCents: 0, unpricedPending: 1 })
   })
+
+  it("lo saldado usa el monto congelado: editar el precio después no reescribe el histórico", () => {
+    const totals = convenioTotals([
+      // Se liquidó a 7000 y luego el precio convenio subió a 12000:
+      // lo saldado sigue siendo 7000 (snapshot), no lo que diga el precio hoy.
+      row({ partnerPriceCents: 12000, convenioSettledAt: new Date(), convenioSettledAmountCents: 7000 }),
+    ])
+    expect(totals.settledCents).toBe(7000)
+  })
+
+  it("una saldada sin snapshot (legacy) cae al precio convenio actual", () => {
+    const totals = convenioTotals([
+      row({ partnerPriceCents: 9000, convenioSettledAt: new Date(), convenioSettledAmountCents: null }),
+    ])
+    expect(totals.settledCents).toBe(9000)
+  })
 })
 
 describe("isConvenioChargeable", () => {
@@ -57,13 +73,14 @@ describe("isConvenioChargeable", () => {
 const tx = {
   user: { findUnique: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-  repairOrder: { findFirst: vi.fn(), update: vi.fn() },
+  repairOrder: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   repairEvent: { create: vi.fn() },
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
 const convenioOrder = (over: Record<string, unknown> = {}) => ({
-  id: "o1", businessId: BIZ, convenioSettledAt: null,
+  id: "o1", businessId: BIZ, convenioSettledAt: null, convenioSettledAmountCents: null,
+  partnerPriceCents: null,
   delegatedOrderId: "m1", originBusinessId: null, delegatedFromOrderId: null,
   ...over,
 })
@@ -76,6 +93,8 @@ beforeEach(() => {
   tx.businessOperation.create.mockResolvedValue({ id: "op-1" })
   tx.businessOperation.update.mockResolvedValue({})
   tx.repairOrder.findFirst.mockResolvedValue(convenioOrder())
+  // La espejo del lado "pagar": el precio convenio se lee de ella por id.
+  tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000 })
   tx.repairOrder.update.mockResolvedValue({})
   tx.repairEvent.create.mockResolvedValue({})
 })
@@ -95,6 +114,21 @@ describe("settleConvenio", () => {
     expect(event.data.detail).toContain("pago al taller asociado")
   })
 
+  it("al saldar congela el monto: lado pagar toma el precio de la espejo", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000 })
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
+    expect(result.convenioSettledAmountCents).toBe(35000)
+    // La espejo se lee solo por id (cross-tenant acotado, como convenioReport).
+    expect(tx.repairOrder.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "m1" },
+    }))
+    expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ convenioSettledAmountCents: 35000 }),
+    }))
+    const event = tx.repairEvent.create.mock.calls[0][0] as { data: { detail: string } }
+    expect(event.data.detail).toContain("350.00 MXN")
+  })
+
   it("el lado reparador (espejo) registra el pago del captador", async () => {
     tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessId: "biz-cap" }))
     const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
@@ -103,12 +137,32 @@ describe("settleConvenio", () => {
     expect(event.data.detail).toContain("pago del negocio captador")
   })
 
-  it("reabrir pone convenioSettledAt en null", async () => {
-    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ convenioSettledAt: new Date() }))
+  it("el lado cobrar congela su propio partnerPriceCents sin leer espejos", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessId: "biz-cap", partnerPriceCents: 42000 }))
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
+    expect(result.convenioSettledAmountCents).toBe(42000)
+    expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ convenioSettledAmountCents: 42000 }),
+    }))
+    // El precio es el propio: no hay lectura cross-tenant.
+    expect(tx.repairOrder.findUnique).not.toHaveBeenCalled()
+  })
+
+  it("saldar una cuenta sin precio convenio congela null", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: null })
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
+    expect(result.convenioSettledAmountCents).toBeNull()
+    expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ convenioSettledAmountCents: null }),
+    }))
+  })
+
+  it("reabrir pone convenioSettledAt y el monto congelado en null", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ convenioSettledAt: new Date(), convenioSettledAmountCents: 35000 }))
     const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: false })
     expect(result.convenioSettledAt).toBeNull()
     expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ convenioSettledAt: null }),
+      data: expect.objectContaining({ convenioSettledAt: null, convenioSettledAmountCents: null }),
     }))
   })
 
@@ -212,6 +266,21 @@ describe("convenioReport", () => {
     })
     const report = await convenioReport(db, BIZ)
     expect(report.porPagar.totals).toEqual({ pendingCents: 35000, settledCents: 20000, unpricedPending: 0 })
+  })
+
+  it("el reporte lleva el monto congelado y los totales saldados lo usan", async () => {
+    const db = fakeDb({
+      outgoing: [{ ...outgoingRow, convenioSettledAt: new Date(), convenioSettledAmountCents: 30000 }],
+      incoming: [{ ...incomingRow, convenioSettledAt: new Date(), convenioSettledAmountCents: 42000, partnerPriceCents: 60000 }],
+      mirrors: [{ id: "m1", number: 12, businessId: "biz-rep", status: "DELIVERED", partnerPriceCents: 50000 }],
+    })
+    const report = await convenioReport(db, BIZ)
+    // Aunque el precio convenio cambió después de liquidar (50000/60000
+    // hoy), lo saldado se queda en lo que se congeló al pagar.
+    expect(report.porPagar.rows[0].convenioSettledAmountCents).toBe(30000)
+    expect(report.porPagar.totals.settledCents).toBe(30000)
+    expect(report.porCobrar.rows[0].convenioSettledAmountCents).toBe(42000)
+    expect(report.porCobrar.totals.settledCents).toBe(42000)
   })
 
   it("espejo sin precio convenio marca unpricedPending y fila sin monto", async () => {

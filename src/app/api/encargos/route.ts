@@ -49,7 +49,9 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/encargos — alta de encargo { description, quantity?, deposit?,
-// customerId?, productId?, branchId?, supplierNote?, idempotencyKey }.
+// depositMethod?, customerId?, productId?, branchId?, supplierNote?,
+// idempotencyKey }. Con anticipo > 0 asienta su Payment — y la entrada a
+// caja cuando es efectivo.
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireModule("inventario")

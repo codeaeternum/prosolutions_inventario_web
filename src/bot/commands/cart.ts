@@ -86,6 +86,7 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
 
             if (products.length === 1) {
                 const p = products[0]
+                sessions.cart[telegramId].selecting = undefined
                 sessions.cart[telegramId].pendingAdd = { id: p.id, name: p.name, price: p.retailPrice, stock: p.stock }
                 return ctx.reply(`📦 *${escapeMarkdownV1(products[0].name)}*
 
@@ -95,8 +96,12 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
 ¿Cuántas unidades agregar? (escribe un número)`, { parse_mode: 'Markdown' })
             }
 
+            // Multi-match: paso propio del carrito (sessions.cart.selecting).
+            // Antes se reutilizaba sessions.sale[SELECT_PRODUCT] y el número
+            // que elegía el producto lo procesaba el hears de sales.ts como
+            // VENTA — descontaba stock sin pasar por el carrito.
             sessions.cart[telegramId].pendingAdd = undefined
-            sessions.sale[telegramId] = { step: 'SELECT_PRODUCT', products }
+            sessions.cart[telegramId].selecting = products
 
             const productList = products.map((p: { name: string; stock: number; retailPrice: number }, i: number) =>
                 `${i + 1}. *${escapeMarkdownV1(p.name)}*\n   Stock: ${p.stock} | $${p.retailPrice.toLocaleString()}`

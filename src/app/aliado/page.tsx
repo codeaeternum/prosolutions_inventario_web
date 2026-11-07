@@ -34,6 +34,8 @@ type PartnerOrder = {
   reportedIssue: string
   createdAt: string
   promisedAt: string | null
+  // Credencial UUID del rastreo público (la comparte el aliado con su cliente).
+  trackingToken?: string | null
 }
 
 type LastCapturedOrder = {
@@ -42,6 +44,7 @@ type LastCapturedOrder = {
   customerPhone: string
   equipment: string
   reportedIssue: string
+  trackingToken?: string | null
 }
 
 type StatusFilter = "all" | "active" | "attention" | "closed"
@@ -66,18 +69,22 @@ function phoneLast4(phone: string): string {
   return phone.replace(/\D/g, "").slice(-4)
 }
 
-function buildTrackingPath(folio: string, customerPhone: string): string {
+// El link nuevo lleva el trackingToken (?t=<uuid>) y ya no expone el
+// teléfono del cliente en la URL; el formato folio + últimos 4 dígitos queda
+// como respaldo para órdenes sin token.
+function buildTrackingPath(folio: string, customerPhone: string, trackingToken?: string | null): string {
+  if (trackingToken) return `/seguimiento?t=${encodeURIComponent(trackingToken)}`
   const phone4 = phoneLast4(customerPhone)
   return `/seguimiento?folio=${encodeURIComponent(folio)}&t=${phone4}`
 }
 
-function buildTrackingUrl(folio: string, customerPhone: string): string {
+function buildTrackingUrl(folio: string, customerPhone: string, trackingToken?: string | null): string {
   const origin = typeof window !== "undefined" ? window.location.origin : ""
-  return `${origin}${buildTrackingPath(folio, customerPhone)}`
+  return `${origin}${buildTrackingPath(folio, customerPhone, trackingToken)}`
 }
 
 function buildCapturedWhatsAppHref(captured: LastCapturedOrder): string {
-  const trackingUrl = buildTrackingUrl(captured.folio, captured.customerPhone)
+  const trackingUrl = buildTrackingUrl(captured.folio, captured.customerPhone, captured.trackingToken)
   const message = [
     `Hola ${captured.customerName}, recibimos tu equipo (${captured.equipment}) para revisión y reparación.`,
     `Folio: ${captured.folio}`,
@@ -89,7 +96,7 @@ function buildCapturedWhatsAppHref(captured: LastCapturedOrder): string {
 
 function buildOrderWhatsAppHref(order: PartnerOrder): string {
   const equipment = [order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")
-  const trackingUrl = buildTrackingUrl(order.folio, order.customerPhone)
+  const trackingUrl = buildTrackingUrl(order.folio, order.customerPhone, order.trackingToken)
   const message = `Hola ${order.customerName}, te compartimos el seguimiento de tu equipo ${equipment} (folio ${order.folio} · ${order.statusLabel}). Consulta el avance en 1 toque: ${trackingUrl}`
   return waLink(order.customerPhone, message)
 }
@@ -179,8 +186,8 @@ export default function AliadoPage() {
 
   const update = (changes: Partial<typeof emptyForm>) => setForm(previous => ({ ...previous, ...changes }))
 
-  async function copyTrackingUrl(folio: string, customerPhone: string) {
-    const url = buildTrackingUrl(folio, customerPhone)
+  async function copyTrackingUrl(folio: string, customerPhone: string, trackingToken?: string | null) {
+    const url = buildTrackingUrl(folio, customerPhone, trackingToken)
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url)
@@ -252,6 +259,7 @@ export default function AliadoPage() {
         customerPhone,
         equipment: [form.equipmentType, brand, model].filter(Boolean).join(" · "),
         reportedIssue,
+        trackingToken: data?.order?.trackingToken ?? null,
       })
       setCopiedLink(false)
       setForm(emptyForm)
@@ -351,12 +359,12 @@ export default function AliadoPage() {
             <div className="rounded-md border border-primary/20 bg-background/80 px-3 py-2 text-xs">
               <span className="font-medium text-muted-foreground">Seguimiento público: </span>
               <a
-                href={buildTrackingPath(lastCaptured.folio, lastCaptured.customerPhone)}
+                href={buildTrackingPath(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="break-all font-mono text-primary underline-offset-4 hover:underline"
               >
-                {buildTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone)}
+                {buildTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)}
               </a>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -374,7 +382,7 @@ export default function AliadoPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => void copyTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone)}
+                onClick={() => void copyTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)}
               >
                 {copiedLink ? (
                   <>
@@ -582,7 +590,7 @@ export default function AliadoPage() {
                   </Button>
                   <Button asChild variant="ghost" size="sm" className="h-7 px-2.5 text-xs">
                     <a
-                      href={buildTrackingPath(order.folio, order.customerPhone)}
+                      href={buildTrackingPath(order.folio, order.customerPhone, order.trackingToken)}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

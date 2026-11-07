@@ -5,7 +5,7 @@ import { linkCustomerByPhone } from "./customers"
 import { syncLowStockAlerts } from "../low-stock"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderTotalCents } from "../workshop-money"
-import { newQuoteToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
+import { newQuoteToken, newTrackingToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
@@ -133,7 +133,10 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // omitir las firmas (~300 KB en base64) y el desbloqueo cifrado evita
     // duplicar datos pesados/sensibles que nadie consume de esta respuesta —
     // la ficha los sirve aparte con ?signatures=1 / ?reveal=1.
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), quoteToken: newQuoteToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
+    // trackingToken: credencial UUID para el rastreo público — el link que se
+    // comparte ya no lleva folio + dígitos del teléfono (enumerable). No rota
+    // al entregar a propósito: el cliente puede revisar su historial después.
+    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), quoteToken: newQuoteToken(), trackingToken: newTrackingToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Sin firma digital capturada, el evento asienta la forma alternativa de
     // confirmación configurada: "pin" = terminación telefónica (el pin nunca
     // se persiste); "ticket" = firma en el comprobante impreso.

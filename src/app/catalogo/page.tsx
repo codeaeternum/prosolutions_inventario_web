@@ -1,10 +1,10 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import Image from "next/image"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   Search,
   Filter,
@@ -76,9 +76,27 @@ type ProductWithDetails = Omit<Product, "wholesalePrice" | "minStock"> & {
   category: { name: string }
 }
 
+// useSearchParams exige un boundary de Suspense en build/prerender.
 export default function CatalogoPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <CatalogoView />
+    </Suspense>
+  )
+}
+
+function CatalogoView() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Vitrina de origen (?biz=<slug>): el catálogo, los filtros y el registro
+  // se resuelven contra ESE negocio en la API; sin el param sigue el default.
+  const biz = searchParams.get("biz")?.trim() || null
+  const bizQuery = biz ? `biz=${encodeURIComponent(biz)}` : ""
   const { formatPrice } = useCurrency()
   const { addItem, totalItems } = useCart()
 
@@ -125,8 +143,8 @@ export default function CatalogoPage() {
     const loadFilters = async () => {
       try {
         const responses = await Promise.all([
-          fetch("/api/brands", { signal: controller.signal }),
-          fetch("/api/categories", { signal: controller.signal }),
+          fetch(`/api/brands${bizQuery ? `?${bizQuery}` : ""}`, { signal: controller.signal }),
+          fetch(`/api/categories${bizQuery ? `?${bizQuery}` : ""}`, { signal: controller.signal }),
         ])
         if (responses.some((response) => !response.ok)) throw new Error("No se pudieron cargar los filtros")
         const [brandList, categoryList] = await Promise.all(responses.map((response) => response.json()))
@@ -141,14 +159,14 @@ export default function CatalogoPage() {
     }
     void loadFilters()
     return () => controller.abort()
-  }, [reload])
+  }, [reload, bizQuery])
 
   useEffect(() => {
     if (!selectedBrand) return
     const controller = new AbortController()
     const loadModels = async () => {
       try {
-        const res = await fetch(`/api/models?brandId=${encodeURIComponent(selectedBrand)}`, { signal: controller.signal })
+        const res = await fetch(`/api/models?brandId=${encodeURIComponent(selectedBrand)}${bizQuery ? `&${bizQuery}` : ""}`, { signal: controller.signal })
         if (!res.ok) throw new Error("No se pudieron cargar los modelos")
         const data = await res.json()
         if (!Array.isArray(data)) throw new Error("Respuesta de modelos no válida")
@@ -159,7 +177,7 @@ export default function CatalogoPage() {
     }
     void loadModels()
     return () => controller.abort()
-  }, [selectedBrand, reload])
+  }, [selectedBrand, reload, bizQuery])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -172,6 +190,7 @@ export default function CatalogoPage() {
         if (selectedBrand) params.set("brandId", selectedBrand)
         if (selectedModel) params.set("modelId", selectedModel)
         if (selectedCategory) params.set("categoryId", selectedCategory)
+        if (biz) params.set("biz", biz)
         const res = await fetch(`/api/products?${params}`, { signal: controller.signal })
         if (!res.ok) throw new Error("No se pudo cargar el catálogo")
         const data = await res.json()
@@ -190,7 +209,7 @@ export default function CatalogoPage() {
     }
     const debounce = setTimeout(loadProducts, 300)
     return () => { clearTimeout(debounce); controller.abort() }
-  }, [search, selectedBrand, selectedModel, selectedCategory, page, reload, session?.user?.id, session?.user?.customerType])
+  }, [search, selectedBrand, selectedModel, selectedCategory, page, reload, biz, session?.user?.id, session?.user?.customerType])
 
   const changeSearch = (value: string) => { setSearch(value); setPage(1) }
   const changeCategory = (value: string | null) => { setSelectedCategory(value); setPage(1) }
@@ -312,7 +331,7 @@ export default function CatalogoPage() {
     // Check if user is logged in
     if (!session) {
       toast.error("Inicia sesión para agregar productos al carrito")
-      router.push("/login?callbackUrl=/catalogo")
+      router.push(`/login?callbackUrl=${encodeURIComponent(`/catalogo${bizQuery ? `?${bizQuery}` : ""}`)}`)
       return
     }
     // Check if user is approved
@@ -523,7 +542,7 @@ export default function CatalogoPage() {
             {/* Cart - always visible */}
             <Button variant="ghost" size="icon" asChild className="relative">
               <Link
-                href="/carrito"
+                href={`/carrito${bizQuery ? `?${bizQuery}` : ""}`}
                 aria-label={totalItems > 0 ? `Carrito (${totalItems} producto${totalItems !== 1 ? "s" : ""})` : "Carrito"}
                 title="Carrito"
               >
@@ -566,7 +585,7 @@ export default function CatalogoPage() {
                   </Link>
                 </Button>
                 <Button size="sm" asChild className="hidden sm:flex">
-                  <Link href="/register">
+                  <Link href={`/register${bizQuery ? `?${bizQuery}` : ""}`}>
                     <UserPlus className="h-4 w-4 mr-1" />
                     Registrarse
                   </Link>

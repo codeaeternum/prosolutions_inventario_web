@@ -39,7 +39,7 @@ async function notifyCustomerRepairReady(
 // cliente (una sola vez), avisa al staff conectado (SSE de admins), envía el
 // Telegram del cliente si tiene cuenta ligada y arma el enlace de WhatsApp
 // para que el front ofrezca notificar al cliente.
-async function readySideEffects(order: { id: string; number: number; status: string; customerName: string; customerPhone: string; customerId: string | null; equipmentType: string; brand: string | null; model: string | null; businessId: string }, actorId: string) {
+async function readySideEffects(order: { id: string; number: number; status: string; customerName: string; customerPhone: string; customerId: string | null; equipmentType: string; brand: string | null; model: string | null; businessId: string; trackingToken?: string | null }, actorId: string) {
   if (order.status !== "READY") return {}
   const exists = await prisma.repairEvent.findFirst({
     where: { orderId: order.id, isPublic: true, detail: READY_PUBLIC_MESSAGE },
@@ -50,9 +50,13 @@ async function readySideEffects(order: { id: string; number: number; status: str
   const digits = order.customerPhone.replace(/\D/g, "")
   // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
   const phone = digits.length === 10 ? `52${digits}` : digits
-  // El link lleva folio + últimos 4 dígitos (?t=): el cliente no teclea nada.
+  // El link lleva el trackingToken (?t=<uuid>): el cliente no teclea nada y el
+  // teléfono ya no viaja en la URL. El formato folio + 4 dígitos queda solo
+  // como respaldo si la orden no tuviera token (filas previas a la migración).
   const phone4 = digits.slice(-4)
-  const tracking = `${base}/seguimiento?folio=${folio}${phone4 ? `&t=${phone4}` : ""}`
+  const tracking = order.trackingToken
+    ? `${base}/seguimiento?t=${order.trackingToken}`
+    : `${base}/seguimiento?folio=${folio}${phone4 ? `&t=${phone4}` : ""}`
   if (!exists) {
     await prisma.repairEvent.create({
       data: { businessId: order.businessId, actorId, orderId: order.id, type: "NOTE", detail: READY_PUBLIC_MESSAGE, isPublic: true },

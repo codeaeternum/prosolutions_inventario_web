@@ -113,13 +113,15 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
     }
 
     /** Link público de rastreo (/<slug>/order-status; /seguimiento como
-     *  fallback), con los últimos 4 dígitos del teléfono prellenados — igual
-     *  que el botón "Compartir" de la ficha web. */
-    async function trackingUrl(businessId: string, folio: string, phone: string): Promise<string> {
+     *  fallback). Con trackingToken va ?t=<uuid> — sin teléfono en la URL;
+     *  el formato folio + últimos 4 dígitos queda solo si la orden no
+     *  trajera token (filas anteriores a la credencial UUID). */
+    async function trackingUrl(businessId: string, folio: string, phone: string, trackingToken?: string | null): Promise<string> {
         const business = await prisma.business.findUnique({ where: { id: businessId }, select: { slug: true } }).catch(() => null)
-        const phone4 = phone.replace(/\D/g, '').slice(-4)
         const base = (process.env.NEXTAUTH_URL || 'https://reficio.app').replace(/\/+$/, '')
         const path = business?.slug ? `/${business.slug}/order-status` : '/seguimiento'
+        if (trackingToken) return `${base}${path}?t=${encodeURIComponent(trackingToken)}`
+        const phone4 = phone.replace(/\D/g, '').slice(-4)
         return `${base}${path}?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ''}`
     }
 
@@ -380,7 +382,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             delete sessions.orden[telegramId]
 
             const folio = await folioOf(user.businessId, order.number)
-            const track = await trackingUrl(user.businessId, folio, data.customerPhone!)
+            const track = await trackingUrl(user.businessId, folio, data.customerPhone!, order.trackingToken)
 
             // El botón de delegación solo se ofrece a un ADMIN — el dominio
             // (delegateRepairToPartner → actor "admin") y la ruta /delegar lo

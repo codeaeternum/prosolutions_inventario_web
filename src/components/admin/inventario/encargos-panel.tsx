@@ -212,9 +212,19 @@ export function EncargosPanel() {
     const [encDescription, setEncDescription] = useState("")
     const [encQuantity, setEncQuantity] = useState("1")
     const [encDeposit, setEncDeposit] = useState("")
+    const [encDepositMethod, setEncDepositMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH")
     const [encPrice, setEncPrice] = useState("")
     const [encSupplierNote, setEncSupplierNote] = useState("")
     const [encBranchId, setEncBranchId] = useState("")
+
+    // Pago al proveedor al pedir la pieza (admin): abre una caja inline en el
+    // encargo y manda los campos del abono en el PATCH de ORDERED — el
+    // servidor lo asienta como SupplierPayment ligado al encargo.
+    const [payBoxFor, setPayBoxFor] = useState<string | null>(null)
+    const [paySupplierId, setPaySupplierId] = useState("none")
+    const [payAmount, setPayAmount] = useState("")
+    const [payMethod, setPayMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH")
+    const [payFromRegister, setPayFromRegister] = useState(false)
     const [customer, setCustomer] = useState<CustomerHit | null>(null)
     const [customerTerm, setCustomerTerm] = useState("")
     const [customerHits, setCustomerHits] = useState<CustomerHit[]>([])
@@ -360,6 +370,9 @@ export function EncargosPanel() {
             description: encDescription.trim(),
             quantity: Number.isInteger(qty) ? qty : NaN,
             deposit,
+            // El medio solo viaja cuando hay anticipo; el servidor asienta el
+            // Payment y, en efectivo, su entrada a caja.
+            ...(deposit > 0 ? { depositMethod: encDepositMethod } : {}),
             priceQuoted,
             customerId: customer?.id,
             productId: productPick?.id,
@@ -396,7 +409,7 @@ export function EncargosPanel() {
     }
 
     const resetEncargoForm = () => {
-        setEncDescription(""); setEncQuantity("1"); setEncDeposit(""); setEncPrice(""); setEncSupplierNote("")
+        setEncDescription(""); setEncQuantity("1"); setEncDeposit(""); setEncDepositMethod("CASH"); setEncPrice(""); setEncSupplierNote("")
         setCustomer(null); setCustomerTerm(""); setProductPick(null); setProductTerm("")
     }
 
@@ -484,18 +497,24 @@ export function EncargosPanel() {
         }
     }
 
-    const markEncargo = async (item: EncargoRow, action: "ORDERED" | "READY" | "DELIVERED" | "CANCELLED") => {
+    const markEncargo = async (item: EncargoRow, action: "ORDERED" | "READY" | "DELIVERED" | "CANCELLED", extra: Record<string, unknown> = {}) => {
         if (busy) return
         setBusy(true)
         setPendingKey(`${item.id}:${action}`)
         try {
-            await transitionEncargo(item, action)
+            const data = await transitionEncargo(item, action, extra)
             toast.success(
                 action === "ORDERED" ? "Encargo marcado como pedida"
                     : action === "READY" ? "Pieza recibida: el encargo está listo para entregar"
                         : action === "DELIVERED" ? "Encargo entregado al cliente"
                             : "Encargo cancelado",
+                action === "ORDERED" && data?.supplierPaymentId
+                    ? { description: "El pago al proveedor quedó registrado." }
+                    : action === "CANCELLED" && data?.refundPaymentId
+                        ? { description: "El anticipo del cliente quedó devuelto." }
+                        : undefined,
             )
+            if (payBoxFor === item.id) setPayBoxFor(null)
             await fetchEncargos()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")
@@ -503,6 +522,21 @@ export function EncargosPanel() {
             setBusy(false)
             setPendingKey(null)
         }
+    }
+
+    /** "Pedir y pagar al proveedor" (admin): misma transición ORDERED pero
+     *  llevando el abono — el servidor lo asienta como SupplierPayment. */
+    const orderWithSupplierPayment = async (item: EncargoRow) => {
+        const amount = parseFloat(payAmount)
+        if (paySupplierId === "none") { toast.error("Selecciona el proveedor que cobra"); return }
+        if (!Number.isFinite(amount) || amount <= 0) { toast.error("Indica el monto pagado al proveedor"); return }
+        if (Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) { toast.error("El monto admite hasta dos decimales"); return }
+        await markEncargo(item, "ORDERED", {
+            supplierId: paySupplierId,
+            supplierAmountCents: Math.round(amount * 100),
+            supplierMethod: payMethod,
+            cashFromRegister: payFromRegister,
+        })
     }
 
     // "Avisar": un toque abre WhatsApp con el aviso de pieza lista. Solo se
@@ -736,7 +770,7 @@ export function EncargosPanel() {
                 <CardContent className="space-y-5">
                     {/* Alta de encargo */}
                     <form onSubmit={e => void submitEncargo(e)} className="space-y-3 rounded-lg border p-3">
-                        <div className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem_9rem]">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_6rem_8rem_9rem_9rem]">
                             <div className="space-y-2">
                                 <Label htmlFor="enc-desc">Qué pieza busca *</Label>
                                 <Input
@@ -758,6 +792,22 @@ export function EncargosPanel() {
                             <div className="space-y-2">
                                 <Label htmlFor="enc-deposit">Anticipo $</Label>
                                 <Input id="enc-deposit" type="number" min="0" step="0.01" placeholder="0.00" value={encDeposit} onChange={e => setEncDeposit(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label id="enc-deposit-method-label">Medio anticipo</Label>
+                                <Select
+                                    value={encDepositMethod}
+                                    onValueChange={v => setEncDepositMethod(v as "CASH" | "CARD" | "TRANSFER")}
+                                >
+                                    <SelectTrigger aria-labelledby="enc-deposit-method-label" disabled={!(parseFloat(encDeposit) > 0)}>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="CASH">Efectivo</SelectItem>
+                                        <SelectItem value="CARD">Tarjeta</SelectItem>
+                                        <SelectItem value="TRANSFER">Transferencia</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
 
@@ -1017,6 +1067,58 @@ export function EncargosPanel() {
                                             </div>
                                         )}
 
+                                        {/* Pago al proveedor al pedir la pieza (solo admin asienta salidas) */}
+                                        {payBoxFor === item.id && item.status === "PENDING" && (
+                                            <div className="rounded-lg border border-dashed p-3 space-y-3">
+                                                <p className="text-xs font-medium text-muted-foreground">
+                                                    Pago al proveedor al marcar la pieza como pedida
+                                                </p>
+                                                <div className="grid gap-2 sm:grid-cols-[1fr_8rem_9rem]">
+                                                    <Select value={paySupplierId} onValueChange={setPaySupplierId}>
+                                                        <SelectTrigger aria-label="Proveedor que cobra">
+                                                            <SelectValue placeholder="Proveedor" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {suppliers.map(s => (
+                                                                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                    <Input
+                                                        type="number" min="0" step="0.01" placeholder="Monto $"
+                                                        value={payAmount} onChange={e => setPayAmount(e.target.value)}
+                                                        aria-label="Monto pagado al proveedor"
+                                                    />
+                                                    <Select value={payMethod} onValueChange={v => setPayMethod(v as "CASH" | "CARD" | "TRANSFER")}>
+                                                        <SelectTrigger aria-label="Método del pago al proveedor">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="CASH">Efectivo</SelectItem>
+                                                            <SelectItem value="CARD">Tarjeta</SelectItem>
+                                                            <SelectItem value="TRANSFER">Transferencia</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                    <Checkbox
+                                                        checked={payFromRegister}
+                                                        onCheckedChange={v => setPayFromRegister(v === true)}
+                                                        disabled={payMethod !== "CASH"}
+                                                    />
+                                                    El efectivo sale de la caja de mi sucursal (queda en el corte)
+                                                </label>
+                                                <div className="flex gap-2">
+                                                    <Button size="sm" disabled={busy} onClick={() => void orderWithSupplierPayment(item)}>
+                                                        {pendingIcon(`${item.id}:ORDERED`, ShoppingCart)} Pedir y registrar pago
+                                                    </Button>
+                                                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => setPayBoxFor(null)}>
+                                                        Cerrar
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* Siguiente paso del flujo como acción principal; cancelar queda discreto. */}
                                         <div className="flex flex-wrap gap-2">
                                             {item.status === "PENDING" && (
@@ -1024,6 +1126,21 @@ export function EncargosPanel() {
                                                     <Button size="sm" disabled={busy} onClick={() => void markEncargo(item, "ORDERED")}>
                                                         {pendingIcon(`${item.id}:ORDERED`, ShoppingCart)} Pedida al proveedor
                                                     </Button>
+                                                    {!isEmployee && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            disabled={busy}
+                                                            aria-expanded={payBoxFor === item.id}
+                                                            title="Pedirla y registrar el pago al proveedor en el mismo paso"
+                                                            onClick={() => {
+                                                                setPayBoxFor(prev => prev === item.id ? null : item.id)
+                                                                setPayAmount(""); setPaySupplierId("none"); setPayMethod("CASH"); setPayFromRegister(false)
+                                                            }}
+                                                        >
+                                                            <ArrowRight className="w-4 h-4 mr-1" aria-hidden /> {payBoxFor === item.id ? "Cerrar pago" : "Pedir pagando"}
+                                                        </Button>
+                                                    )}
                                                     <Button
                                                         size="sm"
                                                         variant="outline"

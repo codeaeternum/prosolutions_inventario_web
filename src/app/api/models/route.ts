@@ -3,7 +3,7 @@ import { z } from "zod"
 import { auth } from "@/lib/auth"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { getDefaultBusinessId } from "@/lib/settings"
+import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { prisma } from "@/lib/prisma"
 import { recordAudit } from "@/lib/audit"
 import { generateSlug } from "@/lib/utils"
@@ -18,9 +18,13 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const brandId = searchParams.get("brandId")
     const session = await auth()
+    // Anónimo: ?biz=<slug> (o header x-tenant-slug) fija el tenant de la
+    // vitrina; slug explícito inválido → 404, no el default ajeno.
+    const businessId = session ? businessIdOf(session) : await resolvePublicBusinessId(req)
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
 
     const models = await prisma.model.findMany({
-      where: { businessId: session ? businessIdOf(session) : await getDefaultBusinessId(), ...(brandId ? { brandId } : {}) },
+      where: { businessId, ...(brandId ? { brandId } : {}) },
       include: {
         brand: { select: { name: true } },
         _count: { select: { products: true } },

@@ -1,9 +1,10 @@
 import { submitRegistration } from "../lib/registration"
 import { downloadTelegramImage } from "../lib/download"
 import { writePaymentProof } from "../../lib/payment-proofs"
-import { Markup } from 'telegraf'
+import { Input, Markup } from 'telegraf'
 import type { Context } from 'telegraf'
 import { message } from 'telegraf/filters'
+import * as QRCode from 'qrcode'
 import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -158,8 +159,10 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
             if (products.length === 1) {
                 const p = products[0]
                 const qrData = p.barcode || p.id
-                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`
-                await ctx.replyWithPhoto({ url: qrUrl }, { caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
+                // QR generado en local (igual que showqr_): el barcode es un
+                // dato interno y no debe viajar a servicios de terceros.
+                const qrBuffer = await QRCode.toBuffer(qrData)
+                await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
                 return
             }
 

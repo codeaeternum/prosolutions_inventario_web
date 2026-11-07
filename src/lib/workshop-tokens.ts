@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto"
 
-// Tokens públicos del taller: quoteToken (ver/aprobar cotización) y
-// uploadToken (QR del sticker para subir/ver evidencias sin login).
-// Ninguno debe vivir para siempre: el QR impreso queda en manos del cliente
-// y un link permanente es una puerta trasera.
+// Tokens públicos del taller: quoteToken (ver/aprobar cotización),
+// uploadToken (QR del sticker para subir/ver evidencias sin login) y
+// trackingToken (rastreo público /seguimiento?t=…, credencial no enumerable).
+// Los dos primeros no deben vivir para siempre: el QR impreso queda en manos
+// del cliente y un link permanente es una puerta trasera.
 
 /** Vigencia del QR de evidencias mientras la orden está activa (1 año). */
 export const UPLOAD_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000
@@ -15,6 +16,16 @@ export function newUploadToken(): string {
 }
 
 export function newQuoteToken(): string {
+  return randomUUID()
+}
+
+/**
+ * Token de rastreo público: sustituye a folio + últimos 4 dígitos del teléfono
+ * (credencial enumerable: folio secuencial × 10⁴ teléfonos). A diferencia del
+ * uploadToken NO rota ni caduca al entregar: el cliente conserva el link para
+ * ver el historial post-entrega — solo expone datos ya saneados para público.
+ */
+export function newTrackingToken(): string {
   return randomUUID()
 }
 

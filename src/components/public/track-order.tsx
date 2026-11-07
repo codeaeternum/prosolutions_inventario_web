@@ -30,11 +30,15 @@ type Result =
 
 export function TrackOrder({ brandName }: { brandName?: string }) {
   const searchParams = useSearchParams()
-  // ?folio= prellena la orden y ?t= los últimos 4 dígitos: los links que el
-  // taller comparte por WhatsApp o QR llegan listos para consultar en 0 clics.
+  // ?t= lleva el trackingToken UUID en los links nuevos: la orden se consulta
+  // sola, sin formulario ni teléfono en la URL. En links viejos ?t= trae los
+  // últimos 4 dígitos del teléfono (exactamente 4 dígitos) como prefill —
+  // el formato distingue ambos casos sin ambigüedad.
+  const rawT = (searchParams.get("t") ?? "").trim()
+  const tokenLink = rawT.length > 0 && !/^\d{4}$/.test(rawT) ? rawT : ""
   const initialFolio = sanitizeFolio(searchParams.get("folio"))
-  const initialPhone = sanitizePhone4(searchParams.get("t"))
-  const hasInitialQuery = initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone)
+  const initialPhone = tokenLink ? "" : sanitizePhone4(rawT)
+  const hasInitialQuery = tokenLink.length > 0 || (initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone))
 
   const [folio, setFolio] = useState(initialFolio)
   const [phone, setPhone] = useState(initialPhone)
@@ -45,12 +49,12 @@ export function TrackOrder({ brandName }: { brandName?: string }) {
 
   const canSubmit = folio.trim().length > 0 && /^\d{4}$/.test(phone) && result.kind !== "loading"
 
-  const runQuery = useCallback(async (folioValue: string, phoneValue: string) => {
+  // Un solo fetch para ambos caminos: token (?t=<uuid>) y legacy
+  // (folio + últimos 4 dígitos del teléfono).
+  const runFetch = useCallback(async (url: string) => {
     setResult({ kind: "loading" })
     try {
-      const res = await fetch(
-        `/api/seguimiento?folio=${encodeURIComponent(folioValue.trim())}&phone=${encodeURIComponent(phoneValue)}`
-      )
+      const res = await fetch(url)
       if (res.status === 404) {
         setResult({ kind: "notfound" })
         return
@@ -76,16 +80,26 @@ export function TrackOrder({ brandName }: { brandName?: string }) {
     }
   }, [brandName])
 
+  const runQuery = useCallback(async (folioValue: string, phoneValue: string) => {
+    await runFetch(
+      `/api/seguimiento?folio=${encodeURIComponent(folioValue.trim())}&phone=${encodeURIComponent(phoneValue)}`
+    )
+  }, [runFetch])
+
+  const runTokenQuery = useCallback(async (token: string) => {
+    await runFetch(`/api/seguimiento?t=${encodeURIComponent(token)}`)
+  }, [runFetch])
+
   useEffect(() => {
     if (autoQueriedRef.current) return
-    if (initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone)) {
-      const timer = setTimeout(() => {
-        autoQueriedRef.current = true
-        void runQuery(initialFolio, initialPhone)
-      }, 0)
-      return () => clearTimeout(timer)
-    }
-  }, [initialFolio, initialPhone, runQuery])
+    if (!tokenLink && !(initialFolio.trim().length > 0 && /^\d{4}$/.test(initialPhone))) return
+    const timer = setTimeout(() => {
+      autoQueriedRef.current = true
+      if (tokenLink) void runTokenQuery(tokenLink)
+      else void runQuery(initialFolio, initialPhone)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [tokenLink, initialFolio, initialPhone, runQuery, runTokenQuery])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -203,8 +217,10 @@ export function TrackOrder({ brandName }: { brandName?: string }) {
           <AlertCircle className="h-10 w-10 text-muted-foreground mx-auto" />
           <h2 className="font-semibold text-lg">No encontramos una orden con esos datos</h2>
           <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-            Verifica el folio y los últimos 4 dígitos del teléfono tal como aparecen en tu ticket de recepción.
-            Si el problema continúa, acude a la sucursal donde dejaste tu equipo.
+            {tokenLink
+              ? "El enlace pudo quedar desactualizado. Inténtalo de nuevo con el folio y los últimos 4 dígitos del teléfono de tu ticket de recepción."
+              : "Verifica el folio y los últimos 4 dígitos del teléfono tal como aparecen en tu ticket de recepción."}
+            {" "}Si el problema continúa, acude a la sucursal donde dejaste tu equipo.
           </p>
         </div>
       )}

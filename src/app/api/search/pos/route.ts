@@ -3,7 +3,7 @@ import { productDto, isCatalogStaff, catalogResponseHeaders, catalogVisibilityLe
 import { hasBranchAccess } from "@/lib/access"
 import { NextResponse } from "next/server"
 import { businessIdOf } from "@/lib/tenant"
-import { getDefaultBusinessId } from "@/lib/settings"
+import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { prisma } from "@/lib/prisma"
 import { Prisma } from "@prisma/client"
 
@@ -11,7 +11,10 @@ export async function GET(req: Request) {
     try {
     const viewerSession = await auth()
     const viewer = viewerSession?.user
-    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
+    // Anónimo: tenant por ?biz=<slug> (o header x-tenant-slug); slug
+    // explícito inválido responde 404, no el default de otro negocio.
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await resolvePublicBusinessId(req)
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
         const { searchParams } = new URL(req.url)
         const query = searchParams.get("q")?.trim()
         // publicOnly se FUERZA sin sesión: el visitante anónimo siempre

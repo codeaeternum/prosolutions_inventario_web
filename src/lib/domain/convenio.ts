@@ -46,15 +46,19 @@ export interface ConvenioTotalsRow {
   chargeable: boolean
   partnerPriceCents: number | null
   convenioSettledAt: Date | string | null
+  // Monto congelado al liquidar la cuenta. NULL en cuentas saldadas antes
+  // del snapshot: se usa el partnerPriceCents actual como respaldo legacy.
+  convenioSettledAmountCents?: number | null
 }
 
 /** Agregado puro: pendiente = exigible y sin saldar con precio convenio;
- *  saldado suma lo ya marcado pagado (cualquier status — pagado es pagado);
+ *  saldado suma lo ya marcado pagado (cualquier status — pagado es pagado)
+ *  al monto congelado al liquidar, no al precio convenio vigente hoy;
  *  unpricedPending cuenta las exigibles sin precio convenio capturado. */
 export function convenioTotals(rows: ConvenioTotalsRow[]) {
   let pendingCents = 0, settledCents = 0, unpricedPending = 0
   for (const row of rows) {
-    if (row.convenioSettledAt) { settledCents += row.partnerPriceCents ?? 0; continue }
+    if (row.convenioSettledAt) { settledCents += row.convenioSettledAmountCents ?? row.partnerPriceCents ?? 0; continue }
     if (!row.chargeable) continue
     if (row.partnerPriceCents == null) { unpricedPending++; continue }
     pendingCents += row.partnerPriceCents
@@ -89,6 +93,7 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       take: 200,
       select: {
         id: true, number: true, delegatedOrderId: true, delegatedAt: true, convenioSettledAt: true,
+        convenioSettledAmountCents: true,
         delegatedToBusiness: { select: { name: true } },
       },
     }),
@@ -100,6 +105,7 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       take: 200,
       select: {
         id: true, number: true, status: true, createdAt: true, convenioSettledAt: true,
+        convenioSettledAmountCents: true,
         partnerPriceCents: true, originContact: true, originBusinessName: true,
         originBusiness: { select: { name: true } },
       },
@@ -171,6 +177,7 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       folio: folio(businessId, order.number),
       delegatedAt: order.delegatedAt,
       convenioSettledAt: order.convenioSettledAt,
+      convenioSettledAmountCents: order.convenioSettledAmountCents,
       mirrorOrderId: order.delegatedOrderId,
       mirrorFolio: mirror ? folio(mirror.businessId, mirror.number) : null,
       partnerName: order.delegatedToBusiness?.name ?? null,
@@ -193,6 +200,7 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       folio: folio(businessId, order.number),
       createdAt: order.createdAt,
       convenioSettledAt: order.convenioSettledAt,
+      convenioSettledAmountCents: order.convenioSettledAmountCents,
       // En la espejo de una delegación, originContact guarda el folio local del
       // captador; en el intake aliado es el texto de "quién lo trajo".
       originFolio: order.originContact,
@@ -233,16 +241,28 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
     if (!side) throw new BusinessError("La orden no pertenece a un convenio entre talleres.", 409)
     // Toggle idempotente: pedir el estado que ya tiene no reescribe nada.
     if ((order.convenioSettledAt != null) === input.settled) {
-      return { orderId: order.id, convenioSettledAt: order.convenioSettledAt, side }
+      return { orderId: order.id, convenioSettledAt: order.convenioSettledAt, convenioSettledAmountCents: order.convenioSettledAmountCents, side }
     }
+    // Snapshot del monto liquidado: el precio convenio vigente EN ESTE
+    // INSTANTE queda congelado en la orden — si después el taller edita el
+    // partnerPriceCents de una orden ya saldada, el histórico no se mueve.
+    // En el lado "pagar" el precio vive en la espejo del reparador (lectura
+    // cross-tenant acotada por id, mismo patrón que convenioReport); en el
+    // lado "cobrar" es el de la propia orden.
+    const settledAmountCents = input.settled
+      ? side === "pagar"
+        ? (await tx.repairOrder.findUnique({ where: { id: order.delegatedOrderId! }, select: { partnerPriceCents: true } }))?.partnerPriceCents ?? null
+        : order.partnerPriceCents
+      : null
     const settledAt = input.settled ? new Date() : null
-    await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, version: { increment: 1 } } })
+    await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, version: { increment: 1 } } })
+    const amountNote = settledAmountCents != null ? ` por ${(settledAmountCents / 100).toFixed(2)} MXN` : ""
     const detail = input.settled
       ? side === "pagar"
-        ? "Convenio saldado: se registró el pago al taller asociado."
-        : "Convenio saldado: se registró el pago del negocio captador."
+        ? `Convenio saldado${amountNote}: se registró el pago al taller asociado.`
+        : `Convenio saldado${amountNote}: se registró el pago del negocio captador.`
       : "Convenio reabierto: la cuenta vuelve a quedar pendiente."
     await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail, isPublic: false } })
-    return { orderId: order.id, convenioSettledAt: settledAt, side }
+    return { orderId: order.id, convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, side }
   })
 }

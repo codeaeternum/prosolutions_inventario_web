@@ -45,7 +45,10 @@ export default function CartPage() {
     const [creditInfo, setCreditInfo] = useState<{ creditLimit: number | null; creditBalance: number } | null>(null)
 
     useEffect(() => {
-        fetch("/api/settings")
+        // Vitrina de origen (?biz=<slug>, venido del catálogo): los porcentajes
+        // de anticipo/reserva deben ser los de ESE negocio, no los del default.
+        const biz = new URLSearchParams(window.location.search).get("biz")?.trim()
+        fetch(`/api/settings${biz ? `?biz=${encodeURIComponent(biz)}` : ""}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
                 if (data?.depositPercentage != null) setDepositPercentage(Number(data.depositPercentage))

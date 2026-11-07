@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { getDefaultBusinessId } from "@/lib/settings"
+import { businessIdForSlug } from "@/lib/tenant-resolution"
 import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { normalizePhone } from "@/lib/utils"
@@ -24,6 +25,11 @@ const registerSchema = z
     phone: z.string().max(50).optional().or(z.literal("")),
     password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
     customerType: z.enum(["TECHNICIAN", "STORE", "NORMAL"]).default("NORMAL"),
+    // Vitrina de origen (/<slug>/...): la cuenta se crea en ESE negocio, no
+    // siempre en el primero. `slug` y `businessSlug` son alias — ambos
+    // opcionales para no romper clientes existentes.
+    slug: z.string().max(50).optional(),
+    businessSlug: z.string().max(50).optional(),
   })
   .refine((data) => data.email?.trim() || data.phone?.trim(), {
     message: "Correo electrónico o teléfono es requerido",
@@ -53,7 +59,7 @@ export async function POST(req: Request) {
         { status: 400 }
       )
     }
-    const { name, email, phone, password, customerType: requestedType } = parseResult.data
+    const { name, email, phone, password, customerType: requestedType, slug, businessSlug } = parseResult.data
     const emailOrNull = email?.trim() || null
     // User.phone es único GLOBAL: se guarda normalizado (últimos 10 dígitos)
     // para que "+52 811 234 5678" y "811 234 5678" choquen en vez de evadirlo.
@@ -61,7 +67,17 @@ export async function POST(req: Request) {
     if (phone?.trim() && !phoneOrNull) {
       return NextResponse.json({ error: "El teléfono no tiene dígitos válidos" }, { status: 400 })
     }
-    const businessId = await getDefaultBusinessId()
+    // Con slug de vitrina la cuenta nace en ese negocio; sin él se conserva
+    // el default (compat mono-tenant). Slug explícito inexistente/inactivo
+    // responde 404 — registrarlo en OTRO negocio sería peor que el error.
+    const requestedSlug = businessSlug ?? slug
+    const businessId = requestedSlug ? await businessIdForSlug(requestedSlug) : await getDefaultBusinessId()
+    if (!businessId) {
+      return NextResponse.json(
+        { error: "El negocio indicado no existe o está inactivo" },
+        { status: 404 }
+      )
+    }
 
     if (emailOrNull) {
       const existingByEmail = await prisma.user.findUnique({

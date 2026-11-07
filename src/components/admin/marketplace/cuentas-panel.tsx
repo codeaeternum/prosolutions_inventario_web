@@ -23,11 +23,13 @@ type ConvenioTotals = { pendingCents: number; settledCents: number; unpricedPend
 type AgingFields = { chargeableAt: string | null; daysPending: number | null }
 type PagarRow = AgingFields & {
   orderId: string; folio: string; delegatedAt: string | null; convenioSettledAt: string | null
+  convenioSettledAmountCents: number | null
   mirrorOrderId: string | null; mirrorFolio: string | null; partnerName: string | null
   mirrorStatus: string | null; partnerPriceCents: number | null; chargeable: boolean
 }
 type CobrarRow = AgingFields & {
   orderId: string; folio: string; createdAt: string; convenioSettledAt: string | null
+  convenioSettledAmountCents: number | null
   originFolio: string | null; captorName: string | null; status: string
   partnerPriceCents: number | null; chargeable: boolean
 }
@@ -195,6 +197,15 @@ export function CuentasPanel() {
     </Button>
   )
 
+  // Precio convenio de la fila: una cuenta ya saldada muestra el monto
+  // congelado al liquidar (snapshot), no el precio vigente hoy.
+  const priceCell = (row: { convenioSettledAt: string | null; convenioSettledAmountCents: number | null; partnerPriceCents: number | null }) =>
+    row.convenioSettledAt && row.convenioSettledAmountCents != null
+      ? <span title="Monto congelado al liquidar la cuenta">{money(row.convenioSettledAmountCents)}</span>
+      : row.partnerPriceCents != null
+        ? money(row.partnerPriceCents)
+        : <span className="text-amber-600 dark:text-amber-400 text-xs">Sin precio convenio</span>
+
   const totalsFooter = (totals: ConvenioTotals, pendienteLabel: string) => (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t pt-3 text-sm">
       <span className="font-medium">{pendienteLabel}: <strong>{money(totals.pendingCents)}</strong></span>
@@ -290,11 +301,7 @@ export function CuentasPanel() {
                           {statusBadge(row.mirrorStatus)}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        {row.partnerPriceCents != null
-                          ? money(row.partnerPriceCents)
-                          : <span className="text-amber-600 dark:text-amber-400 text-xs">Sin precio convenio</span>}
-                      </TableCell>
+                      <TableCell>{priceCell(row)}</TableCell>
                       <TableCell>{cuentaBadge(row)}</TableCell>
                       {report?.canSettle && <TableCell className="text-right">{settleButton(row)}</TableCell>}
                     </TableRow>
@@ -341,11 +348,7 @@ export function CuentasPanel() {
                       <TableCell>{row.captorName ?? "—"}</TableCell>
                       <TableCell>{row.originFolio ?? "—"}</TableCell>
                       <TableCell>{statusBadge(row.status)}</TableCell>
-                      <TableCell>
-                        {row.partnerPriceCents != null
-                          ? money(row.partnerPriceCents)
-                          : <span className="text-amber-600 dark:text-amber-400 text-xs">Sin precio convenio</span>}
-                      </TableCell>
+                      <TableCell>{priceCell(row)}</TableCell>
                       <TableCell>{cuentaBadge(row)}</TableCell>
                       {report?.canSettle && <TableCell className="text-right">{settleButton(row)}</TableCell>}
                     </TableRow>

@@ -249,6 +249,11 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
               <Link href={`/login?callbackUrl=${encodeURIComponent("/admin/mercado")}`} className="text-primary hover:underline">
                 Pide precio de taller
               </Link>
+              {" · "}
+              {/* La cuenta debe nacer en ESTE negocio (?biz), no en el default. */}
+              <Link href={`/register?biz=${encodeURIComponent(target.slug)}`} className="text-primary hover:underline">
+                Solicita tu cuenta
+              </Link>
             </p>
           </>
         )}

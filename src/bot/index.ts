@@ -52,6 +52,42 @@ bot.use(async (ctx, next) => {
     return next()
 })
 
+// Throttle por telegramId: máx 1 mensaje de texto/comando por segundo y 3
+// callback queries por segundo. Un flood de un mismo chat se frena aquí,
+// antes de llegar a los handlers. Map telegramId→timestamps recientes; las
+// entradas sin actividad >60s se purgan en barridos ocasionales para que el
+// Map no crezca sin límite.
+const RATE_WINDOW_MS = 1_000
+const RATE_SWEEP_MS = 60_000
+const rateHits = new Map<string, number[]>()
+let rateSweepAt = 0
+bot.use(async (ctx, next) => {
+    const id = ctx.from?.id?.toString()
+    if (!id) return next()
+    const isCallback = ctx.updateType === 'callback_query'
+    const isText = ctx.updateType === 'message' && !!ctx.message && 'text' in ctx.message
+    if (!isCallback && !isText) return next()
+    const now = Date.now()
+    if (now >= rateSweepAt) {
+        rateSweepAt = now + RATE_SWEEP_MS
+        for (const [key, hits] of rateHits) {
+            if (hits.length === 0 || hits[hits.length - 1] < now - RATE_SWEEP_MS) rateHits.delete(key)
+        }
+    }
+    const window = (rateHits.get(id) ?? []).filter(t => now - t < RATE_WINDOW_MS)
+    const limit = isCallback ? 3 : 1
+    if (window.length >= limit) {
+        // Aviso best-effort: el catch evita que un reply fallido en medio de
+        // un flood escale a bot.catch / unhandled rejection.
+        if (isCallback) await ctx.answerCbQuery('⏳ Un momento…').catch(() => {})
+        else await ctx.reply('⏳ Un momento…').catch(() => {})
+        return
+    }
+    window.push(now)
+    rateHits.set(id, window)
+    return next()
+})
+
 // Test notification command (development only)
 if (process.env.NODE_ENV === 'development') {
     bot.command('testnt', async (ctx) => {

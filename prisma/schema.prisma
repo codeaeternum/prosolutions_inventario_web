@@ -858,6 +858,10 @@ model Payment {
   // Cobros de taller: anticipo (ADVANCE), abono (ABONO) o liquidación (SETTLEMENT).
   repairOrderId  String?
   repairOrder    RepairOrder?  @relation(fields: [repairOrderId], references: [id], onDelete: Restrict)
+  // Cobros de encargos de clientes: anticipo (ADVANCE) al registrarlo y su
+  // devolución (REFUND) al cancelarlo — antes el anticipo solo era texto.
+  encargoId      String?
+  encargo        Encargo?      @relation(fields: [encargoId], references: [id], onDelete: Restrict)
   purpose        String?
   method         PaymentMethod
   amount         Float
@@ -873,6 +877,7 @@ model Payment {
 
   @@index([saleId])
   @@index([repairOrderId])
+  @@index([encargoId])
   @@index([method, createdAt])
   @@index([businessId])
 }
@@ -970,11 +975,21 @@ model RepairOrder {
   // ESPEJO (originBusinessId/delegatedFromOrderId) marca "el captador ya me
   // pagó". Es solo control entre negocios — el cobro al cliente va por POS.
   convenioSettledAt     DateTime?
+  // Monto congelado al saldar la cuenta: convenioSettledAt dice CUÁNDO, este
+  // campo dice CUÁNTO se liquidó (el partnerPriceCents vigente en ese
+  // instante). Sin él, editar el precio convenio de una orden ya saldada
+  // reescribía el histórico. NULL en cuentas liquidadas antes del snapshot:
+  // convenioTotals cae al partnerPriceCents actual como respaldo legacy.
+  convenioSettledAmountCents Int?
   // Token público para subir evidencias por QR sin login (se puede rotar).
   uploadToken          String        @unique @default(cuid())
   uploadTokenExpiresAt DateTime?
   quoteToken           String        @unique @default(cuid()) // Token público para ver/aprobar la cotización
   quoteTokenExpiresAt  DateTime?
+  // Token público de rastreo (/seguimiento?t=…): credencial no enumerable que
+  // sustituye al folio + últimos 4 dígitos del teléfono. NO rota al entregar —
+  // el cliente puede consultar su historial después de recoger el equipo.
+  trackingToken        String        @unique @default(cuid())
   photos               RepairPhoto[]
   intakeBranchId       String
   currentBranchId      String
@@ -1294,6 +1309,10 @@ model SupplierPayment {
   supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   purchaseId  String?
   purchase    Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  // Encargo de cliente cuyo pedido motivó el abono (la pieza se pidió a este
+  // proveedor): trazabilidad directa encargo ↔ salida de dinero.
+  encargoId   String?
+  encargo     Encargo?  @relation(fields: [encargoId], references: [id], onDelete: SetNull)
   amountCents Int
   method      String // "CASH" | "CARD" | "TRANSFER" (solo documenta el medio usado)
   notes       String?
@@ -1304,6 +1323,7 @@ model SupplierPayment {
   @@index([businessId])
   @@index([supplierId])
   @@index([purchaseId])
+  @@index([encargoId])
 }
 
 // ==================== CONTEO FÍSICO ====================
@@ -1452,6 +1472,10 @@ model Encargo {
   createdBy            User?     @relation("EncargoCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   resolvedById         String?
   resolvedBy           User?     @relation("EncargoResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  // Ledger de dinero: anticipos/reembolsos del cliente (Payment) y abonos
+  // al proveedor (SupplierPayment) ligados a este encargo.
+  payments             Payment[]
+  supplierPayments     SupplierPayment[]
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

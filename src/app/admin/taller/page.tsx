@@ -30,6 +30,8 @@ type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?
 type OrderPart = { id: string; description: string; qty: number; unitCostCents: number; unitPriceCents: number; createdAt: string; status: "REQUESTED" | "APPROVED" | "REJECTED"; createdById?: string; decisionNote?: string | null; createdBy: { name: string }; product: { id: string; name: string; barcode: string | null } | null }
 type Order = {
   id: string; number: number; version: number; status: RepairStage; customerName: string; customerPhone: string; quoteToken?: string | null;
+  // Token UUID del link público de rastreo (sin folio + dígitos del teléfono).
+  trackingToken?: string | null;
   // Folio formateado por el servidor con los dígitos del negocio (si viene).
   folio?: string;
   equipmentType: string; brand: string | null; model: string | null; serialNumber: string | null; accessories: string | null;
@@ -143,7 +145,11 @@ function whatsappNotifyUrl(order: Order, businessName: string): string {
   const equipo = [order.brand, order.model].filter(Boolean).join(" ") || order.equipmentType
   const origin = typeof window === "undefined" ? "" : window.location.origin
   const phone4 = (order.customerPhone ?? "").replace(/\D/g, "").slice(-4)
-  const trackingUrl = `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+  // Link con trackingToken (sin teléfono en la URL); el formato folio+4 queda
+  // como respaldo si la orden no trajera token.
+  const trackingUrl = order.trackingToken
+    ? `${origin}/seguimiento?t=${order.trackingToken}`
+    : `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
   const quoteAmountCents = order.approvedQuoteCents ?? order.quoteCents
 
   let body: string
@@ -335,7 +341,9 @@ export default function WorkshopPage() {
     const origin = typeof window === "undefined" ? "" : window.location.origin
     const quoteUrl = `${origin}/cotizacion/${order.quoteToken}`
     const phone4 = (order.customerPhone ?? "").replace(/\D/g, "").slice(-4)
-    const trackingUrl = `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+    const trackingUrl = order.trackingToken
+      ? `${origin}/seguimiento?t=${order.trackingToken}`
+      : `${origin}/seguimiento?folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
     const q = quoteShare(order)
     const linesText = q ? `\n\n${q.lines.map(l => `• ${l.label}: ${money(Math.round(l.amount * 100))}`).join("\n")}\nTotal estimado: ${money(Math.round(q.total * 100))}` : ""
     const diagText = order.diagnosis ? `\nDiagnóstico: ${order.diagnosis}` : ""
@@ -798,7 +806,7 @@ export default function WorkshopPage() {
           <div className="flex flex-wrap items-center gap-2">
             {selected && (
               <>
-                <ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} quote={quoteShare(selected)} />
+                <ShareRepairOrder folio={folioOf(selected)} phone={selected.customerPhone} trackingToken={selected.trackingToken} quote={quoteShare(selected)} />
                 {hasWhatsAppPhone(selected.customerPhone) && (
                   <Button variant="outline" onClick={() => avisarCliente(selected)} title="Avisar al cliente por WhatsApp">
                     <MessageCircle className="mr-2 h-4 w-4" />

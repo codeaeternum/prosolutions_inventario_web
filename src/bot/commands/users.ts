@@ -1,6 +1,7 @@
 import { submitRegistration } from "../lib/registration"
 import { Markup } from 'telegraf'
 import type { BotContext } from '../lib/types'
+import { customerTypeLabels } from '../lib/types'
 import { isAdmin } from '../lib/notify'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
 import { normalizePhone } from '../lib/utils'
@@ -17,10 +18,10 @@ export function registerUsers({ bot, prisma, sessions }: BotContext) {
 /stock - Actualizar stock (ej: /stock 123 50)
 /eliminar \<producto\> - Eliminar producto
 
-� *Taller:*
+🔧 *Taller:*
 /orden - Nueva orden de reparación (wizard)
 
-�🛒 *Ventas en Local:*
+🛒 *Ventas en Local:*
 /vender \<producto\> - Venta rápida (1 producto)
 /carrito - Ver carrito actual
 /agregarc \<producto\> - Agregar al carrito
@@ -266,11 +267,17 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
 
             const user = await prisma.user.update({
                 where: { id: target.id },
-                data: { status: 'APPROVED' }
+                data: {
+                    status: 'APPROVED',
+                    // El tipo que pidió al registrarse se aplica al aprobar:
+                    // un Técnico/Tienda recibe su lista de precios (antes
+                    // siempre quedaba NORMAL aunque hubiera pedido otro tipo).
+                    customerType: target.requestedCustomerType
+                }
             })
 
             await ctx.answerCbQuery('Usuario aprobado')
-            await ctx.editMessageText(`✅ <b>Usuario Aprobado</b>\n\n📛 ${escapeHtml(user.name)}\n📱 ${escapeHtml(user.phone)}`, { parse_mode: 'HTML' })
+            await ctx.editMessageText(`✅ <b>Usuario Aprobado</b>\n\n📛 ${escapeHtml(user.name)}\n📱 ${escapeHtml(user.phone)}\n🏷️ ${escapeHtml(customerTypeLabels[user.customerType] ?? user.customerType)}`, { parse_mode: 'HTML' })
 
             if (user.telegramId) {
                 bot.telegram.sendMessage(user.telegramId, `🎉 <b>¡Tu cuenta ha sido aprobada!</b>\n\nYa puedes ver precios, buscar productos y realizar reservas en nuestro bot.\n\nEscribe "Hola" o el nombre de un producto para comenzar.`, { parse_mode: 'HTML' }).catch(() => { })

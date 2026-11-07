@@ -332,12 +332,15 @@ export default async function TicketPage({
       if (tipo === "reparacion") {
         // QR de rastreo brandeado: con Business.slug activo apunta a la
         // vitrina /<slug>/order-status; sin slug cae al /seguimiento global.
-        // En ambos casos el folio y los últimos 4 dígitos del teléfono van
-        // prellenados (?folio=…&t=…): el cliente solo toca "Consultar".
+        // El link lleva el trackingToken (?t=<uuid>) — credencial no
+        // enumerable que no expone el teléfono; el formato folio + últimos 4
+        // dígitos queda solo como respaldo si la orden no tuviera token.
         const businessSlug = order.business.isActive ? order.business.slug : ""
         const trackingSlug = isValidSlug(businessSlug) ? businessSlug : ""
         const phone4 = order.customerPhone.replace(/\D/g, "").slice(-4)
-        const trackingQuery = `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
+        const trackingQuery = order.trackingToken
+          ? `t=${order.trackingToken}`
+          : `folio=${encodeURIComponent(folio)}${phone4 ? `&t=${phone4}` : ""}`
         const trackingUrl = trackingSlug
           ? `${base}/${trackingSlug}/order-status?${trackingQuery}`
           : `${base}/seguimiento?${trackingQuery}`

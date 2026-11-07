@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { getDefaultBusinessId } from "@/lib/settings"
+import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { normalizeProductName } from "@/lib/utils"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
@@ -44,7 +44,10 @@ export async function GET(req: Request) {
   try {
     const viewerSession = await auth()
     const viewer = viewerSession?.user
-    const businessId = viewerSession ? businessIdOf(viewerSession) : await getDefaultBusinessId()
+    // Anónimo: la vitrina declara su tenant con ?biz=<slug> (o el header
+    // x-tenant-slug); un slug explícito que no resuelve es 404, no el default.
+    const businessId = viewerSession ? businessIdOf(viewerSession) : await resolvePublicBusinessId(req)
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
     const { searchParams } = new URL(req.url)
     const categoryId = searchParams.get("categoryId")
     const modelId = searchParams.get("modelId")

@@ -263,7 +263,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
                 await prisma.product.updateMany({ where: { id: product.id, businessId: actor.businessId }, data: { isActive: false } })
                 delete sessions.deleteProduct[telegramId]
                 await ctx.answerCbQuery('Archivado')
-                return ctx.editMessageText(`✅ *Producto archivado*\n\n� ${productName}\n\nTiene historial de movimientos/ventas: se desactivó en lugar de borrarse para conservar el registro.`, { parse_mode: 'Markdown' })
+                return ctx.editMessageText(`✅ *Producto archivado*\n\n📦 ${productName}\n\nTiene historial de movimientos/ventas: se desactivó en lugar de borrarse para conservar el registro.`, { parse_mode: 'Markdown' })
             }
             await prisma.product.deleteMany({ where: { id: product.id, businessId: actor.businessId } })
             delete sessions.deleteProduct[telegramId]
@@ -294,9 +294,16 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
         if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
 
+        // Lista de taller para clientes STORE/TECHNICIAN o cuenta aliada
+        // WORKSHOP — el mismo criterio que reservations.ts/sell: el "Total"
+        // mostrado y el cupo de crédito deben calcularse con el precio que
+        // realmente cobrará createReservations, no siempre retail.
+        const wholesale = user.customerType === 'STORE' || user.customerType === 'TECHNICIAN' || user.role === 'WORKSHOP'
+        const unitPrice = wholesale ? product.wholesalePrice : product.retailPrice
+
         await ctx.reply(`🛒 *Reservar: ${escapeMarkdownV1(product.name)}*
 
-💰 Precio: $${product.retailPrice}
+💰 Precio: $${unitPrice.toLocaleString()}
 ✅ Stock: ${product.stock} uds
 
 *¿Cuántas unidades deseas?*
@@ -307,7 +314,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
         sessions.reservation[telegramId] = {
             productId: product.id,
             productName: product.name,
-            price: product.retailPrice,
+            price: unitPrice,
             maxStock: product.stock,
             step: 'QUANTITY'
         }

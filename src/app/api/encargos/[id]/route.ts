@@ -30,7 +30,13 @@ async function notifyCustomerEncargoReady(
 
 /**
  * Transición de encargo: { action: "ORDERED" | "READY" | "DELIVERED" |
- * "CANCELLED", marketplaceRequestId?, supplierNote?, idempotencyKey }.
+ * "CANCELLED", marketplaceRequestId?, supplierNote?, idempotencyKey,
+ * refundMethod?, supplierId?, supplierAmountCents?, supplierMethod?,
+ * cashFromRegister? }.
+ * ORDERED admite además el pago al proveedor (SupplierPayment; solo ADMIN,
+ * con cashFromRegister opcional para sacar el efectivo del cajón) y
+ * CANCELLED devuelve el anticipo del cliente (Payment REFUND + salida de
+ * caja cuando es efectivo).
  * Al llegar a READY se avisa al staff del negocio (campanita/SSE) y al
  * cliente por Telegram si tiene su cuenta ligada.
  */

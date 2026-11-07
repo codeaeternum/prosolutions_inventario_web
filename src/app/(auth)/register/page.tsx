@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -48,6 +48,11 @@ type ContactMethod = "email" | "phone"
 
 export default function RegisterPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Vitrina de origen (?biz=<slug>): la cuenta se solicita en ESE negocio
+  // (el visitante llegó por /<slug>/market o /catalogo?biz=). Sin param la
+  // API cae al negocio default — compat con el modo mono-tenant.
+  const biz = searchParams.get("biz")?.trim() || null
 
   const [contactMethod, setContactMethod] = useState<ContactMethod>("email")
   const [formData, setFormData] = useState({
@@ -187,6 +192,7 @@ export default function RegisterPage() {
           ...contactInfo,
           password: formData.password,
           customerType: formData.customerType,
+          ...(biz ? { businessSlug: biz } : {}),
         }),
       })
 

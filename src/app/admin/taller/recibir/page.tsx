@@ -25,7 +25,7 @@ type AccessType = "NONE" | "PATTERN" | "PIN" | "PASSWORD"
 type FunctionalCondition = "ENCENDIDO" | "APAGADO" | "MOJADO" | "MANIPULADO" | "ROTO" | "INCOMPLETO"
 type Aesthetics = "BUENO" | "REGULAR" | "MALO"
 type AdvanceMethod = "CASH" | "CARD" | "TRANSFER"
-type CreatedOrder = { id: string; number: number; customerName: string; originBusinessName?: string | null }
+type CreatedOrder = { id: string; number: number; customerName: string; originBusinessName?: string | null; trackingToken?: string | null }
 type LookupField = "customerName" | "customerPhone"
 // prices: precios específicos por modelo/tipo de equipo (WorkshopServicePrice)
 // — ganan sobre priceCents cuando el equipo recibido coincide.
@@ -855,8 +855,13 @@ export default function ReceiveEquipmentPage() {
   const trackingBase = typeof window === "undefined" ? "" : window.location.origin
   const createdFolio = created ? formatFolio(orderPrefix, created.number, folioDigits) : ""
   const createdPhone4 = form.customerPhone.replace(/\D/g, "").slice(-4)
+  // El link lleva el trackingToken (?t=<uuid>): el teléfono ya no viaja en la
+  // URL. El formato folio+4 solo es respaldo si la orden no trajera token.
+  const createdTracking = created?.trackingToken
+    ? `${trackingBase}/seguimiento?t=${created.trackingToken}`
+    : `${trackingBase}/seguimiento?folio=${encodeURIComponent(createdFolio)}${createdPhone4 ? `&t=${createdPhone4}` : ""}`
   const createdWhatsApp = created && form.customerPhone.trim()
-    ? waMeHref(form.customerPhone, `Hola ${form.customerName.trim()}, recibimos tu equipo con el folio ${createdFolio}. Sigue tu reparación aquí: ${trackingBase}/seguimiento?folio=${encodeURIComponent(createdFolio)}${createdPhone4 ? `&t=${createdPhone4}` : ""}`)
+    ? waMeHref(form.customerPhone, `Hola ${form.customerName.trim()}, recibimos tu equipo con el folio ${createdFolio}. Sigue tu reparación aquí: ${createdTracking}`)
     : null
   const advanceLabel = advanceCents > 0 ? `${money(advanceCents)} · ${advanceMethodLabel}` : ""
   const toLocalInputValue = (date: Date) => { const copy = new Date(date); copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset()); return copy.toISOString().slice(0, 16) }
