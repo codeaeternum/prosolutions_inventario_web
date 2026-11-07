@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { partFormIsDirty } from "@/lib/workshop-form"
 
 export type WorkshopPartStatus = "REQUESTED" | "APPROVED" | "REJECTED"
 
@@ -66,11 +67,15 @@ export function PartsSection(props: {
     readOnly?: boolean
     busy?: boolean
     onAction: (payload: PartActionPayload) => Promise<void>
+    // Avisa al padre que hay captura sin guardar (descripción, cantidades,
+    // producto vinculado, motivo de rechazo) para el diálogo de descarte.
+    onDirtyChange?: (dirty: boolean) => void
 }) {
     const [form, setForm] = useState(emptyForm)
     const [rejectingId, setRejectingId] = useState<string | null>(null)
     const [rejectNote, setRejectNote] = useState("")
     const [productQuery, setProductQuery] = useState("")
+    const [productSearching, setProductSearching] = useState(false)
     const [productOptions, setProductOptions] = useState<ProductOption[]>([])
     const [linkedProduct, setLinkedProduct] = useState<ProductOption | null>(null)
     // "" = default (la sucursal actual de la orden); otro valor = branchId origen.
@@ -79,6 +84,17 @@ export function PartsSection(props: {
     const [stockByBranch, setStockByBranch] = useState<Record<string, number> | null>(null)
     const effectiveSourceBranchId = sourceBranchId || props.currentBranchId
     const parts = props.order.parts ?? []
+    const onDirtyChange = props.onDirtyChange
+    // Cualquier captura sin enviar cuenta como borrador: el padre lo suma a
+    // hasUnsavedChanges y confirma antes de descartar la ficha.
+    const draftDirty = partFormIsDirty({
+        description: form.description, qty: form.qty, cost: form.cost, price: form.price,
+        productQuery, linkedProduct, rejectNote, sourceBranchId,
+    })
+    useEffect(() => {
+        onDirtyChange?.(draftDirty)
+        return () => onDirtyChange?.(false)
+    }, [draftDirty, onDirtyChange])
     const approved = parts.filter(part => (part.status ?? "APPROVED") === "APPROVED")
     const totals = approved.reduce(
         (acc, part) => ({ cost: acc.cost + part.unitCostCents * part.qty, price: acc.price + part.unitPriceCents * part.qty }),
@@ -88,15 +104,19 @@ export function PartsSection(props: {
     // Búsqueda con debounce del catálogo para vincular la refacción a inventario.
     useEffect(() => {
         const query = productQuery.trim()
+        // El cleanup ya apaga el indicador al cambiar de término; sin sync
+        // setState en el cuerpo del efecto (react-hooks/set-state-in-effect).
         if (linkedProduct || query.length < 2) return
         const controller = new AbortController()
         const timer = setTimeout(() => {
+            setProductSearching(true)
             void fetch(`/api/products?search=${encodeURIComponent(query)}&limit=8`, { signal: controller.signal })
                 .then(res => (res.ok ? res.json() : { products: [] }))
                 .then((data: { products?: ProductOption[] }) => setProductOptions(Array.isArray(data.products) ? data.products : []))
                 .catch(() => { /* abortada o sin red: se reintenta al seguir escribiendo */ })
+                .finally(() => { if (!controller.signal.aborted) setProductSearching(false) })
         }, 300)
-        return () => { controller.abort(); clearTimeout(timer) }
+        return () => { controller.abort(); clearTimeout(timer); setProductSearching(false) }
     }, [productQuery, linkedProduct])
 
     // Existencias por sucursal del producto vinculado: alimenta las cantidades
@@ -336,6 +356,9 @@ export function PartsSection(props: {
                                 placeholder="Buscar producto del catálogo por nombre o código…"
                                 autoComplete="off"
                             />
+                            {productSearching && (
+                                <p role="status" className="mt-1 text-xs text-muted-foreground">Buscando en el catálogo…</p>
+                            )}
                             {productOptions.length > 0 && (
                                 <ul className="absolute inset-x-0 top-full z-10 mt-1 max-h-48 overflow-auto rounded-md border bg-popover shadow-md">
                                     {productOptions.map(product => (

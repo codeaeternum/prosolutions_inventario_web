@@ -126,13 +126,19 @@ export async function GET(req: Request) {
         return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
       }
 
-      const found = await prisma.repairOrder.findUnique({
+      // El número de folio es por-tenant (cada negocio tiene su secuencia):
+      // el mismo número puede existir en varios negocios, así que se acota la
+      // búsqueda y el teléfono desambigua. Más nuevo primero: el ticket
+      // recién impreso es el candidato más probable.
+      const found = await prisma.repairOrder.findMany({
         where: { number },
         include: ORDER_INCLUDE,
+        orderBy: { createdAt: "desc" },
+        take: 50,
       })
       // El teléfono es medio secreto de la credencial legacy: si no coincide,
       // se responde el mismo 404 que si el folio no existiera.
-      order = found && onlyDigits(found.customerPhone).endsWith(phone4) ? found : null
+      order = found.find(o => onlyDigits(o.customerPhone).endsWith(phone4)) ?? null
     }
 
     // Respuesta genérica: no revelar si falló el token, el folio, el teléfono

@@ -1,8 +1,6 @@
 import type { Metadata } from "next"
-import { prisma } from "@/lib/prisma"
 import { getBusinessSetting, getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
 import { parseQuoteValidityDays } from "@/app/api/cotizacion/quote-config"
-import { repairFolio } from "@/lib/workshop-labels"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { DocumentShell } from "@/components/public/document-shell"
 import { isQuoteExpired, QuoteDocument, QuoteExpired, QuoteNotFound } from "@/components/public/quote-view"
@@ -13,11 +11,12 @@ export const dynamic = "force-dynamic"
 // slug público o el enlace se compartió como /cotizacion/<token>. La variante
 // brandeada vive en /<slug>/cotizacion/[token] y reutiliza QuoteDocument.
 
-export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
-  const { token } = await params
-  const order = await prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true, businessId: true } })
+// Título genérico a propósito: el link llega por WhatsApp y un
+// "Cotización OT-000123" en el <title> filtraba el folio de la orden a
+// cualquiera que capturara el documento (pestaña, historial, previews).
+export async function generateMetadata(): Promise<Metadata> {
   return {
-    title: order ? `Cotización ${repairFolio(order.number, await getOrderFolioDigits(order.businessId))}` : "Cotización",
+    title: "Cotización",
     description: "Consulta y autoriza la cotización de tu reparación.",
     // Enlace privado por WhatsApp: nunca indexable.
     robots: { index: false, follow: false },

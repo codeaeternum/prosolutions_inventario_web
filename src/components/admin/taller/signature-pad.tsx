@@ -16,13 +16,17 @@ interface SignaturePadProps {
 export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al firmar, el cliente acepta las condiciones y el estado reportado del equipo." }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
+  // inked vive en ref (no solo en estado): un toque-punto dispara
+  // pointerdown→pointerup en el mismo tick y emit() leería un isEmpty
+  // todavía viejo si dependiera del estado de React.
+  const inked = useRef(false)
   const [isEmpty, setIsEmpty] = useState(true)
 
   const emit = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    onChange(isEmpty ? null : canvas.toDataURL("image/png"))
-  }, [isEmpty, onChange])
+    onChange(inked.current ? canvas.toDataURL("image/png") : null)
+  }, [onChange])
 
   useEffect(() => { emit() }, [emit])
 
@@ -37,6 +41,11 @@ export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al
 
   const ctx = () => canvasRef.current!.getContext("2d")!
 
+  const markInked = () => {
+    inked.current = true
+    setIsEmpty(false)
+  }
+
   const start = (e: React.PointerEvent) => {
     drawing.current = true
     const c = ctx()
@@ -47,6 +56,11 @@ export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al
     const p = point(e)
     c.beginPath()
     c.moveTo(p.x, p.y)
+    // Un toque-punto (tap sin arrastrar) también deja marca: antes solo
+    // pointermove la dibujaba y una "firma" de punto quedaba como vacío.
+    c.lineTo(p.x + 0.5, p.y + 0.5)
+    c.stroke()
+    markInked()
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
@@ -56,7 +70,7 @@ export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al
     const p = point(e)
     c.lineTo(p.x, p.y)
     c.stroke()
-    if (isEmpty) setIsEmpty(false)
+    if (!inked.current) markInked()
   }
 
   const end = () => { drawing.current = false; emit() }
@@ -64,6 +78,7 @@ export function SignaturePad({ onChange, label = "Firma del cliente", hint = "Al
   const clear = () => {
     const canvas = canvasRef.current!
     ctx().clearRect(0, 0, canvas.width, canvas.height)
+    inked.current = false
     setIsEmpty(true)
   }
 

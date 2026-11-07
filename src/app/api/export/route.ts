@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { getOrderFolioDigits } from "@/lib/settings"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 import { csvCell } from "@/lib/csv"
@@ -136,15 +136,19 @@ async function exportOrders(businessId: string, branchId?: string): Promise<stri
     },
   })
   const headers = ["Folio", "Fecha recepción", "Cliente", "Teléfono", "Equipo", "Estado", "Sucursal", "Técnico", "Presupuesto", "Abonado", "Saldo"]
-  // Mismo largo de folio que el ticket impreso (order_folio_digits del negocio).
-  const folioDigits = await getOrderFolioDigits(businessId)
+  // Mismo prefijo y largo de folio que el ticket impreso (order_prefix +
+  // order_folio_digits del negocio).
+  const [folioDigits, orderPrefix] = await Promise.all([
+    getOrderFolioDigits(businessId),
+    getBusinessSetting(businessId, "order_prefix").catch(() => null),
+  ])
   const rows = orders.map((o) => {
     // Total de la orden: mano de obra + refacciones autorizadas (o el cargo
     // de diagnóstico en cierres sin reparación).
     const totalCents = orderTotalCents(o, o.parts)
     const paidCents = o.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
     return [
-      repairFolio(o.number, folioDigits),
+      repairFolio(o.number, folioDigits, orderPrefix),
       formatDateTime(o.createdAt),
       o.customerName,
       o.customerPhone,

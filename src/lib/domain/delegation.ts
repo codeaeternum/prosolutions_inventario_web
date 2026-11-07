@@ -3,6 +3,7 @@ import { z } from "zod"
 import { BusinessError, actor, operationKeySchema, transaction } from "./operations"
 import { createRepair } from "./workshop"
 import { formatFolio, parseFolioDigits, repairLabels } from "../workshop-labels"
+import { orderHeldCents } from "../workshop-money"
 
 /**
  * Vínculo captador → taller reparador ("Telcel trae → nosotros reparamos").
@@ -212,6 +213,14 @@ export async function delegateRepairToPartner(db: PrismaClient, actorId: string,
   if (DELEGATION_CLOSED_STATUSES.includes(order.status)) {
     throw new BusinessError("La orden está cerrada; ya no se puede enviar al taller asociado.", 409)
   }
+  // Dinero retenido del cliente (anticipo/abonos netos de reembolsos): al
+  // delegar, la orden local deja de admitir PAYMENT/SETTLE_DELIVER/REFUND en
+  // abierto — un anticipo sin liquidar quedaría atrapado hasta el cierre.
+  // El captador liquida el saldo o reembolsa el anticipo ANTES de delegar.
+  const heldPayments = await db.payment.findMany({ where: { repairOrderId: order.id, status: { in: ["CONFIRMED", "REFUNDED"] } }, select: { amount: true, status: true } })
+  if (orderHeldCents(heldPayments) > 0) {
+    throw new BusinessError("La orden tiene dinero retenido del cliente; liquida o reembolsa el anticipo antes de delegar.", 409, "DELEGATION_HELD_MONEY")
+  }
 
   const partner = await resolveRepairPartner(db, businessId, { missingMessage: "Configura tu taller asociado en Configuración" })
   const partnerName = partner.repairerBusiness.name
@@ -263,6 +272,13 @@ export async function delegateRepairToPartner(db: PrismaClient, actorId: string,
   // se resuelve abajo como éxito idempotente o conflicto.
   const marked = await transaction(db, async tx => {
     await actor(tx, actorId, "admin", businessId)
+    // Re-validación dentro de la tx serializable: un cobro que entró entre
+    // la lectura inicial y la marca no puede colar dinero retenido a una
+    // delegada (REFUND solo vuelve a abrirse cuando la orden ya cerró).
+    const heldNow = orderHeldCents(await tx.payment.findMany({ where: { repairOrderId: order.id, status: { in: ["CONFIRMED", "REFUNDED"] } }, select: { amount: true, status: true } }))
+    if (heldNow > 0) {
+      throw new BusinessError("La orden tiene dinero retenido del cliente; liquida o reembolsa el anticipo antes de delegar.", 409, "DELEGATION_HELD_MONEY")
+    }
     const updated = await tx.repairOrder.updateMany({
       where: { id: order.id, businessId, delegatedOrderId: null, status: { notIn: [...DELEGATION_CLOSED_STATUSES] } },
       data: {

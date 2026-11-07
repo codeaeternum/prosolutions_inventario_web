@@ -12,7 +12,8 @@ export function getClientOperationKey(previous: ClientOperationKey | null, paylo
 }
 
 // Tailscale/LAN HTTP is not a secure context, but getRandomValues remains available.
-function operationUUID(): string {
+// También la usan los uploads de evidencias (multipart) para su idempotencyKey.
+export function operationUUID(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
   const bytes = crypto.getRandomValues(new Uint8Array(16))
   bytes[6] = (bytes[6] & 15) | 64

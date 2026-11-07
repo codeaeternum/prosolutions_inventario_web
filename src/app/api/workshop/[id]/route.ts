@@ -45,7 +45,13 @@ async function readySideEffects(order: { id: string; number: number; status: str
     where: { orderId: order.id, isPublic: true, detail: READY_PUBLIC_MESSAGE },
     select: { id: true },
   })
-  const folio = repairFolio(order.number, await getOrderFolioDigits(order.businessId))
+  // Mismo folio que el ticket/seguimiento: prefijo y dígitos del negocio
+  // (order_prefix + order_folio_digits), leídos una sola vez por request.
+  const [folioDigits, orderPrefix] = await Promise.all([
+    getOrderFolioDigits(order.businessId),
+    getBusinessSetting(order.businessId, "order_prefix").catch(() => null),
+  ])
+  const folio = repairFolio(order.number, folioDigits, orderPrefix)
   const base = (process.env.NEXTAUTH_URL || "https://reficio.app").replace(/\/+$/, "")
   const digits = order.customerPhone.replace(/\D/g, "")
   // wa.me exige formato internacional; los teléfonos locales de 10 dígitos se asumen MX (+52).
@@ -118,9 +124,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       signatureData = signatures?.signatureData ?? null
       deliverySignatureData = signatures?.deliverySignatureData ?? null
     }
-    // El folio viaja ya formateado con los dígitos del negocio
-    // (order_folio_digits) — los clientes no recalculan el padding.
-    const folioDigits = await getOrderFolioDigits(order.businessId)
+    // El folio viaja ya formateado con prefijo y dígitos del negocio
+    // (order_prefix + order_folio_digits) — los clientes no recalculan.
+    const [folioDigits, orderPrefix] = await Promise.all([
+      getOrderFolioDigits(order.businessId),
+      getBusinessSetting(order.businessId, "order_prefix").catch(() => null),
+    ])
     // partnerConfigured: el detalle decide si muestra "Enviar a taller"
     // (delegación saliente al reparador configurado). Los campos de delegación
     // (delegatedToBusinessId/delegatedOrderId/delegatedAt + delegatedToBusiness)
@@ -139,7 +148,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // no-admin aunque la fila lo trajera (omit es la primera línea, este
     // null es la segunda).
     const quoteTokenForViewer = isAdmin ? ((order as { quoteToken?: string | null }).quoteToken ?? null) : null
-    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits), deviceAccessValue, suggestedQuoteCents, signatureData, deliverySignatureData, quoteToken: quoteTokenForViewer }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
+    return NextResponse.json({ order: { ...order, folio: repairFolio(order.number, folioDigits, orderPrefix), deviceAccessValue, suggestedQuoteCents, signatureData, deliverySignatureData, quoteToken: quoteTokenForViewer }, partnerConfigured }, { headers: { "Cache-Control": "private, no-store" } })
   } catch (error) { return businessFailure(error) }
 }
 async function handleUpdate(req: Request, params: Promise<{ id: string }>) {
@@ -167,7 +176,12 @@ async function handleUpdate(req: Request, params: Promise<{ id: string }>) {
     // La actualización ya se confirmó: un fallo en el aviso no debe reportarse
     // como error de la operación.
     const extra = await readySideEffects(result.order, actorId).catch(() => ({}))
-    return NextResponse.json({ ...result, ...extra })
+    // Mismo criterio que el GET de arriba (quoteTokenForViewer): con ese token
+    // se aprueba/rechaza la cotización pública como el cliente — la respuesta
+    // de la mutación tampoco lo devuelve a un no-admin. Se fija a null igual
+    // que en la ficha, no se omite la llave.
+    const updatedOrder = session.user.role === "ADMIN" ? result.order : { ...result.order, quoteToken: null }
+    return NextResponse.json({ ...result, ...extra, order: updatedOrder })
   } catch (error) { return businessFailure(error) }
 }
 export function POST(req: Request, ctx: { params: Promise<{ id: string }> }) { return handleUpdate(req, ctx.params) }

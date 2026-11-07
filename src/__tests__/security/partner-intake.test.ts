@@ -47,6 +47,9 @@ const validBody = {
   equipmentType: "Celular",
   reportedIssue: "No enciende",
   partnerPriceCents: 35000,
+  // Requerida desde el hardening: un reintento con la misma llave devuelve
+  // la misma orden en vez de duplicarla (antes había fallback aleatorio).
+  idempotencyKey: "partner-intake-001",
 }
 
 beforeEach(() => {
@@ -143,6 +146,55 @@ describe("POST /api/workshop/partner", () => {
     const res = await partnerIntake(postReq({ customerName: "Ana" }))
     expect(res.status).toBe(400)
     expect(mocks.createRepair).not.toHaveBeenCalled()
+  })
+
+  it("sin idempotencyKey responde 400 — el retry ya no duplica la orden", async () => {
+    mocks.auth.mockResolvedValue(session("WORKSHOP", { id: "u-nokey" }))
+    // undefined no viaja en JSON: el body llega sin la llave.
+    const res = await partnerIntake(postReq({ ...validBody, idempotencyKey: undefined }))
+    expect(res.status).toBe(400)
+    expect(mocks.createRepair).not.toHaveBeenCalled()
+  })
+
+  it("la respuesta es whitelist: folio + trackingToken, sin secretos de la orden", async () => {
+    mocks.auth.mockResolvedValue(session("WORKSHOP", { id: "u-whitelist" }))
+    mocks.createRepair.mockResolvedValue({
+      order: {
+        id: "o1", number: 9, status: "RECEIVED", trackingToken: "track-uuid",
+        quoteToken: "quote-secreto", uploadToken: "upload-secreto",
+        customerPhone: "8112345678", deliveredToDoc: "INE 1234", location: "Locker 3",
+      },
+      operationId: "op-1",
+    })
+    const res = await partnerIntake(postReq(validBody))
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.operationId).toBe("op-1")
+    expect(json.order).toEqual({
+      id: "o1", number: 9, folio: "PS-000009", status: "RECEIVED", trackingToken: "track-uuid",
+    })
+    // Nada del expediente interno cruza al OTRO tenant.
+    const raw = JSON.stringify(json)
+    for (const leak of ["quote-secreto", "upload-secreto", "INE 1234", "Locker 3", "customerPhone"]) {
+      expect(raw).not.toContain(leak)
+    }
+  })
+
+  it("staff con módulos explícitos sin taller ni mercado recibe 403", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE", { allowedModules: ["ventas"] }))
+    const res = await partnerIntake(postReq(validBody))
+    expect(res.status).toBe(403)
+    expect(mocks.createRepair).not.toHaveBeenCalled()
+  })
+
+  it("rate limit: 30 capturas por hora por usuario y la 31 responde 429", async () => {
+    mocks.auth.mockResolvedValue(session("ADMIN", { id: "u-flood" }))
+    for (let i = 0; i < 30; i++) {
+      const res = await partnerIntake(postReq({ ...validBody, idempotencyKey: `flood-key-${i}` }))
+      expect(res.status).toBe(201)
+    }
+    const res = await partnerIntake(postReq({ ...validBody, idempotencyKey: "flood-key-31" }))
+    expect(res.status).toBe(429)
   })
 })
 

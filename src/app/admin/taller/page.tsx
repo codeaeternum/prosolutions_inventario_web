@@ -23,6 +23,7 @@ import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { semaforo, SemaforoBadge } from "@/components/admin/taller/semaforo"
 import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
+import { localDateTimeToIso, textOrUndefined } from "@/lib/workshop-form"
 import { toast } from "sonner"
 
 type Branch = { id: string; name: string }
@@ -60,6 +61,9 @@ type Order = {
   originBusinessName?: string | null;
   originContact?: string | null;
   partnerPriceCents?: number | null;
+  // Marca de entrega real del servidor (SETTLE_DELIVER). Si el GET aún no la
+  // expone, la UI cae al evento público "Entrega registrada".
+  deliveredAt?: string | null;
   // Delegación saliente: esta orden fue enviada al taller asociado — la espejo
   // vive en su tenant (delegatedOrderId) y aquí solo queda la referencia.
   delegatedToBusinessId?: string | null;
@@ -86,6 +90,9 @@ const activeBoardStages: RepairStage[] = ["RECEIVED", "DIAGNOSIS", "WAITING_APPR
 const closedColumnStages: RepairStage[] = ["DELIVERED", "NOT_REPAIRED", "NOT_AUTHORIZED", "CANCELLED", "WARRANTY"]
 const boardStages: RepairStage[] = [...activeBoardStages, ...closedColumnStages]
 const terminalStages: readonly RepairStage[] = ["DELIVERED", "CANCELLED"]
+// Etapas cerradas como ORIGEN: salir de ellas reabre la orden, así que no va
+// por avance rápido (un clic sin detalle) sino por el flujo completo del form.
+const closedOriginStages: readonly RepairStage[] = ["DELIVERED", "NOT_REPAIRED", "NOT_AUTHORIZED", "CANCELLED"]
 // Además de las cerradas, los cierres sin reparación ya no admiten refacciones
 // (el dominio rechaza PART_* ahí): la sección se muestra solo lectura.
 const partsClosedStages: readonly RepairStage[] = [...terminalStages, "NOT_AUTHORIZED", "NOT_REPAIRED"]
@@ -267,7 +274,7 @@ export default function WorkshopPage() {
   const [feeDraft, setFeeDraft] = useState("")
   const [settleForm, setSettleForm] = useState<SettleForm>(emptySettleForm)
   const [settleOpen, setSettleOpen] = useState(false)
-  const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", location: "" })
+  const [planForm, setPlanForm] = useState<PlanForm>({ scheduledAt: "", promisedAt: "", location: "" })
   const [showAccess, setShowAccess] = useState(false)
   // Delegación al taller asociado: partnerConfigured lo sirve el detalle de la
   // orden; mirrorLive es el estado en vivo de la espejo vía /api/workshop/partner.
@@ -289,6 +296,9 @@ export default function WorkshopPage() {
   const requestVersion = useRef(0)
   const detailVersion = useRef(0)
   const detailRequest = useRef<AbortController | null>(null)
+  // Snapshot para el listener popstate (se monta una sola vez con deps []):
+  // lee siempre el estado actual de borradores y la orden abierta.
+  const popGuardRef = useRef<{ dirty: boolean; selectedId: string | null }>({ dirty: false, selectedId: null })
   const draft = drafts[action] ?? {}
   // Pestaña raíz del taller: "ordenes" (default) y "precios" (catálogo de
   // servicios, absorbido de /admin/taller/catalogo). Viaja en ?tab=.
@@ -305,14 +315,19 @@ export default function WorkshopPage() {
   const selectedParts = selected?.parts ?? []
   // Avance de un clic: solo etapas de progreso — los cierres (cancelar, no
   // quedó, no autorizado) siguen por el flujo completo con detalle, para que
-  // un misclick no libere inventario ni rote tokens.
-  const quickStages = selected ? repairNextStages[selected.status].filter(next => !(["CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] as RepairStage[]).includes(next)) : []
+  // un misclick no libere inventario ni rote tokens. Si la orden YA está
+  // cerrada, salir de ahí (p. ej. NOT_AUTHORIZED → DIAGNOSIS, DELIVERED →
+  // WARRANTY) es reapertura: también va por el formulario, nunca en 1 clic.
+  const quickStages = selected && !closedOriginStages.includes(selected.status)
+    ? repairNextStages[selected.status].filter(next => !(["CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] as RepairStage[]).includes(next))
+    : []
   // El botón "Mostrar" del bloqueo aplica cuando el tipo sugiere secreto — el
   // valor en sí llega null hasta revelarlo (ver toggleAccessSecret).
   const canRevealAccess = isAdmin && Boolean(selected?.deviceAccessValue || (selected?.deviceAccessType && selected.deviceAccessType !== "NONE"))
-  // No hay deliveredAt dedicado: la fecha exacta la conserva el evento público
-  // de entrega (updatedAt cambiaría con una garantía o reembolso posterior).
-  const deliveredAt = selected?.events?.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt
+  // deliveredAt llega en el detalle (SETTLE_DELIVER lo fija); si el GET aún
+  // no lo expone se cae al evento público de entrega — updatedAt cambiaría
+  // con una garantía o reembolso posterior.
+  const deliveredAt = selected?.deliveredAt ?? selected?.events?.find(event => event.type === "STATUS" && event.detail.includes("Entrega registrada"))?.createdAt
   // Desglose para "Enviar cotización" por WhatsApp: mano de obra + refacciones aprobadas.
   const quoteShare = (o: Order) => {
     const labor = o.approvedQuoteCents ?? o.quoteCents
@@ -356,8 +371,18 @@ export default function WorkshopPage() {
   // El nombre de quien recoge se prellena con el titular al abrir el panel:
   // solo cuenta como cambio si difiere del prellenado.
   const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null || settleForm.reference !== "")
-  const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.location !== (selected.location ?? ""))
-  const hasUnsavedChanges = paymentFormDirty || refundFormDirty || feeDraftDirty || settleFormDirty || planFormDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
+  const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.promisedAt !== toLocalInput(selected.promisedAt) || planForm.location !== (selected.location ?? ""))
+  // Borradores internos de las secciones hijas (refacciones, etiqueta de
+  // evidencias): los elevan con onDirtyChange para que el guard de descarte
+  // también los proteja.
+  const [partsDirty, setPartsDirty] = useState(false)
+  const [evidenceDirty, setEvidenceDirty] = useState(false)
+  const hasUnsavedChanges = paymentFormDirty || refundFormDirty || feeDraftDirty || settleFormDirty || planFormDirty || partsDirty || evidenceDirty || Object.values(drafts).some(value => Object.values(value).some(field => (typeof field === "string" && field !== "") || field === true))
+  // El guard del popstate se refresca post-render (escribir refs en render
+  // dispara react-hooks/refs); sin deps corre tras cada render.
+  useEffect(() => {
+    popGuardRef.current = { dirty: hasUnsavedChanges, selectedId: selected?.id ?? null }
+  })
   const updateDraft = (changes: ActionDraft) => setDrafts(previous => ({ ...previous, [action]: { ...previous[action], ...changes } }))
   // SignaturePad emite onChange tras cada render si el handler cambia; el
   // bail-out por valor evita un ciclo de render infinito (mismo patrón que
@@ -399,7 +424,8 @@ export default function WorkshopPage() {
     detailRequest.current = null
     setOpening(false); setSelected(null); setAction("NOTE")
     setDrafts({}); setPaymentForm(emptyPaymentForm); setRefundForm(emptyRefundForm); setFeeDraft(""); setSettleForm(emptySettleForm)
-    setSettleOpen(false); setPlanForm({ scheduledAt: "", location: "" })
+    setSettleOpen(false); setPlanForm({ scheduledAt: "", promisedAt: "", location: "" })
+    setPartsDirty(false); setEvidenceDirty(false)
     setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null }); setDiscardDialog(false); setRotateTokenDialog(false)
     setPartnerConfigured(false); setDelegateOpen(false); setDelegateForm({ price: "", note: "" }); setMirrorLive(null)
   }
@@ -513,7 +539,7 @@ export default function WorkshopPage() {
       // Vigencia del link de evidencias se evalúa al cargar la orden (no en render).
       setEvidenceLinkExpired(Boolean(order.uploadTokenExpiresAt && new Date(order.uploadTokenExpiresAt).getTime() < Date.now()))
       setFeeDraft(order.diagnosticFeeCents === null ? "" : String(order.diagnosticFeeCents / 100))
-      setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), location: order.location ?? "" }); setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null })
+      setPlanForm({ scheduledAt: toLocalInput(order.scheduledAt), promisedAt: toLocalInput(order.promisedAt), location: order.location ?? "" }); setShowAccess(false); setAccessSecret({ loading: false, fetched: false, value: null })
       setPartnerConfigured(Boolean(data.partnerConfigured))
       // Firma de entrega (~300 KB en base64): ya no viaja en la ficha — la
       // pide aparte el ADMIN y solo cuando hay constancia de entrega (sin
@@ -557,8 +583,16 @@ export default function WorkshopPage() {
     const timer = setTimeout(() => { if (initial) void openOrder(initial, false, false) }, 0)
     const onPop = () => {
       const id = fromUrl()
-      if (id) void openOrder(id, false, false)
-      else closeOrder()
+      if (id) { void openOrder(id, false, false); return }
+      const guard = popGuardRef.current
+      // Con borradores sin guardar se reinserta ?orden (anula el back) y se
+      // confirma el descarte — mismo flujo que el botón "Volver a órdenes".
+      if (guard.dirty && guard.selectedId) {
+        syncOrderUrl(guard.selectedId)
+        setDiscardDialog(true)
+        return
+      }
+      closeOrder()
     }
     window.addEventListener("popstate", onPop)
     return () => { clearTimeout(timer); window.removeEventListener("popstate", onPop) }
@@ -580,11 +614,18 @@ export default function WorkshopPage() {
     const fields = Object.fromEntries(new FormData(form).entries()) as Record<string, string>
     try {
       if (kind === "branch") {
-        await post("/api/workshop", { action: "CREATE_BRANCH", name: fields.name }); form.reset(); await load()
+        // El schema exige min 2 caracteres YA recortados: un nombre de puros
+        // espacios pasaba el required del input y devolvía un 400 críptico.
+        const branchName = textOrUndefined(fields.name) ?? ""
+        if (branchName.length < 2) throw new Error("El nombre de la sucursal debe tener al menos 2 caracteres.")
+        await post("/api/workshop", { action: "CREATE_BRANCH", name: branchName }); form.reset(); await load()
       } else if (selected) {
         const quote = fields.quote === undefined ? undefined : Number(fields.quote)
         if (quote !== undefined && (!Number.isFinite(quote) || quote < 0 || Math.abs(quote * 100 - Math.round(quote * 100)) > 0.000001)) throw new Error("El presupuesto admite hasta dos decimales")
-        const result = await post(`/api/workshop/${selected.id}`, { action: fields.action ?? action, expectedVersion: selected.version, detail: fields.detail, status: fields.status, branchId: fields.branchId, assignedToId: fields.assignedToId, quoteCents: quote === undefined ? undefined : Math.round(quote * 100), noteIsPublic: fields.noteIsPublic === "on" })
+        // Strings vacíos → undefined: el schema pide min(1) cuando el campo
+        // viaja, y un detail:"" rechazaba hasta "Cambiar etapa" y la
+        // reapertura por garantía (que llevan el detalle opcional vacío).
+        const result = await post(`/api/workshop/${selected.id}`, { action: fields.action ?? action, expectedVersion: selected.version, detail: textOrUndefined(fields.detail), status: textOrUndefined(fields.status), branchId: textOrUndefined(fields.branchId), assignedToId: textOrUndefined(fields.assignedToId), quoteCents: quote === undefined ? undefined : Math.round(quote * 100), noteIsPublic: fields.noteIsPublic === "on" })
         setDrafts(previous => {
           const next = { ...previous }
           delete next[action]
@@ -682,7 +723,9 @@ export default function WorkshopPage() {
     if (inFlight.current || opening || !selected) return
     inFlight.current = true; setSaving(true)
     try {
-      await post(`/api/workshop/${selected.id}`, { action: "PLAN", expectedVersion: selected.version, scheduledAt: planForm.scheduledAt ? new Date(planForm.scheduledAt).toISOString() : null, location: planForm.location.trim() || null })
+      // localDateTimeToIso valida antes de toISOString: una fecha no
+      // parseable lanzaba RangeError sin contexto — ahora sale Error legible.
+      await post(`/api/workshop/${selected.id}`, { action: "PLAN", expectedVersion: selected.version, scheduledAt: localDateTimeToIso(planForm.scheduledAt, "la fecha programada"), promisedAt: localDateTimeToIso(planForm.promisedAt, "la fecha promesa"), location: planForm.location.trim() || null })
       await openOrder(selected.id, true); await load()
       toast.success("Plan actualizado")
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se confirmó el cambio. Reintenta sin cambiar los datos.") }
@@ -854,10 +897,14 @@ export default function WorkshopPage() {
         ) : tab === "ordenes" ? (
           <div className="flex items-center gap-2">
             <ExportButton type="orders" branchId={branch || undefined} />
-            <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}>
-              <Plus className="mr-2 h-4 w-4" />
-              Recibir equipo
-            </Button>
+            {/* El wrapper lleva el tooltip: un <button> deshabilitado no
+                recibe hover/focus y su title nunca se muestra. */}
+            <span title={!branches.length ? "Registra primero una sucursal del taller" : "Registrar la recepción de un equipo"}>
+              <Button disabled={!branches.length || loading} onClick={() => router.push("/admin/taller/recibir")}>
+                <Plus className="mr-2 h-4 w-4" />
+                Recibir equipo
+              </Button>
+            </span>
           </div>
         ) : null}
       </div>
@@ -893,13 +940,15 @@ export default function WorkshopPage() {
             <CatalogoPanel />
           ) : (
             <>
-              <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vistas del taller">
+              {/* Son filtros de la misma lista, no paneles tab: botones con
+                  aria-pressed (como los demás chips) en lugar de tablist — el
+                  rol tab exigiría arrow-key nav y un tabpanel por vista. */}
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Vistas del taller">
                 {viewTabs.map(vista => (
                   <button
                     key={vista.value}
                     type="button"
-                    role="tab"
-                    aria-selected={view === vista.value}
+                    aria-pressed={view === vista.value}
                     onClick={() => {
                       setView(vista.value)
                       setPage(1)
@@ -1100,7 +1149,9 @@ export default function WorkshopPage() {
                   </div>
                 </div>
               )}
-              <details className="rounded-xl border bg-card p-4">
+              {/* Sin sucursales se abre solo: el form de alta queda a la vista
+                  (es el siguiente paso antes de poder recibir equipos). */}
+              <details className="rounded-xl border bg-card p-4" open={branches.length === 0}>
                 <summary className="cursor-pointer font-medium">Sucursales del taller ({branches.length})</summary>
                 <p className="my-3 text-sm text-muted-foreground">
                   {branches.map(b => b.name).join(" · ") || "Todavía no hay sucursales."} Las ubicaciones de equipos se administran aquí y en Sucursales; el inventario es independiente por sucursal.
@@ -1277,6 +1328,7 @@ export default function WorkshopPage() {
               branches={branches}
               currentBranchId={selected.currentBranch.id}
               readOnly={partsClosedStages.includes(selected.status) || Boolean(selected.delegatedOrderId)}
+              onDirtyChange={setPartsDirty}
               onAction={async payload => {
                 await handlePartAction(payload)
               }}
@@ -1360,6 +1412,7 @@ export default function WorkshopPage() {
             />
             <WorkPlan
               scheduledAt={selected.scheduledAt}
+              promisedAt={selected.promisedAt}
               location={selected.location}
               editable={!terminalStages.includes(selected.status)}
               disabled={saving || opening}
@@ -1382,6 +1435,7 @@ export default function WorkshopPage() {
               onRotateLink={isAdmin ? () => setRotateTokenDialog(true) : undefined}
               rotateBusy={saving || opening}
               onChanged={() => void openOrder(selected.id, true)}
+              onDirtyChange={setEvidenceDirty}
             />
             {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && (
               <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5">
@@ -1563,7 +1617,7 @@ export default function WorkshopPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Descartar los cambios sin guardar?</AlertDialogTitle>
             <AlertDialogDescription>
-              Los borradores de acciones y de refacciones que no guardaste se perderán al volver a la lista.
+              Los borradores de acciones, refacciones y evidencias que no guardaste se perderán al volver a la lista.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

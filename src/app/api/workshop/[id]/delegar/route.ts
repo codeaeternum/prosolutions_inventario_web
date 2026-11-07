@@ -16,7 +16,13 @@ const delegateSchema = z.object({
   partnerPriceCents: z.number().int().min(0).max(100000000).optional(),
   note: z.string().trim().max(500).optional(),
   idempotencyKey: operationKeySchema.optional(),
-})
+}).refine(
+  // Un POST {} ya no delega: congelar la orden local y copiar PII a otro
+  // tenant exige intención explícita — precio convenio o nota para el
+  // taller (idempotencyKey solo es plomería del reintento).
+  v => v.partnerPriceCents != null || Boolean(v.note?.trim()),
+  { message: "Indica el precio convenio o una nota para el taller." },
+)
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

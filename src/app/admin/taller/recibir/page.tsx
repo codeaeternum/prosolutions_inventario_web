@@ -219,6 +219,9 @@ export default function ReceiveEquipmentPage() {
   const phoneBoxRef = useRef<HTMLDivElement | null>(null)
   const brandBoxRef = useRef<HTMLLabelElement | null>(null)
   const modelBoxRef = useRef<HTMLLabelElement | null>(null)
+  // Título del paso activo: recibe el foco al cambiar de paso para que
+  // teclado/lector de pantalla no queden en el botón que disparó el cambio.
+  const stepTitleRef = useRef<HTMLHeadingElement>(null)
 
   // Cualquier captura limpia el aviso de validación del paso: el usuario ya está corrigiendo.
   const update = (changes: Partial<typeof emptyForm>) => { setDirty(true); setStepError(""); setForm(previous => ({ ...previous, ...changes })) }
@@ -676,6 +679,14 @@ export default function ReceiveEquipmentPage() {
   }
 
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" })
+
+  // Foco al título del nuevo paso (tabIndex=-1 → solo foco programático, no
+  // entra en el orden de tabulación). El smooth-scroll no estorba: el foco
+  // mueve el viewport al título de todas formas.
+  useEffect(() => {
+    if (intakeMode !== "full") return
+    stepTitleRef.current?.focus()
+  }, [step, intakeMode])
 
   const goNext = () => {
     const error = validateStep(step)
@@ -1353,6 +1364,21 @@ export default function ReceiveEquipmentPage() {
                       </div>
                     )}
                   </div>
+                  {/* Confirmación del cliente en exprés: misma regla que el
+                      paso 2 de la recepción completa — canvas firma aquí, en
+                      "ticket" se asienta que firmará en el impreso, en "pin"
+                      valida la terminación telefónica. */}
+                  {signatureMode === "canvas" && (
+                    <div className="rounded-lg border p-4">
+                      <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
+                    </div>
+                  )}
+                  {signatureMode === "ticket" && (
+                    <div className="rounded-lg border border-dashed p-4 text-sm">
+                      <p className="font-medium">El cliente firmará en el ticket impreso</p>
+                      <p className="mt-1 text-xs text-muted-foreground">El comprobante del cliente sale con línea de firma y leyenda de aceptación. Configurado en Configuración → Recepción.</p>
+                    </div>
+                  )}
                   {signatureMode === "pin" && (
                     <div className="rounded-lg border p-4 text-sm">
                       <label className="block space-y-2">El cliente confirma con los últimos 4 dígitos de su teléfono *
@@ -1388,7 +1414,7 @@ export default function ReceiveEquipmentPage() {
           <IntakeStepper steps={STEPS} current={step} />
           <section className="rounded-xl border bg-card p-5 sm:p-6">
             <fieldset disabled={saving} className="disabled:opacity-80">
-              <h2 className="mb-5 font-semibold">{STEPS[step]}</h2>
+              <h2 ref={stepTitleRef} tabIndex={-1} className="mb-5 font-semibold">{STEPS[step]}</h2>
 
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2">

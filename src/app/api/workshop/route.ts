@@ -16,6 +16,11 @@ const boardStages: (keyof typeof repairLabels)[] = [
   "NOT_AUTHORIZED", "DELIVERED", "CANCELLED",
 ]
 
+// Tope de órdenes abiertas que la vista "debt" barre en memoria por request
+// (con `orderBy` vigente = las más recientes). La respuesta marca
+// `truncated: true` cuando el corte pudo dejar filas fuera.
+const DEBT_CANDIDATE_CAP = 5000
+
 // Internal pilot. Open staff access only after branch/technician permissions are implemented.
 export async function GET(req: Request) {
   try {
@@ -87,10 +92,15 @@ export async function GET(req: Request) {
     // los devuelve.
     const listOmit = { deviceAccessValue: true, signatureData: true, deliverySignatureData: true, uploadToken: true, quoteToken: true }
     const orderBy = [{ createdAt: "desc" as const }, { id: "desc" as const }]
-    // Largo del folio impreso del negocio (order_folio_digits, 4–8): la
-    // respuesta ya trae el folio formateado para no recalcularlo en cliente.
-    const folioDigits = parseFolioDigits(await getBusinessSetting(businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null))
-    const withFolio = <T extends { number: number }>(order: T) => ({ ...order, folio: repairFolio(order.number, folioDigits) })
+    // Prefijo y largo del folio impreso del negocio (order_prefix +
+    // order_folio_digits): la respuesta ya trae el folio formateado para no
+    // recalcularlo en cliente — el mismo que imprime el ticket/seguimiento.
+    const [folioDigitsRaw, orderPrefix] = await Promise.all([
+      getBusinessSetting(businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+      getBusinessSetting(businessId, "order_prefix").catch(() => null),
+    ])
+    const folioDigits = parseFolioDigits(folioDigitsRaw)
+    const withFolio = <T extends { number: number }>(order: T) => ({ ...order, folio: repairFolio(order.number, folioDigits, orderPrefix) })
     if (isBoard && !status && !view) {
       const [stageOrders, counts, branches, staff] = await Promise.all([
         Promise.all(boardStages.map(stage => prisma.repairOrder.findMany({ where: { ...where, status: stage }, take: 20, orderBy, include: orderInclude, omit: listOmit }))),
@@ -113,8 +123,12 @@ export async function GET(req: Request) {
       // (partes son qty×precio por fila), así que se calcula por orden ANTES
       // de paginar — el filtro post-paginación inflaba total/totalPages y
       // escondía las órdenes sin ningún cobro registrado.
+      // Tope duro de candidatas: el barrido en memoria (partes + pagos)
+      // cubre las órdenes abiertas más recientes — un negocio con más de
+      // DEBT_CANDIDATE_CAP abiertas recibe `truncated: true` y revisa por
+      // etapa/sucursal en lugar de pagar un escaneo ilimitado por request.
       const [candidates, paidRows, branches, staff] = await Promise.all([
-        prisma.repairOrder.findMany({ where, orderBy, select: { id: true, status: true, quoteCents: true, approvedQuoteCents: true, diagnosticFeeCents: true, closedWithoutRepair: true } }),
+        prisma.repairOrder.findMany({ where, orderBy, take: DEBT_CANDIDATE_CAP, select: { id: true, status: true, quoteCents: true, approvedQuoteCents: true, diagnosticFeeCents: true, closedWithoutRepair: true } }),
         prisma.payment.groupBy({ by: ["repairOrderId"], where: { repairOrderId: { not: null }, businessId, ...paymentWhere }, _sum: { amount: true } }),
         prisma.branch.findMany({ where: { isActive: true, businessId }, orderBy: { name: "asc" } }),
         prisma.user.findMany({ where: { status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] }, businessId }, select: { id: true, name: true } }),
@@ -132,7 +146,7 @@ export async function GET(req: Request) {
       const pageOrders = await prisma.repairOrder.findMany({ where: { id: { in: [...pageIds] } }, include: orderInclude, omit: listOmit })
       const byId = new Map(pageOrders.map(order => [order.id, order]))
       const orders = owing.slice((page - 1) * 20, page * 20).map(order => byId.get(order.id)).filter((order): order is NonNullable<typeof order> => order !== undefined)
-      return NextResponse.json({ orders: orders.map(withFolio), total: owing.length, branches, staff, page, totalPages: Math.max(1, Math.ceil(owing.length / 20)) }, { headers: { "Cache-Control": "private, no-store" } })
+      return NextResponse.json({ orders: orders.map(withFolio), total: owing.length, branches, staff, page, totalPages: Math.max(1, Math.ceil(owing.length / 20)), truncated: candidates.length === DEBT_CANDIDATE_CAP }, { headers: { "Cache-Control": "private, no-store" } })
     }
     const [orders, total, branches, staff] = await Promise.all([
       prisma.repairOrder.findMany({ where, take: 20, skip: (Math.floor(page) - 1) * 20, orderBy, include: orderInclude, omit: listOmit }),
@@ -158,6 +172,12 @@ export async function POST(req: Request) {
       const result = await operation(prisma, { key: input.idempotencyKey, actorId, businessId, kind: "BRANCH_CREATE", permission: "admin", payload: input.name }, async tx => ({ branch: await tx.branch.create({ data: { businessId, name: input.name } }) }))
       return NextResponse.json(result, { status: 201 })
     }
-    return NextResponse.json(await createRepair(prisma, actorId, businessId, body), { status: 201 })
+    const result = await createRepair(prisma, actorId, businessId, body)
+    // Mismo criterio que la ficha (GET /api/workshop/[id]): con el quoteToken
+    // se autoriza la cotización pública como el cliente — la respuesta del
+    // alta no lo devuelve a un no-admin. uploadToken sí viaja: el técnico lo
+    // necesita para el QR/link público de evidencias.
+    const order = session.user.role === "ADMIN" ? result.order : { ...result.order, quoteToken: null }
+    return NextResponse.json({ ...result, order }, { status: 201 })
   } catch (error) { return businessFailure(error) }
 }

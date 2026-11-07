@@ -4,7 +4,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
-import { getOrderFolioDigits } from "@/lib/settings"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 
@@ -215,15 +215,19 @@ export async function GET(
         }),
       ])
 
-    // Largo del folio impreso configurado por el negocio (order_folio_digits).
-    const folioDigits = await getOrderFolioDigits(businessId)
+    // Prefijo y largo del folio impreso del negocio (order_prefix +
+    // order_folio_digits) — el mismo formato del ticket/seguimiento.
+    const [folioDigits, orderPrefix] = await Promise.all([
+      getOrderFolioDigits(businessId),
+      getBusinessSetting(businessId, "order_prefix").catch(() => null),
+    ])
 
     const repairOrders = repairs.map((order) => {
       const totalCents = orderTotalCents(order, order.parts)
       return {
         id: order.id,
         number: order.number,
-        folio: repairFolio(order.number, folioDigits),
+        folio: repairFolio(order.number, folioDigits, orderPrefix),
         status: order.status,
         statusLabel: repairLabels[order.status as RepairStage] ?? order.status,
         equipment: [order.equipmentType, order.brand, order.model].filter(Boolean).join(" "),

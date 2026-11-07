@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   creditMovementFindMany: vi.fn(),
   supplierPaymentFindMany: vi.fn(),
   folioDigits: vi.fn(),
+  businessSetting: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -28,7 +29,7 @@ vi.mock("@/lib/prisma", () => ({
     supplierPayment: { findMany: mocks.supplierPaymentFindMany },
   },
 }))
-vi.mock("@/lib/settings", () => ({ getOrderFolioDigits: mocks.folioDigits }))
+vi.mock("@/lib/settings", () => ({ getOrderFolioDigits: mocks.folioDigits, getBusinessSetting: mocks.businessSetting }))
 
 import { GET } from "@/app/api/caja/movements/route"
 
@@ -104,6 +105,7 @@ beforeEach(() => {
   mocks.creditMovementFindMany.mockResolvedValue([])
   mocks.supplierPaymentFindMany.mockResolvedValue([])
   mocks.folioDigits.mockResolvedValue(6)
+  mocks.businessSetting.mockResolvedValue(null)
 })
 
 describe("acceso", () => {

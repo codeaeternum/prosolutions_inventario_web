@@ -10,6 +10,7 @@ import { createRepair } from "@/lib/domain/workshop"
  */
 
 const tx = {
+  $queryRaw: vi.fn(),
   user: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   repairOrder: { create: vi.fn() },
@@ -45,6 +46,9 @@ beforeEach(() => {
   // Eco del data recibido: lo que el dominio escribió es lo que regresa la fila.
   tx.repairOrder.create.mockImplementation(({ data }) => Promise.resolve({ id: "o1", number: 9, quoteCents: null, approvedQuoteCents: null, partnerPriceCents: null, ...data }))
   tx.repairEvent.create.mockResolvedValue({})
+  // nextOrderNumber() reserva el folio con un UPSERT atómico sobre
+  // BusinessCounter ($queryRaw → RETURNING): el mock entrega el 9.
+  tx.$queryRaw.mockResolvedValue([{ n: 9 }])
 })
 
 describe("origen de taller aliado", () => {

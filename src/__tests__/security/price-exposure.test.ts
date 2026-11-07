@@ -41,7 +41,7 @@ const mocks = vi.hoisted(() => {
     partRequest: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     encargo: { findMany: vi.fn() },
     reservation: { findMany: vi.fn(), count: vi.fn() },
-    repairOrder: { findUnique: vi.fn(), updateMany: vi.fn() },
+    repairOrder: { findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     repairEvent: { findFirst: vi.fn(), create: vi.fn() },
     repairPhoto: { create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     settings: { findFirst: vi.fn() },
@@ -889,7 +889,7 @@ describe("GET /api/evidencia/[token] (público por token)", () => {
 
 describe("GET /api/seguimiento (folio + 4 dígitos del teléfono)", () => {
   it("lee unitCostCents para calcular pero NUNCA lo devuelve; eventos solo isPublic", async () => {
-    mocks.prisma.repairOrder.findUnique.mockResolvedValue({
+    mocks.prisma.repairOrder.findMany.mockResolvedValue([{
       number: 5, businessId: BIZ, status: "IN_REPAIR",
       customerPhone: "+52 8112345678", customerName: "Ana",
       equipmentType: "Celular", brand: "Apple", model: "iPhone 15",
@@ -907,7 +907,7 @@ describe("GET /api/seguimiento (folio + 4 dígitos del teléfono)", () => {
       // Veneno: la fila lleva el costo real; la respuesta lo descarta.
       parts: [{ qty: 1, unitCostCents: 9000, unitPriceCents: 15000, status: "APPROVED" }],
       business: { name: "Taller Uno", phone: "8122334455", isActive: true },
-    })
+    }])
     const res = await seguimientoGet(req("https://app.invalid/api/seguimiento?folio=5&phone=5678"))
     const json = await res.json()
     expect(res.status).toBe(200)
@@ -920,10 +920,10 @@ describe("GET /api/seguimiento (folio + 4 dígitos del teléfono)", () => {
   })
 
   it("404 genérico cuando el teléfono no coincide — no revela que el folio existe", async () => {
-    mocks.prisma.repairOrder.findUnique.mockResolvedValue({
+    mocks.prisma.repairOrder.findMany.mockResolvedValue([{
       number: 5, businessId: BIZ, status: "IN_REPAIR", customerPhone: "8112345678",
       business: { isActive: true },
-    })
+    }])
     const res = await seguimientoGet(req("https://app.invalid/api/seguimiento?folio=5&phone=0000"))
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: "No encontramos una orden con esos datos." })

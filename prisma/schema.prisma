@@ -90,6 +90,7 @@ model Business {
   verificationCodes   VerificationCode[]
   auditEvents         AuditEvent[]
   notifications       Notification[]
+  counter             BusinessCounter?
 
   @@index([isActive])
 }
@@ -886,7 +887,14 @@ model RepairOrder {
   id                   String        @id @default(cuid())
   businessId           String
   business             Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  number               Int           @unique @default(autoincrement())
+  // Folio visible OT-000001, por negocio: nextOrderNumber() lo reserva desde
+  // BusinessCounter dentro de la tx serializable. Antes era un autoincrement
+  // GLOBAL multi-tenant: órdenes de otros tenants y espejos de delegación
+  // consumían números → huecos garantizados por negocio y el número revelaba
+  // el volumen total de la plataforma. Las órdenes anteriores a la migración
+  // tenant_order_numbers conservan su número (la consecutividad per-tenant
+  // aplica desde ahí); @@unique([businessId, number]) es la red de seguridad.
+  number               Int
   version              Int           @default(1)
   status               RepairStatus  @default(RECEIVED)
   customerName         String
@@ -948,6 +956,13 @@ model RepairOrder {
   // cuenta cuántas veces ha entrado a garantía.
   warrantyUntil        DateTime?
   warrantyCount        Int            @default(0)
+  // Ventana en que el cliente puede RECLAMAR garantía tras cada entrega:
+  // se fija en SETTLE_DELIVER (y en la entrega de una orden delegada) como
+  // now + warranty_days del negocio. Es el dato que el guard de
+  // STATUS→WARRANTY consulta — antes se usaba warrantyUntil, pero la misma
+  // entrega lo limpiaba a null y la ventana quedaba siempre "vigente":
+  // cualquier empleado reabría la orden por garantía sin límite real.
+  warrantyEligibleUntil DateTime?
   // Taller aliado que captó el equipo (modelo "Telcel trae → nosotros
   // reparamos"): originBusinessId liga el tenant cuando está registrado y
   // originBusinessName queda como texto cuando no lo está. partnerPriceCents
@@ -1005,6 +1020,7 @@ model RepairOrder {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
+  @@unique([businessId, number])
   @@index([currentBranchId, status, createdAt])
   @@index([assignedToId, status])
   @@index([customerPhone])
@@ -1014,6 +1030,20 @@ model RepairOrder {
   @@index([originBusinessId])
   @@index([delegatedToBusinessId])
   @@index([delegatedFromOrderId])
+}
+
+// Contador de folios por tenant: una fila por negocio. El dominio
+// (nextOrderNumber en src/lib/domain/tenant-sequence.ts) lo incrementa de
+// forma ATÓMICA con INSERT … ON CONFLICT … DO UPDATE dentro de la tx
+// serializable — la alternativa MAX(number)+1 obliga a serializar lecturas
+// de toda la tabla del tenant. Las órdenes históricas conservan su número;
+// el backfill de la migración tenant_order_numbers arranca cada contador
+// en MAX(number)+1 y los negocios sin órdenes parten del default 1.
+model BusinessCounter {
+  businessId      String   @id
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Próximo folio disponible para RepairOrder.number de este negocio.
+  nextOrderNumber Int      @default(1)
 }
 
 // Refacción o insumo registrado contra una orden de reparación.

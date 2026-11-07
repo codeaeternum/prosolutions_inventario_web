@@ -192,6 +192,7 @@ describe("loadQuoteByToken — la orden pública trae serviceLines", () => {
   it("adjunta las líneas resueltas y el serviceName seleccionado", async () => {
     mocks.roFindUnique.mockResolvedValue({
       businessId: "biz-1",
+      business: { isActive: true },
       number: 7,
       status: "WAITING_APPROVAL",
       customerName: "Cliente",
@@ -222,7 +223,7 @@ describe("loadQuoteByToken — la orden pública trae serviceLines", () => {
   })
 
   it("un fallo del lookup de catálogo deja serviceLines vacío sin tumbar el documento", async () => {
-    mocks.roFindUnique.mockResolvedValue({ businessId: "biz-1", serviceName: "Cambio de pantalla", equipmentType: "Celular", brand: null, model: null })
+    mocks.roFindUnique.mockResolvedValue({ businessId: "biz-1", business: { isActive: true }, serviceName: "Cambio de pantalla", equipmentType: "Celular", brand: null, model: null })
     mocks.wsFindMany.mockRejectedValue(new Error("sin conexión"))
     const result = await loadQuoteByToken("tok-1")
     expect(result?.serviceLines).toEqual([])

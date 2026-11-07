@@ -50,6 +50,14 @@ describe("repairFolio", () => {
     expect(repairFolio(42, 4)).toBe("OT-0042")
     expect(repairFolio(42, 8)).toBe("OT-00000042")
   })
+
+  it("accepts the business order_prefix (staff folio = ticket folio)", () => {
+    expect(repairFolio(1, 6, "PS")).toBe("PS-000001")
+    expect(repairFolio(1, 4, "ps")).toBe("PS-0001")
+    // Vacío/inválido cae al prefijo por defecto igual que formatFolio.
+    expect(repairFolio(1, 6, null)).toBe("OT-000001")
+    expect(repairFolio(1, 6, "   ")).toBe("OT-000001")
+  })
 })
 
 describe("parseFolioDigits / clampFolioDigits", () => {

@@ -30,12 +30,13 @@ const localAdmin = { id: "admin-1", name: "Admin", role: "ADMIN", status: "APPRO
 const repairerStaff = { id: "u-rep", name: "Taller", role: "EMPLOYEE", status: "APPROVED", businessId: REPAIRER }
 
 const tx = {
+  $queryRaw: vi.fn(),
   user: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   repairOrder: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
   repairEvent: { create: vi.fn() },
   repairPart: { findMany: vi.fn(), updateMany: vi.fn() },
-  payment: { aggregate: vi.fn() },
+  payment: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   branch: { findFirst: vi.fn() },
   business: { findUnique: vi.fn() },
   systemSettings: { findUnique: vi.fn() },
@@ -83,7 +84,12 @@ beforeEach(() => {
   tx.repairEvent.create.mockResolvedValue({})
   tx.repairPart.findMany.mockResolvedValue([])
   tx.repairPart.updateMany.mockResolvedValue({ count: 0 })
-  tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } })
+  // Ledger de pagos de la orden: el dominio suma el dinero retenido por
+  // fila en centavos (orderHeldCents) — sin pagos, held = 0.
+  tx.payment.findMany.mockResolvedValue([])
+  // nextOrderNumber() reserva el folio de la espejo con un UPSERT atómico
+  // ($queryRaw → RETURNING nextOrderNumber - 1): el mock entrega el 12.
+  tx.$queryRaw.mockResolvedValue([{ n: 12 }])
   tx.branch.findFirst.mockResolvedValue({ id: "rb1", name: "Taller Centro" })
   tx.business.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
     Promise.resolve(where.id === REPAIRER ? { name: "Reparador SA", isActive: true } : { name: "Captador SA" }))
@@ -153,6 +159,30 @@ describe("delegar orden propia al taller asociado", () => {
     expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
   })
 
+  it("rechaza delegar una orden con dinero retenido (anticipo sin liquidar)", async () => {
+    // Anticipo de $500 cobrado en recepción: al delegar, la orden local
+    // deja de admitir cobros y reembolsos en abierto — el dinero quedaría
+    // atrapado. El captador liquida o reembolsa ANTES de enviarla.
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    await expect(delegateRepairToPartner(db, "admin-1", CAPTOR, "o1", {}))
+      .rejects.toMatchObject({ status: 409, code: "DELEGATION_HELD_MONEY", message: "La orden tiene dinero retenido del cliente; liquida o reembolsa el anticipo antes de delegar." })
+    // La espejo jamás se crea: el rechazo corre antes del tenant reparador.
+    expect(tx.repairOrder.create).not.toHaveBeenCalled()
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("un anticipo ya reembolsado (held = 0) no bloquea la delegación", async () => {
+    tx.payment.findMany.mockResolvedValue([
+      { amount: 500, status: "CONFIRMED" },
+      { amount: -500, status: "REFUNDED" },
+    ])
+    const result = await delegateRepairToPartner(db, "admin-1", CAPTOR, "o1", {})
+    expect(result.delegated).toBe(true)
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "EXTERNAL_LAB" }),
+    }))
+  })
+
   it("sin taller asociado configurado pide configurarlo (400)", async () => {
     tx.systemSettings.findUnique.mockResolvedValue(null)
     await expect(delegateRepairToPartner(db, "admin-1", CAPTOR, "o1", {}))
@@ -189,8 +219,8 @@ describe("guard de delegada en updateRepair", () => {
     localOrder({ status: "EXTERNAL_LAB", delegatedOrderId: "m1", delegatedToBusinessId: REPAIRER, version: 3, ...over })
   const payload = (over: Record<string, unknown>) => ({ idempotencyKey: `deleg-test-${Math.random()}`, expectedVersion: 3, ...over })
 
-  it.each(["PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "REFUND"] as const)(
-    "bloquea %s sobre una orden delegada", async action => {
+  it.each(["PART_ADD", "PART_REQUEST", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "REFUND"] as const)(
+    "bloquea %s sobre una orden delegada abierta", async action => {
       tx.repairOrder.findUnique.mockResolvedValue(delegated())
       // REFUND exige detalle antes de llegar al guard — se envía para que el
       // rechazo que se evalúa sea el de la delegación, no el de validación.
@@ -254,6 +284,33 @@ describe("guard de delegada en updateRepair", () => {
     await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "STATUS", status: "CANCELLED" }))
     const event = events().find(e => e.orderId === "o1" && e.type === "STATUS")
     expect(event?.detail).toContain("la orden espejo sigue activa en el taller asociado")
+  })
+
+  it("REFUND pasa sobre la delegada YA CERRADA: libera el excedente retenido", async () => {
+    // Delegada cerrada como DELIVERED con un anticipo de $500 y cargo final
+    // de $200 (closedWithoutRepair + diagnóstico): el excedente de $300 es
+    // devolvible aunque la orden siga marcada como delegada — devolver no
+    // toca stock ni etapa del taller asociado.
+    tx.repairOrder.findUnique.mockResolvedValue(delegated({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "REFUND", paymentCents: 30000, paymentMethod: "TRANSFER", paymentReference: "SPEI-DEL-1", detail: "Devolución del excedente" }))
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ purpose: "REFUND", status: "REFUNDED", amount: -300, reference: "SPEI-DEL-1" }),
+    }))
+  })
+
+  it.each(["NOT_REPAIRED", "CANCELLED"] as const)("REFUND también pasa con la delegada en %s", async status => {
+    tx.repairOrder.findUnique.mockResolvedValue(delegated({ status, closedWithoutRepair: true, diagnosticFeeCents: 0 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    await updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "REFUND", paymentCents: 50000, paymentMethod: "TRANSFER", paymentReference: "SPEI-DEL-2", detail: "Devolución" }))
+    expect(tx.payment.create).toHaveBeenCalled()
+  })
+
+  it("REFUND sigue bloqueado mientras la delegada está abierta", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(delegated({ status: "EXTERNAL_LAB" }))
+    await expect(updateRepair(db, "admin-1", CAPTOR, "o1", payload({ action: "REFUND", paymentCents: 100, paymentMethod: "TRANSFER", detail: "Intento" })))
+      .rejects.toMatchObject({ status: 409, message: "La orden fue delegada al taller asociado; cobra al cliente por POS y gestiona el trabajo en el portal aliado." })
+    expect(tx.payment.create).not.toHaveBeenCalled()
   })
 })
 

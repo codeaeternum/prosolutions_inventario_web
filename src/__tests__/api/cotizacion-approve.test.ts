@@ -116,6 +116,15 @@ describe("decisión sobre orden espejo (delegatedFromOrderId)", () => {
     }))
   })
 
+  it("signerName con saltos de línea o marcado se rechaza (no falsifica la bitácora)", async () => {
+    for (const signerName of ["Ana\nEntregado por otro", "<script>x</script>", "A & B <taller>"]) {
+      const res = await post({ action: "APPROVE", expectedLaborCents: 150000, signerName })
+      expect(res.status).toBe(400)
+    }
+    expect(mocks.orderUpdateMany).not.toHaveBeenCalled()
+    expect(mocks.eventCreate).not.toHaveBeenCalled()
+  })
+
   it("una orden normal (sin origen de delegación) NO dispara el hook", async () => {
     mocks.orderFindUnique.mockResolvedValue(mirrorOrder({ delegatedFromOrderId: null }))
     const res = await post({ action: "APPROVE", expectedLaborCents: 150000 })

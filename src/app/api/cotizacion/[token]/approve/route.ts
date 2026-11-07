@@ -26,7 +26,11 @@ const QUOTE_CHANGED = "La cotización cambió; vuelve a abrir el link"
 
 const bodySchema = z.object({
   action: z.enum(["APPROVE", "REJECT"]),
-  signerName: z.string().trim().max(80).optional(),
+  // El nombre del firmante viaja tal cual a la bitácora de la orden y al
+  // aviso SSE/Telegram del staff: saltos de línea o etiquetas falsificarían
+  // líneas de bitácora ("Ana\nEntregado" leería como dos eventos). Texto de
+  // una sola línea sin caracteres de control ni de marcado.
+  signerName: z.string().trim().max(80).regex(/^[^\r\n<>&]*$/, "El nombre no admite saltos ni <>&").optional(),
   // Anti-TOCTOU: la mano de obra que el cliente vio en pantalla. Si el taller
   // cambió el presupuesto entre la carga y el POST, se rechaza la decisión
   // en vez de comprometer una cifra que el cliente nunca autorizó.
@@ -198,9 +202,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
 
     // Aviso al staff conectado (SSE). Un fallo del aviso no debe reportarse
     // como error: la decisión ya quedó comprometida en la transacción.
-    // El folio del aviso usa el largo configurado por el negocio dueño de la
-    // orden (order_folio_digits); un ajuste ausente/inválido cae al default.
-    const folio = repairFolio(decided.order.number, parseFolioDigits(await getBusinessSetting(decided.order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null)))
+    // El folio del aviso usa prefijo y largo del negocio dueño de la orden
+    // (order_prefix + order_folio_digits); un ajuste ausente/inválido cae al
+    // default — es el mismo que imprime el ticket/seguimiento.
+    const [folioDigitsRaw, orderPrefix] = await Promise.all([
+      getBusinessSetting(decided.order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+      getBusinessSetting(decided.order.businessId, "order_prefix").catch(() => null),
+    ])
+    const folio = repairFolio(decided.order.number, parseFolioDigits(folioDigitsRaw), orderPrefix)
     const equipment = [decided.order.equipmentType, decided.order.brand, decided.order.model].filter(Boolean).join(" ")
     void sendNotificationToStaff({
       type: "repair_ready",

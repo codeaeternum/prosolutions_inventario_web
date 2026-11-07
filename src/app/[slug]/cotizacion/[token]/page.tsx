@@ -4,7 +4,6 @@ import { notFound, redirect } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSettingsMap, getOrderFolioDigits } from "@/lib/settings"
 import { parseQuoteValidityDays } from "@/app/api/cotizacion/quote-config"
-import { repairFolio } from "@/lib/workshop-labels"
 import { isValidSlug, normalizeSlug, resolvePublicSlug } from "@/lib/public-slug"
 import { loadQuoteByToken } from "@/lib/public-quote"
 import { Button } from "@/components/ui/button"
@@ -21,15 +20,14 @@ interface PageProps {
   params: Promise<{ slug: string; token: string }>
 }
 
+// Título genérico a propósito: el link llega por WhatsApp y un folio en el
+// <title> lo filtraba a cualquiera que capturara el documento (pestaña,
+// historial, previews). El nombre del negocio sí va — ya viaja en el slug.
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { slug, token } = await params
-  const [target, order] = await Promise.all([
-    resolvePublicSlug(slug),
-    prisma.repairOrder.findUnique({ where: { quoteToken: token }, select: { number: true, businessId: true } }),
-  ])
-  const title = order ? `Cotización ${repairFolio(order.number, await getOrderFolioDigits(order.businessId))}` : "Cotización"
+  const { slug } = await params
+  const target = await resolvePublicSlug(slug)
   return {
-    title: target?.kind === "business" ? `${title} — ${target.name}` : title,
+    title: target?.kind === "business" ? `Cotización — ${target.name}` : "Cotización",
     description: "Consulta y autoriza la cotización de tu reparación.",
     robots: { index: false, follow: false },
   }

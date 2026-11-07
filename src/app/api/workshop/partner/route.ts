@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { getSession, requireMarketplaceViewer } from "@/lib/api-auth"
+import { getSession, requireMarketplaceViewer, type ApiSession } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createRepair } from "@/lib/domain/workshop"
@@ -9,6 +9,7 @@ import { businessFailure } from "@/lib/domain/http"
 import { operationKeySchema } from "@/lib/domain/operations"
 import { resolveRepairPartner } from "@/lib/domain/delegation"
 import { getBusinessSetting } from "@/lib/settings"
+import { checkAndRecord } from "@/lib/rate-limit"
 import { DEFAULT_ORDER_PREFIX, formatFolio, parseFolioDigits, repairLabels } from "@/lib/workshop-labels"
 
 // Intake de talleres aliados CON cuenta (fase B del modelo "Telcel trae →
@@ -32,14 +33,33 @@ const intakeSchema = z.object({
   partnerPriceCents: z.number().int().min(0).max(100000000).optional(),
   originContact: z.string().trim().max(120).optional(),
   notes: z.string().trim().max(500).optional(),
-  idempotencyKey: operationKeySchema.optional(),
+  // Requerida (sin fallback aleatorio): un reintento de red con llave propia
+  // debe devolver la misma orden — antes un retry duplicaba la captura.
+  // El portal /aliado ya la manda (getClientOperationKey).
+  idempotencyKey: operationKeySchema,
 })
+
+// El actor natural del intake es el rol WORKSHOP del negocio captador
+// (portal /aliado): requireModule("taller") lo excluiría — exige
+// ADMIN/EMPLOYEE vía requireAdminOrEmployee. En su lugar se exige capacidad
+// de taller O mercado: un staff con módulos explícitos sin ninguno de los
+// dos no capta ni lista órdenes en otro tenant (era cualquier staff).
+// WORKSHOP/ADMIN y las listas vacías pasan igual que dicta hasModule.
+function assertPartnerModule(session: ApiSession): NextResponse | null {
+  if (hasModule(session.user, "taller") || hasModule(session.user, "mercado")) return null
+  return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
+}
+
+const PARTNER_POST_WINDOW_MS = 60 * 60 * 1000
+const MAX_PARTNER_POSTS = 30 // capturas por hora por usuario — el flujo real es manual
 
 export async function GET() {
   try {
     const auth = await requireMarketplaceViewer()
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    const deniedModule = assertPartnerModule(session)
+    if (deniedModule) return deniedModule
     const partnerBusinessId = businessIdOf(session)
     // Las órdenes que este negocio originó como aliado. customerPhone viaja
     // porque el aliado mismo lo capturó de su cliente — no es fuga de datos.
@@ -98,6 +118,13 @@ export async function POST(req: Request) {
     const auth = await requireMarketplaceViewer()
     if (auth.error) return auth.error
     const session = getSession(auth)!
+    const deniedModule = assertPartnerModule(session)
+    if (deniedModule) return deniedModule
+    // Tope por usuario autenticado: la captura es un flujo manual de
+    // mostrador — 30/hora cubre con holgura un local muy activo.
+    if (!checkAndRecord("workshop-partner", session.user.id, PARTNER_POST_WINDOW_MS, MAX_PARTNER_POSTS)) {
+      return NextResponse.json({ error: "Demasiadas capturas. Intenta de nuevo en una hora." }, { status: 429 })
+    }
     const partnerBusinessId = businessIdOf(session)
     const body = intakeSchema.parse(await req.json())
 
@@ -107,7 +134,7 @@ export async function POST(req: Request) {
     const partner = await resolveRepairPartner(prisma, partnerBusinessId)
 
     const result = await createRepair(prisma, partner.repairerActor.id, partner.repairerBusinessId, {
-      idempotencyKey: body.idempotencyKey ?? `partner-${randomUUID()}`,
+      idempotencyKey: body.idempotencyKey,
       customerName: body.customerName,
       customerPhone: body.customerPhone,
       equipmentType: body.equipmentType,
@@ -126,6 +153,23 @@ export async function POST(req: Request) {
       // equipo y es la auditoría real de "Recibió". notes viaja como evento
       // interno — el rastreo público del cliente nunca lo expone.
     }, { recordedById: session.user.id, privateNote: body.notes ? `Nota del negocio aliado: ${body.notes}` : undefined })
-    return NextResponse.json(result, { status: 201 })
+    // Respuesta whitelist: el aliado solo necesita folio + link de rastreo
+    // para compartir con su cliente. La orden completa (quoteToken,
+    // uploadToken, location, deliveredToDoc, PII de custodia) jamás sale al
+    // OTRO tenant — antes `result` se devolvía entera.
+    const [prefix, digitsRaw] = await Promise.all([
+      getBusinessSetting(partner.repairerBusinessId, "order_prefix").catch(() => null),
+      getBusinessSetting(partner.repairerBusinessId, "order_folio_digits").catch(() => null),
+    ])
+    return NextResponse.json({
+      order: {
+        id: result.order.id,
+        number: result.order.number,
+        folio: formatFolio(prefix, result.order.number, parseFolioDigits(digitsRaw)),
+        status: result.order.status,
+        trackingToken: result.order.trackingToken ?? null,
+      },
+      operationId: result.operationId,
+    }, { status: 201 })
   } catch (error) { return businessFailure(error) }
 }

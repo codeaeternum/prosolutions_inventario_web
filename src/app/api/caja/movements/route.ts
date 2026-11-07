@@ -3,7 +3,7 @@ import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { cents } from "@/lib/domain/operations"
 import { repairFolio } from "@/lib/workshop-labels"
-import { getOrderFolioDigits } from "@/lib/settings"
+import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
 
 /**
@@ -143,7 +143,7 @@ export async function GET(req: Request) {
       ? { OR: [{ purchaseId: null }, { purchase: { branchId: branchScope } }] }
       : {}
 
-    const [cashMovements, payments, creditMovements, supplierPayments, folioDigits] = await Promise.all([
+    const [cashMovements, payments, creditMovements, supplierPayments, folioDigits, orderPrefix] = await Promise.all([
       prisma.cashMovement.findMany({
         where: {
           businessId,
@@ -196,6 +196,9 @@ export async function GET(req: Request) {
         take,
       }),
       getOrderFolioDigits(businessId),
+      // Prefijo del folio de taller (order_prefix): los documentos de
+      // referencia "Taller PS-000123" salen con el mismo formato del ticket.
+      getBusinessSetting(businessId, "order_prefix").catch(() => null),
     ])
 
     // Asientos de caja ligados a un abono de crédito (referenceType
@@ -234,7 +237,7 @@ export async function GET(req: Request) {
         const documentRef = p.sale
           ? `V-${p.sale.number}`
           : p.repairOrder
-            ? repairFolio(p.repairOrder.number, folioDigits)
+            ? repairFolio(p.repairOrder.number, folioDigits, orderPrefix)
             : p.encargoId
               ? "Encargo"
               : null

@@ -98,9 +98,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     }
     // Membrete, largo del folio, vigencia y términos salen del negocio
     // DUEÑO de la orden (quote_validity_days / quote_terms configurables).
-    const [businessName, folioDigitsRaw, validityDaysRaw, termsRaw] = await Promise.all([
+    const [businessName, folioDigitsRaw, orderPrefix, validityDaysRaw, termsRaw] = await Promise.all([
       getBusinessSetting(order.businessId, "ticket_business_name"),
       getBusinessSetting(order.businessId, ORDER_FOLIO_DIGITS_KEY).catch(() => null),
+      getBusinessSetting(order.businessId, "order_prefix").catch(() => null),
       getBusinessSetting(order.businessId, "quote_validity_days").catch(() => null),
       getBusinessSetting(order.businessId, "quote_terms").catch(() => null),
     ])
@@ -138,7 +139,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     return NextResponse.json(
       {
         quote: {
-          folio: repairFolio(order.number, parseFolioDigits(folioDigitsRaw)),
+          folio: repairFolio(order.number, parseFolioDigits(folioDigitsRaw), orderPrefix),
           businessName: businessName || order.business?.name || "Reficio",
           issuedAt,
           customerName: order.customerName,

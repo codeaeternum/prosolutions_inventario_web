@@ -14,7 +14,7 @@ export const repairNextStages: Record<RepairStage, RepairStage[]> = {
   WAITING_APPROVAL: ["DIAGNOSIS", "NOT_AUTHORIZED", "CANCELLED"],
   WAITING_PARTS: ["IN_REPAIR", "EXTERNAL_LAB", "CANCELLED"],
   IN_REPAIR: ["WAITING_PARTS", "EXTERNAL_LAB", "QUALITY_CHECK", "NOT_REPAIRED", "CANCELLED"],
-  EXTERNAL_LAB: ["IN_REPAIR", "QUALITY_CHECK", "NOT_REPAIRED"],
+  EXTERNAL_LAB: ["IN_REPAIR", "QUALITY_CHECK", "NOT_REPAIRED", "CANCELLED"],
   QUALITY_CHECK: ["IN_REPAIR", "READY", "NOT_REPAIRED"],
   READY: ["QUALITY_CHECK"],
   NOT_REPAIRED: [], NOT_AUTHORIZED: ["DIAGNOSIS"],
@@ -56,7 +56,11 @@ export const formatFolio = (prefix: string | null | undefined, number: number, d
   const clean = (prefix ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)
   return `${clean || DEFAULT_ORDER_PREFIX}-${String(number).padStart(clampFolioDigits(digits), "0")}`
 }
-export const repairFolio = (number: number, digits?: number) => formatFolio(DEFAULT_ORDER_PREFIX, number, digits)
+/** Folio de una orden de taller con el prefijo del negocio (`order_prefix`
+ *  de SystemSettings, default "OT"). `prefix` es opcional para no romper a
+ *  los llamadores que aún no lo resuelven — cae al prefijo por defecto; los
+ *  que muestran el folio a usuario/bot ya deben pasar el del negocio. */
+export const repairFolio = (number: number, digits?: number, prefix?: string | null) => formatFolio(prefix, number, digits)
 
 export function parseReportedIssue(raw: string): { service?: string; issue: string } {
   const withoutBudget = raw

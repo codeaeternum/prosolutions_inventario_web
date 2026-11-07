@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { DocumentShell } from "@/components/public/document-shell"
 import { repairFolio } from "@/lib/workshop-labels"
 import { formatDate } from "@/lib/utils"
+import { compressImageFile } from "@/lib/image-compress"
+import { operationUUID } from "@/lib/client-operation-key"
 
 interface EvidencePhoto {
   id: string
@@ -20,10 +22,17 @@ interface PendingFile {
   file: File
   preview: string
   status: "pending" | "uploading" | "done" | "error"
+  // Llave de idempotencia por archivo: se conserva entre reintentos para que
+  // el servidor deduplique si la primera subida sí llegó pero la respuesta se perdió.
+  uploadKey: string
 }
 
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"]
 const MAX_BYTES = 5 * 1024 * 1024
+// Tope de entrada: muy por encima del límite de subida (5 MB post-compresión)
+// porque las fotos grandes se reencodan antes del FormData — solo se rechaza
+// lo que ni comprimido pasaría o sería absurdo de procesar (~30 MB).
+const MAX_INTAKE_BYTES = 30 * 1024 * 1024
 const LABEL_SUGGESTIONS = ["Frente", "Trasera", "Detalle", "Pantalla", "Antes", "Después"]
 
 export default function EvidenciaPage() {
@@ -82,13 +91,13 @@ function EvidenceUploader() {
         toast.error(`"${file.name}" no es JPG, PNG ni WebP.`)
         continue
       }
-      if (file.size > MAX_BYTES) {
-        toast.error(`"${file.name}" pesa más de 5 MB.`)
+      if (file.size > MAX_INTAKE_BYTES) {
+        toast.error(`"${file.name}" pesa más de 30 MB.`)
         continue
       }
       const preview = URL.createObjectURL(file)
       previewsRef.current.add(preview)
-      next.push({ file, preview, status: "pending" })
+      next.push({ file, preview, status: "pending", uploadKey: operationUUID() })
     }
     if (next.length) setPending(prev => [...prev, ...next])
     if (inputRef.current) inputRef.current.value = ""
@@ -117,8 +126,17 @@ function EvidenceUploader() {
         const item = pending[i]
         if (item.status === "done" || item.status === "uploading") continue
         setPending(prev => prev.map((p, j) => j === i ? { ...p, status: "uploading" } : p))
+        // Las fotos del celular pesan varios MB: se reencodan antes de subir
+        // (el límite del servidor es 5 MB); si el canvas falla va el original.
+        const file = await compressImageFile(item.file)
+        if (file.size > MAX_BYTES) {
+          setPending(prev => prev.map((p, j) => j === i ? { ...p, status: "error" } : p))
+          toast.error(`"${item.file.name}" pesa más de 5 MB.`)
+          continue
+        }
         const form = new FormData()
-        form.append("file", item.file)
+        form.append("file", file)
+        form.append("idempotencyKey", item.uploadKey)
         if (label.trim()) form.append("label", label.trim())
         try {
           const res = await fetch(`/api/evidencia/${encodeURIComponent(token)}`, { method: "POST", body: form })
@@ -233,7 +251,7 @@ function EvidenceUploader() {
               >
                 <ImagePlus className="h-7 w-7 text-muted-foreground" />
                 <p className="mt-2 text-sm font-medium">Elegir de galería o archivos</p>
-                <p className="mt-1 text-xs text-muted-foreground">JPG, PNG o WebP · máximo 5 MB por foto</p>
+                <p className="mt-1 text-xs text-muted-foreground">JPG, PNG o WebP · las fotos grandes se optimizan solas al subir</p>
               </button>
             </div>
 

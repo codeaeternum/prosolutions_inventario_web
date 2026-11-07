@@ -54,8 +54,9 @@ vi.mock("@/lib/domain/workshop", () => ({ createRepair: vi.fn(), updateRepair: v
 vi.mock("@/app/api/notifications/stream/route", () => ({ sendNotificationToStaff: vi.fn(async () => {}) }))
 vi.mock("@/lib/settings", () => ({ getBusinessSetting: vi.fn(async () => "Taller Test"), getOrderFolioDigits: vi.fn(async () => 6) }))
 
-import { GET as workshopList } from "@/app/api/workshop/route"
-import { GET as workshopDetail } from "@/app/api/workshop/[id]/route"
+import { GET as workshopList, POST as workshopCreate } from "@/app/api/workshop/route"
+import { GET as workshopDetail, PATCH as workshopUpdate } from "@/app/api/workshop/[id]/route"
+import { createRepair, updateRepair } from "@/lib/domain/workshop"
 import { GET as seguimiento } from "@/app/api/seguimiento/route"
 import { POST as decideQuote } from "@/app/api/cotizacion/[token]/approve/route"
 import { GET as quoteDoc } from "@/app/api/cotizacion/[token]/route"
@@ -281,7 +282,7 @@ describe("GET /api/seguimiento (timeline público)", () => {
   }
 
   it("solo publica eventos isPublic — nunca status/pagos/notas internas", async () => {
-    mocks.orderFindUnique.mockResolvedValue(order)
+    mocks.orderFindMany.mockResolvedValue([order])
     const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?folio=OT-000007&phone=1234", { headers: { "x-real-ip": nextIp() } }))
     expect(res.status).toBe(200)
     const json = await res.json()
@@ -299,7 +300,7 @@ describe("GET /api/seguimiento (timeline público)", () => {
     // quoteToken autoriza /api/cotizacion/[token] por sí solo; con la
     // credencial débil de seguimiento (folio + 4 dígitos) cualquiera que
     // la obtuviera podría aprobar/rechazar la cotización del cliente.
-    mocks.orderFindUnique.mockResolvedValue({ ...order, status: "WAITING_APPROVAL", quoteToken: "token-secreto-cotizacion" })
+    mocks.orderFindMany.mockResolvedValue([{ ...order, status: "WAITING_APPROVAL", quoteToken: "token-secreto-cotizacion" }])
     const res = await seguimiento(new Request("https://app.invalid/api/seguimiento?folio=OT-000007&phone=1234", { headers: { "x-real-ip": nextIp() } }))
     expect(res.status).toBe(200)
     const json = await res.json()
@@ -335,6 +336,7 @@ describe("GET /api/seguimiento (timeline público)", () => {
   })
 
   it("el path legacy tiene rate limit más estricto (10/min) y no consume el bucket del token", async () => {
+    mocks.orderFindMany.mockResolvedValue([order])
     mocks.orderFindUnique.mockResolvedValue(order)
     const ip = "10.77.0.99"
     const legacy = () => seguimiento(new Request("https://app.invalid/api/seguimiento?folio=OT-000007&phone=1234", { headers: { "x-real-ip": ip } }))
@@ -537,5 +539,58 @@ describe("evidencia de staff en /api/workshop/[id]/photos", () => {
       method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ photoId: "p1" }),
     }), idParams)
     expect(res.status).toBe(200)
+  })
+})
+
+describe("quoteToken en las respuestas de mutación del taller", () => {
+  // La ficha (GET) ya oculta el quoteToken al no-admin; las mutaciones
+  // POST/PATCH devolvían la orden con él — con ese token se aprueba la
+  // cotización pública como el cliente (auditoría falsificada).
+  const orderWithSecrets = {
+    id: "order-1", number: 7, status: "IN_REPAIR", businessId: "biz-1",
+    customerName: "Ana", customerPhone: "8112345678",
+    quoteToken: "qt-secreto-mutacion", uploadToken: "ut-visible",
+  }
+  const patchReq = () => new Request("https://app.invalid/api/workshop/order-1", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "NOTE", detail: "ok" }),
+  })
+
+  beforeEach(() => {
+    vi.mocked(updateRepair).mockResolvedValue({ order: orderWithSecrets, operationId: "op-1" } as never)
+    vi.mocked(createRepair).mockResolvedValue({ order: { ...orderWithSecrets, id: "order-2" }, operationId: "op-2" } as never)
+    // La guarda de sucursal previa a updateRepair lee la orden.
+    mocks.orderFindUnique.mockResolvedValue({ currentBranchId: "b1" })
+  })
+
+  it("PATCH: el EMPLOYEE recibe la orden con quoteToken null", async () => {
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    const res = await workshopUpdate(patchReq(), idParams)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.order.quoteToken).toBeNull()
+    expect(JSON.stringify(json)).not.toContain("qt-secreto-mutacion")
+    // uploadToken sí viaja: el técnico lo usa para el link de evidencias.
+    expect(json.order.uploadToken).toBe("ut-visible")
+  })
+
+  it("PATCH: el ADMIN sí recibe el quoteToken", async () => {
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    const res = await workshopUpdate(patchReq(), idParams)
+    expect(res.status).toBe(200)
+    expect((await res.json()).order.quoteToken).toBe("qt-secreto-mutacion")
+  })
+
+  it("POST alta: mismo criterio — null al EMPLOYEE, token al ADMIN", async () => {
+    const createReq = () => new Request("https://app.invalid/api/workshop", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customerName: "Ana" }),
+    })
+    mocks.auth.mockResolvedValue(session("EMPLOYEE"))
+    const employeeRes = await workshopCreate(createReq())
+    expect(employeeRes.status).toBe(201)
+    expect((await employeeRes.json()).order.quoteToken).toBeNull()
+
+    mocks.auth.mockResolvedValue(session("ADMIN"))
+    const adminRes = await workshopCreate(createReq())
+    expect((await adminRes.json()).order.quoteToken).toBe("qt-secreto-mutacion")
   })
 })

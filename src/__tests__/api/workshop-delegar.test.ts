@@ -61,6 +61,28 @@ describe("permisos", () => {
     expect(mocks.delegate).not.toHaveBeenCalled()
   })
 
+  it("un POST {} ya no delega: exige precio convenio o nota (400)", async () => {
+    const res = await post({})
+    expect(res.status).toBe(400)
+    expect(mocks.delegate).not.toHaveBeenCalled()
+  })
+
+  it("idempotencyKey sola tampoco basta: es plomería del reintento, no intención", async () => {
+    const res = await post({ idempotencyKey: "delegar-abc-123" })
+    expect(res.status).toBe(400)
+    expect(mocks.delegate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { note: "Cliente con prisa" },
+    { partnerPriceCents: 0 },
+  ])("pero sí delega con un campo significativo (%o)", async body => {
+    mocks.delegate.mockResolvedValue({ delegated: true, mirrorOrderId: "m1", mirrorFolio: "OT-1", partnerName: "Reparador SA" })
+    const res = await post(body)
+    expect(res.status).toBe(200)
+    expect(mocks.delegate).toHaveBeenCalled()
+  })
+
   it("un ADMIN sí delega y recibe el folio de la espejo", async () => {
     mocks.delegate.mockResolvedValue({
       delegated: true, alreadyDelegated: false,

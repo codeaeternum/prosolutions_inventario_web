@@ -65,6 +65,10 @@ export async function loadQuoteByToken(token: string, businessId?: string) {
     where: { quoteToken: token, ...(businessId ? { businessId } : {}) },
     select: {
       businessId: true,
+      // Tenant suspendido: la página pública muere igual que la API
+      // (/api/cotizacion/[token] devuelve 404) — abajo se sirve como
+      // "no encontrada" en vez de mostrar montos de un negocio inactivo.
+      business: { select: { isActive: true } },
       number: true,
       status: true,
       customerName: true,
@@ -99,7 +103,7 @@ export async function loadQuoteByToken(token: string, businessId?: string) {
       },
     },
   })
-  if (!order) return null
+  if (!order || !order.business?.isActive) return null
   // Un fallo del lookup de catálogo no debe tumbar el documento: sin líneas
   // el desglose muestra la fila agregada de mano de obra como siempre.
   const serviceLines = await loadQuoteServiceLines(order).catch(() => [])

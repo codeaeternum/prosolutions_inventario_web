@@ -7,6 +7,10 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { compressImageFile } from "@/lib/image-compress"
+import { operationUUID } from "@/lib/client-operation-key"
+import { evidenceUploadSummary } from "@/lib/workshop-form"
 
 export type EvidencePhoto = {
     id: string
@@ -27,15 +31,29 @@ export function EvidenceSection(props: {
     // Solo admin: rota el uploadToken — el enlace/QR anterior muere.
     onRotateLink?: () => void
     rotateBusy?: boolean
+    // Avisa al padre que hay captura sin guardar (etiqueta o subida en curso)
+    // para el diálogo de descarte de la ficha.
+    onDirtyChange?: (dirty: boolean) => void
 }) {
     const [busy, setBusy] = useState(false)
     const [label, setLabel] = useState("")
     const [qrOpen, setQrOpen] = useState(false)
     const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
     const [linkUrl, setLinkUrl] = useState("")
+    const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+    const [photoToDelete, setPhotoToDelete] = useState<EvidencePhoto | null>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const photos = props.order.photos ?? []
     const linkState = props.linkState ?? "active"
+    const onDirtyChange = props.onDirtyChange
+
+    // Borrador de la sección: etiqueta a medio escribir o un lote subiendo.
+    // El padre lo suma a hasUnsavedChanges para el guard de "descartar".
+    const draftDirty = label.trim() !== "" || busy
+    useEffect(() => {
+        onDirtyChange?.(draftDirty)
+        return () => onDirtyChange?.(false)
+    }, [draftDirty, onDirtyChange])
 
     // Solo en cliente (window no existe durante el SSR de este componente).
     useEffect(() => {
@@ -55,40 +73,65 @@ export function EvidenceSection(props: {
     async function uploadFiles(files: FileList | null) {
         if (!files?.length || busy) return
         setBusy(true)
+        const batch = Array.from(files)
+        setProgress({ done: 0, total: batch.length })
+        let ok = 0
+        let fail = 0
         try {
-            for (const file of Array.from(files)) {
-                if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-                    toast.error(`"${file.name}" no es JPG, PNG ni WebP.`)
+            for (const original of batch) {
+                if (!["image/jpeg", "image/png", "image/webp"].includes(original.type)) {
+                    toast.error(`"${original.name}" no es JPG, PNG ni WebP.`)
+                    fail += 1
+                    setProgress({ done: ok + fail, total: batch.length })
                     continue
                 }
+                // Comprime solo las grandes (>2 MB): las del celular pasan el
+                // límite de 5 MB del servidor una vez reencodadas; si el canvas
+                // falla se sube el original y el servidor decide.
+                const file = await compressImageFile(original)
                 if (file.size > 5 * 1024 * 1024) {
-                    toast.error(`"${file.name}" pesa más de 5 MB.`)
+                    toast.error(`"${original.name}" pesa más de 5 MB.`)
+                    fail += 1
+                    setProgress({ done: ok + fail, total: batch.length })
                     continue
                 }
                 const form = new FormData()
                 form.append("file", file)
+                // Llave por archivo: un reintento del mismo POST deduplica en servidor.
+                form.append("idempotencyKey", operationUUID())
                 if (label.trim()) form.append("label", label.trim())
-                const res = await fetch(`/api/workshop/${props.order.id}/photos`, { method: "POST", body: form })
-                const data = await res.json().catch(() => null) as { error?: string } | null
-                if (!res.ok) {
-                    toast.error(data?.error ?? `No se pudo subir "${file.name}".`)
-                    continue
+                try {
+                    const res = await fetch(`/api/workshop/${props.order.id}/photos`, { method: "POST", body: form })
+                    const data = await res.json().catch(() => null) as { error?: string } | null
+                    if (!res.ok) {
+                        fail += 1
+                        toast.error(data?.error ?? `No se pudo subir "${original.name}".`)
+                    } else {
+                        ok += 1
+                    }
+                } catch {
+                    fail += 1
+                    toast.error(`Sin conexión: no se pudo subir "${original.name}".`)
                 }
+                setProgress({ done: ok + fail, total: batch.length })
             }
-            toast.success("Evidencia guardada")
-            setLabel("")
-            props.onChanged()
-        } catch {
-            toast.error("Sin conexión. Intenta de nuevo.")
+            const summary = evidenceUploadSummary(ok, fail)
+            if (summary.type === "success") toast.success(summary.message)
+            else if (summary.type === "error") toast.error(summary.message)
+            // La etiqueta solo se conserva si nada se subió (es borrador aún).
+            if (ok > 0) {
+                setLabel("")
+                props.onChanged()
+            }
         } finally {
             setBusy(false)
+            setProgress(null)
             if (inputRef.current) inputRef.current.value = ""
         }
     }
 
     async function remove(photo: EvidencePhoto) {
         if (busy) return
-        if (!window.confirm(`¿Eliminar esta evidencia${photo.label ? ` (${photo.label})` : ""}?`)) return
         setBusy(true)
         try {
             const res = await fetch(`/api/workshop/${props.order.id}/photos`, {
@@ -149,7 +192,7 @@ export function EvidenceSection(props: {
                             <button
                                 type="button"
                                 disabled={busy}
-                                onClick={() => void remove(photo)}
+                                onClick={() => setPhotoToDelete(photo)}
                                 aria-label="Eliminar evidencia"
                                 className="absolute right-1 top-1 rounded-full bg-black/60 p-1.5 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100 focus:opacity-100"
                             >
@@ -165,7 +208,9 @@ export function EvidenceSection(props: {
                 </ul>
             )}
 
-            {/* Subida desde esta computadora */}
+            {/* Subida desde esta computadora. Sin `capture`: este mismo input
+                sirve para cámara y galería en el celular — forzar cámara le
+                quitaría al staff la opción de elegir fotos ya tomadas. */}
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed p-3">
                 <input
                     ref={inputRef}
@@ -184,7 +229,7 @@ export function EvidenceSection(props: {
                 />
                 <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => inputRef.current?.click()}>
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                    Subir fotos
+                    {busy && progress ? `Subiendo ${progress.done} de ${progress.total}` : "Subir fotos"}
                 </Button>
                 {props.order.uploadToken && linkState === "active" && (
                     <Button type="button" size="sm" variant="outline" disabled={busy} onClick={openQr}>
@@ -199,6 +244,11 @@ export function EvidenceSection(props: {
                     </Button>
                 )}
             </div>
+            {busy && progress && (
+                <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
+                    Subiendo foto {Math.min(progress.done + 1, progress.total)} de {progress.total}…
+                </p>
+            )}
 
             {/* Aviso del estado del enlace público: en orden cerrada el QR
                 impreso ya murió; si solo venció, el admin lo regenera arriba. */}
@@ -235,6 +285,31 @@ export function EvidenceSection(props: {
                     </Button>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={photoToDelete !== null} onOpenChange={open => { if (!open) setPhotoToDelete(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Eliminar esta evidencia?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            La foto{photoToDelete?.label ? ` «${photoToDelete.label}»` : ""} se quitará del expediente de la orden. Esta acción no se puede deshacer.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={busy}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={busy}
+                            onClick={event => {
+                                event.preventDefault()
+                                const photo = photoToDelete
+                                setPhotoToDelete(null)
+                                if (photo) void remove(photo)
+                            }}
+                        >
+                            Eliminar evidencia
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </section>
     )
 }

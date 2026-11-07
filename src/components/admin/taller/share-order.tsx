@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link2, MessageCircle, Share2, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -43,7 +43,35 @@ export function ShareRepairOrder({ folio, phone, trackingToken, className, quote
 }) {
   const [open, setOpen] = useState(false)
   const [fetchedSlug, setFetchedSlug] = useState<string | undefined>(undefined)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const slug = publicSlug || fetchedSlug
+
+  // Al abrir: foco al primer ítem. Escape cierra y devuelve el foco al
+  // disparador (patrón menú); las flechas recorren los ítems.
+  useEffect(() => {
+    if (!open) return
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.stopPropagation()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener("keydown", closeOnEscape)
+    return () => document.removeEventListener("keydown", closeOnEscape)
+  }, [open])
+
+  function onMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
+    if (!items.length) return
+    const index = items.indexOf(document.activeElement as HTMLElement)
+    if (event.key === "ArrowDown") { event.preventDefault(); items[(index + 1) % items.length].focus() }
+    else if (event.key === "ArrowUp") { event.preventDefault(); items[(index - 1 + items.length) % items.length].focus() }
+    else if (event.key === "Home") { event.preventDefault(); items[0].focus() }
+    else if (event.key === "End") { event.preventDefault(); items[items.length - 1].focus() }
+    else if (event.key === "Tab") { setOpen(false) }
+  }
 
   // Prefetch al montar (no al abrir el menú): así el slug ya llegó cuando el
   // usuario copia el link de rastreo o toca "Enviar cotización".
@@ -119,6 +147,7 @@ export function ShareRepairOrder({ folio, phone, trackingToken, className, quote
       <Button
         type="button"
         variant="outline"
+        ref={triggerRef}
         onClick={() => setOpen(value => !value)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -134,7 +163,7 @@ export function ShareRepairOrder({ folio, phone, trackingToken, className, quote
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div role="menu" className="absolute right-0 z-50 mt-2 w-44 rounded-lg border bg-popover p-1 shadow-md">
+          <div role="menu" ref={menuRef} onKeyDown={onMenuKeyDown} className="absolute right-0 z-50 mt-2 w-44 rounded-lg border bg-popover p-1 shadow-md">
             <button type="button" role="menuitem" className={itemClass} onClick={() => shareWhatsApp(message())}>
               <MessageCircle className="h-4 w-4" />
               WhatsApp

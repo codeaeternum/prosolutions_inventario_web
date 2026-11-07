@@ -395,6 +395,16 @@ def main():
     sql.append(
         f"SELECT setval('\"RepairOrder_number_seq\"', GREATEST((SELECT MAX(number) FROM \"RepairOrder\"), {max_number}));"
     )
+    # El folio ya no sale del sequence global: es por negocio vía
+    # BusinessCounter (nextOrderNumber en tenant-sequence.ts). Tras insertar
+    # folios explícitos hay que subir el contador del tenant importado o las
+    # próximas órdenes colisionarían con los números importados.
+    sql.append(
+        f'INSERT INTO "BusinessCounter" ("businessId", "nextOrderNumber")'
+        f" VALUES ('{BUSINESS_ID}', {max_number + 1})"
+        f' ON CONFLICT ("businessId") DO UPDATE SET "nextOrderNumber" ='
+        f' GREATEST("BusinessCounter"."nextOrderNumber", {max_number + 1});'
+    )
     sql.append("COMMIT;")
 
     with open(out_sql, "w", encoding="utf-8") as f:

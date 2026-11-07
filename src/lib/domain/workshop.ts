@@ -2,9 +2,10 @@ import type { Prisma, PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { linkCustomerByPhone } from "./customers"
+import { nextOrderNumber } from "./tenant-sequence"
 import { syncLowStockAlerts } from "../low-stock"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
-import { orderTotalCents } from "../workshop-money"
+import { orderHeldCents, orderTotalCents } from "../workshop-money"
 import { newQuoteToken, newTrackingToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
 
@@ -52,15 +53,20 @@ const createSchema = z.object({
   // Anticipo cobrado en recepción; con caja abierta genera su asiento de caja.
   advance: z.object({ amountCents: moneyCents, method: paymentMethod }).optional(),
 })
-/** Dígitos del folio del negocio (SystemSettings `order_folio_digits`, 4–8)
- *  leídos con el cliente de la operación para no salir de la transacción —
- *  mismo patrón que warranty_days. Ajuste ausente/inválido o lectura fallida
- *  caen al default: el movimiento de caja/inventario no se bloquea por ello. */
-async function folioDigitsOf(tx: Prisma.TransactionClient, businessId: string): Promise<number> {
+/** Formato completo del folio (prefijo `order_prefix` + dígitos) en UNA
+ *  consulta con el cliente de la operación para no salir de la transacción —
+ *  mismo patrón que warranty_days. Lo usan los textos que el dominio imprime
+ *  (movimientos de caja, eventos): sin él saldrían "OT-" aunque el negocio
+ *  use otro prefijo. Ajuste ausente/inválido o lectura fallida caen al
+ *  default: el asiento no se bloquea por ello. */
+async function folioFormatOf(tx: Prisma.TransactionClient, businessId: string): Promise<{ digits: number; prefix: string | null }> {
   try {
-    const row = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: ORDER_FOLIO_DIGITS_KEY } }, select: { value: true } })
-    return parseFolioDigits(row?.value)
-  } catch { return DEFAULT_FOLIO_DIGITS }
+    const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: ["order_prefix", ORDER_FOLIO_DIGITS_KEY] } }, select: { key: true, value: true } })
+    return {
+      digits: parseFolioDigits(rows.find((r) => r.key === ORDER_FOLIO_DIGITS_KEY)?.value),
+      prefix: rows.find((r) => r.key === "order_prefix")?.value ?? null,
+    }
+  } catch { return { digits: DEFAULT_FOLIO_DIGITS, prefix: null } }
 }
 /** Cómo acredita el cliente la recepción (SystemSettings
  *  `repair_signature_mode`): "canvas" (firma digital, default), "ticket"
@@ -72,6 +78,15 @@ async function signatureModeOf(tx: Prisma.TransactionClient, businessId: string)
     const row = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: "repair_signature_mode" } }, select: { value: true } })
     return row?.value === "ticket" || row?.value === "pin" ? row.value : "canvas"
   } catch { return "canvas" }
+}
+/** Días de garantía del negocio (SystemSettings `warranty_days`, default 30,
+ *  tope MAX_WARRANTY_DAYS). Fuente única: la misma cifra fija la ventana de
+ *  reclamo tras cada entrega (warrantyEligibleUntil) y la vigencia del ciclo
+ *  abierto al reingresar por garantía (warrantyUntil). */
+async function warrantyDaysOf(tx: Prisma.TransactionClient, businessId: string): Promise<number> {
+  const setting = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } }, select: { value: true } })
+  const configured = Number.parseInt(setting?.value ?? "", 10)
+  return configured >= 1 && configured <= MAX_WARRANTY_DAYS ? configured : DEFAULT_WARRANTY_DAYS
 }
 async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
@@ -92,7 +107,8 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
   }
   const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, reference: args.reference ?? null, createdById: args.actorId, notes: args.note ?? null } })
   if (register) {
-    const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller ${repairFolio(args.orderNumber, await folioDigitsOf(tx, args.businessId))} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
+    const fmt = await folioFormatOf(tx, args.businessId)
+    const movement = await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "IN", amount: args.amountCents / 100, description: `Taller ${repairFolio(args.orderNumber, fmt.digits, fmt.prefix)} · ${args.purpose === "ADVANCE" ? "anticipo" : args.purpose === "SETTLEMENT" ? "liquidación" : "abono"}`, referenceType: "REPAIR_PAYMENT", referenceId: payment.id } })
     await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
   }
   return { payment }
@@ -136,7 +152,11 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // trackingToken: credencial UUID para el rastreo público — el link que se
     // comparte ya no lleva folio + dígitos del teléfono (enumerable). No rota
     // al entregar a propósito: el cliente puede revisar su historial después.
-    const order = await tx.repairOrder.create({ data: { ...input, ...uploadTokenFields(), quoteToken: newQuoteToken(), trackingToken: newTrackingToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
+    // El folio es POR NEGOCIO: nextOrderNumber() lo reserva desde
+    // BusinessCounter dentro de esta misma tx serializable — un rollback
+    // devuelve el número sin quemarlo (domain/tenant-sequence).
+    const number = await nextOrderNumber(tx, businessId)
+    const order = await tx.repairOrder.create({ data: { ...input, number, ...uploadTokenFields(), quoteToken: newQuoteToken(), trackingToken: newTrackingToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Sin firma digital capturada, el evento asienta la forma alternativa de
     // confirmación configurada: "pin" = terminación telefónica (el pin nunca
     // se persiste); "ticket" = firma en el comprobante impreso.
@@ -180,7 +200,8 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
   if (!part.productId) return null
   args.touched?.add(part.productId)
   const productId = part.productId
-  const folio = repairFolio(order.number, await folioDigitsOf(tx, businessId))
+  const folioFmt = await folioFormatOf(tx, businessId)
+  const folio = repairFolio(order.number, folioFmt.digits, folioFmt.prefix)
   if (type === "RETURN") {
     // Se repone solo lo que realmente se descontó (los movimientos OUT de esta
     // refacción, identificados por su id en `notes`) menos lo ya repuesto —
@@ -267,8 +288,14 @@ const PART_REAUTH_STAGES: readonly string[] = ["IN_REPAIR", "WAITING_PARTS", "EX
 // Orden delegada al taller asociado (delegatedOrderId, ver domain/delegation):
 // el trabajo vive en la orden espejo del tenant reparador y el cobro al
 // cliente se hace por POS — la orden local ya no admite movimientos de dinero
-// ni de stock. Las transiciones STATUS (incluido CANCELLED) siguen abiertas.
-const DELEGATED_BLOCKED_ACTIONS: readonly string[] = ["PART_ADD", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "REFUND"]
+// ni de stock (PART_REQUEST incluido: pedir refacciones aquí no las surte
+// nadie). Las transiciones STATUS (incluido CANCELLED) siguen abiertas.
+// ÚNICA excepción: REFUND sobre una delegada YA CERRADA (PART_CLOSED_STATUSES)
+// — devolver el excedente no toca stock ni etapa, solo libera dinero retenido;
+// delegar con anticipo vigente se rechaza en delegateRepairToPartner, pero
+// órdenes anteriores al candado (o un cobro colado por carrera) pueden quedar
+// con saldo a favor del cliente.
+const DELEGATED_BLOCKED_ACTIONS: readonly string[] = ["PART_ADD", "PART_REQUEST", "PART_DECIDE", "PART_REMOVE", "PAYMENT", "SETTLE_DELIVER", "REFUND"]
 const actionSchema = z.object({
   idempotencyKey: operationKeySchema, expectedVersion: z.number().int().min(1),
   // PART_ADD se conserva como alias del cliente actual; ambos crean la refacción
@@ -281,7 +308,10 @@ const actionSchema = z.object({
   partId: z.string().min(1).optional(), partDescription: z.string().trim().min(1).max(200).optional(),
   approve: z.boolean().optional(),
   partQty: z.number().int().min(1).max(999).default(1),
-  partCostCents: moneyCents.default(0), partPriceCents: moneyCents.default(0),
+  // Importes de la refacción: opcionales — en PART_ADD/PART_REQUEST el
+  // ausente queda en 0; en PART_DECIDE el ausente conserva el valor que el
+  // técnico pidió (el admin solo corrige lo que envía).
+  partCostCents: moneyCents.optional(), partPriceCents: moneyCents.optional(),
   partProductId: z.string().min(1).optional(),
   // Sucursal que surte la pieza (almacén de refacciones); sin ella se descuenta
   // de la sucursal actual de la orden. Se valida al crear la refacción.
@@ -293,6 +323,8 @@ const actionSchema = z.object({
   // se puede rastrear contra el estado de cuenta.
   paymentReference: z.string().trim().min(1).max(200).optional(),
   scheduledAt: z.iso.datetime().nullable().optional(), location: z.string().trim().max(80).nullable().optional(),
+  // PLAN también fija/actualiza la fecha promesa de entrega (null la borra).
+  promisedAt: z.iso.datetime().nullable().optional(),
   // Entrega estructurada (SETTLE_DELIVER): quién recoge el equipo — puede ser
   // un familiar o empleado distinto al titular —, su identificación opcional
   // (INE/licencia) y su firma en PNG base64, aparte de la de recepción.
@@ -331,7 +363,13 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     if ((order.status === "CANCELLED" || (order.status === "DELIVERED" && !reopeningToWarranty)) && input.action !== "REFUND") throw new BusinessError("La orden está cerrada. El historial se conserva.", 409)
     // Guard de delegada: la espejo en el tenant reparador es quien mueve
     // refacciones y cobra la reparación; aquí solo queda el seguimiento.
-    if (order.delegatedOrderId && DELEGATED_BLOCKED_ACTIONS.includes(input.action)) throw new BusinessError("La orden fue delegada al taller asociado; cobra al cliente por POS y gestiona el trabajo en el portal aliado.", 409)
+    // REFUND pasa únicamente con la delegada ya en un cierre
+    // (PART_CLOSED_STATUSES): devolver el excedente al cliente no toca
+    // stock ni etapa — libera dinero que quedó retenido al cerrar.
+    if (order.delegatedOrderId && DELEGATED_BLOCKED_ACTIONS.includes(input.action)
+      && !(input.action === "REFUND" && PART_CLOSED_STATUSES.includes(order.status))) {
+      throw new BusinessError("La orden fue delegada al taller asociado; cobra al cliente por POS y gestiona el trabajo en el portal aliado.", 409)
+    }
     const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
     let detail = input.detail ?? ""
     let eventType: string = input.action
@@ -339,9 +377,17 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     // Cierre STATUS→DELIVERED de una orden delegada: nombre del taller que
     // recibe, para el asiento privado de constancia (ver el bloque STATUS).
     let delegatedDeliveryTo: string | null = null
+    // Solicitudes de refacción rechazadas por el cierre delegado — viaja al
+    // detalle del evento STATUS junto a la transición.
+    let delegatedPartsDropped = 0
     // Dinero retenido por la orden: cobros CONFIRMED menos reembolsos
     // (filas REFUNDED con amount negativo, misma convención que ventas).
-    const heldCents = async () => Math.round(((await tx.payment.aggregate({ _sum: { amount: true }, where: { repairOrderId: id, status: { in: ["CONFIRMED", "REFUNDED"] } } }))._sum.amount ?? 0) * 100)
+    // La suma se hace por fila en centavos (orderHeldCents): un aggregate
+    // _sum de Float pesos acumulaba el error binario ANTES de redondear,
+    // así que con varios pagos el saldo/excedente podía moverse un centavo.
+    const heldCents = async () => orderHeldCents(
+      await tx.payment.findMany({ where: { repairOrderId: id, status: { in: ["CONFIRMED", "REFUNDED"] } }, select: { amount: true, status: true } }),
+    )
     const orderParts = () => tx.repairPart.findMany({ where: { orderId: id }, select: { id: true, productId: true, description: true, qty: true, unitCostCents: true, unitPriceCents: true, status: true } })
     // Ciclo de refacciones cerrado en estados terminales (incluye los cierres
     // sin reparación, que el bloqueo general de cerradas no alcanza): no se
@@ -349,21 +395,34 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     if (["PART_REQUEST", "PART_ADD", "PART_DECIDE"].includes(input.action) && PART_CLOSED_STATUSES.includes(order.status)) {
       throw new BusinessError("La orden está cerrada; las refacciones ya no se pueden agregar ni resolver.", 409)
     }
-    // Re-autorización del cliente: una refacción que llega a APPROVED con la
-    // cotización ya autorizada (PART_ADD de admin o PART_DECIDE) cambiaría el
-    // total entregado sin que el cliente lo viera. La orden vuelve a
-    // WAITING_APPROVAL, el link público muestra el nuevo total y su vigencia
-    // se reinicia. El aviso público se emite al final junto al evento PART
-    // privado (que lleva el detalle de la pieza). Si la orden YA esperaba
-    // re-autorización solo se renueva la vigencia — sin duplicar el aviso.
+    // Re-autorización del cliente: una refacción con cargo que llega a
+    // APPROVED (PART_ADD de admin o PART_DECIDE) cuando la cotización ya fue
+    // autorizada —o cuando NO hay autorización vigente pero la orden ya está
+    // en trabajo— cambiaría el total entregado sin que el cliente lo viera.
+    // La orden vuelve a WAITING_APPROVAL, el link público muestra el nuevo
+    // total y su vigencia se reinicia. El aviso público se emite al final
+    // junto al evento PART privado (que lleva el detalle de la pieza). Si la
+    // orden YA esperaba re-autorización solo se renueva la vigencia — sin
+    // duplicar el aviso.
     let partReauthNotice = false
-    const onPartApproved = () => {
-      const reauth = order.quoteApprovedAt !== null && PART_REAUTH_STAGES.includes(order.status)
+    const onPartApproved = (part: { qty: number; unitPriceCents: number }) => {
+      const inWorkStage = PART_REAUTH_STAGES.includes(order.status)
+      const reauth = order.quoteApprovedAt !== null && inWorkStage
       const pendingDecision = order.status === "WAITING_APPROVAL"
-      if (!reauth && !pendingDecision) return
+      // Pieza CON cargo aprobada en pleno trabajo SIN autorización vigente
+      // —ni una cotización ya autorizada (quoteApprovedAt) ni una
+      // presentada esperando decisión (WAITING_APPROVAL)—: cobraría
+      // refacciones que el cliente jamás autorizó. Es la ruta sin
+      // cotización del hueco original: EXTERNAL_LAB→READY sin QUOTE, o un
+      // reingreso de garantía con la autorización limpia. Se dispara la
+      // MISMA re-autorización: la orden vuelve a WAITING_APPROVAL y el
+      // total (mano de obra + piezas) queda pendiente de decisión.
+      // Piezas gratuitas no exigen nada — no cambian el cobro.
+      const unauthorizedCharge = inWorkStage && order.quoteApprovedAt === null && part.qty * part.unitPriceCents > 0
+      if (!reauth && !pendingDecision && !unauthorizedCharge) return
       const expires = quoteExpiry()
       Object.assign(data, { quoteExpiresAt: expires, quoteTokenExpiresAt: expires })
-      if (reauth) {
+      if (reauth || unauthorizedCharge) {
         Object.assign(data, { quoteApprovedAt: null, status: "WAITING_APPROVAL" })
         partReauthNotice = true
       }
@@ -411,19 +470,34 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
           ? await tx.business.findUnique({ where: { id: order.delegatedToBusinessId }, select: { name: true } })
           : null
         delegatedDeliveryTo = partner?.name?.trim() || "Taller asociado"
-        Object.assign(data, rotatedUploadToken(), { warrantyUntil: null, deliveredTo: delegatedDeliveryTo, deliveredById: actorId })
+        // La entrega abre la ventana de reclamo de garantía igual que
+        // SETTLE_DELIVER — aunque el trabajo lo hizo el taller asociado,
+        // frente al cliente la responsable es la orden local.
+        const warrantyDays = await warrantyDaysOf(tx, businessId)
+        // Solicitudes de refacción que quedaron pendientes (anteriores a la
+        // delegación) no pueden colgar tras el cierre: la orden cerrada ya
+        // no admite PART_DECIDE — se rechazan aquí (nunca descontaron stock).
+        delegatedPartsDropped = (await tx.repairPart.updateMany({
+          where: { orderId: id, status: "REQUESTED" },
+          data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: "La orden se entregó al taller asociado; la solicitud quedó sin resolver." },
+        })).count
+        Object.assign(data, rotatedUploadToken(), { warrantyUntil: null, warrantyEligibleUntil: new Date(Date.now() + warrantyDays * 24 * 60 * 60 * 1000), deliveredTo: delegatedDeliveryTo, deliveredById: actorId })
       }
       if (input.status === "READY") data.qualityCheck = input.detail ?? null
       // El detalle es opcional: sin texto del staff el evento conserva solo
       // la transición ("Etapa anterior → Etapa nueva.").
       detail = `${repairLabels[order.status]} → ${repairLabels[input.status]}.${input.detail ? ` ${input.detail}` : ""}`
+      if (delegatedPartsDropped > 0) detail = `${detail} ${delegatedPartsDropped} solicitud(es) de refacción pendientes se rechazaron con la entrega.`
       // El cambio de etapa es el progreso que ve el cliente en seguimiento;
       // el texto libre del staff va después del punto y se trunca al publicar.
       eventPublic = true
       if (input.status === "WARRANTY") {
-        // Si la orden tenía una vigencia previa ya vencida, un empleado de
-        // mostrador no puede reabrirla por su cuenta: requiere un ADMIN.
-        if (order.warrantyUntil && order.warrantyUntil.getTime() < Date.now()) {
+        // La ventana para reclamar garantía se fija en CADA entrega
+        // (warrantyEligibleUntil — SETTLE_DELIVER y el cierre delegado la
+        // renuevan como now + warranty_days). Vencida, un empleado de
+        // mostrador no puede reabrir la orden por su cuenta: exige ADMIN.
+        // Órdenes entregadas antes del campo quedan null y no las aplica.
+        if (order.warrantyEligibleUntil && order.warrantyEligibleUntil.getTime() < Date.now()) {
           const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
           if (me?.role !== "ADMIN") {
             throw new BusinessError("La garantía ya venció; solicita autorización de un administrador para reabrir la orden.", 409)
@@ -434,10 +508,7 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // SystemSettings (default 30) — y cuenta las entradas a garantía.
         // El ciclo cierra cuando la orden vuelve a entregarse por
         // SETTLE_DELIVER (ahí warrantyUntil se limpia).
-        const setting = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } }, select: { value: true } })
-        const configured = Number.parseInt(setting?.value ?? "", 10)
-        const warrantyDays = configured >= 1 && configured <= MAX_WARRANTY_DAYS ? configured : DEFAULT_WARRANTY_DAYS
-        const until = new Date(Date.now() + warrantyDays * 24 * 60 * 60 * 1000)
+        const until = new Date(Date.now() + (await warrantyDaysOf(tx, businessId)) * 24 * 60 * 60 * 1000)
         // closedWithoutRepair se limpia al reabrir: con la marca en true
         // orderTotalCents seguiría cobrando solo el diagnóstico en la segunda
         // entrega y las refacciones del ciclo de garantía saldrían gratis.
@@ -480,10 +551,16 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       detail = `Ubicación actualizada a ${branch.name}. ${input.detail}`
     } else if (input.action === "PLAN") {
       const when = input.scheduledAt === undefined ? undefined : input.scheduledAt === null ? null : new Date(input.scheduledAt)
-      if (when === undefined && input.location === undefined) throw new BusinessError("Define la fecha programada o la locación.")
+      const promised = input.promisedAt === undefined ? undefined : input.promisedAt === null ? null : new Date(input.promisedAt)
+      if (when === undefined && promised === undefined && input.location === undefined) throw new BusinessError("Define la fecha programada, la fecha promesa o la locación.")
       if (when !== undefined) data.scheduledAt = when
+      if (promised !== undefined) data.promisedAt = promised
       if (input.location !== undefined) data.location = input.location || null
-      const pieces = [when ? `reparación programada para ${when.toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}` : "", input.location ? `locación ${input.location}` : ""].filter(Boolean)
+      const pieces = [
+        when ? `reparación programada para ${when.toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}` : "",
+        promised ? `entrega prometida para ${promised.toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}` : promised === null ? "fecha promesa eliminada" : "",
+        input.location ? `locación ${input.location}` : "",
+      ].filter(Boolean)
       detail = `Plan actualizado: ${pieces.join(", ")}. ${input.detail ?? ""}`.trim()
       eventType = "NOTE"
     } else if (input.action === "PAYMENT") {
@@ -501,20 +578,25 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     } else if (input.action === "REFUND") {
       if (input.paymentCents === undefined || input.paymentCents <= 0) throw new BusinessError("Indica el monto a devolver.")
       if (!input.paymentMethod) throw new BusinessError("Selecciona el método de devolución.")
+      // Misma regla que el cobro (PAYMENT/SETTLE_DELIVER): la devolución por
+      // transferencia exige su folio SPEI — sin él no se rastrea contra el
+      // estado de cuenta ni se concilia la salida.
+      if (input.paymentMethod === "TRANSFER" && !input.paymentReference) throw new BusinessError("Captura la referencia de la transferencia.")
       // Reembolso de anticipo/excedente (p. ej. al cancelar o al entregar sin
       // reparación): solo es devolvable lo cobrado de más sobre el total —
       // el dinero que aún se debe no es reembolsable. Se registra como pago
       // negativo con status REFUNDED, igual que las devoluciones de ventas.
       const refundableCents = await heldCents() - orderTotalCents(order, await orderParts())
       if (input.paymentCents > refundableCents) throw new BusinessError(`La devolución excede lo cobrado de más (${(Math.max(0, refundableCents) / 100).toFixed(2)} MXN).`, 409)
-      const payment = await tx.payment.create({ data: { businessId, repairOrderId: id, purpose: "REFUND", method: input.paymentMethod, amount: -input.paymentCents / 100, status: "REFUNDED", createdById: actorId, notes: input.detail ?? null } })
+      const payment = await tx.payment.create({ data: { businessId, repairOrderId: id, purpose: "REFUND", method: input.paymentMethod, amount: -input.paymentCents / 100, status: "REFUNDED", reference: input.paymentReference ?? null, createdById: actorId, notes: input.detail ?? null } })
       if (input.paymentMethod === "CASH") {
         const register = await openRegister(tx, order.currentBranchId, businessId)
         // Igual que las devoluciones de venta: la caja no queda en negativo —
         // si no alcanza el efectivo se rechaza antes de registrar la salida.
         const availableCents = await registerCashCents(tx, register.id)
         if (input.paymentCents > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409)
-        const movement = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: input.paymentCents / 100, description: `Taller ${repairFolio(order.number, await folioDigitsOf(tx, businessId))} · reembolso`, referenceType: "REPAIR_REFUND", referenceId: payment.id } })
+        const refundFmt = await folioFormatOf(tx, businessId)
+        const movement = await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "OUT", amount: input.paymentCents / 100, description: `Taller ${repairFolio(order.number, refundFmt.digits, refundFmt.prefix)} · reembolso`, referenceType: "REPAIR_REFUND", referenceId: payment.id } })
         await tx.payment.update({ where: { id: payment.id }, data: { cashMovementId: movement.id } })
       }
       eventType = "PAYMENT"
@@ -547,6 +629,16 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         // además cubre órdenes anteriores a esa regla.
         tail.push(...await releaseOrderParts(tx, { order, parts, actorId, businessId, note: "La orden se entregó sin reparación; no se cobra.", touched: touchedProductIds }))
       }
+      // Solicitudes de refacción que quedaron sin resolver (REQUESTED) no
+      // pueden colgar tras la entrega: la orden cerrada ya no admite
+      // PART_DECIDE — se rechazan con la entrega misma. Nunca descontaron
+      // stock, así que es solo el cambio de estado (en el cierre sin
+      // reparación releaseOrderParts ya las cubrió: count 0).
+      const droppedRequests = await tx.repairPart.updateMany({
+        where: { orderId: id, status: "REQUESTED" },
+        data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: "La orden se entregó; la solicitud quedó sin resolver." },
+      })
+      if (droppedRequests.count > 0) tail.push(`${droppedRequests.count} solicitud(es) de refacción pendientes se rechazaron con la entrega.`)
       if (balanceCents > 0) {
         await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail, reference: input.paymentReference })
         detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${recipientLabel}`
@@ -563,15 +655,21 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         status: "DELIVERED",
         deliveredTo: input.deliveredTo,
         deliveredToDoc: input.deliveredToDoc || null,
-        deliverySignatureData: input.deliverySignatureData ?? null,
+        // La firma solo se reemplaza cuando llega una nueva: en la
+        // re-entrega por garantía sin firma nueva NO se pisa la de la
+        // entrega anterior — es la constancia legal de aquella entrega.
+        ...(input.deliverySignatureData ? { deliverySignatureData: input.deliverySignatureData } : {}),
         // Auditoría de mostrador: quién del staff entregó el equipo.
         deliveredById: actorId,
         // El QR de evidencias impreso en el sticker del cliente muere con la
         // entrega: se rota el token (la orden conserva uno interno vigente).
         ...rotatedUploadToken(),
         // Si la orden reingresó por garantía, esta entrega cierra el ciclo:
-        // la vigencia se limpia (warrantyCount conserva el historial).
+        // la vigencia se limpia (warrantyCount conserva el historial) y la
+        // VENTANA de reclamo se renueva — es el dato que el guard de
+        // STATUS→WARRANTY consulta (warranty_days del negocio, default 30).
         warrantyUntil: null,
+        warrantyEligibleUntil: new Date(Date.now() + (await warrantyDaysOf(tx, businessId)) * 24 * 60 * 60 * 1000),
         ...(withoutRepair ? { closedWithoutRepair: true } : {}),
       })
       eventType = "PAYMENT"
@@ -597,7 +695,10 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       if (input.sourceBranchId && !sourceBranch) throw new BusinessError("La sucursal que surte no existe o está inactiva.", 404)
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       const needsApproval = actorUser?.role === "EMPLOYEE"
-      const part = await tx.repairPart.create({ data: { businessId, orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents, unitPriceCents: input.partPriceCents, sourceBranchId: sourceBranch?.id ?? null, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED" } })
+      // Nace APPROVED (admin): queda estampada quién autorizó y cuándo —
+      // misma auditoría que una resuelta por PART_DECIDE. Las REQUESTED
+      // del técnico se estampan al decidirse.
+      const part = await tx.repairPart.create({ data: { businessId, orderId: id, productId: input.partProductId ?? null, description: input.partDescription, qty: input.partQty, unitCostCents: input.partCostCents ?? 0, unitPriceCents: input.partPriceCents ?? 0, sourceBranchId: sourceBranch?.id ?? null, createdById: actorId, status: needsApproval ? "REQUESTED" : "APPROVED", ...(needsApproval ? {} : { decidedById: actorId, decidedAt: new Date() }) } })
       eventType = "PART"
       // Las creadas ya APPROVED (administrador) descuentan stock de inmediato;
       // las REQUESTED del técnico lo descuentan recién en PART_DECIDE.
@@ -608,28 +709,38 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         : `Refacción agregada: ${part.qty} × ${part.description}${sourceNote} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(addedStock, part.qty)}`
       // PART_ADD del admin nace APPROVED: mismo cambio de total que decide
       // PART_DECIDE — aplica la misma re-autorización del cliente.
-      if (!needsApproval) onPartApproved()
+      if (!needsApproval) onPartApproved(part)
     } else if (input.action === "PART_DECIDE") {
       const actorUser = await tx.user.findUnique({ where: { id: actorId } })
       if (actorUser?.role !== "ADMIN") throw new BusinessError("Solo el administrador autoriza refacciones.", 403)
       if (input.approve === undefined) throw new BusinessError("Indica si autorizas o rechazas la refacción.")
       const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
       if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
+      // Corrección de importes en la misma decisión: el técnico pidió la
+      // pieza con un precio/costo estimado y el admin lo ajusta al resolver
+      // (partPriceCents/partCostCents opcionales — el ausente conserva el
+      // valor pedido). El evento documenta el cambio, que es la cifra real
+      // que se cobra y con la que se evalúa la re-autorización.
+      const correctedCost = input.partCostCents ?? part.unitCostCents
+      const correctedPrice = input.partPriceCents ?? part.unitPriceCents
+      const priceChanged = correctedCost !== part.unitCostCents || correctedPrice !== part.unitPriceCents
       const decided = await tx.repairPart.updateMany({
         where: { id: part.id, status: "REQUESTED" },
         data: input.approve
-          ? { status: "APPROVED", decidedById: actorId, decidedAt: new Date() }
-          : { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: input.detail ?? null },
+          ? { status: "APPROVED", decidedById: actorId, decidedAt: new Date(), unitCostCents: correctedCost, unitPriceCents: correctedPrice }
+          : { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), decisionNote: input.detail ?? null, unitCostCents: correctedCost, unitPriceCents: correctedPrice },
       })
       if (decided.count !== 1) throw new BusinessError("La refacción ya fue autorizada o rechazada.", 409)
       eventType = "PART"
-      const decidedStock = input.approve ? await syncPartStock(tx, { order, part, actorId, businessId, type: "OUT", touched: touchedProductIds }) : null
+      const corrected = { ...part, unitCostCents: correctedCost, unitPriceCents: correctedPrice }
+      const decidedStock = input.approve ? await syncPartStock(tx, { order, part: corrected, actorId, businessId, type: "OUT", touched: touchedProductIds }) : null
+      const correctionNote = priceChanged ? ` — precio corregido de ${(part.unitPriceCents / 100).toFixed(2)} a ${(correctedPrice / 100).toFixed(2)} MXN` : ""
       detail = input.approve
-        ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(part.unitPriceCents / 100).toFixed(2)} MXN${stockNote(decidedStock, part.qty)}`
-        : `Refacción rechazada: ${part.qty} × ${part.description}${input.detail ? `. ${input.detail}` : ""}`
+        ? `Refacción autorizada: ${part.qty} × ${part.description} — ${(correctedPrice / 100).toFixed(2)} MXN${correctionNote}${stockNote(decidedStock, part.qty)}`
+        : `Refacción rechazada: ${part.qty} × ${part.description}${correctionNote}${input.detail ? `. ${input.detail}` : ""}`
       // Solo al autorizar: la pieza se vuelve cobrable y puede detonar la
       // re-autorización del cliente. Un rechazo no cambia el total.
-      if (input.approve) onPartApproved()
+      if (input.approve) onPartApproved(corrected)
     } else if (input.action === "PART_REMOVE") {
       const part = input.partId ? await tx.repairPart.findFirst({ where: { id: input.partId, orderId: id } }) : null
       if (!part) throw new BusinessError("La refacción no pertenece a esta orden.", 404)
