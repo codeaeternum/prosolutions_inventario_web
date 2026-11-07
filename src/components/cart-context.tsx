@@ -134,7 +134,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
 
     const totalItems = items.reduce((total, item) => total + item.quantity, 0)
-    const totalPrice = items.reduce((total, item) => total + item.price * item.quantity, 0)
+    // item.price es Float en pesos: el total del carrito se acumula en
+    // centavos enteros y se expone en pesos (0.1 + 0.2 ≠ 0.3 en Float).
+    const totalPrice = items.reduce((total, item) => total + Math.round(item.price * 100) * item.quantity, 0) / 100
 
     return (
         <CartContext.Provider

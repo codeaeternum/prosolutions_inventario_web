@@ -78,6 +78,13 @@ export async function issueVerificationCode(
  *   identifier+purpose y compara hashes; en fallo incrementa `attempts`.
  * - Sin `identifier` (deep-link del bot, canal TELEGRAM): localiza el vigente
  *   por codeHash — el link ya porta el código, no hay nada que teclear.
+ *   Un MISS aquí no puede contarse en `attempts`: el codeHash ES la dirección
+ *   de búsqueda, un código erróneo no localiza fila alguna (y castigar la
+ *   vigente más reciente del canal dejaría quemar códigos ajenos a fuerza de
+ *   misses). El freno del link es su TTL + el throttle por telegramId que
+ *   aplica el llamador en bot/commands/start.ts. En cambio, cuando el hash sí
+ *   localiza una fila y el consumo falla (expirada), el intento SÍ se cuenta
+ *   — misma regla que el mismatch con identifier.
  * Devuelve el row (con userId) ya marcado como consumido.
  */
 export async function consumeVerificationCode(
@@ -115,6 +122,13 @@ export async function consumeVerificationCode(
     throw new VerificationError("TOO_MANY_ATTEMPTS", "Demasiados intentos con este código")
   }
   if (row.expiresAt.getTime() <= Date.now()) {
+    // Toda fila localizada cuyo consumo falla cuenta el intento — también en
+    // el path sin identifier: un link expirado que sigue circulando no puede
+    // reintentarse gratis aunque la fila ya esté muerta.
+    await db.verificationCode.update({
+      where: { id: row.id },
+      data: { attempts: { increment: 1 } },
+    })
     throw new VerificationError("EXPIRED", "El código expiró")
   }
   // En la ruta sin identifier el codeHash ya empataba en el where.

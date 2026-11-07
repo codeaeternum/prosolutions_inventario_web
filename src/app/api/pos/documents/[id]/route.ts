@@ -30,9 +30,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // El detalle expone renglones y pagos de la sucursal del documento.
     const deniedBranch = assertBranchAllowed(session, document.branchId)
     if (deniedBranch) return deniedBranch
-    const paid = document.payments.reduce((sum, p) => sum + p.amount, 0)
+    // Payment.amount y Sale.total son Float en pesos: la cuenta va en centavos.
+    const paidCents = document.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+    const paid = paidCents / 100
     return NextResponse.json(
-      { document: { ...document, paid, balance: Math.max(0, document.total - paid) } },
+      { document: { ...document, paid, balance: Math.max(0, Math.round(document.total * 100) - paidCents) / 100 } },
       { headers: { "Cache-Control": "private, no-store" } },
     )
   } catch (error) { return businessFailure(error) }

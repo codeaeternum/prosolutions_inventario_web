@@ -104,7 +104,9 @@ export function ComparadorSucursales() {
       // media de los promedios por sucursal.
       total: (rows) => {
         const count = rows.reduce((s, b) => s + b.ventasCount, 0)
-        return count > 0 ? rows.reduce((s, b) => s + b.ventas, 0) / count : 0
+        // ventas viene en pesos: el promedio ponderado se hace en centavos.
+        const totalCents = rows.reduce((s, b) => s + Math.round(b.ventas * 100), 0)
+        return count > 0 ? totalCents / count / 100 : 0
       },
     },
     { key: "piezasVendidas", label: "Piezas vendidas", get: (b) => b.piezasVendidas, format: intFmt, better: "high" },

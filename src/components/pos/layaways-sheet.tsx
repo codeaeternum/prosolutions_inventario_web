@@ -45,15 +45,25 @@ interface PayResponse {
     error?: string
 }
 
+// total/paid/balance llegan en pesos (Float): toda la aritmética se hace en
+// centavos enteros para que un saldo de $0.30 no quede en 0.30000000000004.
+function docBalanceCents(doc: PosDocumentSummary): number {
+    if (doc.balance != null) return Math.round(doc.balance * 100)
+    if (doc.paid != null) return Math.max(0, Math.round(doc.total * 100) - Math.round(doc.paid * 100))
+    return Math.round(doc.total * 100)
+}
+
 function docBalance(doc: PosDocumentSummary): number {
-    if (doc.balance != null) return doc.balance
-    if (doc.paid != null) return Math.max(0, doc.total - doc.paid)
-    return doc.total
+    return docBalanceCents(doc) / 100
+}
+
+function docPaidCents(doc: PosDocumentSummary): number {
+    if (doc.paid != null) return Math.round(doc.paid * 100)
+    return Math.max(0, Math.round(doc.total * 100) - docBalanceCents(doc))
 }
 
 function docPaid(doc: PosDocumentSummary): number {
-    if (doc.paid != null) return doc.paid
-    return Math.max(0, doc.total - docBalance(doc))
+    return docPaidCents(doc) / 100
 }
 
 /** Apartados vigentes (documentos OPEN/LAYAWAY) y cobro de saldo «Liquidar». */
@@ -106,12 +116,13 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
         const doc = payTarget
         if (!doc || paying) return
         const amount = parseFloat(payAmount)
-        const balance = docBalance(doc)
+        const balanceCents = docBalanceCents(doc)
+        const balance = balanceCents / 100
         if (!Number.isFinite(amount) || amount <= 0) {
             toast.error("Captura un monto válido")
             return
         }
-        if (amount > balance + 0.009) {
+        if (Math.round(amount * 100) > balanceCents) {
             toast.error(`El abono no puede superar el saldo (${formatPrice(balance)})`)
             return
         }
@@ -137,8 +148,11 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             if (!res.ok) throw new Error(data?.error || "No se pudo registrar el abono")
             pendingPay.current = null
 
-            const remaining = data?.balance ?? Math.max(0, balance - amount)
-            const finished = data?.completed === true || remaining <= 0.009
+            const remainingCents = data?.balance != null
+                ? Math.round(data.balance * 100)
+                : Math.max(0, balanceCents - Math.round(amount * 100))
+            const remaining = remainingCents / 100
+            const finished = data?.completed === true || remainingCents <= 0
             const ticketId = data?.sale?.id
             if (finished && ticketPopup && ticketId) {
                 ticketPopup.location.href = `/admin/tickets/venta/${ticketId}`
@@ -151,8 +165,8 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                 toast.success(`Abono de ${formatPrice(amount)} registrado — restan ${formatPrice(remaining)}`)
             }
             if (payMethod === "EFECTIVO" && cashGiven) {
-                const change = parseFloat(cashGiven) - amount
-                if (change > 0.009) toast.info(`Cambio a entregar: ${formatPrice(change)}`)
+                const changeCents = Math.round(parseFloat(cashGiven) * 100) - Math.round(amount * 100)
+                if (changeCents > 0) toast.info(`Cambio a entregar: ${formatPrice(changeCents / 100)}`)
             }
             setPayTarget(null)
             void load()
@@ -278,9 +292,9 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                                             Cambio: {formatPrice(parseFloat(cashGiven) - parseFloat(payAmount))}
                                         </p>
                                     )}
-                                    {cashGiven && parseFloat(cashGiven) < (parseFloat(payAmount) || 0) && (
+                                    {cashGiven && Math.round(parseFloat(cashGiven) * 100) < (Math.round(parseFloat(payAmount) * 100) || 0) && (
                                         <p className="text-destructive font-medium text-sm">
-                                            Faltan: {formatPrice((parseFloat(payAmount) || 0) - parseFloat(cashGiven))}
+                                            Faltan: {formatPrice(((Math.round(parseFloat(payAmount) * 100) || 0) - Math.round(parseFloat(cashGiven) * 100)) / 100)}
                                         </p>
                                     )}
                                 </div>

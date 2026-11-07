@@ -22,6 +22,15 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // Multi-tenant: el catálogo siempre se scopea al businessId del usuario del
     // bot. Quienes aún no se registran navegan el negocio por defecto del
     // deployment (bot mono-negocio: un número de Telegram = un negocio).
+    //
+    // INTENCIONAL — el catálogo es solo lectura y ya es público en la web
+    // (/catalogo): dejar que un desconocido lo hojeé es el escaparate del
+    // negocio. El borde está en las acciones, no en la vista: reservar exige
+    // cuenta registrada y APPROVED (reserve_), y venta/QR/eliminar exigen
+    // isAdmin — ninguna escritura usa el businessId por defecto. Si este
+    // deployment algún día hospeda más de un negocio, un visitante vería el
+    // catálogo del negocio más viejo: aceptable mientras el deployment sea
+    // mono-negocio, a revisar si cambia.
     async function businessIdOf(telegramId?: string): Promise<string> {
         if (telegramId) {
             const me = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })

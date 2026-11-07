@@ -143,13 +143,15 @@ export async function loadStatementByToken(token: string): Promise<StatementResu
         createdAt: mov.createdAt,
       })),
       layaways: layaways.map(({ payments, ...sale }) => {
-        const paid = payments.reduce((sum, p) => sum + p.amount, 0)
+        // Payment.amount y Sale.total son Float en pesos: la cuenta va en
+        // centavos enteros (mismo criterio que la ficha 360).
+        const paidCents = payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
         return {
           number: sale.number,
           folio: saleFolio(sale.number),
           total: sale.total,
-          paid,
-          balance: Math.max(0, sale.total - paid),
+          paid: paidCents / 100,
+          balance: Math.max(0, Math.round(sale.total * 100) - paidCents) / 100,
           expiresAt: sale.expiresAt,
           createdAt: sale.createdAt,
         }

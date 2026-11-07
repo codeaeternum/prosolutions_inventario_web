@@ -240,13 +240,15 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
 
   // Saldo corrido: creditBalance es el saldo DESPUÉS del movimiento más
   // reciente; se recorre hacia atrás para mostrar el saldo tras cada cargo/abono.
+  // La corrida va en centavos: los montos vienen en pesos (Float) y restar
+  // pesos fila a fila arrastra epsilon (0.1 + 0.2 ≠ 0.3).
   const movementsWithBalance = useMemo(() => {
     const movs = data?.creditMovements ?? []
     const result: Array<CreditMovementItem & { balanceAfter: number }> = []
-    let running = data?.customer.creditBalance ?? 0
+    let runningCents = Math.round((data?.customer.creditBalance ?? 0) * 100)
     for (const mov of movs) {
-      result.push({ ...mov, balanceAfter: running })
-      running = mov.type === "DEBT" ? running - mov.amount : running + mov.amount
+      result.push({ ...mov, balanceAfter: runningCents / 100 })
+      runningCents += mov.type === "DEBT" ? -Math.round(mov.amount * 100) : Math.round(mov.amount * 100)
     }
     return result
   }, [data])

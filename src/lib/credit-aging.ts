@@ -16,7 +16,6 @@ export interface CreditAgingMovement {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const EPS = 0.005
 
 function bucketOf(days: number): CreditAgingBucket {
   if (days <= 7) return "0-7"
@@ -24,6 +23,10 @@ function bucketOf(days: number): CreditAgingBucket {
   if (days <= 30) return "16-30"
   return "30+"
 }
+
+// amount llega en pesos (Float); la corrida FIFO se hace en centavos
+// enteros — el epsilon binario no puede dejar saldos fantasma de ±1¢.
+const toCents = (amount: number) => Math.round(amount * 100)
 
 /**
  * FIFO: los abonos (PAYMENT) y reversiones (REVERSAL) cubren primero los cargos
@@ -35,22 +38,22 @@ export function creditAging(
   now: Date = new Date()
 ): CreditAging {
   const debts = movements
-    .filter((m) => m.type === "DEBT" && m.amount > EPS)
-    .map((m) => ({ at: new Date(m.createdAt), amount: m.amount }))
+    .filter((m) => m.type === "DEBT")
+    .map((m) => ({ at: new Date(m.createdAt), amountCents: toCents(m.amount) }))
+    .filter((m) => m.amountCents > 0)
     .sort((a, b) => a.at.getTime() - b.at.getTime())
 
-  let credit = movements
+  let creditCents = movements
     .filter((m) => m.type !== "DEBT")
-    .reduce((sum, m) => sum + m.amount, 0)
+    .reduce((sum, m) => sum + toCents(m.amount), 0)
 
   let oldest: Date | null = null
   for (const debt of debts) {
-    credit -= debt.amount
-    if (credit < -EPS) {
+    creditCents -= debt.amountCents
+    if (creditCents < 0) {
       oldest = debt.at
       break
     }
-    if (credit < 0) credit = 0
   }
 
   if (!oldest) return { oldestDebtAt: null, daysOverdue: 0, bucket: null }

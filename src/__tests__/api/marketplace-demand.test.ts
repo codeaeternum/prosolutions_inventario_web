@@ -61,6 +61,19 @@ describe("tendencia semanal en horario del negocio", () => {
     expect(body.weekly.reduce((n: number, w: { requests: number }) => n + w.requests, 0)).toBe(1)
   })
 
+  it("compras surtidas se acumulan en centavos — sin epsilon residual", async () => {
+    // 0.1 + 0.2 = 0.30000000000000004 en Float: la suma en pesos dejaba
+    // epsilon en purchasesTotal; con centavos por fila queda exacto.
+    mocks.requestFind.mockResolvedValue([
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "Taller X", createdAt: new Date(), sale: { total: 0.1 } },
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "taller x", createdAt: new Date(), sale: { total: 0.2 } },
+    ])
+    const res = await GET()
+    const { byTaller } = await res.json()
+    expect(byTaller[0].purchasesTotal).toBe(0.3)
+    expect(byTaller[0].purchasesCount).toBe(2)
+  })
+
   it("las 8 semanas terminan en la semana MX actual, ascendente", async () => {
     const body = await (await GET()).json()
     const keys = body.weekly.map((w: { weekStart: string }) => w.weekStart)

@@ -64,11 +64,12 @@ export type PaymentLike = { amount: number; status?: string | null }
 
 /** Dinero retenido por el negocio en centavos (neto de reembolsos). */
 export function orderHeldCents(payments: readonly PaymentLike[] = []): number {
-  const cents = payments.reduce((sum, payment) => {
+  // Cada fila se convierte a centavos ANTES de sumar: sumar Float pesos y
+  // redondear al final deja escapar el epsilon acumulado (0.1 + 0.2 ≠ 0.3).
+  return payments.reduce((sum, payment) => {
     if (payment.status !== undefined && payment.status !== null && payment.status !== "CONFIRMED" && payment.status !== "REFUNDED") return sum
-    return sum + payment.amount
+    return sum + Math.round(payment.amount * 100)
   }, 0)
-  return Math.round(cents * 100)
 }
 
 /** Saldo pendiente de cobro en centavos (nunca negativo: el excedente es

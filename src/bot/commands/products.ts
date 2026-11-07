@@ -301,7 +301,11 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     reserveSession.quantity = quantity
                     reserveSession.step = 'PAYMENT_METHOD'
 
-                    const total = reserveSession.price * quantity
+                    // Los montos son Float en pesos: el total y el chequeo de
+                    // crédito se hacen en centavos enteros para no rechazar el
+                    // límite exacto ni mostrar epsilon en el mensaje.
+                    const totalCents = Math.round(reserveSession.price * 100) * quantity
+                    const total = totalCents / 100
                     const buttons = [
                         [Markup.button.callback('🏢 Pago en Tienda (Pagar al recoger)', 'pay_store')],
                         [Markup.button.callback('🏦 Transferencia (Subir comprobante)', 'pay_transfer')]
@@ -311,10 +315,10 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                             where: { telegramId },
                             select: { creditLimit: true, creditBalance: true }
                         })
-                        const limit = userWithCredit?.creditLimit ?? 0
-                        const balance = userWithCredit?.creditBalance ?? 0
-                        const available = limit > 0 ? Math.max(0, limit - balance) : 0
-                        if (available >= total) {
+                        const limitCents = Math.round((userWithCredit?.creditLimit ?? 0) * 100)
+                        const balanceCents = Math.round((userWithCredit?.creditBalance ?? 0) * 100)
+                        const availableCents = limitCents > 0 ? Math.max(0, limitCents - balanceCents) : 0
+                        if (availableCents >= totalCents) {
                             buttons.push([Markup.button.callback('💳 A crédito (cobro a tu cuenta)', 'pay_credit')])
                         }
                     } catch { }

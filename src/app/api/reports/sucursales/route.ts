@@ -159,10 +159,12 @@ export async function GET(req: NextRequest) {
       }),
     ])
 
+    // _sum.total es Float en pesos: el agregado de Postgres puede arrastrar
+    // epsilon binario, así que se trabaja en centavos enteros.
     const ventasPorBranch = new Map(
       salesAgg.map((s) => [
         s.branchId,
-        { total: s._sum.total ?? 0, count: s._count._all },
+        { totalCents: Math.round((s._sum.total ?? 0) * 100), count: s._count._all },
       ])
     )
 
@@ -176,13 +178,15 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    const mermasPorBranch = new Map<string, { piezas: number; costo: number }>()
+    // costo en centavos: costPrice es Float en pesos — la multiplicación y
+    // la suma fila a fila se hacen en enteros.
+    const mermasPorBranch = new Map<string, { piezas: number; costoCents: number }>()
     for (const m of mermaRows) {
       const branchId = m.branchId ?? principalId
       if (!branchId || !ids.includes(branchId)) continue
-      const agg = mermasPorBranch.get(branchId) ?? { piezas: 0, costo: 0 }
+      const agg = mermasPorBranch.get(branchId) ?? { piezas: 0, costoCents: 0 }
       agg.piezas += m.quantity
-      agg.costo += m.quantity * (m.product.costPrice ?? 0)
+      agg.costoCents += m.quantity * Math.round((m.product.costPrice ?? 0) * 100)
       mermasPorBranch.set(branchId, agg)
     }
 
@@ -203,17 +207,17 @@ export async function GET(req: NextRequest) {
       dias,
       desde: since.toISOString(),
       branches: branches.map((b) => {
-        const ventas = ventasPorBranch.get(b.id) ?? { total: 0, count: 0 }
-        const mermas = mermasPorBranch.get(b.id) ?? { piezas: 0, costo: 0 }
+        const ventas = ventasPorBranch.get(b.id) ?? { totalCents: 0, count: 0 }
+        const mermas = mermasPorBranch.get(b.id) ?? { piezas: 0, costoCents: 0 }
         return {
           id: b.id,
           name: b.name,
-          ventas: round2(ventas.total),
+          ventas: ventas.totalCents / 100,
           ventasCount: ventas.count,
-          ticketPromedio: ventas.count > 0 ? round2(ventas.total / ventas.count) : 0,
+          ticketPromedio: ventas.count > 0 ? round2(ventas.totalCents / ventas.count / 100) : 0,
           piezasVendidas: piezasPorBranch.get(b.id) ?? 0,
           mermas: mermas.piezas,
-          mermasCosto: round2(mermas.costo),
+          mermasCosto: mermas.costoCents / 100,
           stockPiezas: stockPorBranch.get(b.id) ?? 0,
           productosConStock: productosPorBranch.get(b.id) ?? 0,
           ordenesActivas: ordenesPorBranch.get(b.id) ?? 0,

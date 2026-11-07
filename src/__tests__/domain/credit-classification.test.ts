@@ -45,4 +45,19 @@ describe("credit reversal presentation", () => {
     const response = await GET(new NextRequest("http://localhost/api/credit/movements?summary=true"))
     expect(await response.json()).toMatchObject({ monthPayments: 50, movements: entries })
   })
+
+  it("los _sum en Float se redondean a centavos — el agregado no expone epsilon", async () => {
+    // Postgres puede devolver 0.30000000000000004 tras SUM(0.1, 0.2):
+    // la API redondea a 2 decimales porque el contrato público es en pesos.
+    mocked.prisma.user.aggregate.mockResolvedValue({ _sum: { creditBalance: 0.30000000000000004 } })
+    mocked.prisma.user.count.mockResolvedValue(1)
+    mocked.prisma.user.findMany.mockResolvedValue([])
+    mocked.prisma.creditMovement.findMany.mockResolvedValue([])
+    mocked.prisma.creditMovement.aggregate.mockResolvedValue({ _sum: { amount: 0.7000000000000001 } })
+    mocked.prisma.business.findUnique.mockResolvedValue({ name: "Negocio Fixture" })
+    const response = await GET(new NextRequest("http://localhost/api/credit/movements?summary=true"))
+    const json = await response.json()
+    expect(json.totalDebt).toBe(0.3)
+    expect(json.monthPayments).toBe(0.7)
+  })
 })

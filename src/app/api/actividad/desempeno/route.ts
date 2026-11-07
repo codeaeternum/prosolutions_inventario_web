@@ -111,12 +111,14 @@ export async function GET(request: NextRequest) {
       }),
     ])
 
-    type Stats = Omit<UsuarioDesempeno, "id" | "name" | "role" | "jobTitle">
+    // `ventas` se acumula en centavos: Sale.total es Float en pesos y sumar
+    // pesos fila a fila arrastra epsilon binario (0.1 + 0.2 ≠ 0.3).
+    type Stats = Omit<UsuarioDesempeno, "id" | "name" | "role" | "jobTitle" | "ventas"> & { ventasCents: number }
     const stats = new Map<string, Stats>()
     const of = (id: string): Stats => {
       let s = stats.get(id)
       if (!s) {
-        s = { ventas: 0, ventasCount: 0, piezasVendidas: 0, ordenesCreadas: 0, ordenesEntregadas: 0, movimientos: 0, acciones: 0 }
+        s = { ventasCents: 0, ventasCount: 0, piezasVendidas: 0, ordenesCreadas: 0, ordenesEntregadas: 0, movimientos: 0, acciones: 0 }
         stats.set(id, s)
       }
       return s
@@ -124,8 +126,8 @@ export async function GET(request: NextRequest) {
 
     for (const s of sales) {
       const st = of(s.sellerId)
-      // Cobrado neto: el total de catálogo menos el descuento autorizado.
-      st.ventas += s.total - s.discountCents / 100
+      // Cobrado neto en centavos: total de catálogo − descuento autorizado.
+      st.ventasCents += Math.round(s.total * 100) - s.discountCents
       st.ventasCount++
       st.piezasVendidas += s.items.reduce((n, i) => n + Math.max(0, i.quantity - i.returnedQuantity), 0)
     }
@@ -158,7 +160,10 @@ export async function GET(request: NextRequest) {
         const s = stats.get(u.id)
         return s ? s.acciones + s.ventasCount + s.ordenesCreadas + s.movimientos > 0 : false
       })
-      .map(u => ({ id: u.id, name: u.name, role: u.role, jobTitle: u.jobTitle, ...(stats.get(u.id) ?? of(u.id)) }))
+      .map(u => {
+        const { ventasCents, ...rest } = stats.get(u.id) ?? of(u.id)
+        return { id: u.id, name: u.name, role: u.role, jobTitle: u.jobTitle, ventas: ventasCents / 100, ...rest }
+      })
       .sort((a, b) => b.ventas - a.ventas || b.acciones - a.acciones || a.name.localeCompare(b.name, "es"))
 
     return NextResponse.json(

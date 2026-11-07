@@ -29,7 +29,8 @@ async function methodTotals(businessId: string, register: { branchId: string | n
     _sum: { amount: true },
   })
   const totals = Object.fromEntries(METHODS.map(m => [m, 0])) as Record<(typeof METHODS)[number], number>
-  for (const row of rows) totals[row.method] = row._sum.amount ?? 0
+  // _sum.amount es Float en pesos: se redondea el agregado a centavos exactos.
+  for (const row of rows) totals[row.method] = Math.round((row._sum.amount ?? 0) * 100) / 100
   return totals
 }
 
@@ -110,9 +111,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ active: false })
     }
 
-    const calculatedTotal = activeRegister.movements.reduce((sum, mov) => {
-      return mov.type === "IN" ? sum + mov.amount : sum - mov.amount
-    }, activeRegister.initialAmount)
+    // initialAmount/amount son Float en pesos: la corrida se hace en centavos
+    // y se expone en pesos, igual que expectedCashCents.
+    const calculatedCents = activeRegister.movements.reduce((sum, mov) => {
+      return mov.type === "IN" ? sum + Math.round(mov.amount * 100) : sum - Math.round(mov.amount * 100)
+    }, Math.round(activeRegister.initialAmount * 100))
+    const calculatedTotal = calculatedCents / 100
 
     return NextResponse.json({
       active: true,

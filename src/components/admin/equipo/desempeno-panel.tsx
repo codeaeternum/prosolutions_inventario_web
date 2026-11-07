@@ -93,22 +93,26 @@ export function DesempenoPanel() {
   }, [usuarios, searchQuery])
 
   const resumenEquipo = useMemo(() => {
-    return filteredUsuarios.reduce(
+    // ventas llega en pesos (Float): el total del equipo se acumula en
+    // centavos enteros y se expone en pesos.
+    const acc = filteredUsuarios.reduce(
       (acc, u) => ({
-        ventas: acc.ventas + u.ventas,
+        ventasCents: acc.ventasCents + Math.round(u.ventas * 100),
         ventasCount: acc.ventasCount + u.ventasCount,
         ordenesCreadas: acc.ordenesCreadas + u.ordenesCreadas,
         ordenesEntregadas: acc.ordenesEntregadas + u.ordenesEntregadas,
         piezasVendidas: acc.piezasVendidas + u.piezasVendidas,
       }),
       {
-        ventas: 0,
+        ventasCents: 0,
         ventasCount: 0,
         ordenesCreadas: 0,
         ordenesEntregadas: 0,
         piezasVendidas: 0,
       }
     )
+    const { ventasCents, ...rest } = acc
+    return { ...rest, ventas: ventasCents / 100 }
   }, [filteredUsuarios])
 
   const handleExportCsv = () => {

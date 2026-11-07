@@ -120,16 +120,18 @@ export function CobranzaPanel() {
   }, [debtors, search])
 
   // Resumen por bucket: cuántos deudores y cuánto saldo cae en cada tramo.
+  // creditBalance es Float en pesos: el total del tramo se acumula en
+  // centavos y se devuelve en pesos.
   const bucketSummary = useMemo(() => {
     const acc = new Map<CreditAgingBucket, { count: number; total: number }>()
     for (const d of filteredDebtors) {
       if (!d.aging?.bucket) continue
       const entry = acc.get(d.aging.bucket) ?? { count: 0, total: 0 }
       entry.count += 1
-      entry.total += d.creditBalance ?? 0
+      entry.total += Math.round((d.creditBalance ?? 0) * 100)
       acc.set(d.aging.bucket, entry)
     }
-    return acc
+    return new Map([...acc].map(([bucket, v]) => [bucket, { count: v.count, total: v.total / 100 }]))
   }, [filteredDebtors])
 
   const handleExportCsv = () => {

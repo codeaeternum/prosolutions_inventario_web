@@ -74,7 +74,9 @@ export default function CartPage() {
             return
         }
         const total = Number(totalPrice) || 0
-        if (reservationType === "CREDIT" && creditInfo && (creditInfo.creditLimit == null || creditInfo.creditBalance + total > creditInfo.creditLimit)) {
+        // El chequeo del límite va en centavos: saldo/total/límite son Float.
+        const totalCents = Math.round(total * 100)
+        if (reservationType === "CREDIT" && creditInfo && (creditInfo.creditLimit == null || Math.round(creditInfo.creditBalance * 100) + totalCents > Math.round(creditInfo.creditLimit * 100))) {
             toast.error("No tienes crédito disponible para este monto. Elige otra forma de pago.")
             return
         }
@@ -292,7 +294,7 @@ export default function CartPage() {
                                         A crédito
                                     </div>
                                     <div className="text-xs text-muted-foreground mt-1">
-                                        Disponible: {formatPrice(Math.max(0, creditInfo.creditLimit - creditInfo.creditBalance))}
+                                        Disponible: {formatPrice(Math.max(0, Math.round(creditInfo.creditLimit * 100) - Math.round(creditInfo.creditBalance * 100)) / 100)}
                                     </div>
                                     <div className="text-xs text-muted-foreground">Se cobra a tu cuenta</div>
                                 </div>

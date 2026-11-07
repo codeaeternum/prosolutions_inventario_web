@@ -241,17 +241,20 @@ export async function GET(
     }))
 
     const documentsOut = documents.map(({ payments, _count, ...doc }) => {
-      const paid = payments.reduce((sum, p) => sum + p.amount, 0)
+      // Payment.amount y Sale.total son Float en pesos: la cuenta va en
+      // centavos y se expone de vuelta en pesos.
+      const paidCents = payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
       return {
         ...doc,
         itemsCount: _count.items,
-        paid,
-        balance: Math.max(0, doc.total - paid),
+        paid: paidCents / 100,
+        balance: Math.max(0, Math.round(doc.total * 100) - paidCents) / 100,
       }
     })
 
     const stats = {
-      totalPurchased: (salesAgg._sum.total ?? 0) - (salesAgg._sum.discountCents ?? 0) / 100 + (repairPaidAgg._sum.amount ?? 0),
+      // Neto cobrado en centavos: catálogo − descuento + lo pagado en taller.
+      totalPurchased: (Math.round((salesAgg._sum.total ?? 0) * 100) - (salesAgg._sum.discountCents ?? 0) + Math.round((repairPaidAgg._sum.amount ?? 0) * 100)) / 100,
       salesCount: salesAgg._count._all,
       lastPurchaseAt: lastSale?.createdAt ?? null,
       pendingReservations,

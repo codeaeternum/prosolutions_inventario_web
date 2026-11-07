@@ -182,13 +182,15 @@ export async function GET(req: NextRequest) {
 
     // Calcular estadísticas de stock
     let totalStock = 0
-    let totalStockValue = 0
+    // Valuación en centavos: wholesalePrice es Float en pesos — la suma fila
+    // a fila en pesos arrastra epsilon binario.
+    let totalStockValueCents = 0
     let lowStockProducts = 0
     let outOfStockProducts = 0
 
     for (const product of allProducts) {
       totalStock += product.stock
-      totalStockValue += product.stock * (product.wholesalePrice ?? 0)
+      totalStockValueCents += product.stock * Math.round((product.wholesalePrice ?? 0) * 100)
       if (product.stock <= product.minStock) {
         lowStockProducts++
       }
@@ -297,7 +299,7 @@ export async function GET(req: NextRequest) {
       totalProducts,
       totalActiveProducts,
       totalStock,
-      totalStockValue,
+      totalStockValue: totalStockValueCents / 100,
       lowStockProducts,
       outOfStockProducts,
       totalUsers,

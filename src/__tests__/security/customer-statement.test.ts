@@ -123,6 +123,25 @@ describe("GET /api/cuenta/[token]", () => {
     })
   })
 
+  it("pagado/saldo del apartado se computan en centavos — sin epsilon residual", async () => {
+    mocks.userFindUnique.mockResolvedValue(statementUser())
+    // 0.1 + 0.2 = 0.30000000000000004 en Float: la suma en pesos dejaba
+    // epsilon; con centavos por fila paid/saldo quedan exactos.
+    mocks.saleFindMany.mockResolvedValue([
+      {
+        number: 7,
+        total: 0.5,
+        expiresAt: null,
+        createdAt: new Date("2026-12-05"),
+        payments: [{ amount: 0.1 }, { amount: 0.2 }],
+      },
+    ])
+    const res = await getStatement(req(), tokenParams)
+    const json = await res.json()
+    expect(json.statement.layaways[0].paid).toBe(0.3)
+    expect(json.statement.layaways[0].balance).toBe(0.2)
+  })
+
   it("no expone campos prohibidos: ids internos, contacto ni tokens", async () => {
     mocks.userFindUnique.mockResolvedValue(statementUser())
     mocks.movementFindMany.mockResolvedValue([

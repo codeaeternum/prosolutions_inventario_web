@@ -67,9 +67,11 @@ export default async function CorteTicketPage({
     },
     _sum: { amount: true },
   })
+  // _sum.amount es Float en pesos: el agregado se redondea a centavos
+  // exactos antes de imprimirlo en el ticket.
   const methodTotals = ["CASH", "CARD", "TRANSFER", "CREDIT"].map(method => ({
     label: METHOD_LABELS[method],
-    amount: paymentRows.find(row => row.method === method)?._sum.amount ?? 0,
+    amount: Math.round((paymentRows.find(row => row.method === method)?._sum.amount ?? 0) * 100) / 100,
   }))
 
   const expectedCents = expectedCashCents(register.initialAmount, register.movements as CashMovementLike[])

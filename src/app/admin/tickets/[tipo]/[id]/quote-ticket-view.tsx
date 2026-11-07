@@ -51,7 +51,8 @@ function Row({ label, value }: { label: string; value?: string }) {
 
 export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
   const { service, issue } = parseReportedIssue(data.issue)
-  const partsTotal = data.parts.reduce((sum, part) => sum + part.subtotal, 0)
+  // subtotal llega en pesos (Float): el total de refacciones va en centavos.
+  const partsTotalCents = data.parts.reduce((sum, part) => sum + Math.round(part.subtotal * 100), 0)
   // Mano de obra en centavos para compararla con las líneas: serviceAmount
   // llega en pesos (laborCents / 100 al armar data) — el round-trip es exacto.
   const laborCents = data.serviceAmount !== undefined ? Math.round(data.serviceAmount * 100) : null
@@ -63,7 +64,7 @@ export function QuoteTicketView({ data }: { data: QuoteTicketData }) {
   const lineLabel = (name: string) => (data.deviceLabel ? `${name} — ${data.deviceLabel}` : name)
   const hasBreakdown = data.serviceAmount !== undefined || data.parts.length > 0 || pendingServiceLines.length > 0
   const hasNumericTotal = data.serviceAmount !== undefined || data.parts.length > 0
-  const total = (data.serviceAmount ?? 0) + partsTotal
+  const total = (Math.round((data.serviceAmount ?? 0) * 100) + partsTotalCents) / 100
 
   // Mismo patrón que el ticket/hoja: en pestaña abierta por script
   // history.back() no hace nada; cerramos y si no se puede, al taller.

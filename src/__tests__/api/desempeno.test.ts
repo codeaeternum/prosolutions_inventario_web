@@ -63,6 +63,19 @@ describe("desempeño por empleado", () => {
     }))
   })
 
+  it("suma en centavos: totales que acumulan epsilon no desvían el reporte", async () => {
+    mocks.saleFind.mockResolvedValue([
+      // 0.1 + 0.2 = 0.30000000000000004 en Float: la suma en pesos dejaba
+      // epsilon residual; con centavos por fila el resultado es exacto.
+      { sellerId: "emp-1", total: 0.1, discountCents: 0, items: [] },
+      { sellerId: "emp-1", total: 0.2, discountCents: 0, items: [] },
+    ])
+    const res = await GET(new Request("http://localhost/api/actividad/desempeno?dias=7") as never)
+    const { usuarios } = await res.json()
+    const kevin = usuarios.find((u: { id: string }) => u.id === "emp-1")
+    expect(kevin.ventas).toBe(0.3)
+  })
+
   it("un empleado sin ventas aparece con ceros", async () => {
     const res = await GET(new Request("http://localhost/api/actividad/desempeno?dias=30") as never)
     const { usuarios } = await res.json()

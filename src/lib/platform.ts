@@ -104,7 +104,12 @@ export async function listPlatformBusinesses(): Promise<PlatformBusinessSummary[
     prisma.repairOrder.groupBy({ by: ["businessId"], _max: { createdAt: true } }),
   ])
 
-  const totalMap = new Map(salesTotals.map(r => [r.businessId, (r._sum.total ?? 0) - (r._sum.discountCents ?? 0) / 100]))
+  // Cobrado neto en centavos: _sum.total es Float en pesos y el agregado de
+  // Postgres puede arrastrar epsilon — se redondea a centavos antes de restar.
+  const totalMap = new Map(salesTotals.map(r => [
+    r.businessId,
+    (Math.round((r._sum.total ?? 0) * 100) - (r._sum.discountCents ?? 0)) / 100,
+  ]))
   const saleAtMap = new Map(salesActivity.map(r => [r.businessId, r._max.createdAt]))
   const orderAtMap = new Map(ordersActivity.map(r => [r.businessId, r._max.createdAt]))
 
@@ -245,7 +250,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
   ])
 
   return {
-    ...toSummary(business, (salesTotal._sum.total ?? 0) - (salesTotal._sum.discountCents ?? 0) / 100, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
+    ...toSummary(business, (Math.round((salesTotal._sum.total ?? 0) * 100) - (salesTotal._sum.discountCents ?? 0)) / 100, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
     updatedAt: business.updatedAt,
     businessKind: business.businessKind ?? "FULL",
     showInDirectory: business.showInDirectory ?? true,

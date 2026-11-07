@@ -1,6 +1,7 @@
 import { expireReservations } from "../lib/domain/reservations"
 import { purgePendingSignups } from "../lib/pending-signup-purge"
 import { purgeOldEvents } from "../lib/event-retention"
+import { reconcileDelegations } from "../lib/domain/delegation-reconcile"
 import 'dotenv/config'
 import { Telegraf } from 'telegraf'
 import * as cron from 'node-cron'
@@ -246,6 +247,25 @@ cron.schedule('25 4 * * *', async () => {
         }
     } catch (e) {
         console.error('Error in event retention job:', e)
+    }
+})
+
+// Reconciliación diaria (04:35) de delegaciones cross-tenant: la espejo en el
+// tenant reparador y la marca local son commits separados — un fallo a media
+// operación deja vínculos divergentes. El barrido solo DETECTA (issue en la
+// respuesta + RepairEvent privado de alerta en la orden); la corrección es
+// manual. El endpoint /api/cron/reconcile-delegations la dispara a mano.
+cron.schedule('35 4 * * *', async () => {
+    if (!_prisma) return
+    try {
+        const result = await reconcileDelegations(_prisma)
+        if (result.issues.length > 0) {
+            console.warn(`Delegation reconcile: ${result.issues.length} issue(s) en ${result.checked} vínculos (${result.annotated} alertas nuevas)`, result.issues)
+        } else if (isDev) {
+            console.log('Delegation reconcile: OK', result.checked)
+        }
+    } catch (e) {
+        console.error('Error in delegation reconcile job:', e)
     }
 })
 

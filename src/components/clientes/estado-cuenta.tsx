@@ -107,7 +107,7 @@ export function EstadoCuentaSheet({ open, onOpenChange, userId }: EstadoCuentaSh
               <div className="p-3 bg-muted rounded-lg text-center">
                 <p className="text-xs text-muted-foreground">Crédito Disponible</p>
                 <p className="text-lg font-bold text-green-600">
-                  {formatPrice(Math.max(0, account.creditLimit - (account.creditBalance || 0)))}
+                  {formatPrice(Math.max(0, Math.round(account.creditLimit * 100) - Math.round((account.creditBalance || 0) * 100)) / 100)}
                 </p>
               </div>
             )}

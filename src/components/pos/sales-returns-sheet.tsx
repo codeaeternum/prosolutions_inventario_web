@@ -107,12 +107,14 @@ function formatSaleFolio(number: number): string {
 }
 
 function defaultRefundMethod(sale: SaleRecord): PosPaymentMethod {
+    // Neto por método en centavos: payment.amount es Float en pesos y la
+    // corrida cobro+reembolso en pesos arrastra epsilon.
     const netByMethod = new Map<PosPaymentMethod, number>()
     for (const payment of sale.payments) {
         if (payment.status === "VOIDED") continue
         const mapped = DB_TO_POS_METHOD[payment.method]
         if (!mapped) continue
-        netByMethod.set(mapped, (netByMethod.get(mapped) ?? 0) + payment.amount)
+        netByMethod.set(mapped, (netByMethod.get(mapped) ?? 0) + Math.round(payment.amount * 100))
     }
     let bestMethod: PosPaymentMethod = "EFECTIVO"
     let bestAmount = -1
@@ -390,7 +392,8 @@ export function SalesReturnsSheet({
                             {filteredSales.map(sale => {
                                 const folio = formatSaleFolio(sale.number)
                                 const discount = (sale.discountCents ?? 0) / 100
-                                const netTotal = Math.max(0, sale.total - discount)
+                                // Neto en centavos: sale.total es Float en pesos.
+                                const netTotal = Math.max(0, Math.round(sale.total * 100) - (sale.discountCents ?? 0)) / 100
                                 const hasReturnableUnits =
                                     sale.status === "COMPLETED" &&
                                     sale.items.some(item => item.quantity > item.returnedQuantity)

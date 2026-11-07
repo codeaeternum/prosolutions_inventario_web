@@ -194,7 +194,8 @@ export async function GET() {
         },
         sales: {
           countTotal: salesCountTotal,
-          sumLast30d: salesLast30d._sum.total ?? 0,
+          // _sum.total es Float en pesos: el agregado se redondea a centavos.
+          sumLast30d: Math.round((salesLast30d._sum.total ?? 0) * 100) / 100,
           countLast30d: salesLast30d._count._all,
         },
         products: { total: productsTotal },

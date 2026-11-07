@@ -82,7 +82,8 @@ export function CustomerPicker({ value, onChange, disabled, requiresCredit, plac
     }
 
     if (value) {
-        const available = value.creditLimit != null ? Math.max(0, value.creditLimit - value.creditBalance) : null
+        // Disponible en centavos: limit/balance son Float en pesos.
+        const available = value.creditLimit != null ? Math.max(0, Math.round(value.creditLimit * 100) - Math.round(value.creditBalance * 100)) / 100 : null
         return (
             <div className="flex items-center justify-between gap-2 rounded-lg border bg-primary/5 px-3 py-2">
                 <div className="min-w-0">
@@ -120,7 +121,7 @@ export function CustomerPicker({ value, onChange, disabled, requiresCredit, plac
             {shownResults.length > 0 && (
                 <div className="absolute z-20 inset-x-0 top-full mt-1 rounded-lg border bg-popover shadow-md max-h-48 overflow-y-auto">
                     {shownResults.map(u => {
-                        const available = u.creditLimit != null ? Math.max(0, u.creditLimit - u.creditBalance) : null
+                        const available = u.creditLimit != null ? Math.max(0, Math.round(u.creditLimit * 100) - Math.round(u.creditBalance * 100)) / 100 : null
                         return (
                             <button
                                 key={u.id}

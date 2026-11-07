@@ -217,7 +217,9 @@ export default async function VerifyPage({
           <VerifyActions
             qrCode={qrCode}
             paymentMethod={reservation.paymentMethod}
-            due={Math.max(0, reservation.totalPrice - (reservation.depositPaid ? reservation.depositAmount ?? reservation.totalPrice : 0))}
+            // Saldo por cobrar en centavos: totalPrice/depositAmount son
+            // Float en pesos — restarlos crudos deja epsilon residual.
+            due={Math.max(0, Math.round(reservation.totalPrice * 100) - (reservation.depositPaid ? Math.round((reservation.depositAmount ?? reservation.totalPrice) * 100) : 0)) / 100}
             canComplete={canComplete}
             status={reservation.status}
             isExpired={isExpired}

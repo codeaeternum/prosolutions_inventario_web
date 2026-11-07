@@ -100,6 +100,13 @@ describe("orderHeldCents", () => {
   it("pagos sin status (selects que ya filtraron) cuentan todos", () => {
     expect(orderHeldCents([{ amount: 100 }, { amount: -40 }])).toBe(6000)
   })
+
+  it("cada fila se redondea a centavos antes de sumar — el epsilon no se acumula", () => {
+    // 0.1 + 0.2 = 0.30000000000000004 en Float: sumar pesos y redondear al
+    // final daba 30.000000000000004¢; con centavos por fila queda exacto.
+    expect(orderHeldCents([{ amount: 0.1, status: "CONFIRMED" }, { amount: 0.2, status: "CONFIRMED" }])).toBe(30)
+    expect(orderHeldCents([{ amount: 0.1 }, { amount: 0.2 }, { amount: -0.1 }])).toBe(20)
+  })
 })
 
 describe("orderBalanceCents / orderOverpaidCents", () => {

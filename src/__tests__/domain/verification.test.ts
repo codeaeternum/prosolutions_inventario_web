@@ -219,6 +219,27 @@ describe("consumeVerificationCode", () => {
       consumeVerificationCode(db, { code, channel: "TELEGRAM" }),
     ).rejects.toMatchObject({ reason: "MISMATCH" })
   })
+
+  it("sin identifier un miss NO toca fila alguna (el hash es la dirección — no hay attempts que contar)", async () => {
+    const { db, rows } = fakeDb()
+    await issueVerificationCode(db, { identifier: "5512345678", channel: "TELEGRAM" })
+    // Código imposible de emitir (no son 6 dígitos): miss garantizado.
+    await expect(
+      consumeVerificationCode(db, { code: "no-es-codigo", channel: "TELEGRAM" }),
+    ).rejects.toMatchObject({ reason: "MISMATCH" })
+    expect(rows[0].attempts).toBe(0)
+  })
+
+  it("sin identifier, una fila localizada pero expirada SÍ cuenta el intento", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, { identifier: "5512345678", channel: "TELEGRAM" })
+    rows[0].expiresAt = new Date(Date.now() - 1000)
+    await expect(
+      consumeVerificationCode(db, { code, channel: "TELEGRAM" }),
+    ).rejects.toMatchObject({ reason: "EXPIRED" })
+    expect(rows[0].attempts).toBe(1)
+    expect(rows[0].consumedAt).toBeNull()
+  })
 })
 
 describe("markVerified", () => {

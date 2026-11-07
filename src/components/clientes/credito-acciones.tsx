@@ -162,9 +162,10 @@ export function CargoManualDialog({ open, onOpenChange, user, onSuccess }: Credi
     setNotes("")
   })
 
+  // Disponible en centavos: limit/balance son Float en pesos.
   const disponible =
     user?.creditLimit != null && user.creditLimit > 0
-      ? user.creditLimit - (user.creditBalance ?? 0)
+      ? Math.max(0, Math.round(user.creditLimit * 100) - Math.round((user.creditBalance ?? 0) * 100)) / 100
       : null
 
   const handleOpenChange = (next: boolean) => {

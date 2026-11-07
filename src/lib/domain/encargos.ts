@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
+import { actor, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
 import { recordAudit } from "../audit"
 
 /**
@@ -139,8 +139,9 @@ export async function createEncargo(db: PrismaClient, actorId: string, businessI
     throw new BusinessError("El precio cotizado admite como máximo dos decimales.", 400)
   }
   // El anticipo nunca supera lo cotizado: /api/pedidos muestra ambos montos
-  // y un anticipo mayor sería un cargo fantasma para el cliente.
-  if (input.priceQuoted !== undefined && input.deposit > input.priceQuoted) {
+  // y un anticipo mayor sería un cargo fantasma para el cliente. La
+  // comparación va en centavos: deposit/priceQuoted son Float en pesos.
+  if (input.priceQuoted !== undefined && cents(input.deposit, true) > cents(input.priceQuoted, true)) {
     throw new BusinessError("El anticipo no puede ser mayor que el precio cotizado.", 400)
   }
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "ENCARGO_CREATE", permission: "staff", payload: input }, async tx => {
@@ -340,8 +341,10 @@ export async function transitionEncargoTx(
     ])
     // Los REFUND se guardan con amount negativo: el retenido = anticipos +
     // devoluciones (ya vienen en negativo). Sin ledger, cae al deposit.
+    // Cada fila se convierte a centavos ANTES de sumar: sumar Float pesos y
+    // redondear al final deja escapar el epsilon acumulado.
     const heldCents = advances.length
-      ? Math.round(advances.reduce((sum, p) => sum + p.amount, 0) * 100) + Math.round(priorRefunds.reduce((sum, p) => sum + p.amount, 0) * 100)
+      ? advances.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) + priorRefunds.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
       : Math.round(encargo.deposit * 100)
     if (heldCents > 0) {
       const method = input.refundMethod ?? advances[0]?.method ?? "CASH"

@@ -29,7 +29,7 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
 ### 2.3 Búsqueda de productos (texto libre)
 
 - **Entrada**: Cualquier mensaje de texto que **no** sea comando (no empiece por `/`) y que no esté dentro de un wizard activo (registro, reserva, agregar producto admin).
-- **Lógica**: Se divide el texto en palabras (≥ 2 caracteres). Se buscan productos con **AND** (todas las palabras en el nombre). Si no hay resultados, se hace **OR** y se ordena por coincidencias. Solo productos `isPublic: true` y `stock > 0`.
+- **Lógica**: Se divide el texto en palabras (≥ 2 caracteres). Se buscan productos con **AND** (todas las palabras en el nombre). Si no hay resultados, se hace **OR** y se ordena por coincidencias. Solo productos `isActive: true` y `stock > 0`.
 - **Respuesta**: Lista de hasta 5 productos con botones inline; al pulsar uno se abre el detalle (`prod_<id>`).
 
 ### 2.4 Detalle de producto y acciones
@@ -50,8 +50,8 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
   3. Si **Pago en Tienda** → se llama `processReservation(ctx, 'STORE')`.
   4. Si **Transferencia** → se pide **foto del comprobante**. Al recibir la foto se guarda fuera de `public/` en almacenamiento privado (`storage/payment-proofs/`, servido por `/api/payment-proofs/<archivo>` con sesión y propiedad verificadas) y se llama `processReservation(ctx, 'TRANSFER', urlLocal)`.
 - **processReservation**:
-  - Usa **ajustes**: `reservation_hours` y `bank_info` de `SystemSettings` (configurables con `/ajustes`).
-  - Crea un registro `Reservation` en la BD (status `PENDING` o `PENDING_PAYMENT` según método).
+  - Usa **ajustes**: datos de pago `bank_transfer_info` y `bank_cash_info` de `SystemSettings` (los que muestra `pay_transfer`), y la vigencia de la fila `Settings` — `pendingVerificationHours` para reservas a depósito (DEPOSIT) y `tempReservationMinutes` para apartado (TEMPORARY). Todo editable con `/ajustes` o en `/admin/configuracion` de la web (llaves muertas como `reservation_hours`/`bank_info` ya no se leen).
+  - Crea un registro `Reservation` en la BD vía `createReservations` (status `PENDING` o `PENDING_PAYMENT` según método).
   - Resta la cantidad del **stock** del producto.
   - Genera un QR con el ID de la reserva y lo envía al usuario.
   - Notifica a todos los admins por Telegram (el comprobante se revisa solo desde la sesión web autenticada).
@@ -92,8 +92,8 @@ Las ventas del bot crean **movimientos de inventario** en la misma tabla que usa
 
 ### 2.8 Notificaciones a admins
 
-- **Función**: `notifyAdmins(bot, message)` en `lib/notify.ts`.
-- **Comportamiento**: Busca en la BD todos los usuarios con `role: 'ADMIN'` y `telegramId` no nulo y les envía el mensaje en HTML.
+- **Función**: `notifyAdmins(bot, businessId, message, extraOptions?)` en `lib/notify.ts`.
+- **Comportamiento**: Busca en la BD los usuarios `role: 'ADMIN'`, `status: 'APPROVED'` y `telegramId` no nulo **del negocio `businessId`** (multi-tenant: nunca avisa a admins de otros tenants) y les envía el mensaje en HTML.
 - **Uso**: Tras una venta rápida o confirmación de carrito en el bot; también se puede usar desde la web (p. ej. al crear un movimiento de inventario) si se implementa una llamada al bot o un servicio compartido.
 
 ### 2.9 Cron: reservas vencidas
@@ -102,9 +102,15 @@ Las ventas del bot crean **movimientos de inventario** en la misma tabla que usa
 - **Qué hace**: Busca reservas con `status: 'PENDING'` y `expiresAt < ahora`. Las actualiza a `CANCELLED`, devuelve el stock al producto y envía un mensaje al usuario por Telegram si tiene `telegramId`.
 - **Nota**: La web puede tener su propio cron (`/api/reservations/check-expiring`) con lógica similar; ambos trabajan sobre la misma tabla de reservas.
 
+### 2.9b Crons de mantenimiento diario
+
+- **04:17** — Purga de altas de negocio abandonadas (`purgePendingSignups`; dueño PENDING que nunca verificó). Espejo HTTP: `/api/cron/purge-pending-signups`.
+- **04:25** — Retención de bitácoras (`purgeOldEvents`; AuditEvent/PlatformEvent viejos). Espejo HTTP: `/api/cron/purge-events`.
+- **04:35** — Reconciliación de delegaciones cross-tenant (`reconcileDelegations`): detecta espejos faltantes/huérfanas, marcas incompletas y estados divergentes entre la orden del captador y la del taller asociado. **Solo detecta** — deja un `RepairEvent` privado de alerta en la orden afectada (dedupe 24 h); corregir es manual. Espejo HTTP: `/api/cron/reconcile-delegations` (`?dry=1` sin alertas).
+
 ### 2.10 Ajustes del sistema (admin)
 
-- **Comando**: `/ajustes`. Muestra dólar, horas de expiración y datos bancarios. Los valores se guardan en una tabla `SystemSettings` (key/value). El bot usa estos valores en los mensajes (p. ej. datos bancarios para transferencia). Si la web usa la tabla `Settings` (otra tabla), son configuraciones distintas; conviene unificarlas si quieres una sola fuente de verdad.
+- **Comando**: `/ajustes`. Muestra y edita: horas para verificar un depósito (fila `Settings.pendingVerificationHours` — la misma que lee `createReservations`/web), datos de transferencia `bank_transfer_info` y de depósito en efectivo `bank_cash_info` (llaves de `SystemSettings` por negocio — las mismas que muestra `pay_transfer`). Bot y web comparten las mismas fuentes: un cambio por `/ajustes` ya se refleja en la web y viceversa.
 
 ---
 

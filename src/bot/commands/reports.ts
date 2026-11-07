@@ -133,14 +133,17 @@ export function registerReports({ bot, prisma }: BotContext) {
                 where: { registerId: register.id },
                 _sum: { amount: true },
             })
-            const totalIn = totals.find(t => t.type === 'IN')?._sum.amount ?? 0
-            const totalOut = totals.find(t => t.type === 'OUT')?._sum.amount ?? 0
+            // Los _sum son Float en pesos: la cuenta va en centavos enteros.
+            const sumCents = (type: 'IN' | 'OUT') => Math.round((totals.find(t => t.type === type)?._sum.amount ?? 0) * 100)
+            const totalIn = sumCents('IN') / 100
+            const totalOut = sumCents('OUT') / 100
+            const expected = (Math.round(register.initialAmount * 100) + sumCents('IN') - sumCents('OUT')) / 100
 
             let msg = `🟢 *Caja Abierta*\n\n`
             msg += `💰 Monto inicial: $${register.initialAmount.toLocaleString()}\n`
             msg += `📈 Entradas: $${totalIn.toLocaleString()}\n`
             msg += `📉 Salidas: $${totalOut.toLocaleString()}\n`
-            msg += `💵 Total esperado: $${(register.initialAmount + totalIn - totalOut).toLocaleString()}\n`
+            msg += `💵 Total esperado: $${expected.toLocaleString()}\n`
             msg += `👤 Abrió: ${escapeMarkdownV1(register.openedBy?.name || 'N/A')}\n`
             msg += `🕐 Desde: ${new Date(register.openedAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}\n`
 
@@ -178,7 +181,8 @@ export function registerReports({ bot, prisma }: BotContext) {
                 return ctx.reply('✅ *No hay deudores pendientes.*\n\nTodos los créditos están al corriente.', { parse_mode: 'Markdown' })
             }
 
-            const totalDebt = debtors.reduce((s, d) => s + (d.creditBalance ?? 0), 0)
+            // creditBalance es Float en pesos: el total va en centavos.
+            const totalDebt = debtors.reduce((s, d) => s + Math.round((d.creditBalance ?? 0) * 100), 0) / 100
             let msg = `💳 *Créditos Pendientes* (${debtors.length} deudor${debtors.length > 1 ? 'es' : ''})\n\n`
             debtors.forEach((d, i) => {
                 const pct = d.creditLimit ? Math.round(((d.creditBalance ?? 0) / d.creditLimit) * 100) : 0
@@ -220,7 +224,8 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             const totalSales = salesMovements.length
             const totalItems = salesMovements.reduce((s, m) => s + m.quantity, 0)
-            const totalRevenue = salesMovements.reduce((s, m) => s + (m.totalPrice ?? 0), 0)
+            // totalPrice es Float en pesos: el total va en centavos.
+            const totalRevenue = salesMovements.reduce((s, m) => s + Math.round((m.totalPrice ?? 0) * 100), 0) / 100
 
             let msg = `📊 *Reporte del Día*\n`
             msg += `📅 ${new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })}\n\n`

@@ -2,6 +2,7 @@ import type { Context, Telegraf } from "telegraf"
 import type { PrismaClient } from "@prisma/client"
 import type { WizardState } from "../lib/types"
 import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
+import { checkAndRecord } from "../../lib/rate-limit"
 import { sendWelcomeEmail } from "../../lib/mailer"
 import { escapeMarkdownV1 } from "../lib/format"
 
@@ -11,8 +12,19 @@ export type { WizardState }
  * Deep-link de verificación: /start verify_<6 dígitos>. El código viaja en el
  * link (canal TELEGRAM); aquí se consume, se marca phoneVerifiedAt y se liga
  * el telegramId a la cuenta que lo generó — nunca se le quita a otro usuario.
+ *
+ * Un acierto liga ESTE telegramId a la cuenta del código, así que el link no
+ * puede probarse en masa: consumeVerificationCode no puede contar un miss en
+ * ninguna fila (el hash es la dirección), por eso el freno vive aquí — por
+ * telegramId, en memoria del proceso del bot.
  */
+const VERIFY_LINK_WINDOW_MS = 15 * 60 * 1000
+const VERIFY_LINK_MAX_ATTEMPTS = 8
+
 async function handleVerifyPayload(ctx: Context, prisma: PrismaClient, telegramId: string, code: string) {
+  if (!checkAndRecord("verify-tg", telegramId, VERIFY_LINK_WINDOW_MS, VERIFY_LINK_MAX_ATTEMPTS)) {
+    return ctx.reply("🔒 Demasiados intentos de verificación. Espera unos minutos o genera un código nuevo desde la app.")
+  }
   try {
     const consumed = await consumeVerificationCode(prisma, { code, channel: "TELEGRAM" })
 

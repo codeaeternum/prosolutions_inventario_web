@@ -111,8 +111,9 @@ async function exportSales(businessId: string, branchId?: string): Promise<strin
     s.customer?.name ?? "Mostrador",
     s.seller.name,
     s.items.reduce((sum, i) => sum + i.quantity, 0),
-    // Lo cobrado: catálogo menos el descuento autorizado al cobrar.
-    money(s.total - s.discountCents / 100),
+    // Lo cobrado: catálogo menos el descuento autorizado al cobrar — en
+    // centavos: s.total es Float en pesos.
+    money((Math.round(s.total * 100) - s.discountCents) / 100),
     s.discountCents > 0 ? `${money(s.discountCents / 100)}${s.discountReason ? ` (${s.discountReason})` : ""}` : "",
     [...new Set(s.payments.filter((p) => p.status !== "VOIDED").map((p) => paymentMethodLabels[p.method] ?? p.method))].join(" + "),
     saleStatusLabels[s.status] ?? s.status,

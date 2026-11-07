@@ -184,7 +184,8 @@ export async function GET(request: NextRequest) {
       cliente: s.customer?.name ?? null,
       detalle: s.items.map((i) => `${i.quantity}× ${i.product.name}`).join(", "),
       monto: s.total,
-      anticipo: s.payments.reduce((sum, p) => sum + p.amount, 0),
+      // Payment.amount es Float en pesos: la suma va en centavos enteros.
+      anticipo: s.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) / 100,
       status: s.status,
       createdAt: s.createdAt,
       branchId: s.branchId,

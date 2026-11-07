@@ -74,10 +74,13 @@ export async function GET(req: NextRequest) {
           (b.creditBalance ?? 0) - (a.creditBalance ?? 0)
       )
 
+    // Los _sum son Float en pesos: el agregado de Postgres puede arrastrar
+    // epsilon binario, así que se redondea por centavos antes de exponerlo.
+    const roundMoney = (value: number | null) => Math.round((value ?? 0) * 100) / 100
     return NextResponse.json({
-      totalDebt: totalDebtAgg._sum.creditBalance || 0,
+      totalDebt: roundMoney(totalDebtAgg._sum.creditBalance),
       activeClients,
-      monthPayments: monthPaymentsAgg._sum.amount || 0,
+      monthPayments: roundMoney(monthPaymentsAgg._sum.amount),
       businessName: business?.name ?? "",
       debtors: debtorsWithAging,
       movements,

@@ -106,10 +106,9 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         const number = parseInt(ctx.match[2])
 
         try {
-            const adminUser = await prisma.user.findUnique({
-                where: { telegramId },
-                select: { id: true, businessId: true }
-            })
+            // getBotAccount ya trae name: el aviso a otros admins lo usa para
+            // atribuir la venta (no más "Por: Admin" genérico).
+            const adminUser = await getBotAccount(prisma, telegramId)
             if (!adminUser) return ctx.reply('Cuenta no disponible.')
 
             const product = await prisma.product.findUnique({
@@ -144,7 +143,7 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
             // y escapeHtml — no el Markdown/escapeMarkdownV1 del successMsg.
             notifyAdmins(bot, adminUser.businessId, `📢 <b>Nueva Venta (Bot)</b>
 
-👤 Por: Admin
+👤 Por: ${escapeHtml(adminUser.name)}
 ✅ <b>¡Venta registrada!</b>
 
 📦 ${escapeHtml(product.name)}

@@ -73,9 +73,11 @@ export async function GET() {
       approved: number
       rejected: number
       fulfilled: number
-      estimatedTotal: number
+      /** Valor estimado en centavos (qty × wholesalePrice). */
+      estimatedTotalCents: number
       purchasesCount: number
-      purchasesTotal: number
+      /** Compras surtidas en centavos (Sale.total es Float en pesos). */
+      purchasesTotalCents: number
     }
     const byProduct = new Map<string, ProductAgg>()
     const byTaller = new Map<string, TallerAgg>()
@@ -121,9 +123,9 @@ export async function GET() {
           approved: 0,
           rejected: 0,
           fulfilled: 0,
-          estimatedTotal: 0,
+          estimatedTotalCents: 0,
           purchasesCount: 0,
-          purchasesTotal: 0,
+          purchasesTotalCents: 0,
         }
         byTaller.set(tallerKey, t)
       }
@@ -137,12 +139,12 @@ export async function GET() {
       // Compras surtidas: solicitud FULFILLED con su venta ligada.
       if (r.status === "FULFILLED" && r.sale) {
         t.purchasesCount++
-        t.purchasesTotal += r.sale.total
+        t.purchasesTotalCents += Math.round(r.sale.total * 100)
       }
 
       // Demanda (sin rechazadas): por producto, valor estimado y tendencia.
       if (r.status !== "REJECTED") {
-        if (product) t.estimatedTotal += r.qty * product.wholesalePrice
+        if (product) t.estimatedTotalCents += r.qty * Math.round(product.wholesalePrice * 100)
 
         let pa = byProduct.get(r.productId)
         if (!pa) {
@@ -179,14 +181,18 @@ export async function GET() {
           tallerCount: agg.talleres.size,
           // Demanda insatisfecha: piezas pedidas por encima del stock actual.
           unmetQty: Math.max(0, agg.totalQty - stock),
-          estimatedValue: p ? agg.totalQty * p.wholesalePrice : null,
+          estimatedValue: p ? (agg.totalQty * Math.round(p.wholesalePrice * 100)) / 100 : null,
         }
       })
       .sort((a, b) => b.totalQty - a.totalQty || b.requestCount - a.requestCount)
 
-    const tallerList = [...byTaller.values()].sort(
-      (a, b) => b.totalQty - a.totalQty || b.requestCount - a.requestCount
-    )
+    const tallerList = [...byTaller.values()]
+      .sort((a, b) => b.totalQty - a.totalQty || b.requestCount - a.requestCount)
+      .map(({ estimatedTotalCents, purchasesTotalCents, ...rest }) => ({
+        ...rest,
+        estimatedTotal: estimatedTotalCents / 100,
+        purchasesTotal: purchasesTotalCents / 100,
+      }))
 
     const weekly = [...weekBuckets.entries()].map(([weekStart, w]) => ({
       weekStart,

@@ -92,12 +92,14 @@ async function getDashboardStats() {
     // Contar productos con stock bajo en JS
     const lowStockProducts = allProducts.filter(p => p.stock <= p.minStock).length
     
-    // Total caja activa
+    // Total caja activa — en centavos: initialAmount/amount son Float en
+    // pesos y la corrida fila a fila en pesos arrastra epsilon binario.
     let cashTotal = activeRegister?.initialAmount || 0;
     if (activeRegister) {
-        cashTotal = activeRegister.movements.reduce((sum, mov) => {
-            return mov.type === "IN" ? sum + mov.amount : sum - mov.amount
-        }, cashTotal)
+        const centsTotal = activeRegister.movements.reduce((sum, mov) => {
+            return mov.type === "IN" ? sum + Math.round(mov.amount * 100) : sum - Math.round(mov.amount * 100)
+        }, Math.round(cashTotal * 100))
+        cashTotal = centsTotal / 100
     }
 
     return {
@@ -109,7 +111,8 @@ async function getDashboardStats() {
       lowStockProducts,
       totalBrands,
       recentReservations,
-      todaysSales: todaysSales._sum.totalPrice || 0,
+      // _sum.totalPrice es Float en pesos: el agregado se redondea a centavos.
+      todaysSales: Math.round((todaysSales._sum.totalPrice || 0) * 100) / 100,
       cashTotal,
       isRegisterOpen: !!activeRegister,
       activeRepairs,

@@ -27,7 +27,8 @@ import {
     Coins,
     Banknote,
     CalendarDays,
-    Truck
+    Truck,
+    ArrowLeftRight
 } from "lucide-react"
 
 const CashRequestsPanel = dynamic(
@@ -42,6 +43,10 @@ const LesDeboPanel = dynamic(
     () => import("@/components/admin/caja/les-debo-panel").then((m) => m.LesDeboPanel),
     { ssr: false }
 )
+const MovimientosPanel = dynamic(
+    () => import("@/components/admin/caja/movimientos-panel").then((m) => m.MovimientosPanel),
+    { ssr: false }
+)
 
 type PaymentMethod = "CASH" | "CARD" | "TRANSFER" | "CREDIT"
 
@@ -50,7 +55,7 @@ const METHOD_LABELS: Record<string, string> = {
 }
 
 // Centro de dinero: pestañas controladas por ?tab= (deep-link). Sin param = Turno actual.
-const CAJA_TABS = ["caja", "semana", "solicitudes", "proveedores"] as const
+const CAJA_TABS = ["caja", "semana", "solicitudes", "proveedores", "movimientos"] as const
 type CajaTab = (typeof CAJA_TABS)[number]
 
 const CAJA_TAB_DESCRIPTIONS: Record<CajaTab, string> = {
@@ -58,6 +63,7 @@ const CAJA_TAB_DESCRIPTIONS: Record<CajaTab, string> = {
     semana: "Historial de cortes cerrados en los últimos 7 días con efectivo contado, esperado y diferencia.",
     solicitudes: "Salidas de efectivo por gastos sujetas a autorización de un administrador.",
     proveedores: "Cuentas por pagar a proveedores, antigüedad de saldos y registro de abonos.",
+    movimientos: "Rastro unificado del dinero para auditoría: caja, cobros documentados, crédito y pagos a proveedores.",
 }
 
 // Misma whitelist que el servidor (domain/cash.ts): denominaciones MXN del
@@ -539,6 +545,9 @@ function CajaPanel() {
                         <TabsTrigger value="proveedores" className="flex items-center gap-2">
                             <Truck className="h-4 w-4" /> Les debo (Proveedores)
                         </TabsTrigger>
+                        <TabsTrigger value="movimientos" className="flex items-center gap-2">
+                            <ArrowLeftRight className="h-4 w-4" /> Movimientos
+                        </TabsTrigger>
                     </TabsList>
                 </div>
                 <p className="text-sm text-muted-foreground">{CAJA_TAB_DESCRIPTIONS[tab]}</p>
@@ -572,6 +581,10 @@ function CajaPanel() {
 
             <TabsContent value="proveedores">
                 <LesDeboPanel isAdmin={isAdmin} />
+            </TabsContent>
+
+            <TabsContent value="movimientos">
+                <MovimientosPanel branches={branches} />
             </TabsContent>
 
             {/* Diálogo de cierre con conteo de billetes */}

@@ -8,7 +8,7 @@ El bot vive en `src/bot/`. Este documento describe la estructura actual y la dir
 
 - **`index.ts`**: Punto de entrada único; registra comandos, middlewares, cron y toda la lógica. ~2600 líneas (start, help, miid, cancelar y middleware extraídos).
 - **`lib/prisma.ts`**: Cliente Prisma singleton para el bot (`getPrisma()`).
-- **`lib/notify.ts`**: Helpers `isAdmin(telegramId)` y `notifyAdmins(bot, message)`.
+- **`lib/notify.ts`**: Helpers `isAdmin(telegramId)` y `notifyAdmins(bot, businessId, message)`.
 - **`lib/guards.ts`**: `requireAdmin(ctx)` y `requirePrisma(ctx)` para comandos que exigen admin o BD (evitan repetir el mismo mensaje).
 - **`lib/utils.ts`**: `generateQRCode()`.
 - **`middlewares/logger.ts`**: Middleware de logging.

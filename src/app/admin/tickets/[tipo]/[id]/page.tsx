@@ -126,8 +126,12 @@ export default async function TicketPage({
       const isQuote = saleDoc.kind === "QUOTE"
       const isLayaway = saleDoc.kind === "LAYAWAY"
       const isLive = saleDoc.status === "DRAFT" || saleDoc.status === "OPEN"
-      const paid = saleDoc.payments.filter(p => p.status === "CONFIRMED").reduce((sum, p) => sum + p.amount, 0)
-      const balance = Math.max(0, saleDoc.total - paid)
+      // Payment.amount y Sale.total son Float en pesos: la cuenta va en
+      // centavos enteros y se expone en pesos.
+      const paidCents = saleDoc.payments.filter(p => p.status === "CONFIRMED").reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+      const paid = paidCents / 100
+      const totalCents = Math.round(saleDoc.total * 100)
+      const balance = Math.max(0, totalCents - paidCents) / 100
       // Descuento autorizado al cobrar: el ticket imprime el desglose y el
       // TOTAL pasa a ser lo realmente cobrado (catálogo − descuento).
       const discount = (saleDoc.discountCents ?? 0) / 100
@@ -156,7 +160,7 @@ export default async function TicketPage({
           price: item.unitPrice,
           total: item.totalPrice,
         })),
-        total: saleDoc.total - discount,
+        total: (totalCents - (saleDoc.discountCents ?? 0)) / 100,
         discount: discount > 0 ? discount : undefined,
         discountReason: saleDoc.discountReason ?? undefined,
         paymentMethod: isLive
@@ -181,6 +185,9 @@ export default async function TicketPage({
       if (sale) {
         // El movimiento heredado también lleva sucursal (nullable → libre).
         if (!hasBranchAccess(session.user, sale.branchId)) notFound()
+        // unitPrice es Float en pesos: el total de línea se computa en
+        // centavos (qty × precio) para no arrastrar epsilon al ticket.
+        const legacyLineCents = Math.abs(sale.quantity) * Math.round((sale.unitPrice || 0) * 100)
         ticketData = {
           title: "TICKET DE VENTA",
           folio: sale.id.slice(-8).toUpperCase(),
@@ -190,10 +197,10 @@ export default async function TicketPage({
               name: sale.product.name,
               qty: Math.abs(sale.quantity),
               price: sale.unitPrice || 0,
-              total: Math.abs(sale.quantity) * (sale.unitPrice || 0)
+              total: legacyLineCents / 100
             }
           ],
-          total: Math.abs(sale.quantity) * (sale.unitPrice || 0),
+          total: legacyLineCents / 100,
           notes: sale.notes || "Venta en tienda",
           cashier: sale.user?.name || "Sistema"
         }

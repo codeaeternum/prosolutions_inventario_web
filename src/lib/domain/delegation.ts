@@ -27,8 +27,9 @@ import { formatFolio, parseFolioDigits, repairLabels } from "../workshop-labels"
 export const REPAIR_PARTNER_KEY = "repair_partner_business_id"
 
 // Cierres que ya no admiten delegación: la orden no puede salir hacia el
-// taller una vez entregada o cerrada (con o sin reparación).
-const DELEGATION_CLOSED_STATUSES: readonly RepairStatus[] = ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"]
+// taller una vez entregada o cerrada (con o sin reparación). La reconciliación
+// (delegation-reconcile) reusa la misma lista como "estados terminales".
+export const DELEGATION_CLOSED_STATUSES: readonly RepairStatus[] = ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"]
 
 /** Datos mínimos de la espejo que la delegación necesita (folio + estado). */
 type MirrorRow = { id: string; number: number; businessId: string; status: RepairStatus }

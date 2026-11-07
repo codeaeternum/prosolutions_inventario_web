@@ -373,11 +373,14 @@ export async function listDocuments(db: PrismaClient, businessId: string, raw: u
     take: filters.limit ?? 50,
   })
   return rows.map(sale => {
-    const paid = sale.payments.reduce((sum, p) => sum + p.amount, 0)
+    // Payment.amount y Sale.total son Float en pesos: la cuenta va en
+    // centavos enteros (igual que payDocument) y se expone en pesos.
+    const paidCents = sale.payments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+    const balanceCents = Math.round(sale.total * 100) - paidCents
     // `expiresAt` ya viaja con el documento; `expired` resuelve el badge
     // "vencido" del POS sin que cada cliente recalcule la vigencia.
     const expired = Boolean(sale.expiresAt && sale.expiresAt.getTime() <= Date.now())
-    return { ...sale, itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0), paid, balance: sale.total - paid, expired }
+    return { ...sale, itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0), paid: paidCents / 100, balance: balanceCents / 100, expired }
   })
 }
 

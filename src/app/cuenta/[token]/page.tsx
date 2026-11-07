@@ -72,8 +72,9 @@ function StatementExpired() {
 
 function StatementDocument({ statement, linkExpiresAt }: { statement: PublicStatement; linkExpiresAt: Date | null }) {
   const owes = statement.creditBalance > 0
+  // Disponible en centavos: limit/balance son Float en pesos.
   const available =
-    statement.creditLimit != null ? Math.max(0, statement.creditLimit - statement.creditBalance) : null
+    statement.creditLimit != null ? Math.max(0, Math.round(statement.creditLimit * 100) - Math.round(statement.creditBalance * 100)) / 100 : null
 
   return (
     <section className="container mx-auto max-w-2xl px-4 pt-8 pb-16 space-y-6">
