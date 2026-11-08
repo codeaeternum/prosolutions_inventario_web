@@ -19,7 +19,9 @@ export const metadata: Metadata = {
   title: "Mercado",
   description: mercadoDescription,
   alternates: { canonical: "/mercado" },
-  openGraph: { title: "Mercado — Reficio", description: mercadoDescription },
+  // openGraph manual pisa la imagen de la convención opengraph-image de la
+  // raíz; hay que referenciarla de forma explícita.
+  openGraph: { title: "Mercado — Reficio", description: mercadoDescription, images: ["/opengraph-image"] },
   robots: { index: true, follow: true },
 }
 

@@ -30,7 +30,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return {
     title,
     description: "Consulta y autoriza la cotización de tu reparación.",
-    openGraph: { title },
+    // openGraph manual pisa la imagen de la convención opengraph-image del
+    // segmento [slug]; hay que referenciarla de forma explícita.
+    openGraph: { title, images: [`/${slug}/opengraph-image`] },
     robots: { index: false, follow: false },
   }
 }

@@ -33,7 +33,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     title,
     description,
     alternates: { canonical: `/${target.slug}/servicios` },
-    openGraph: { title, description },
+    // openGraph manual pisa la imagen de la convención opengraph-image del
+    // segmento [slug]; hay que referenciarla de forma explícita.
+    openGraph: { title, description, images: [`/${target.slug}/opengraph-image`] },
     robots: { index: true, follow: true },
   }
 }

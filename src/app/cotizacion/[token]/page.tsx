@@ -18,7 +18,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Cotización",
     description: "Consulta y autoriza la cotización de tu reparación.",
-    openGraph: { title: "Cotización de reparación" },
+    // openGraph manual pisa la imagen de la convención opengraph-image de la
+    // raíz; hay que referenciarla de forma explícita.
+    openGraph: { title: "Cotización de reparación", images: ["/opengraph-image"] },
     // Enlace privado por WhatsApp: nunca indexable.
     robots: { index: false, follow: false },
   }
