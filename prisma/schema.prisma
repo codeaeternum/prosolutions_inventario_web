@@ -243,6 +243,12 @@ model User {
   allowedModules   String[] @default([])
   allowedBranchIds String[] @default([])
 
+  // Esquema de pago del staff para el "Estimado de nómina" (un solo tipo en
+  // v1 — no se combinan). Solo lo lee/escribe un ADMIN.
+  payType       String @default("NONE") // NONE | HOURLY | SALARY | COMMISSION
+  payRateCents  Int?   // HOURLY: tarifa por hora · SALARY: sueldo por quincena (centavos)
+  commissionPct Float? // COMMISSION: % sobre ventas COMPLETED del periodo
+
   // Metas de compra
   monthlyPurchaseGoal   Float? // Meta mensual de compra en pesos
   totalPurchases        Float     @default(0) // Total de compras acumuladas

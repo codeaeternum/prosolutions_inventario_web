@@ -224,10 +224,10 @@ const COMMANDS: CommandItem[] = [
 
   // ── Negocio ─────────────────────────────────────────────────────────
   { id: "nav-reportes", label: "Reportes", hint: "Ventas, cortes y comparativos", keywords: "graficas estadisticas analitica", href: "/admin/reportes", icon: BarChart3, group: "Negocio", module: "reportes", shortcut: "g r" },
-  { id: "nav-equipo", label: "Equipo", hint: "Actividad, usuarios y turnos", keywords: "empleados equipo hub staff", href: "/admin/equipo", icon: UsersRound, group: "Negocio", adminOnly: true, shortcut: "g e" },
-  { id: "nav-usuarios", label: "Usuarios y permisos", hint: "Equipo · Cuentas", keywords: "empleados roles permisos modulos", href: "/admin/equipo?tab=usuarios", icon: UsersRound, group: "Negocio", module: "usuarios", adminOnly: true },
+  { id: "nav-equipo", label: "Equipo", hint: "Actividad, usuarios y turnos", keywords: "empleados equipo hub staff", href: "/admin/equipo?tab=usuarios", icon: UsersRound, group: "Negocio", adminOnly: true, shortcut: "g e" },
+  { id: "nav-usuarios", label: "Usuarios y permisos", hint: "Equipo · Cuentas", keywords: "empleados roles permisos modulos nomina cuentas staff usuarios", href: "/admin/equipo?tab=usuarios", icon: UsersRound, group: "Negocio", module: "usuarios", adminOnly: true },
   { id: "nav-actividad", label: "Registro de actividad", hint: "Equipo · Bitácora", keywords: "actividad log auditoria historial", href: "/admin/equipo?tab=actividad", icon: UsersRound, group: "Negocio", adminOnly: true },
-  { id: "nav-turnos", label: "Turnos del equipo", hint: "Equipo · Asistencia", keywords: "asistencia horarios sesiones", href: "/admin/equipo?tab=turnos", icon: UsersRound, group: "Negocio", adminOnly: true },
+  { id: "nav-turnos", label: "Turnos del equipo", hint: "Equipo · Asistencia", keywords: "turnos equipo asistencia horarios sesiones checador", href: "/admin/equipo?tab=turnos", icon: UsersRound, group: "Negocio", adminOnly: true },
   { id: "nav-desempeno", label: "Desempeño", hint: "Equipo · Productividad", keywords: "metricas productividad empleados", href: "/admin/equipo?tab=desempeno", icon: UsersRound, group: "Negocio", adminOnly: true },
   { id: "nav-config", label: "Configuración", hint: "Datos del negocio y taller", keywords: "ajustes negocio perfil", href: "/admin/configuracion", icon: Settings, group: "Negocio", module: "configuracion", shortcut: "g s" },
   { id: "nav-sucursales", label: "Sucursales", hint: "Configuración · Sedes", keywords: "sucursal sede tienda", href: "/admin/configuracion?tab=sucursales", icon: Settings, group: "Negocio", module: "configuracion" },

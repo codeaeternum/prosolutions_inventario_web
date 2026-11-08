@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Clock, Download, History, RefreshCw, Search } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Clock, Download, History, RefreshCw, Search, AlertTriangle } from "lucide-react"
 import { csvCell } from "@/lib/csv"
 
 interface TurnoDia {
@@ -162,11 +163,38 @@ export function TurnosPanel() {
         </div>
       </CardHeader>
       <CardContent>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {!error && !loading && turnos.length === 0 && (
+        {loading && turnos.length === 0 ? (
+          // Skeleton con forma de filas de turno: la primera carga no deja
+          // la tarjeta en blanco.
+          <div className="space-y-4" aria-busy="true" aria-label="Cargando turnos">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton className="h-4 w-32" />
+                <div className="rounded-lg border p-3 flex items-center justify-between gap-4">
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-56" />
+                  </div>
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive" />
+            <p className="text-sm text-destructive">{error}</p>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Reintentar
+            </Button>
+          </div>
+        ) : (
+          <>
+        {turnos.length === 0 && (
           <p className="text-sm text-muted-foreground">Sin actividad registrada en el período.</p>
         )}
-        {!error && !loading && turnos.length > 0 && filteredTurnos.length === 0 && (
+        {turnos.length > 0 && filteredTurnos.length === 0 && (
           <p className="text-sm text-muted-foreground">Sin resultados para &ldquo;{searchQuery.trim()}&rdquo;.</p>
         )}
         {[...porDia.entries()].map(([dia, rows]) => (
@@ -232,6 +260,8 @@ export function TurnosPanel() {
             </div>
           </div>
         ))}
+          </>
+        )}
       </CardContent>
     </Card>
   )

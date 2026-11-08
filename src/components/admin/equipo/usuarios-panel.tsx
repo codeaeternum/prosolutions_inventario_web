@@ -2,12 +2,24 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import { useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  AlertTriangle,
   Loader2,
   Users,
   UserCheck,
@@ -26,8 +38,10 @@ import {
   Pencil,
   ExternalLink,
   History,
+  RefreshCw,
   Search,
   Download,
+  Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
@@ -64,6 +78,9 @@ interface User {
   telegramId: string | null
   jobTitle?: string | null
   publicSlug?: string | null
+  /** Esquema de pago (nómina): lo agrega la API de users; por eso va opcional
+   *  y todo su uso es con optional chaining (NONE = sin esquema). */
+  payType?: string | null
   role: "ADMIN" | "CUSTOMER" | "EMPLOYEE" | "WORKSHOP"
   customerType: "TECHNICIAN" | "STORE" | "NORMAL"
   status: "PENDING" | "APPROVED" | "REJECTED"
@@ -85,22 +102,128 @@ interface Branch {
 
 const DEFAULT_LIMIT = 20
 
+export type UsuariosGrupo = "clientes" | "empleados" | "talleres" | "administradores" | "pendientes"
+export type UsuariosStatusFilter = "all" | "pending" | "approved" | "rejected"
+
+const GRUPOS_VALIDOS: readonly string[] = ["clientes", "empleados", "talleres", "administradores", "pendientes"]
+const STATUS_VALIDOS: readonly string[] = ["pending", "approved", "rejected"]
+
+/**
+ * Grupo de cuentas desde la URL (`?grupo=`). `?filter=pending` —link viejo
+ * "Revisar" del dashboard— aterriza en Pendientes; valor inválido → Clientes.
+ * Los filtros viven en searchParams para que sobrevivan reload y se puedan
+ * compartir, igual que `?tab=` en equipo-panel.
+ */
+export function grupoFromParams(get: (key: string) => string | null): UsuariosGrupo {
+  const raw = get("grupo")
+  if (raw && GRUPOS_VALIDOS.includes(raw)) return raw as UsuariosGrupo
+  if (get("filter") === "pending") return "pendientes"
+  return "clientes"
+}
+
+export function statusFilterFromParams(get: (key: string) => string | null): UsuariosStatusFilter {
+  const raw = get("status")?.toLowerCase() ?? ""
+  return STATUS_VALIDOS.includes(raw) ? (raw as UsuariosStatusFilter) : "all"
+}
+
+/**
+ * Búsqueda instantánea sobre la página cargada: nombre, correo, teléfono,
+ * puesto y sucursal base. (El servidor además filtra todo el directorio por
+ * nombre/correo/teléfono con `?search=` — puesto y sucursal son extra local.)
+ */
+export function userMatchesQuery(
+  user: {
+    name: string
+    email: string
+    phone?: string | null
+    jobTitle?: string | null
+    homeBranch?: { name: string } | null
+  },
+  query: string
+): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [user.name, user.email, user.phone ?? "", user.jobTitle ?? "", user.homeBranch?.name ?? ""]
+    .some((field) => field.toLowerCase().includes(q))
+}
+
+/**
+ * Orden de revisión: las cuentas PENDING van primero (las más nuevas arriba,
+ * que son las que esperan respuesta) y el resto conserva el orden del
+ * servidor. Así el registro nuevo nunca queda enterrado bajo 20 aprobados.
+ */
+export function sortUsersForReview<T extends { status: string; createdAt: string }>(list: T[]): T[] {
+  const pending: T[] = []
+  const rest: T[] = []
+  for (const item of list) (item.status === "PENDING" ? pending : rest).push(item)
+  pending.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return [...pending, ...rest]
+}
+
+/** Acciones de cuenta que piden confirmación antes de tocar el servidor. */
+type ConfirmAction = {
+  user: User
+  to: "APPROVED" | "REJECTED"
+  kind: "aprobar" | "rechazar" | "suspender" | "reactivar"
+}
+
 export function UsuariosPanel() {
   const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
   const pageFromUrl = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
   const limitFromUrl = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT))
+
+  // Filtros derivados de la URL: ?grupo, ?status y ?q (más ?page/?limit).
+  const getParam = useCallback((key: string) => searchParams.get(key), [searchParams])
+  const grupo = grupoFromParams(getParam)
+  const statusFilter = statusFilterFromParams(getParam)
+  const qFromUrl = searchParams.get("q") ?? ""
 
   const [users, setUsers] = useState<User[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("all")
-  const [searchQuery, setSearchQuery] = useState("")
-  // ?filter=pending (link "Revisar" del dashboard) aterriza directo en Pendientes.
-  const [activeTab, setActiveTab] = useState<string>(() =>
-    searchParams.get("filter") === "pending" ? "pendientes" : "clientes"
-  )
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // Conteo global de pendientes para el badge del tab (la página visible no
+  // basta: puede haber pendientes repartidos en otras páginas).
+  const [pendingTotal, setPendingTotal] = useState(0)
+
+  // El input filtra al instante en cliente; la URL se sincroniza con debounce
+  // para no hacer un router.replace por tecla.
+  const [searchInput, setSearchInput] = useState(qFromUrl)
+  const lastSyncedQ = useRef(qFromUrl)
+
   const [updating, setUpdating] = useState<string | null>(null)
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+
+  /**
+   * Escribe filtros en la URL (replace: no ensucia el historial). `null` o ""
+   * borran la clave; `filter` (formato viejo) siempre se limpia porque su
+   * equivalente moderno es `grupo`.
+   */
+  const updateParams = useCallback((changes: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete("filter")
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null || value === "") params.delete(key)
+      else params.set(key, value)
+    }
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, pathname, router])
+
+  const handleGrupoChange = (value: string) => {
+    updateParams({
+      grupo: value === "clientes" ? null : value,
+      page: null,
+      // En Pendientes el estatus va implícito: limpiar evita combos sin sentido.
+      ...(value === "pendientes" ? { status: null } : {}),
+    })
+  }
+
+  const handleStatusFilter = (value: UsuariosStatusFilter) => {
+    updateParams({ status: value === "all" ? null : value, page: null })
+  }
   const [createOpen, setCreateOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newUser, setNewUser] = useState({
@@ -148,29 +271,53 @@ export function UsuariosPanel() {
   const abonoOperation = useRef<ClientOperationKey | null>(null)
   const abonoInFlight = useRef(false)
 
+  // Guard de carrera: si los filtros cambian rápido (teclear en el buscador),
+  // solo la última respuesta aterriza en estado.
+  const fetchSeq = useRef(0)
+
   const fetchUsers = useCallback(async () => {
+    const version = ++fetchSeq.current
+    setLoadError(null)
     try {
       const params = new URLSearchParams()
-      if (filter !== "all") params.set("status", filter.toUpperCase())
+      if (statusFilter !== "all") params.set("status", statusFilter.toUpperCase())
 
-      if (activeTab === "empleados") {
+      if (grupo === "empleados") {
         params.set("role", "EMPLOYEE")
-      } else if (activeTab === "talleres") {
+      } else if (grupo === "talleres") {
         params.set("role", "WORKSHOP")
-      } else if (activeTab === "administradores") {
+      } else if (grupo === "administradores") {
         params.set("role", "ADMIN")
-      } else if (activeTab === "pendientes") {
+      } else if (grupo === "pendientes") {
         params.set("status", "PENDING")
       } else {
         // clientes
         params.set("role", "CUSTOMER")
       }
 
+      // Búsqueda en TODO el directorio (no solo la página visible): el server
+      // filtra por nombre/correo/teléfono; puesto/sucursal se cubren con el
+      // filtro local sobre la página cargada.
+      if (qFromUrl) params.set("search", qFromUrl)
+
       params.set("page", String(pageFromUrl))
       params.set("limit", String(limitFromUrl))
 
-      const res = await fetch(`/api/users?${params}`)
-      const data = await res.json()
+      // Conteo total de pendientes en paralelo (1 fila, trae `total`): el
+      // badge del tab refleja toda la cuenta, no solo lo que se ve.
+      const [res, pendingRes] = await Promise.all([
+        fetch(`/api/users?${params}`),
+        fetch("/api/users?status=PENDING&limit=1").catch(() => null),
+      ])
+      const data = await res.json().catch(() => null)
+      if (version !== fetchSeq.current) return
+      if (!res.ok) throw new Error("respuesta no OK")
+      if (pendingRes?.ok) {
+        const p = await pendingRes.json().catch(() => null)
+        if (version === fetchSeq.current && typeof p?.total === "number") {
+          setPendingTotal(p.total)
+        }
+      }
       if (data && typeof data === "object" && "users" in data) {
         setUsers(data.users ?? [])
         setTotal(data.total ?? 0)
@@ -182,18 +329,45 @@ export function UsuariosPanel() {
         setTotalPages(1)
       }
     } catch (error) {
+      if (version !== fetchSeq.current) return
       console.error("Error fetching users:", error)
+      setLoadError("No se pudieron cargar los usuarios")
       toast.error("No se pudieron cargar los usuarios. Reintenta en un momento.")
     } finally {
-      setLoading(false)
+      if (version === fetchSeq.current) setLoading(false)
     }
-  }, [filter, pageFromUrl, limitFromUrl, activeTab])
+  }, [grupo, statusFilter, qFromUrl, pageFromUrl, limitFromUrl])
 
   // Microtask: setState síncrono en el effect dispararía renders en cascada
   // (react-hooks/set-state-in-effect).
   useEffect(() => {
     queueMicrotask(() => void fetchUsers())
   }, [fetchUsers])
+
+  const handleRetry = () => {
+    setLoading(true)
+    setLoadError(null)
+    void fetchUsers()
+  }
+
+  // ?q externo (atrás/adelante del navegador o link) → espeja al input.
+  useEffect(() => {
+    if (qFromUrl !== lastSyncedQ.current) {
+      lastSyncedQ.current = qFromUrl
+      queueMicrotask(() => setSearchInput(qFromUrl))
+    }
+  }, [qFromUrl])
+
+  // Input → URL con debounce: el filtrado local es instantáneo y la URL queda
+  // compartible/recargable sin un router.replace por cada tecla.
+  useEffect(() => {
+    if (searchInput === qFromUrl) return
+    const timer = setTimeout(() => {
+      lastSyncedQ.current = searchInput
+      updateParams({ q: searchInput || null, page: null })
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchInput, qFromUrl, updateParams])
 
   useEffect(() => {
     fetch("/api/branches")
@@ -202,7 +376,11 @@ export function UsuariosPanel() {
       .catch(() => setBranches([]))
   }, [])
 
-  const updateUser = async (id: string, data: { status?: string; customerType?: string; role?: string; homeBranchId?: string }) => {
+  const updateUser = async (
+    id: string,
+    data: { status?: string; customerType?: string; role?: string; homeBranchId?: string },
+    opts?: { successToast?: string }
+  ) => {
     setUpdating(id)
     try {
       const res = await fetch(`/api/users/${id}`, {
@@ -215,7 +393,9 @@ export function UsuariosPanel() {
 
       if (res.ok) {
         fetchUsers()
-        if (data.status === "APPROVED") {
+        if (opts?.successToast) {
+          toast.success(opts.successToast)
+        } else if (data.status === "APPROVED") {
           toast.success("Usuario aprobado exitosamente")
         } else if (data.status === "REJECTED") {
           toast.success("Usuario rechazado")
@@ -362,7 +542,32 @@ export function UsuariosPanel() {
     }
   }
 
-  const pendingCount = users.filter((u) => u.status === "PENDING").length
+  const confirmCopy: Record<ConfirmAction["kind"], { title: (name: string) => string; desc: string; cta: string; toast: string }> = {
+    aprobar: {
+      title: (name) => `¿Aprobar la cuenta de ${name}?`,
+      desc: "Podrá iniciar sesión y usar la plataforma con el rol que tenga asignado.",
+      cta: "Sí, aprobar",
+      toast: "Cuenta aprobada: ya puede iniciar sesión",
+    },
+    rechazar: {
+      title: (name) => `¿Rechazar la cuenta de ${name}?`,
+      desc: "No podrá entrar. Si fue un error, después puedes reactivarla desde Rechazados.",
+      cta: "Sí, rechazar",
+      toast: "Cuenta rechazada",
+    },
+    suspender: {
+      title: (name) => `¿Suspender a ${name}?`,
+      desc: "Perderá acceso de inmediato hasta que la reactives. Su historial y datos se conservan.",
+      cta: "Sí, suspender",
+      toast: "Cuenta suspendida. Puedes reactivarla cuando quieras",
+    },
+    reactivar: {
+      title: (name) => `¿Reactivar la cuenta de ${name}?`,
+      desc: "Recuperará el acceso con el rol y los datos que tenía.",
+      cta: "Sí, reactivar",
+      toast: "Cuenta reactivada",
+    },
+  }
 
   const openCreditDialog = (user: User) => {
     if (abonoInFlight.current) return
@@ -479,17 +684,24 @@ export function UsuariosPanel() {
     STORE: "Tienda",
   }
 
+  // Pendientes primero (esperan respuesta) y luego filtro instantáneo por
+  // nombre/correo/teléfono/puesto/sucursal sobre la página cargada.
   const filteredUsers = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return users
-    return users.filter(
-      (u) =>
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        (u.phone ?? "").toLowerCase().includes(q) ||
-        (u.jobTitle ?? "").toLowerCase().includes(q)
-    )
-  }, [users, searchQuery])
+    const ordered = sortUsersForReview(users)
+    if (!searchInput.trim()) return ordered
+    return ordered.filter((u) => userMatchesQuery(u, searchInput))
+  }, [users, searchInput])
+
+  // Query que la paginación conserva en sus links (tab + filtros vigentes).
+  // `filter` viejo se traduce a `grupo` para que los links salgan limpios.
+  const paginationQuery = useMemo(() => {
+    const query: Record<string, string> = { tab: "usuarios" }
+    searchParams.forEach((value, key) => {
+      if (key !== "page" && key !== "limit" && key !== "filter") query[key] = value
+    })
+    if (!query.grupo && grupo !== "clientes") query.grupo = grupo
+    return query
+  }, [searchParams, grupo])
 
   const handleExportCsv = () => {
     if (filteredUsers.length === 0) return
@@ -529,10 +741,35 @@ export function UsuariosPanel() {
     URL.revokeObjectURL(url)
   }
 
-  if (loading) {
+  // Skeleton con la forma del contenido (barra + tabs + tarjetas): mejor que
+  // un spinner porque el layout no brinca al terminar de cargar.
+  if (loading && users.length === 0 && !loadError) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="space-y-6" aria-busy="true" aria-label="Cargando usuarios">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <Skeleton className="h-5 w-72" />
+          <Skeleton className="h-9 w-40" />
+        </div>
+        <Skeleton className="h-10 w-full max-w-md" />
+        <Skeleton className="h-10 w-full max-w-lg" />
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-xl border p-5 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-2 flex-1">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-4 w-4/5" />
+                  <Skeleton className="h-4 w-1/2" />
+                </div>
+                <Skeleton className="h-5 w-20" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Skeleton className="h-9 w-24" />
+                <Skeleton className="h-9 w-24" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -615,7 +852,7 @@ export function UsuariosPanel() {
                     value={newUser.role}
                     onValueChange={(value) => setNewUser({ ...newUser, role: value })}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="role">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -632,7 +869,7 @@ export function UsuariosPanel() {
                     value={newUser.customerType}
                     onValueChange={(value) => setNewUser({ ...newUser, customerType: value })}
                   >
-                    <SelectTrigger disabled={newUser.role === "ADMIN" || newUser.role === "WORKSHOP"}>
+                    <SelectTrigger id="customerType" disabled={newUser.role === "ADMIN" || newUser.role === "WORKSHOP"}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -650,7 +887,7 @@ export function UsuariosPanel() {
                     value={newUser.homeBranchId}
                     onValueChange={(value) => setNewUser({ ...newUser, homeBranchId: value })}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="homeBranch">
                       <SelectValue placeholder="Sin sucursal asignada" />
                     </SelectTrigger>
                     <SelectContent>
@@ -777,16 +1014,17 @@ export function UsuariosPanel() {
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
+          id="usuarios-search"
           placeholder="Buscar por nombre, correo, teléfono o puesto..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           aria-label="Buscar usuarios por nombre, correo, teléfono o puesto"
           className="pl-9"
         />
       </div>
 
       {/* Filter Tabs */}
-      <Tabs defaultValue="clientes" value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs value={grupo} onValueChange={handleGrupoChange} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="clientes" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
@@ -807,43 +1045,65 @@ export function UsuariosPanel() {
           <TabsTrigger value="pendientes" className="flex items-center gap-2">
             <Clock className="h-4 w-4" />
             Pendientes
-            {pendingCount > 0 && (
-              <Badge variant="destructive" className="ml-1 px-1.5 min-w-[20px] h-5 flex items-center justify-center">
-                {pendingCount}
-              </Badge>
-            )}
+            <span aria-live="polite" className="inline-flex">
+              {pendingTotal > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="ml-1 px-1.5 min-w-[20px] h-5 flex items-center justify-center"
+                  aria-label={`${pendingTotal} cuentas pendientes de aprobación`}
+                >
+                  {pendingTotal}
+                </Badge>
+              )}
+            </span>
           </TabsTrigger>
         </TabsList>
-        <TabsContent value={activeTab}>
-          <div className="flex gap-2 flex-wrap mb-4">
-            <Button
-              variant={filter === "all" ? "default" : "outline"}
-              size="sm"
-              onClick={() => setFilter("all")}
-            >
-              Todos {total > 0 ? `(${total})` : ""}
-            </Button>
-            {activeTab === "clientes" && (
-              <>
-                <Button
-                  variant={filter === "approved" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setFilter("approved")}
-                >
-                  <UserCheck className="mr-2 h-4 w-4" />
-                  Aprobados
-                </Button>
-                <Button
-                  variant={filter === "rejected" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setFilter("rejected")}
-                >
-                  <XCircle className="mr-2 h-4 w-4" />
-                  Rechazados
-                </Button>
-              </>
-            )}
-          </div>
+        <TabsContent value={grupo}>
+          {/* Chips de estatus: acceso rápido sin abrir dropdowns. En
+              "pendientes" van implícitos (todas son PENDING). */}
+          {grupo !== "pendientes" && (
+            <div className="flex gap-2 flex-wrap mb-4 items-center">
+              <Button
+                variant={statusFilter === "all" ? "default" : "outline"}
+                size="sm"
+                aria-pressed={statusFilter === "all"}
+                onClick={() => handleStatusFilter("all")}
+              >
+                Todos
+              </Button>
+              <Button
+                variant={statusFilter === "pending" ? "default" : "outline"}
+                size="sm"
+                aria-pressed={statusFilter === "pending"}
+                onClick={() => handleStatusFilter("pending")}
+              >
+                <Clock className="mr-2 h-4 w-4" />
+                Pendientes
+              </Button>
+              <Button
+                variant={statusFilter === "approved" ? "default" : "outline"}
+                size="sm"
+                aria-pressed={statusFilter === "approved"}
+                onClick={() => handleStatusFilter("approved")}
+              >
+                <UserCheck className="mr-2 h-4 w-4" />
+                Aprobados
+              </Button>
+              <Button
+                variant={statusFilter === "rejected" ? "default" : "outline"}
+                size="sm"
+                aria-pressed={statusFilter === "rejected"}
+                onClick={() => handleStatusFilter("rejected")}
+              >
+                <XCircle className="mr-2 h-4 w-4" />
+                Rechazados
+              </Button>
+              <span className="text-sm text-muted-foreground ml-auto" aria-live="polite">
+                {total} {total === 1 ? "usuario" : "usuarios"}
+                {searchInput.trim() ? " encontrados" : ""}
+              </span>
+            </div>
+          )}
 
       {/* Users List */}
       <div className="space-y-4">
@@ -871,8 +1131,31 @@ export function UsuariosPanel() {
                             Taller aliado
                           </Badge>
                         )}
+                        {/* El API de users va a exponer `payType`; mientras no
+                            llegue el campo, esto simplemente no se pinta. */}
+                        {user.payType && user.payType !== "NONE" && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 border-emerald-500/50 text-emerald-700 dark:text-emerald-300"
+                            title="Tiene esquema de pago configurado (nómina)"
+                          >
+                            <Wallet className="mr-1 h-3 w-3" />
+                            Con pago
+                          </Badge>
+                        )}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground truncate">{user.email}</p>
+                      {/* Puesto y sucursal base a la vista: antes solo vivían
+                          dentro de diálogos/selects y había que abrir cada
+                          cuenta para saber quién es quién. */}
+                      {(user.jobTitle || user.homeBranch?.name) && (
+                        <p className="text-sm font-medium text-foreground/80 truncate mt-0.5">
+                          {[
+                            user.jobTitle,
+                            user.homeBranch?.name ? `Sucursal ${user.homeBranch.name}` : null,
+                          ].filter(Boolean).join(" · ")}
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-muted-foreground">
                         {user.telegramId && (
                           <span title="Registrado por Telegram" className="inline-flex items-center gap-1"><Send className="h-3.5 w-3.5" /> Telegram</span>
@@ -963,7 +1246,7 @@ export function UsuariosPanel() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => updateUser(user.id, { status: "REJECTED" })}
+                            onClick={() => setConfirmAction({ user, to: "REJECTED", kind: "rechazar" })}
                             disabled={updating === user.id}
                           >
                             {updating === user.id ? (
@@ -975,7 +1258,7 @@ export function UsuariosPanel() {
                           </Button>
                           <Button
                             size="sm"
-                            onClick={() => updateUser(user.id, { status: "APPROVED" })}
+                            onClick={() => setConfirmAction({ user, to: "APPROVED", kind: "aprobar" })}
                             disabled={updating === user.id}
                           >
                             {updating === user.id ? (
@@ -997,7 +1280,11 @@ export function UsuariosPanel() {
                                 updateUser(user.id, { customerType: value })
                               }
                             >
-                              <SelectTrigger className="h-9 w-[140px]" disabled={updating === user.id}>
+                              <SelectTrigger
+                                className="h-9 w-[140px]"
+                                disabled={updating === user.id}
+                                aria-label={`Tipo de cliente de ${user.name}`}
+                              >
                                 <span>
                                   {user.customerType === "STORE"
                                     ? "Tienda (Taller)"
@@ -1019,7 +1306,11 @@ export function UsuariosPanel() {
                               updateUser(user.id, { role: value })
                             }
                           >
-                            <SelectTrigger className="h-9 w-[140px]" disabled={updating === user.id}>
+                            <SelectTrigger
+                              className="h-9 w-[140px]"
+                              disabled={updating === user.id}
+                              aria-label={`Rol de ${user.name}`}
+                            >
                               <span>
                                 {user.role === "ADMIN"
                                   ? "Administrador"
@@ -1055,7 +1346,11 @@ export function UsuariosPanel() {
                                 updateUser(user.id, { homeBranchId: value === "none" ? "" : value })
                               }
                             >
-                              <SelectTrigger className="h-9 w-[160px]" disabled={updating === user.id}>
+                              <SelectTrigger
+                                className="h-9 w-[160px]"
+                                disabled={updating === user.id}
+                                aria-label={`Sucursal base de ${user.name}`}
+                              >
                                 <span>{user.homeBranch?.name ?? "Sin sucursal"}</span>
                               </SelectTrigger>
                               <SelectContent>
@@ -1090,6 +1385,21 @@ export function UsuariosPanel() {
                               </Link>
                             </Button>
                           )}
+                          {/* Suspender: corta el acceso sin borrar la cuenta
+                              (queda como "Rechazado" y se puede reactivar).
+                              No se ofrece sobre admins para no auto-bloquearse. */}
+                          {user.role !== "ADMIN" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-9 gap-1 text-destructive hover:text-destructive"
+                              onClick={() => setConfirmAction({ user, to: "REJECTED", kind: "suspender" })}
+                              disabled={updating === user.id}
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                              Suspender
+                            </Button>
+                          )}
                         </>
                       )}
 
@@ -1097,9 +1407,14 @@ export function UsuariosPanel() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => updateUser(user.id, { status: "APPROVED" })}
+                          onClick={() => setConfirmAction({ user, to: "APPROVED", kind: "reactivar" })}
                           disabled={updating === user.id}
                         >
+                          {updating === user.id ? (
+                            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle className="mr-1 h-4 w-4" />
+                          )}
                           Reactivar
                         </Button>
                       )}
@@ -1116,23 +1431,103 @@ export function UsuariosPanel() {
                 limit={limitFromUrl}
                 total={total}
                 totalPages={totalPages}
-                query={{
-                  // Sin `tab` la paginación sacaría al usuario del tab Usuarios.
-                  tab: "usuarios",
-                  ...(filter !== "all" ? { status: filter.toUpperCase() } : {}),
-                }}
+                query={paginationQuery}
               />
             </div>
           </>
+        ) : loadError ? (
+          // Error a pantalla completa solo cuando no hay nada que mostrar.
+          <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive" />
+            <p className="text-sm text-destructive">{loadError}</p>
+            <Button variant="outline" size="sm" onClick={handleRetry}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Reintentar
+            </Button>
+          </div>
         ) : (
           <div className="text-center py-12 text-muted-foreground">
             <Users className="h-16 w-16 mx-auto mb-4 opacity-50" />
-            <p>No hay usuarios {filter !== "all" ? `${statusLabels[filter.toUpperCase() as keyof typeof statusLabels]?.toLowerCase()}s` : ""}</p>
+            {searchInput.trim() ? (
+              <>
+                <p>Sin resultados para &ldquo;{searchInput.trim()}&rdquo;.</p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={() => setSearchInput("")}>
+                  Limpiar búsqueda
+                </Button>
+              </>
+            ) : statusFilter !== "all" ? (
+              <>
+                <p>
+                  No hay usuarios con estatus &ldquo;{statusLabels[statusFilter.toUpperCase() as keyof typeof statusLabels]?.toLowerCase()}&rdquo; en este grupo.
+                </p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={() => handleStatusFilter("all")}>
+                  Ver todos
+                </Button>
+              </>
+            ) : (
+              <>
+                <p>
+                  {grupo === "pendientes"
+                    ? "Todo al día: no hay cuentas esperando aprobación."
+                    : grupo === "empleados"
+                      ? "Aún no hay empleados. Crea la primera cuenta para delegar módulos."
+                      : grupo === "talleres"
+                        ? "Aún no hay talleres aliados."
+                        : grupo === "administradores"
+                          ? "No hay administradores adicionales."
+                          : "Aún no hay clientes registrados."}
+                </p>
+                {grupo !== "pendientes" && grupo !== "administradores" && (
+                  <Button className="mt-4" onClick={() => setCreateOpen(true)}>
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Crear usuario
+                  </Button>
+                )}
+              </>
+            )}
           </div>
         )}
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Confirmación de acciones de cuenta: la copia dice qué pasa al
+          confirmar (no un genérico "¿estás seguro?"). */}
+      <AlertDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => { if (!open) setConfirmAction(null) }}
+      >
+        <AlertDialogContent>
+          {confirmAction && (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {confirmCopy[confirmAction.kind].title(confirmAction.user.name)}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {confirmCopy[confirmAction.kind].desc}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    const action = confirmAction
+                    setConfirmAction(null)
+                    void updateUser(
+                      action.user.id,
+                      { status: action.to },
+                      { successToast: confirmCopy[action.kind].toast }
+                    )
+                  }}
+                >
+                  {confirmCopy[confirmAction.kind].cta}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Credit Management Dialog */}
       <Dialog open={creditOpen} onOpenChange={(open) => { if (abonoInFlight.current) return; setCreditOpen(open); if (!open) setCreditUser(null) }}>
@@ -1145,6 +1540,15 @@ export function UsuariosPanel() {
               <div className="p-3 bg-muted rounded-lg">
                 <p className="font-semibold">{creditUser.name}</p>
                 <p className="text-xs text-muted-foreground">{creditUser.email}</p>
+                {(creditUser.jobTitle || creditUser.phone || creditUser.homeBranch?.name) && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {[
+                      creditUser.jobTitle,
+                      creditUser.phone,
+                      creditUser.homeBranch?.name ? `Sucursal ${creditUser.homeBranch.name}` : null,
+                    ].filter(Boolean).join(" · ")}
+                  </p>
+                )}
                 {(creditUser.creditBalance ?? 0) > 0 && (
                   <p className="text-sm font-medium text-destructive mt-1">
                     Deuda actual: ${(creditUser.creditBalance ?? 0).toLocaleString()}
@@ -1270,6 +1674,14 @@ export function UsuariosPanel() {
               <div className="p-3 bg-muted rounded-lg">
                 <p className="font-semibold">{editUser.name}</p>
                 <p className="text-xs text-muted-foreground">{editUser.email}</p>
+                {(editUser.phone || editUser.homeBranch?.name) && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {[
+                      editUser.phone,
+                      editUser.homeBranch?.name ? `Sucursal ${editUser.homeBranch.name}` : null,
+                    ].filter(Boolean).join(" · ")}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit-jobTitle">

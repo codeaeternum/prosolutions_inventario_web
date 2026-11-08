@@ -335,7 +335,7 @@ export function PedidosPanel() {
 
       {/* Listado de pedidos (tarjetas móviles + tabla de escritorio) */}
       {loading ? (
-        <div className="flex items-center justify-center h-64">
+        <div className="flex items-center justify-center h-64" role="status" aria-label="Cargando pedidos">
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
       ) : filteredRows.length > 0 ? (

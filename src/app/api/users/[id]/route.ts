@@ -22,6 +22,15 @@ const accountSchema = z.object({
   customerType: z.enum(["NORMAL", "TECHNICIAN", "STORE"]).optional(),
 })
 
+// Esquema de pago del staff (solo ADMIN lo escribe): un solo tipo en v1 —
+// payRateCents es tarifa/hora (HOURLY) o sueldo por quincena (SALARY) y
+// commissionPct el % sobre ventas cobradas (COMMISSION). null limpia el dato.
+const paySchema = z.object({
+  payType: z.enum(["NONE", "HOURLY", "SALARY", "COMMISSION"]).optional(),
+  payRateCents: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  commissionPct: z.number().min(0).max(100).nullable().optional(),
+})
+
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -51,6 +60,9 @@ export async function PATCH(
         publicSlug: true,
         allowedModules: true,
         allowedBranchIds: true,
+        payType: true,
+        payRateCents: true,
+        commissionPct: true,
       },
     })
     if (!existingUser) {
@@ -71,18 +83,21 @@ export async function PATCH(
       return NextResponse.json({ error: "No puedes gestionar tu propia cuenta" }, { status: 403 })
     }
 
-    // Rol, estatus, tipo de cliente, módulos/sucursales permitidas y PIN
-    // rápido son exclusivos del ADMIN. El empleado solo ajusta puesto,
-    // sucursal base y el slug público del taller (campos operativos).
+    // Rol, estatus, tipo de cliente, módulos/sucursales permitidas, esquema
+    // de pago y PIN rápido son exclusivos del ADMIN. El empleado solo ajusta
+    // puesto, sucursal base y el slug público del taller (campos operativos).
     if (!isAdmin && (
       role !== undefined ||
       status !== undefined ||
       customerType !== undefined ||
       quickPin !== undefined ||
       body.allowedModules !== undefined ||
-      body.allowedBranchIds !== undefined
+      body.allowedBranchIds !== undefined ||
+      body.payType !== undefined ||
+      body.payRateCents !== undefined ||
+      body.commissionPct !== undefined
     )) {
-      return NextResponse.json({ error: "Solo un administrador puede cambiar rol, estatus, módulos o PIN" }, { status: 403 })
+      return NextResponse.json({ error: "Solo un administrador puede cambiar rol, estatus, módulos, esquema de pago o PIN" }, { status: 403 })
     }
 
     const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
@@ -98,6 +113,17 @@ export async function PATCH(
       return NextResponse.json({ error: "Estatus o tipo de cliente inválido" }, { status: 400 })
     }
     const { status: statusUpdate, customerType: customerTypeUpdate } = accountParsed.data
+
+    const payParsed = paySchema.safeParse({
+      payType: body.payType,
+      payRateCents: body.payRateCents,
+      commissionPct: body.commissionPct,
+    })
+    if (!payParsed.success) {
+      return NextResponse.json({ error: "Esquema de pago inválido" }, { status: 400 })
+    }
+    const { payType: payTypeUpdate, payRateCents: payRateUpdate, commissionPct: commissionUpdate } = payParsed.data
+
     if (allowedBranchIds?.length) {
       const owned = await prisma.branch.count({ where: { id: { in: allowedBranchIds }, businessId } })
       if (owned !== allowedBranchIds.length) {
@@ -175,6 +201,9 @@ export async function PATCH(
         ...(publicSlugUpdate !== undefined && { publicSlug: publicSlugUpdate }),
         ...(allowedModules !== undefined && { allowedModules }),
         ...(allowedBranchIds !== undefined && { allowedBranchIds }),
+        ...(payTypeUpdate !== undefined && { payType: payTypeUpdate }),
+        ...(payRateUpdate !== undefined && { payRateCents: payRateUpdate }),
+        ...(commissionUpdate !== undefined && { commissionPct: commissionUpdate }),
       },
       select: {
         id: true,
@@ -188,6 +217,9 @@ export async function PATCH(
         homeBranchId: true,
         allowedModules: true,
         allowedBranchIds: true,
+        // La respuesta lleva el esquema de pago solo al ADMIN: el mismo
+        // endpoint sirve al empleado que edita campos operativos.
+        ...(isAdmin ? { payType: true, payRateCents: true, commissionPct: true } : {}),
       },
     })
 
@@ -203,6 +235,7 @@ export async function PATCH(
       slugPublico: existingUser.publicSlug,
       modulos: existingUser.allowedModules,
       sucursales: existingUser.allowedBranchIds,
+      esquemaPago: existingUser.payType,
     }
     const auditAfter = {
       estatus: user.status,
@@ -213,9 +246,16 @@ export async function PATCH(
       slugPublico: user.publicSlug,
       modulos: user.allowedModules,
       sucursales: user.allowedBranchIds,
+      esquemaPago: payTypeUpdate ?? existingUser.payType,
     }
     const changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
-    if (changes || quickPinUpdate !== undefined) {
+    // Tarifa y % se auditan solo como "cambió el esquema de pago": la
+    // bitácora no guarda importes de sueldo.
+    const payChanged =
+      (payTypeUpdate !== undefined && payTypeUpdate !== existingUser.payType) ||
+      (payRateUpdate !== undefined && payRateUpdate !== existingUser.payRateCents) ||
+      (commissionUpdate !== undefined && commissionUpdate !== existingUser.commissionPct)
+    if (changes || quickPinUpdate !== undefined || payChanged) {
       const parts: string[] = []
       if (changes?.rol) parts.push(`Rol ${auditBefore.rol} → ${auditAfter.rol}`)
       if (changes?.estatus) parts.push(`Estatus ${auditBefore.estatus} → ${auditAfter.estatus}`)
@@ -226,6 +266,13 @@ export async function PATCH(
       if (changes?.modulos) parts.push(`Módulos: ${listText(auditBefore.modulos, "todos")} → ${listText(auditAfter.modulos, "todos")}`)
       if (changes?.sucursales) parts.push(`Sucursales: ${listText(auditBefore.sucursales, "todas")} → ${listText(auditAfter.sucursales, "todas")}`)
       if (quickPinUpdate !== undefined) parts.push(quickPinUpdate === null ? "PIN rápido eliminado" : "PIN rápido actualizado")
+      if (payChanged) {
+        parts.push(
+          changes?.esquemaPago
+            ? `Esquema de pago ${auditBefore.esquemaPago} → ${auditAfter.esquemaPago}`
+            : "Cambió la tarifa o comisión del esquema de pago"
+        )
+      }
       await recordAudit(prisma, {
         businessId,
         actorId: session.user.id,

@@ -69,7 +69,7 @@ const navigationGroups: NavGroup[] = [
   {
     name: "Negocio",
     items: [
-      { name: "Equipo", href: "/admin/equipo", icon: UsersRound, adminOnly: true },
+      { name: "Equipo", href: "/admin/equipo?tab=usuarios", icon: UsersRound, adminOnly: true },
       { name: "Reportes", href: "/admin/reportes", icon: BarChart3 },
       { name: "Configuración", href: "/admin/configuracion", icon: Settings },
     ]
@@ -132,14 +132,18 @@ const partnerGroup: NavGroup = {
 // Un ítem está activo solo si su href es el prefijo MÁS LARGO del menú que
 // coincide con la ruta — así /admin/taller/catalogo marca "Catálogo de
 // servicios" y no también "Órdenes de servicio".
+// El pathname nunca trae query string: los href con ?tab=… (p. ej. Equipo →
+// ?tab=usuarios) se comparan por su ruta base o nunca marcarían activo.
 function isNavItemActive(pathname: string, href: string): boolean {
-  if (pathname === href) return true
-  if (href === "/admin") return false
-  if (!pathname.startsWith(`${href}/`)) return false
-  return !ALL_NAV_HREFS.some(other =>
-    other !== href && other.length > href.length &&
-    (pathname === other || pathname.startsWith(`${other}/`))
-  )
+  const base = href.split("?")[0]
+  if (pathname === base) return true
+  if (base === "/admin") return false
+  if (!pathname.startsWith(`${base}/`)) return false
+  return !ALL_NAV_HREFS.some(other => {
+    const otherBase = other.split("?")[0]
+    return otherBase !== base && otherBase.length > base.length &&
+      (pathname === otherBase || pathname.startsWith(`${otherBase}/`))
+  })
 }
 
 interface AdminSidebarProps {

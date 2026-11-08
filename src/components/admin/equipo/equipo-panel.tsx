@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Clock, History, TrendingUp, Users } from "lucide-react"
+import { Clock, History, TrendingUp, Users, Wallet } from "lucide-react"
 
 const ActividadPanel = dynamic(
     () => import("@/components/admin/equipo/actividad-panel").then((m) => m.ActividadPanel),
@@ -21,8 +21,12 @@ const DesempenoPanel = dynamic(
     () => import("@/components/admin/equipo/desempeno-panel").then((m) => m.DesempenoPanel),
     { ssr: false }
 )
+const NominaPanel = dynamic(
+    () => import("@/components/admin/equipo/nomina-panel").then((m) => m.NominaPanel),
+    { ssr: false }
+)
 
-const TABS = ["actividad", "usuarios", "turnos", "desempeno"] as const
+const TABS = ["actividad", "usuarios", "turnos", "desempeno", "nomina"] as const
 type Tab = (typeof TABS)[number]
 
 const DESCRIPTIONS: Record<Tab, string> = {
@@ -30,6 +34,7 @@ const DESCRIPTIONS: Record<Tab, string> = {
     usuarios: "Cuentas de empleados, clientes, roles, sucursales y permisos por módulo",
     turnos: "Asistencia y sesiones operativas derivadas de la actividad real",
     desempeno: "Métricas de productividad, ventas y órdenes atendidas por integrante",
+    nomina: "Sueldo estimado por integrante según su esquema de pago y actividad",
 }
 
 /**
@@ -89,6 +94,10 @@ export function EquipoPanel() {
                             <TrendingUp className="h-4 w-4" />
                             Desempeño
                         </TabsTrigger>
+                        <TabsTrigger value="nomina" className="flex items-center gap-2">
+                            <Wallet className="h-4 w-4" />
+                            Nómina
+                        </TabsTrigger>
                     </TabsList>
                 </div>
 
@@ -114,6 +123,9 @@ export function EquipoPanel() {
                     cualquier otro rol, igual que con el tab de Actividad. */}
                 <TabsContent value="desempeno" className="mt-0">
                     <DesempenoPanel />
+                </TabsContent>
+                <TabsContent value="nomina" className="mt-0">
+                    <NominaPanel />
                 </TabsContent>
             </Tabs>
         </>

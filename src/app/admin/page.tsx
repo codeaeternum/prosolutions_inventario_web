@@ -22,6 +22,7 @@ import {
   Wrench,
   Wallet,
   ClipboardList,
+  UsersRound,
 } from "lucide-react"
 import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
@@ -362,6 +363,14 @@ export default async function AdminDashboard() {
                 Tablero del taller
               </Link>
             </Button>
+            {session?.user?.role === "ADMIN" && (
+              <Button asChild variant="outline" size="sm" className="gap-2">
+                <Link href="/admin/equipo?tab=usuarios">
+                  <UsersRound className="h-4 w-4" />
+                  Gestionar equipo
+                </Link>
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

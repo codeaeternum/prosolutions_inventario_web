@@ -26,6 +26,7 @@ export async function GET(req: Request) {
   try {
     const result = await requireModule("usuarios")
     if (result.error) return result.error
+    const session = getSession(result)!
 
     const { searchParams } = new URL(req.url)
     const status = searchParams.get("status")
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
     const searchQuery = searchParams.get("search")
 
     const where = {
-      businessId: businessIdOf(getSession(result)!),
+      businessId: businessIdOf(session),
       ...(status && { status: status as "PENDING" | "APPROVED" | "REJECTED" }),
       ...(roleParam && { role: roleParam as UserRole }),
       ...(searchQuery && {
@@ -65,6 +66,11 @@ export async function GET(req: Request) {
       homeBranch: { select: { id: true, name: true } },
       allowedModules: true,
       allowedBranchIds: true,
+      // Esquema de pago: solo el ADMIN recibe tarifa/sueldo/comisión — un
+      // empleado con el módulo de usuarios no debe ver sueldos ajenos.
+      ...(session.user.role === "ADMIN"
+        ? { payType: true, payRateCents: true, commissionPct: true }
+        : {}),
       createdAt: true,
       _count: { select: { reservations: true } },
     }

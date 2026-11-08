@@ -164,7 +164,7 @@ export function CobranzaPanel() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex items-center justify-center min-h-[400px]" role="status" aria-label="Cargando cartera de cobranza">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
@@ -351,10 +351,15 @@ export function CobranzaPanel() {
                             size="sm"
                             variant="ghost"
                             className="gap-1.5 h-8 text-green-600 hover:text-green-700"
-                            title="Recordatorio por WhatsApp"
+                            title={`Recordatorio por WhatsApp a ${user.name}`}
                             asChild
                           >
-                            <a href={waUrl} target="_blank" rel="noopener noreferrer">
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Enviar recordatorio por WhatsApp a ${user.name}`}
+                            >
                               <MessageCircle className="h-3.5 w-3.5" />
                             </a>
                           </Button>

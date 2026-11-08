@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Clock, Download, History, RefreshCw, Search, ShieldAlert, TrendingUp } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
+import { AlertTriangle, Clock, Download, History, RefreshCw, Search, ShieldAlert, TrendingUp } from "lucide-react"
 import { csvCell } from "@/lib/csv"
 import { formatPrice } from "@/lib/utils"
 
@@ -205,11 +206,32 @@ export function DesempenoPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {!error && !loading && usuarios.length === 0 && (
+        {loading && usuarios.length === 0 ? (
+          // Skeleton con forma de resumen + tabla: la primera carga no deja
+          // la tarjeta en blanco.
+          <div className="space-y-4" aria-busy="true" aria-label="Cargando desempeño">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-20" />
+              ))}
+            </div>
+            <Skeleton className="h-10 max-w-sm w-full" />
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+            <AlertTriangle className="h-10 w-10 text-destructive" />
+            <p className="text-sm text-destructive">{error}</p>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Reintentar
+            </Button>
+          </div>
+        ) : usuarios.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin empleados registrados.</p>
-        )}
-        {usuarios.length > 0 && (
+        ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="rounded-lg border bg-muted/30 p-3">
