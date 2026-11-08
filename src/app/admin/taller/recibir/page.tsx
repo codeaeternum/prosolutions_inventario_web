@@ -919,16 +919,17 @@ export default function ReceiveEquipmentPage() {
   ) : undefined
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 pb-20">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-primary"><BusinessName fallback="ProSolutions" /> · Taller</p>
-          <h1 className="mt-1 text-3xl font-bold">Recibir equipo</h1>
-          <p className="mt-2 text-muted-foreground">Registra la recepción en cinco pasos: cliente, equipo, acceso, entrega y confirmación.</p>
+    <div className="mx-auto max-w-5xl space-y-4 pb-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" asChild className="shrink-0" aria-label="Volver a órdenes">
+            <Link href="/admin/taller"><ArrowLeft className="h-4 w-4" /></Link>
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold">Recibir equipo <span className="ml-1 text-sm font-normal text-muted-foreground"><BusinessName fallback="ProSolutions" /> · Taller</span></h1>
+            <p className="text-sm text-muted-foreground">Registra la recepción en cinco pasos: cliente, equipo, acceso, entrega y confirmación.</p>
+          </div>
         </div>
-        <Button variant="outline" asChild>
-          <Link href="/admin/taller"><ArrowLeft className="mr-2 h-4 w-4" />Volver a órdenes</Link>
-        </Button>
       </div>
 
       {created ? (
@@ -958,12 +959,12 @@ export default function ReceiveEquipmentPage() {
       ) : (
         <>
           <IntakeStepper steps={STEPS} current={step} onSelect={goToStep} />
-          <section className="rounded-xl border bg-card p-5 sm:p-6">
+          <section className="rounded-xl border bg-card p-5 pb-0 sm:p-6 sm:pb-0">
             <fieldset disabled={saving} className="disabled:opacity-80">
-              <h2 ref={stepTitleRef} tabIndex={-1} className="mb-5 font-semibold">{STEPS[step]}</h2>
+              <h2 ref={stepTitleRef} tabIndex={-1} className="mb-4 font-semibold">{STEPS[step]}</h2>
 
               {step === 0 && (
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                   <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
                     <Input id="intake-customer-name" name="customerName" value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
@@ -977,12 +978,12 @@ export default function ReceiveEquipmentPage() {
                       <button type="button" onClick={() => update({ phoneAltVisible: false, customerPhoneAlt: "" })} className="text-xs text-muted-foreground transition hover:text-destructive">Quitar contacto alterno</button>
                     </div>
                   ) : (
-                    <div className="self-end sm:col-span-2">
+                    <div className="self-end sm:col-span-2 lg:col-span-1">
                       <button type="button" onClick={() => update({ phoneAltVisible: true })} className="text-xs font-medium text-primary transition hover:underline">Agregar otro contacto</button>
                     </div>
                   )}
                   {(searching || matchedCustomer || showNewCustomerNote || lookupFailed) && (
-                    <div className="sm:col-span-2" aria-live="polite">
+                    <div className="sm:col-span-2 lg:col-span-3" aria-live="polite">
                       {searching && <p className="text-xs text-muted-foreground">Buscando clientes…</p>}
                       {!searching && matchedCustomer && <p className="text-xs font-medium text-primary">Cliente existente — datos autocompletados.</p>}
                       {!searching && lookupFailed && <p className="text-xs text-muted-foreground">No se pudo buscar clientes. Puedes continuar; la orden se vinculará por teléfono.</p>}
@@ -1002,11 +1003,11 @@ export default function ReceiveEquipmentPage() {
                     </select>
                   </label>
                   {metaLoaded && branches.length === 0 && (
-                    <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:col-span-2">
+                    <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:col-span-2 lg:col-span-3">
                       No hay sucursales del taller registradas. Crea una desde la pantalla de órdenes antes de recibir equipos.
                     </p>
                   )}
-                  <div className="rounded-lg border border-indigo-200/70 bg-indigo-500/5 p-4 dark:border-indigo-500/30 sm:col-span-2">
+                  <div className="rounded-lg border border-indigo-200/70 bg-indigo-500/5 p-4 dark:border-indigo-500/30 sm:col-span-2 lg:col-span-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="space-y-1">
                         <p className="flex items-center gap-2 text-sm font-medium"><Store size={15} className="text-indigo-600 dark:text-indigo-300" />Traída por taller aliado</p>
@@ -1017,7 +1018,7 @@ export default function ReceiveEquipmentPage() {
                       </button>
                     </div>
                     {form.partnerDrop && (
-                      <div className="mt-4 grid gap-4 border-t border-indigo-200/70 pt-4 dark:border-indigo-500/30 sm:grid-cols-2">
+                      <div className="mt-4 grid gap-4 border-t border-indigo-200/70 pt-4 dark:border-indigo-500/30 sm:grid-cols-2 lg:grid-cols-3">
                         <label className="block space-y-2 text-sm">Negocio aliado *
                           <Input
                             id="intake-partner-business"
@@ -1092,7 +1093,7 @@ export default function ReceiveEquipmentPage() {
                       <p key={hint} className="text-xs text-muted-foreground">{hint}</p>
                     ))}
                   </div>
-                  <div className="grid gap-5 sm:grid-cols-2">
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                     <div className="space-y-2">
                       <p className="text-sm">Servicios del catálogo</p>
                       {form.services.length > 0 && (
@@ -1153,8 +1154,8 @@ export default function ReceiveEquipmentPage() {
                       <span className="block text-xs text-muted-foreground">Se propone al elegir un servicio con precio fijo; puedes ajustarlo o dejarlo vacío.</span>
                     </label>
                   </div>
-                  <div className="grid gap-5 sm:grid-cols-2">
-                    <div className="space-y-2 sm:col-span-2">
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="space-y-2 sm:col-span-2 lg:col-span-3">
                       <p className="text-sm">Marcas frecuentes</p>
                       <div className="flex flex-wrap gap-2">
                         {quickBrands.map(brand => {
@@ -1219,7 +1220,7 @@ export default function ReceiveEquipmentPage() {
                       </label>
                     </div>
                     {profile.colorRelevant && (
-                      <div className="space-y-2 sm:col-span-2">
+                      <div className="space-y-2 sm:col-span-2 lg:col-span-3">
                         <p className="text-sm">Color</p>
                         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Color del equipo">
                           {EQUIPMENT_COLORS.map(({ label, hex }) => (
@@ -1239,7 +1240,8 @@ export default function ReceiveEquipmentPage() {
               )}
 
               {step === 2 && (
-                <div className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-2 lg:gap-8">
+                  <div className="space-y-6">
                   <div className="space-y-2">
                     <p className="text-sm">Bloqueo del equipo</p>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Tipo de bloqueo">
@@ -1300,7 +1302,8 @@ export default function ReceiveEquipmentPage() {
                       </div>
                     )}
                   </div>
-                  <div className="grid gap-5">
+                  </div>
+                  <div className="space-y-5">
                     <div className="space-y-2">
                       <p className="text-sm">Condiciones del equipo</p>
                       <div className="flex flex-wrap gap-2">
@@ -1342,6 +1345,7 @@ export default function ReceiveEquipmentPage() {
                       <textarea id="intake-reported-issue" name="reportedIssue" value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
                     </label>
                   </div>
+                  <div className="lg:col-span-2">
                   {signatureMode === "canvas" ? (
                     <div className="rounded-lg border p-4">
                       <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
@@ -1374,12 +1378,13 @@ export default function ReceiveEquipmentPage() {
                       <p className="mt-2 text-xs text-muted-foreground">Debe coincidir con la terminación del teléfono de contacto capturado en el paso 1.</p>
                     </div>
                   )}
+                  </div>
                 </div>
               )}
 
               {step === 3 && (
-                <div className="space-y-6">
-                  <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-6 lg:grid-cols-2 lg:gap-8">
+                  <div className="grid content-start gap-5 sm:grid-cols-2">
                     <label className="block space-y-2 text-sm">Fecha promesa de entrega
                       <Input id="intake-promised-at" name="promisedAt" type="datetime-local" value={form.promisedAt} min={minDateTime} onChange={event => update({ promisedAt: event.target.value })} />
                     </label>
@@ -1395,7 +1400,7 @@ export default function ReceiveEquipmentPage() {
                       <datalist id="workshop-locations">{locations.map(location => <option key={location} value={location} />)}</datalist>
                     </label>
                   </div>
-                  <div className="rounded-lg border p-4">
+                  <div className="content-start rounded-lg border p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="space-y-1">
                         <p className="flex items-center gap-2 text-sm font-medium"><CircleDollarSign size={15} className="text-primary" />Anticipo del cliente</p>
@@ -1438,7 +1443,7 @@ export default function ReceiveEquipmentPage() {
               {step === 4 && (
                 <div className="space-y-5">
                   <p className="text-sm text-muted-foreground">Revisa que la información esté completa antes de crear la orden.</p>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <SummaryGroup title="Cliente" icon={UserRound} items={[
                       ["Nombre", form.customerName.trim()],
                       ["Teléfono", form.customerPhone.trim()],
@@ -1488,15 +1493,21 @@ export default function ReceiveEquipmentPage() {
                 </div>
               )}
 
-              {stepError && <p role="alert" className="mt-5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{stepError}</p>}
-
-              <div className="mt-6 flex items-center justify-between border-t pt-5">
-                {step > 0
-                  ? <Button type="button" variant="outline" onClick={goBack}><ArrowLeft className="mr-2 h-4 w-4" />Anterior</Button>
-                  : <span />}
-                {step < STEPS.length - 1
-                  ? <Button type="button" onClick={goNext}>Siguiente<ArrowRight className="ml-2 h-4 w-4" /></Button>
-                  : <Button type="button" onClick={() => void submit()} disabled={saving}>{saving ? "Creando…" : "Crear orden"}</Button>}
+              {/* Barra de acción pegajosa: Anterior/Siguiente/Crear siempre a
+                  la vista — el paso puede ser alto y el botón no exige bajar.
+                  En <lg flota sobre la barra inferior del admin (mismo offset
+                  que el aviso de conectividad); los márgenes negativos la
+                  extienden al ancho de la tarjeta. */}
+              <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] -mx-5 mt-6 border-t bg-card/95 px-5 py-3 backdrop-blur-sm supports-[backdrop-filter]:bg-card/80 sm:-mx-6 sm:px-6 lg:bottom-0 lg:rounded-b-xl">
+                {stepError && <p role="alert" className="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{stepError}</p>}
+                <div className="flex items-center justify-between">
+                  {step > 0
+                    ? <Button type="button" variant="outline" onClick={goBack}><ArrowLeft className="mr-2 h-4 w-4" />Anterior</Button>
+                    : <span />}
+                  {step < STEPS.length - 1
+                    ? <Button type="button" onClick={goNext}>Siguiente<ArrowRight className="ml-2 h-4 w-4" /></Button>
+                    : <Button type="button" onClick={() => void submit()} disabled={saving}>{saving ? "Creando…" : "Crear orden"}</Button>}
+                </div>
               </div>
             </fieldset>
           </section>
