@@ -216,15 +216,22 @@ describe("GET /api/users/pos — PII de clientes exige ventas|clientes", () => {
 })
 
 describe("GET /api/reports — agregados recortados por sucursal", () => {
-  it("reservas (conteo, estados, recientes) y top clientes quedan en { in: allowed }", async () => {
+  it("reservas (conteo, estados, recientes) y rankings quedan en { in: allowed }", async () => {
     mocks.auth.mockResolvedValue(restricted(["reportes"]))
     await reports(nx(new Request("https://app.invalid/api/reports")))
     expect(q("reservation.count").mock.calls[0][0].where.branchId).toEqual({ in: ["b1"] })
-    expect(q("reservation.groupBy").mock.calls[0][0].where.branchId).toEqual({ in: ["b1"] })
     expect(q("reservation.findMany").mock.calls[0][0].where.branchId).toEqual({ in: ["b1"] })
-    // Top clientes: el _count de reservas COMPLETED también se recorta.
-    const clientsCall = q("user.findMany").mock.calls[0][0]
-    expect(clientsCall.select._count.select.reservations.where.branchId).toEqual({ in: ["b1"] })
+    // Los rankings son reservation.groupBy (estados, productId, userId):
+    // TODOS llevan el recorte de sucursal en su where.
+    const groupCalls = q("reservation.groupBy").mock.calls.map((c) => c[0])
+    for (const call of groupCalls) expect(call.where.branchId).toEqual({ in: ["b1"] })
+    // Top clientes: el groupBy por userId solo cuenta reservas COMPLETED de
+    // clientes aprobados, y también va recortado por sucursal.
+    const clientsGroup = groupCalls.find((c) => c.by?.[0] === "userId")
+    expect(clientsGroup.where).toMatchObject({
+      status: "COMPLETED",
+      user: { role: "CUSTOMER", status: "APPROVED" },
+    })
   })
 
   it("?series=1: ventas, caja, cobros de taller y órdenes se recortan", async () => {
@@ -234,7 +241,8 @@ describe("GET /api/reports — agregados recortados por sucursal", () => {
     expect(q("cashMovement.findMany").mock.calls[0][0].where.register).toEqual({ branchId: { in: ["b1"] } })
     expect(q("payment.findMany").mock.calls[0][0].where.repairOrder).toEqual({ currentBranchId: { in: ["b1"] } })
     expect(q("repairOrder.groupBy").mock.calls[0][0].where.currentBranchId).toEqual({ in: ["b1"] })
-    expect(q("repairPart.findMany").mock.calls[0][0].where.order).toEqual({ currentBranchId: { in: ["b1"] } })
+    // Refacciones más usadas: groupBy por orden también recortado.
+    expect(q("repairPart.groupBy").mock.calls[0][0].where.order).toEqual({ currentBranchId: { in: ["b1"] } })
   })
 
   it("admin conserva el reporte global", async () => {

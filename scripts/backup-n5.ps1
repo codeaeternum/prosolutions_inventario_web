@@ -20,6 +20,10 @@
 param(
     # Carpeta raíz donde caen los backups (en el N5: D:\Backups\prosolutions)
     [string]$BackupRoot = "D:\Backups\prosolutions",
+    # Copia espejo en OTRO disco físico (en el N5: F:\ es el HDD de 4TB, D: y C:
+    # son SSDs distintos). Vacío desactiva la copia; si el disco no existe se
+    # omite con advertencia sin fallar el respaldo principal.
+    [string]$OffsiteRoot = "F:\prosolutions-backups",
     # .env.docker del repo; por defecto el que está junto a este script (raíz del proyecto)
     [string]$EnvFile = (Join-Path (Split-Path -Parent $PSScriptRoot) ".env.docker"),
     # Alternativa/override: pasar la URL o user/db explícitos (p. ej. desde Task Scheduler)
@@ -98,6 +102,7 @@ $status = [ordered]@{
     uploads    = @{ file = $null; bytes = 0; ok = $false; error = $null }
     proofs     = @{ file = $null; bytes = 0; ok = $false; error = $null }
     evidence   = @{ file = $null; bytes = 0; ok = $false; error = $null }
+    offsite    = @{ enabled = ($OffsiteRoot -ne ""); files = 0; bytes = 0; ok = $true; error = $null }
     finishedAt = $null
 }
 $script:hadFailure = $false
@@ -196,6 +201,49 @@ try {
     } catch {
         $script:hadFailure = $true
         Write-Log "Retención FALLO: $_"
+    }
+
+    # ---------- 3b) Copia espejo en OTRO disco fisico ----------
+    # Replica los artefactos de ESTA corrida a $OffsiteRoot (misma estructura de
+    # subcarpetas) y aplica la misma retencion. Si el disco destino no existe se
+    # omite con advertencia; un fallo de copia si marca hadFailure - una copia
+    # que muere en silencio durante semanas es peor que una alerta.
+    # OJO: PS 5.1 lee .ps1 como ANSI salvo BOM - no usar em-dash (U+2014, byte
+    # 0x94 = comilla en CP1252) ni acentos dentro de strings literales.
+    if ($OffsiteRoot) {
+        $offsiteDrive = Split-Path -Qualifier $OffsiteRoot
+        if (-not (Test-Path -LiteralPath "$offsiteDrive\")) {
+            $status.offsite.ok = $false
+            $status.offsite.error = "la unidad $offsiteDrive no existe; copia espejo omitida"
+            Write-Log "Copia espejo: $offsiteDrive no existe - omitida"
+        } else {
+            try {
+                $dirs = @("db") + ($volumeJobs | ForEach-Object { $_.dir })
+                foreach ($d in $dirs) {
+                    New-Item -ItemType Directory -Force -Path (Join-Path $OffsiteRoot $d) | Out-Null
+                }
+                foreach ($k in @("db", "uploads", "proofs", "evidence")) {
+                    $src = $status[$k].file
+                    if (-not ($status[$k].ok -and $src -and (Test-Path -LiteralPath $src))) { continue }
+                    $dstDir = "db"
+                    if ($k -ne "db") { $dstDir = ($volumeJobs | Where-Object { $_.key -eq $k } | Select-Object -First 1).dir }
+                    $dst = Join-Path (Join-Path $OffsiteRoot $dstDir) (Split-Path -Leaf $src)
+                    Copy-Item -LiteralPath $src -Destination $dst -Force
+                    $status.offsite.files++
+                    $status.offsite.bytes += (Get-Item -LiteralPath $dst).Length
+                }
+                Write-Log ("Copia espejo OK -> {0} ({1} archivo(s), {2:N1} MB)" -f $OffsiteRoot, $status.offsite.files, ($status.offsite.bytes / 1MB))
+                $cutoff = (Get-Date).AddDays(-$RetentionDays)
+                Get-ChildItem -LiteralPath $OffsiteRoot -Recurse -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LastWriteTime -lt $cutoff } |
+                    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+            } catch {
+                $script:hadFailure = $true
+                $status.offsite.ok = $false
+                $status.offsite.error = "$_"
+                Write-Log "Copia espejo FALLO: $_"
+            }
+        }
     }
 } catch {
     $script:hadFailure = $true

@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   cashFind: vi.fn(),
   paymentFind: vi.fn(),
   orderGroup: vi.fn(),
-  partFind: vi.fn(),
+  partGroup: vi.fn(),
   userFind: vi.fn(),
 }))
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({
     cashMovement: { findMany: mocks.cashFind },
     payment: { findMany: mocks.paymentFind },
     repairOrder: { groupBy: mocks.orderGroup },
-    repairPart: { findMany: mocks.partFind },
+    repairPart: { groupBy: mocks.partGroup },
     user: { findMany: mocks.userFind },
   },
 }))
@@ -43,7 +43,7 @@ beforeEach(() => {
   mocks.cashFind.mockResolvedValue([])
   mocks.paymentFind.mockResolvedValue([])
   mocks.orderGroup.mockResolvedValue([])
-  mocks.partFind.mockResolvedValue([])
+  mocks.partGroup.mockResolvedValue([])
   mocks.userFind.mockResolvedValue([])
 })
 
@@ -88,5 +88,32 @@ describe("cobros de taller", () => {
     expect(mocks.paymentFind).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: { in: ["CONFIRMED", "REFUNDED"] } }),
     }))
+  })
+})
+
+describe("refacciones más usadas", () => {
+  it("agrega en BD por (descripción, precio) y fusiona variantes con espacios", async () => {
+    // El groupBy devuelve un renglón por par descripción+precio; el merge
+    // por etiqueta normalizada suma piezas e ingreso en centavos.
+    mocks.partGroup.mockResolvedValue([
+      { description: "Pantalla A10", unitPriceCents: 15000, _sum: { qty: 3 } },
+      { description: "  Pantalla A10 ", unitPriceCents: 15000, _sum: { qty: 2 } },
+      { description: "Batería B2", unitPriceCents: 30000, _sum: { qty: 4 } },
+      { description: "   ", unitPriceCents: 100, _sum: { qty: 9 } }, // vacía: se omite
+    ])
+    const res = await getSeries()
+    const body = await res.json()
+    const top = body.topParts
+    expect(top[0]).toMatchObject({ label: "Pantalla A10", count: 5, revenueCents: 75000 })
+    expect(top[1]).toMatchObject({ label: "Batería B2", count: 4, revenueCents: 120000 })
+    expect(top).toHaveLength(2)
+    // La consulta es groupBy con _sum.qty — no la corrida histórica fila a fila.
+    expect(mocks.partGroup).toHaveBeenCalledWith(expect.objectContaining({
+      by: ["description", "unitPriceCents"],
+      _sum: { qty: true },
+      where: expect.objectContaining({ status: "APPROVED" }),
+    }))
+    // Datos de dinero: la respuesta no es cacheable.
+    expect(res.headers.get("Cache-Control")).toContain("no-store")
   })
 })

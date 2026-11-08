@@ -12,8 +12,8 @@ import { PRINCIPAL_BRANCH_ID } from "@/lib/domain/operations"
 // activa con sus métricas lado a lado.
 //
 // - Ventas: solo COMPLETED cuenta como ingreso (igual que la serie de
-//   /api/reports: DRAFT/OPEN son documentos vivos, VOIDED se excluye).
-//   Sale.total viene en pesos.
+//   /api/reports: DRAFT/OPEN son documentos vivos, VOIDED se excluye) y el
+//   importe es lo cobrado NETO — Sale.total (pesos) − discountCents.
 // - Piezas vendidas: unidades netas de SaleItem (quantity − devueltas) de
 //   las ventas COMPLETED del periodo.
 // - Mermas: InventoryMovement type OUT sin paymentMethod — la misma
@@ -31,6 +31,9 @@ import { PRINCIPAL_BRANCH_ID } from "@/lib/domain/operations"
 // ?branchId= limita la comparación a una sucursal del negocio.
 
 const DIAS_VALIDOS = new Set([7, 30, 90])
+
+// Ventas y costos por sucursal: datos sensibles que no se sirven de caché.
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
 
 // Estados terminales del taller: la orden ya no ocupa mesa ni caja.
 const ESTADOS_TERMINALES: RepairStatus[] = [
@@ -83,7 +86,7 @@ export async function GET(req: NextRequest) {
       null
 
     const empty = { generatedAt: new Date().toISOString(), dias, desde: since.toISOString(), branches: [] }
-    if (ids.length === 0) return NextResponse.json(empty)
+    if (ids.length === 0) return NextResponse.json(empty, { headers: NO_STORE })
 
     const [
       salesAgg,
@@ -94,6 +97,10 @@ export async function GET(req: NextRequest) {
       ordenesAgg,
     ] = await Promise.all([
       // Ventas cobradas del periodo: total y número de tickets por sucursal.
+      // Se trae también discountCents: lo cobrado de verdad es
+      // total de catálogo − descuento autorizado (misma convención que la
+      // serie de /api/reports y nómina; sin restarlo las ventas quedaban
+      // infladas respecto a lo que entró a caja).
       prisma.sale.groupBy({
         by: ["branchId"],
         where: {
@@ -102,7 +109,7 @@ export async function GET(req: NextRequest) {
           createdAt: { gte: since },
           branchId: { in: ids },
         },
-        _sum: { total: true },
+        _sum: { total: true, discountCents: true },
         _count: { _all: true },
       }),
       // Piezas vendidas (netas de devoluciones) por sucursal de la venta.
@@ -122,12 +129,16 @@ export async function GET(req: NextRequest) {
         },
       }),
       // Mermas del periodo (salidas que no son venta) con costo del producto.
+      // El OR cubre las asignadas a las sucursales en comparación más las
+      // históricas sin sucursal (caen a la principal, regla de abajo); antes
+      // se traían las mermas de TODO el negocio y se filtraban en memoria.
       prisma.inventoryMovement.findMany({
         where: {
           businessId,
           type: "OUT",
           paymentMethod: null,
           createdAt: { gte: since },
+          OR: [{ branchId: { in: ids } }, { branchId: null }],
         },
         select: {
           branchId: true,
@@ -160,11 +171,15 @@ export async function GET(req: NextRequest) {
     ])
 
     // _sum.total es Float en pesos: el agregado de Postgres puede arrastrar
-    // epsilon binario, así que se trabaja en centavos enteros.
+    // epsilon binario, así que se trabaja en centavos enteros y se resta el
+    // descuento autorizado (int) — ventas = lo cobrado neto.
     const ventasPorBranch = new Map(
       salesAgg.map((s) => [
         s.branchId,
-        { totalCents: Math.round((s._sum.total ?? 0) * 100), count: s._count._all },
+        {
+          totalCents: Math.round((s._sum.total ?? 0) * 100) - (s._sum.discountCents ?? 0),
+          count: s._count._all,
+        },
       ])
     )
 
@@ -223,7 +238,7 @@ export async function GET(req: NextRequest) {
           ordenesActivas: ordenesPorBranch.get(b.id) ?? 0,
         }
       }),
-    })
+    }, { headers: NO_STORE })
   } catch (error) {
     return businessFailure(error)
   }

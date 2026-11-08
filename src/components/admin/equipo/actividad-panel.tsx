@@ -129,6 +129,7 @@ const ENTITY_LABELS: Record<string, string> = {
   branch: "Sucursales",
   customer: "Clientes",
   business: "Negocio",
+  asistencia: "Asistencia",
 }
 
 function actorInitials(name: string): string {

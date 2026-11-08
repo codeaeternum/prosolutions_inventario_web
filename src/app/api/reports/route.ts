@@ -8,6 +8,10 @@ import { businessDayKey, businessMonthKey, parseBusinessDateParam } from "@/lib/
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
 
+// Los reportes exponen ventas, caja y valuación de inventario: jamás
+// servibles desde un caché compartido (misma regla que /api/caja y nómina).
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 export async function GET(req: NextRequest) {
   try {
     const result = await requireModule("reportes")
@@ -26,7 +30,7 @@ export async function GET(req: NextRequest) {
     // ?series=1 — series de tiempo y rankings para las gráficas del panel.
     // Es una respuesta independiente: no usa los filtros from/to.
     if (searchParams.get("series") === "1") {
-      return NextResponse.json(await buildReportSeries(businessId, scopedBranchIds))
+      return NextResponse.json(await buildReportSeries(businessId, scopedBranchIds), { headers: NO_STORE })
     }
 
     // from/to en fecha corta "YYYY-MM-DD" = día completo del negocio
@@ -34,6 +38,11 @@ export async function GET(req: NextRequest) {
     // con hora/ISO completo pasan tal cual.
     const from = parseBusinessDateParam(searchParams.get("from"), "start")
     const to = parseBusinessDateParam(searchParams.get("to"), "end")
+    // Igual que nómina: un rango invertido es error del cliente, no un
+    // reporte vacío silencioso.
+    if (from && to && from > to) {
+      return NextResponse.json({ error: "Rango inválido: 'from' es posterior a 'to'" }, { status: 400 })
+    }
 
     // Filtros de fecha para reservas
     const dateFilter = {
@@ -41,6 +50,13 @@ export async function GET(req: NextRequest) {
       ...(to && { lte: to }),
     }
     const hasDateFilter = from || to
+
+    // Filtro de reservas compartido por conteos, rankings y recientes.
+    const reservationWhere = {
+      businessId,
+      ...(hasDateFilter ? { createdAt: dateFilter } : {}),
+      ...(branchScope ? { branchId: branchScope } : {}),
+    }
 
     // Obtener estadísticas en paralelo
     const [
@@ -57,25 +73,25 @@ export async function GET(req: NextRequest) {
       reservationsByStatus,
       // Catálogo
       totalBrands,
-      totalCategories,
+      categories,
       totalModels,
-      // Top productos (por reservas)
-      topProductsData,
+      // Top productos (por reservas del periodo)
+      topProductGroups,
       // Top marcas
       topBrandsData,
       // Últimas reservas
       recentReservations,
-      // Top clientes
-      topClientsData,
-      // Stock por categoría
-      categoriesWithStock,
+      // Top clientes (por compras completadas del periodo)
+      topClientGroups,
     ] = await Promise.all([
-      // Productos
+      // Productos — una sola pasada del catálogo activo: de ella salen los
+      // agregados de stock Y el desglose de stock bajo por categoría (antes
+      // se consultaban los productos dos veces: aquí y anidados por categoría).
       prisma.product.count({ where: { businessId } }),
       prisma.product.count({ where: { businessId, isActive: true } }),
       prisma.product.findMany({
         where: { businessId, isActive: true },
-        select: { stock: true, minStock: true, wholesalePrice: true },
+        select: { id: true, name: true, categoryId: true, stock: true, minStock: true, wholesalePrice: true },
       }),
       // Usuarios
       prisma.user.count({ where: { businessId, role: "CUSTOMER" } }),
@@ -83,36 +99,29 @@ export async function GET(req: NextRequest) {
       prisma.user.count({ where: { businessId, status: "PENDING" } }),
       // Reservas (con filtro de fecha si aplica; recortadas por sucursal
       // cuando el empleado tiene asignadas)
-      prisma.reservation.count({
-        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
-      }),
+      prisma.reservation.count({ where: reservationWhere }),
       prisma.reservation.groupBy({
         by: ["status"],
         _count: { status: true },
-        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
+        where: reservationWhere,
       }),
       // Catálogo
       prisma.brand.count({ where: { businessId } }),
-      prisma.category.count({ where: { businessId } }),
+      prisma.category.findMany({
+        where: { businessId },
+        select: { id: true, name: true },
+      }),
       prisma.model.count({ where: { businessId } }),
-      // Top productos
-      prisma.product.findMany({
-        where: { businessId, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          stock: true,
-          _count: {
-            select: {
-              reservations: hasDateFilter
-                ? { where: { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } }
-                : { where: { businessId, ...(branchScope ? { branchId: branchScope } : {}) } },
-            },
-          },
-        },
-        orderBy: {
-          reservations: { _count: "desc" },
-        },
+      // Top productos: el ranking se ordena en BD por el conteo DEL PERIODO.
+      // Antes era product.findMany con orderBy reservations._count desc —
+      // ese orderBy usa el total SIN el where del _count anidado, así que
+      // con filtro de fechas el "top 5" se ordenaba por el histórico y no
+      // por el periodo (los números sí eran del periodo: ranking mentiroso).
+      prisma.reservation.groupBy({
+        by: ["productId"],
+        where: { ...reservationWhere, product: { isActive: true } },
+        _count: { _all: true },
+        orderBy: { _count: { productId: "desc" } },
         take: 5,
       }),
       // Top marcas
@@ -132,7 +141,7 @@ export async function GET(req: NextRequest) {
       }),
       // Últimas reservas
       prisma.reservation.findMany({
-        where: hasDateFilter ? { businessId, createdAt: dateFilter, ...(branchScope ? { branchId: branchScope } : {}) } : { businessId, ...(branchScope ? { branchId: branchScope } : {}) },
+        where: reservationWhere,
         include: {
           user: { select: { name: true } },
           product: { select: { name: true } },
@@ -140,43 +149,18 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
-      // Top clientes
-      prisma.user.findMany({
-        where: { businessId, role: "CUSTOMER", status: "APPROVED" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          customerType: true,
-          _count: {
-            select: {
-              reservations: hasDateFilter
-                ? { where: { businessId, createdAt: dateFilter, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) } }
-                : { where: { businessId, status: "COMPLETED", ...(branchScope ? { branchId: branchScope } : {}) } },
-            },
-          },
+      // Top clientes: mismo defecto de orden que topProducts — el groupBy
+      // ordena por las compras COMPLETED del periodo de verdad.
+      prisma.reservation.groupBy({
+        by: ["userId"],
+        where: {
+          ...reservationWhere,
+          status: "COMPLETED",
+          user: { role: "CUSTOMER", status: "APPROVED" },
         },
-        orderBy: {
-          reservations: { _count: "desc" },
-        },
+        _count: { _all: true },
+        orderBy: { _count: { userId: "desc" } },
         take: 10,
-      }),
-      // Stock bajo por categoría
-      prisma.category.findMany({
-        where: { businessId },
-        select: {
-          id: true,
-          name: true,
-          products: {
-            where: { businessId, isActive: true },
-            select: {
-              id: true,
-              name: true,
-              stock: true,
-              minStock: true,
-            },
-          },
-        },
       }),
     ])
 
@@ -204,76 +188,80 @@ export async function GET(req: NextRequest) {
       reservationsByStatus.map((s: { status: ReservationStatusType; _count: { status: number } }) => [s.status, s._count.status])
     )
 
-    // Formatear top productos
-    const topProducts = topProductsData.map((p: { id: string; name: string; stock: number; _count: { reservations: number } }) => ({
-      id: p.id,
-      name: p.name,
-      stock: p.stock,
-      reservationCount: p._count.reservations,
-    }))
+    // Segunda tanda: solo los detalles de los grupos ya rankeados en BD
+    // (5 productos, 10 clientes, las ligas producto↔marca de las 5 marcas).
+    const [topProductRows, topClientRows, brandProductLinks] = await Promise.all([
+      prisma.product.findMany({
+        where: { businessId, id: { in: topProductGroups.map((g) => g.productId) } },
+        select: { id: true, name: true, stock: true },
+      }),
+      prisma.user.findMany({
+        where: { businessId, id: { in: topClientGroups.map((g) => g.userId) } },
+        select: { id: true, name: true, email: true, customerType: true },
+      }),
+      // Conteo de productos por marca en UNA consulta: antes era un
+      // product.count por marca (N+1) — las ligas ProductModel→model.brandId
+      // llegan de una vez y se agrupan aquí.
+      prisma.productModel.findMany({
+        where: {
+          businessId,
+          model: { brandId: { in: topBrandsData.map((b) => b.id) } },
+          product: { businessId },
+        },
+        select: { productId: true, model: { select: { brandId: true } } },
+      }),
+    ])
 
-    // Formatear top marcas (contamos productos a través de modelos)
-    const topBrands: { id: string; name: string; productCount: number }[] = await Promise.all(
-      topBrandsData.map(async (b: { id: string; name: string; _count: { models: number } }) => {
-        const productCount = await prisma.product.count({
-          where: {
-            businessId,
-            models: {
-              some: {
-                model: { brandId: b.id },
-              },
-            },
-          },
-        })
-        return {
-          id: b.id,
-          name: b.name,
-          productCount,
-        }
-      })
-    )
+    // Top productos: conserva el orden del groupBy (conteo del periodo).
+    const productById = new Map(topProductRows.map((p) => [p.id, p]))
+    const topProducts = topProductGroups.flatMap((g) => {
+      const p = productById.get(g.productId)
+      return p ? [{ id: p.id, name: p.name, stock: p.stock, reservationCount: g._count._all }] : []
+    })
 
-    // Ordenar por cantidad de productos
-    topBrands.sort((a: { productCount: number }, b: { productCount: number }) => b.productCount - a.productCount)
-
-    // Formatear top clientes
-    type TopClientData = {
-      id: string
-      name: string
-      email: string | null
-      customerType: string
-      _count: { reservations: number }
+    // Top marcas: productos distintos por marca (un producto con varios
+    // modelos de la misma marca cuenta una vez).
+    const productsByBrand = new Map<string, Set<string>>()
+    for (const link of brandProductLinks) {
+      const set = productsByBrand.get(link.model.brandId) ?? new Set<string>()
+      set.add(link.productId)
+      productsByBrand.set(link.model.brandId, set)
     }
-    const topClients = (topClientsData as TopClientData[])
-      .filter(c => c._count.reservations > 0)
-      .map(c => ({
-        id: c.id,
-        name: c.name,
-        email: c.email,
-        customerType: c.customerType,
-        completedReservations: c._count.reservations,
-      }))
+    const topBrands = topBrandsData
+      .map((b) => ({ id: b.id, name: b.name, productCount: productsByBrand.get(b.id)?.size ?? 0 }))
+      .sort((a, b) => b.productCount - a.productCount)
 
-    // Formatear stock bajo por categoría
-    type CategoryWithStock = {
-      id: string
-      name: string
-      products: Array<{
-        id: string
-        name: string
-        stock: number
-        minStock: number
-      }>
+    // Top clientes: conserva el orden del groupBy.
+    const clientById = new Map(topClientRows.map((u) => [u.id, u]))
+    const topClients = topClientGroups.flatMap((g) => {
+      const u = clientById.get(g.userId)
+      return u ? [{
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        customerType: u.customerType,
+        completedReservations: g._count._all,
+      }] : []
+    })
+
+    // Stock bajo por categoría: se reagrupa la pasada de allProducts en vez
+    // de volver a traer cada producto anidado por categoría.
+    const productsByCategory = new Map<string, typeof allProducts>()
+    for (const p of allProducts) {
+      const list = productsByCategory.get(p.categoryId)
+      if (list) list.push(p)
+      else productsByCategory.set(p.categoryId, [p])
     }
-    const lowStockByCategory = (categoriesWithStock as CategoryWithStock[])
+    const lowStockByCategory = categories
       .map(cat => {
-        const lowStockItems = cat.products.filter(p => p.stock <= p.minStock)
+        const catProducts = productsByCategory.get(cat.id) ?? []
+        const lowStockItems = catProducts.filter(p => p.stock <= p.minStock)
         return {
           id: cat.id,
           name: cat.name,
-          totalProducts: cat.products.length,
+          totalProducts: catProducts.length,
           lowStockCount: lowStockItems.length,
-          outOfStockCount: cat.products.filter(p => p.stock === 0).length,
+          outOfStockCount: catProducts.filter(p => p.stock === 0).length,
           products: lowStockItems.slice(0, 5).map(p => ({
             id: p.id,
             name: p.name,
@@ -306,12 +294,20 @@ export async function GET(req: NextRequest) {
       activeUsers,
       pendingUsers,
       totalReservations,
-      pendingReservations: statusMap.get("PENDING") || 0,
+      // "Pendientes" = TODA reserva abierta que pide acción, no solo la que
+      // llegó: las que esperan comprobante, con depósito verificado y las
+      // aprobadas por recoger también son trabajo pendiente (antes el
+      // conteo ignoraba PENDING_PAYMENT/DEPOSIT_VERIFIED/APPROVED).
+      pendingReservations:
+        (statusMap.get("PENDING") || 0) +
+        (statusMap.get("PENDING_PAYMENT") || 0) +
+        (statusMap.get("DEPOSIT_VERIFIED") || 0) +
+        (statusMap.get("APPROVED") || 0),
       completedReservations: statusMap.get("COMPLETED") || 0,
       cancelledReservations: statusMap.get("CANCELLED") || 0,
       expiredReservations: statusMap.get("EXPIRED") || 0,
       totalBrands,
-      totalCategories,
+      totalCategories: categories.length,
       totalModels,
       topProducts,
       topBrands,
@@ -327,7 +323,7 @@ export async function GET(req: NextRequest) {
       })),
     }
 
-    return NextResponse.json(response)
+    return NextResponse.json(response, { headers: NO_STORE })
   } catch (error) {
     console.error("Error fetching reports:", error)
     return NextResponse.json(
@@ -364,7 +360,7 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
     movements,
     repairPayments,
     modelGroups,
-    parts,
+    partGroups,
     statusGroups,
     newCustomers,
     customerGroups,
@@ -404,9 +400,14 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
       _count: { _all: true },
     }),
     // Refacciones más usadas; solo las autorizadas cuentan como cobradas.
-    prisma.repairPart.findMany({
+    // groupBy (descripción, precio): la corrida histórica traía UNA fila por
+    // pieza instalada — con años de órdenes eran decenas de miles de filas
+    // para un top 10; el agregado en BD devuelve un renglón por par
+    // descripción+precio. Ingreso = qty × precio de cada variante.
+    prisma.repairPart.groupBy({
+      by: ["description", "unitPriceCents"],
       where: { businessId, status: "APPROVED", ...(branchScope ? { order: { currentBranchId: branchScope } } : {}) },
-      select: { description: true, qty: true, unitPriceCents: true },
+      _sum: { qty: true },
     }),
     // Órdenes de reparación agrupadas por estado (histórico).
     prisma.repairOrder.groupBy({
@@ -487,13 +488,15 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
     .slice(0, 10)
 
   // Top refacciones por piezas usadas; ingreso = qty * precio unitario.
+  // Las variantes de descripción que solo difieren en espacios se fusionan.
   const partAgg = new Map<string, { count: number; revenueCents: number }>()
-  for (const p of parts) {
+  for (const p of partGroups) {
     const label = p.description.trim()
     if (!label) continue
+    const qty = p._sum.qty ?? 0
     const a = partAgg.get(label) ?? { count: 0, revenueCents: 0 }
-    a.count += p.qty
-    a.revenueCents += p.qty * p.unitPriceCents
+    a.count += qty
+    a.revenueCents += qty * p.unitPriceCents
     partAgg.set(label, a)
   }
   const topParts = [...partAgg]

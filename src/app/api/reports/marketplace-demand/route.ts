@@ -15,6 +15,9 @@ import { businessDayKey } from "@/lib/business-time"
 const normalizeTaller = (name: string) =>
   name.trim().toLowerCase().replace(/\s+/g, " ")
 
+// La demanda expone precios de taller y compras por cuenta: nunca cacheable.
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 // Lunes de la semana a la que pertenece `d` en el HORARIO DEL NEGOCIO
 // (businessDayKey), devuelto como clave "YYYY-MM-DD". Antes usaba
 // getDay()/setHours() del servidor: en un host UTC la semana se desplazaba
@@ -41,7 +44,9 @@ export async function GET() {
         status: true,
         tallerName: true,
         createdAt: true,
-        sale: { select: { total: true } },
+        // status + discountCents: una venta anulada (VOIDED) o con descuento
+        // autorizado ya no es una compra por su total de catálogo.
+        sale: { select: { total: true, status: true, discountCents: true } },
       },
     })
 
@@ -136,10 +141,13 @@ export async function GET() {
       else if (r.status === "REJECTED") t.rejected++
       else if (r.status === "FULFILLED") t.fulfilled++
 
-      // Compras surtidas: solicitud FULFILLED con su venta ligada.
-      if (r.status === "FULFILLED" && r.sale) {
+      // Compras surtidas: solicitud FULFILLED con su venta VIGENTE ligada.
+      // Una venta anulada después (VOIDED: stock repuesto y dinero
+      // reembolsado) no es compra — antes se contaba igual e inflaba el
+      // surtido. El importe es el cobrado neto: catálogo − descuento.
+      if (r.status === "FULFILLED" && r.sale?.status === "COMPLETED") {
         t.purchasesCount++
-        t.purchasesTotalCents += Math.round(r.sale.total * 100)
+        t.purchasesTotalCents += Math.round(r.sale.total * 100) - r.sale.discountCents
       }
 
       // Demanda (sin rechazadas): por producto, valor estimado y tendencia.
@@ -211,7 +219,7 @@ export async function GET() {
       topProducts,
       byTaller: tallerList,
       weekly,
-    })
+    }, { headers: NO_STORE })
   } catch (error) {
     console.error("Error fetching marketplace demand report:", error)
     return NextResponse.json(

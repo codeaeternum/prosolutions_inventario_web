@@ -65,13 +65,36 @@ describe("tendencia semanal en horario del negocio", () => {
     // 0.1 + 0.2 = 0.30000000000000004 en Float: la suma en pesos dejaba
     // epsilon en purchasesTotal; con centavos por fila queda exacto.
     mocks.requestFind.mockResolvedValue([
-      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "Taller X", createdAt: new Date(), sale: { total: 0.1 } },
-      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "taller x", createdAt: new Date(), sale: { total: 0.2 } },
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "Taller X", createdAt: new Date(), sale: { total: 0.1, status: "COMPLETED", discountCents: 0 } },
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "taller x", createdAt: new Date(), sale: { total: 0.2, status: "COMPLETED", discountCents: 0 } },
     ])
     const res = await GET()
     const { byTaller } = await res.json()
     expect(byTaller[0].purchasesTotal).toBe(0.3)
     expect(byTaller[0].purchasesCount).toBe(2)
+  })
+
+  it("una venta anulada ya no es compra y el descuento se resta del surtido", async () => {
+    // FULFILLED con venta VOIDED: el stock volvió y el dinero se reembolsó —
+    // contarla como compra inflaba el total del taller. La otra venta lleva
+    // descuento autorizado: lo surtido es el neto, no el catálogo.
+    mocks.requestFind.mockResolvedValue([
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "Taller X", createdAt: new Date(), sale: { total: 500, status: "VOIDED", discountCents: 0 } },
+      { productId: "p1", qty: 1, status: "FULFILLED", tallerName: "Taller X", createdAt: new Date(), sale: { total: 300, status: "COMPLETED", discountCents: 5000 } },
+    ])
+    const res = await GET()
+    const { byTaller } = await res.json()
+    expect(byTaller[0].purchasesCount).toBe(1)
+    // $300 − $50 = $250 netos, no $800 de catálogo bruto.
+    expect(byTaller[0].purchasesTotal).toBe(250)
+    // La consulta trae el estado y el descuento de la venta ligada.
+    expect(mocks.requestFind).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        sale: expect.objectContaining({
+          select: expect.objectContaining({ status: true, discountCents: true }),
+        }),
+      }),
+    }))
   })
 
   it("las 8 semanas terminan en la semana MX actual, ascendente", async () => {

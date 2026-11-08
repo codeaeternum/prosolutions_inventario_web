@@ -17,7 +17,6 @@ import {
   AlertTriangle,
   Download,
   Calendar,
-  Loader2,
   RefreshCw,
   Store,
   Wrench,
@@ -35,6 +34,7 @@ import {
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { ComparadorSucursales } from "@/components/admin/reportes/comparador-sucursales"
+import { csvCell } from "@/lib/csv"
 import { formatDate } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
 import {
@@ -185,6 +185,19 @@ function parsePeriodParam(raw: string | null): ReportPeriod | null {
   if (normalized === "90d" || normalized === "90" || normalized === "trimestre") return "90d"
   if (normalized === "personalizado" || normalized === "custom") return "personalizado"
   return null
+}
+
+// Etiquetas de estado de reserva en español — mismas convenciones que el
+// hub de Pedidos (el enum llega en inglés desde la API).
+const RESERVATION_STATUS_META: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" }> = {
+  PENDING: { label: "Pendiente", variant: "warning" },
+  PENDING_PAYMENT: { label: "Pago por validar", variant: "warning" },
+  DEPOSIT_VERIFIED: { label: "Depósito verificado", variant: "default" },
+  APPROVED: { label: "Aprobada", variant: "default" },
+  REJECTED: { label: "Rechazada", variant: "destructive" },
+  COMPLETED: { label: "Completada", variant: "success" },
+  CANCELLED: { label: "Cancelada", variant: "destructive" },
+  EXPIRED: { label: "Expirada", variant: "outline" },
 }
 
 function toLocalDateInputValue(date: Date): string {
@@ -360,32 +373,33 @@ export default function ReportsPage() {
   const exportCSV = () => {
     if (!stats) return
 
-    const headers = [
-      "Métrica",
-      "Valor",
+    const periodLabel = PERIOD_OPTIONS.find((o) => o.value === period)?.label ?? "Todo"
+    const rows: Array<[string, string | number]> = [
+      ["Periodo", periodLabel],
+      ...(dateFrom ? [["Desde", dateFrom] as [string, string]] : []),
+      ...(dateTo ? [["Hasta", dateTo] as [string, string]] : []),
+      ["Total Productos", stats.totalProducts],
+      ["Productos Activos", stats.totalActiveProducts],
+      ["Stock Total", stats.totalStock],
+      ["Valor Total en Stock (MXN)", stats.totalStockValue.toFixed(2)],
+      ["Productos Stock Bajo", stats.lowStockProducts],
+      ["Productos Agotados", stats.outOfStockProducts],
+      ["Total Usuarios", stats.totalUsers],
+      ["Usuarios Activos", stats.activeUsers],
+      ["Usuarios Pendientes", stats.pendingUsers],
+      ["Total Reservas", stats.totalReservations],
+      ["Reservas Pendientes", stats.pendingReservations],
+      ["Reservas Completadas", stats.completedReservations],
+      ["Reservas Canceladas", stats.cancelledReservations],
+      ["Total Marcas", stats.totalBrands],
+      ["Total Categorías", stats.totalCategories],
+      ["Total Modelos", stats.totalModels],
     ]
 
-    const rows = [
-      ["Total Productos", stats.totalProducts.toString()],
-      ["Productos Activos", stats.totalActiveProducts.toString()],
-      ["Stock Total", stats.totalStock.toString()],
-      ["Valor Total en Stock", `$${stats.totalStockValue.toFixed(2)}`],
-      ["Productos Stock Bajo", stats.lowStockProducts.toString()],
-      ["Productos Agotados", stats.outOfStockProducts.toString()],
-      ["Total Usuarios", stats.totalUsers.toString()],
-      ["Usuarios Activos", stats.activeUsers.toString()],
-      ["Usuarios Pendientes", stats.pendingUsers.toString()],
-      ["Total Reservas", stats.totalReservations.toString()],
-      ["Reservas Pendientes", stats.pendingReservations.toString()],
-      ["Reservas Completadas", stats.completedReservations.toString()],
-      ["Reservas Canceladas", stats.cancelledReservations.toString()],
-      ["Total Marcas", stats.totalBrands.toString()],
-      ["Total Categorías", stats.totalCategories.toString()],
-      ["Total Modelos", stats.totalModels.toString()],
-    ]
-
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n")
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    // csvCell por celda (anti-inyección + comillas) y BOM UTF-8 para que
+    // Excel respete los acentos — igual que los exports de Equipo.
+    const lines = [["Métrica", "Valor"].map(csvCell).join(","), ...rows.map((r) => r.map(csvCell).join(","))]
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" })
     const link = document.createElement("a")
     link.href = URL.createObjectURL(blob)
     link.download = `reporte-${new Date().toISOString().split("T")[0]}.csv`
@@ -611,7 +625,7 @@ export default function ReportsPage() {
                 <Package className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stats.totalActiveProducts}</div>
+                <div className="text-2xl font-bold" aria-live="polite">{stats.totalActiveProducts}</div>
                 <p className="text-xs text-muted-foreground">
                   de {stats.totalProducts} totales
                 </p>
@@ -624,7 +638,7 @@ export default function ReportsPage() {
                 <ShoppingCart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stats.totalStock.toLocaleString()}</div>
+                <div className="text-2xl font-bold" aria-live="polite">{intFmt(stats.totalStock)}</div>
                 <p className="text-xs text-muted-foreground">
                   unidades en inventario
                 </p>
@@ -637,7 +651,7 @@ export default function ReportsPage() {
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">
+                <div className="text-2xl font-bold" aria-live="polite">
                   {formatPrice(stats.totalStockValue)}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -652,7 +666,7 @@ export default function ReportsPage() {
                 <AlertTriangle className="h-4 w-4 text-yellow-500 dark:text-yellow-400" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
+                <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400" aria-live="polite">
                   {stats.lowStockProducts}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -662,9 +676,16 @@ export default function ReportsPage() {
             </Card>
           </div>
 
-          {/* Comparador de sucursales: ventas, mermas, stock y taller lado a lado */}
-          <ComparadorSucursales />
+        </>
+      )}
 
+      {/* Comparador de sucursales: ventas, mermas, stock y taller lado a
+          lado. Tiene su propio fetch — antes vivía dentro del gate de stats
+          y un fallo de /api/reports lo apagaba junto con todo lo demás. */}
+      <ComparadorSucursales />
+
+      {stats && (
+        <>
           {/* Usuarios y Reservas */}
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
@@ -705,7 +726,9 @@ export default function ReportsPage() {
                   <span className="font-bold text-lg">{stats.totalReservations}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Pendientes</span>
+                  <span className="text-muted-foreground" title="Incluye pendientes, pagos por validar, depósitos verificados y aprobadas por recoger">
+                    Por atender
+                  </span>
                   <Badge variant="secondary">{stats.pendingReservations}</Badge>
                 </div>
                 <div className="flex justify-between items-center">
@@ -763,7 +786,11 @@ export default function ReportsPage() {
               </CardHeader>
               <CardContent>
                 {stats.topProducts.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">No hay datos disponibles</p>
+                  <EmptyState
+                    icon={TrendingUp}
+                    title="Sin reservas en el periodo"
+                    description="Cuando se registren reservas de productos, el ranking aparecerá aquí."
+                  />
                 ) : (
                   <div className="space-y-3">
                     {stats.topProducts.map((product, index) => (
@@ -791,7 +818,11 @@ export default function ReportsPage() {
               </CardHeader>
               <CardContent>
                 {stats.topBrands.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">No hay datos disponibles</p>
+                  <EmptyState
+                    icon={BarChart3}
+                    title="Aún no hay marcas"
+                    description="Las marcas con productos en catálogo se mostrarán aquí."
+                  />
                 ) : (
                   <div className="space-y-3">
                     {stats.topBrands.map((brand, index) => (
@@ -820,7 +851,11 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               {!stats.topClients || stats.topClients.length === 0 ? (
-                <p className="text-muted-foreground text-sm">No hay datos disponibles</p>
+                <EmptyState
+                  icon={Users}
+                  title="Sin compras completadas en el periodo"
+                  description="Los clientes con más compras completadas aparecerán aquí."
+                />
               ) : (
                 <div className="space-y-3">
                   {stats.topClients.map((client, index) => (
@@ -898,7 +933,11 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               {stats.recentReservations.length === 0 ? (
-                <p className="text-muted-foreground text-sm">No hay reservas</p>
+                <EmptyState
+                  icon={CalendarCheck}
+                  title="No hay reservas en el periodo"
+                  description="Prueba con un rango de fechas más amplio o limpia el filtro."
+                />
               ) : (
                 <div className="space-y-3">
                   {stats.recentReservations.map((reservation) => (
@@ -917,15 +956,9 @@ export default function ReportsPage() {
                           {formatPrice(reservation.totalPrice)}
                         </span>
                         <Badge
-                          variant={
-                            reservation.status === "COMPLETED"
-                              ? "default"
-                              : reservation.status === "CANCELLED" || reservation.status === "EXPIRED"
-                                ? "destructive"
-                                : "secondary"
-                          }
+                          variant={RESERVATION_STATUS_META[reservation.status]?.variant ?? "secondary"}
                         >
-                          {reservation.status}
+                          {RESERVATION_STATUS_META[reservation.status]?.label ?? reservation.status}
                         </Badge>
                       </div>
                     </div>
@@ -950,8 +983,14 @@ export default function ReportsPage() {
         </CardHeader>
         <CardContent>
           {demandLoading ? (
-            <div className="flex items-center justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="space-y-4" role="status" aria-label="Cargando demanda del mercado">
+              <div className="flex flex-wrap gap-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-6 w-28" />
+                ))}
+              </div>
+              <Skeleton className="h-28 w-full" />
+              <Skeleton className="h-44 w-full" />
             </div>
           ) : demandError || !demand ? (
             <div role="alert" className="flex flex-col items-center justify-center gap-3 py-8">
@@ -972,7 +1011,7 @@ export default function ReportsPage() {
           ) : (
             <div className="space-y-6">
               {/* Resumen */}
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2" aria-live="polite">
                 <Badge variant="secondary">
                   {demand.summary.totalRequests} solicitudes
                 </Badge>
@@ -1210,11 +1249,21 @@ export default function ReportsPage() {
         </h2>
 
         {seriesLoading ? (
-          <Card>
-            <CardContent className="flex items-center justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </CardContent>
-          </Card>
+          <div className="space-y-4" role="status" aria-label="Cargando gráficas">
+            <div className="grid gap-4 lg:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="rounded-xl border bg-card p-6 space-y-3">
+                  <Skeleton className="h-5 w-40" />
+                  <Skeleton className="h-4 w-56" />
+                  <Skeleton className="h-40 w-full" />
+                </div>
+              ))}
+            </div>
+            <div className="rounded-xl border bg-card p-6 space-y-3">
+              <Skeleton className="h-5 w-56" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          </div>
         ) : seriesError || !series ? (
           <Card>
             <CardContent role="alert" className="flex flex-col items-center justify-center gap-3 py-8">

@@ -18,10 +18,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useCurrency } from "@/components/currency-provider"
 import {
   GitCompareArrows,
-  Loader2,
   RefreshCw,
   Store,
   Trophy,
@@ -135,13 +135,19 @@ export function ComparadorSucursales() {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border p-0.5 gap-0.5">
+            <div
+              role="group"
+              aria-label="Periodo del comparador"
+              className="flex rounded-lg border p-0.5 gap-0.5"
+            >
               {PERIODOS.map((d) => (
                 <Button
                   key={d}
                   size="sm"
                   variant={dias === d ? "default" : "ghost"}
                   className="h-7 px-2.5"
+                  aria-pressed={dias === d}
+                  aria-label={`Comparar últimos ${d} días`}
                   onClick={() => setDias(d)}
                 >
                   {d}d
@@ -164,15 +170,20 @@ export function ComparadorSucursales() {
       </CardHeader>
       <CardContent>
         {loading && !data ? (
-          <div className="flex items-center justify-center py-10">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="rounded-lg border p-4 space-y-3" role="status" aria-label="Cargando comparador de sucursales">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between gap-4">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+            ))}
           </div>
         ) : error || !data ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-8">
+          <div role="alert" className="flex flex-col items-center justify-center gap-3 py-8">
             <p className="text-sm text-destructive">
               {error || "Error desconocido"}
             </p>
-            <Button onClick={fetchData} variant="outline" size="sm">
+            <Button onClick={fetchData} variant="outline" size="sm" aria-label="Reintentar comparador de sucursales">
               <RefreshCw className="h-4 w-4 mr-2" />
               Reintentar
             </Button>
@@ -185,7 +196,12 @@ export function ComparadorSucursales() {
           />
         ) : (
           <>
-            <div className="rounded-lg border overflow-x-auto">
+            {/* Al cambiar de periodo se recarga con los datos viejos a la
+                vista atenuados — aria-busy lo anuncia sin esconder la tabla. */}
+            <div
+              className={`rounded-lg border overflow-x-auto transition-opacity${loading ? " opacity-60" : ""}`}
+              aria-busy={loading}
+            >
               <Table>
                 <TableHeader>
                   <TableRow>

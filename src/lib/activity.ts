@@ -156,6 +156,7 @@ const AUDIT_LABELS: Record<string, string> = {
 }
 
 const AUDIT_PREFIX_LABELS: [string, string][] = [
+  ["ASISTENCIA_", "Asistencia"],
   ["SUPPLIER_", "Proveedor"],
   ["CATEGORY_", "Catálogo"],
   ["BRAND_", "Catálogo"],

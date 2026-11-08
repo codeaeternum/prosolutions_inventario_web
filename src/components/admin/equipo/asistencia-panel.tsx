@@ -5,16 +5,22 @@ import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertTriangle, History, LogIn, RefreshCw, Search, ShieldAlert } from "lucide-react"
+import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
+import { toast } from "sonner"
 import { businessDayKey } from "@/lib/business-time"
+import { JORNADA_MAX_MS } from "@/lib/asistencia"
 
 // Misma forma que JornadaDerivada de lib/asistencia (la respuesta del GET).
 interface Jornada {
+  inEventId: string
   inAt: string
+  outEventId: string | null
   outAt: string | null
   /** null en jornada abandonada (openEnded): no se inventan minutos. */
   minutos: number | null
@@ -23,6 +29,15 @@ interface Jornada {
   /** Abandonada (>16 h sin cierre): no es una jornada vigente. */
   openEnded?: boolean
   source?: string
+}
+
+// ClockEvent serializado del GET: las marcas crudas del periodo, con su id
+// para PATCH /api/asistencia/[eventId].
+interface ClockEventItem {
+  id: string
+  type: string
+  at: string
+  note: string | null
 }
 
 interface StaffUser {
@@ -36,6 +51,9 @@ const STAFF_ROLES = ["ADMIN", "EMPLOYEE", "WORKSHOP"] as const
 
 const fmtHora = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" })
+
+const fmtFechaHora = (iso: string) =>
+  new Date(iso).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Mexico_City" })
 
 const fmtDuracion = (min: number) => {
   if (min < 60) return `${min} min`
@@ -70,16 +88,49 @@ const rangeFor = (preset: Preset): { from: string; to: string } => {
 const fuenteLabel = (fuente: string) =>
   fuente === "reloj" ? "Reloj" : fuente === "actividad" ? "Actividad" : fuente
 
+// datetime-local habla hora LOCAL del navegador (igual que los inputs del
+// taller: toISOString daría UTC y el navegador compara literal).
+const toLocalInput = (instant: Date) => {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}T${pad(instant.getHours())}:${pad(instant.getMinutes())}`
+}
+
+/** Valor de un input datetime-local → ISO; null si no es fecha válida. */
+const localInputToIso = (value: string): string | null => {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+/**
+ * Sugerencia de cierre para una jornada abandonada: el fin del día en que
+ * abrió, pero nunca más allá de la ventana de 16 h (una salida más tardía
+ * derivaría otra vez en openEnded) ni en el futuro.
+ */
+const cierreSugerido = (inAt: string): Date => {
+  const entrada = new Date(inAt)
+  const finDelDia = new Date(entrada)
+  finDelDia.setHours(23, 59, 0, 0)
+  const maxVentana = new Date(entrada.getTime() + JORNADA_MAX_MS - 60_000)
+  return new Date(Math.min(finDelDia.getTime(), maxVentana.getTime(), Date.now()))
+}
+
 /**
  * Asistencia (solo ADMIN): checadas de entrada y salida de todo el equipo
  * agrupadas por persona, cruzadas con /api/users para listar también a
  * quien no ha marcado. A diferencia de Turnos (reconstruido de la
  * actividad), aquí la jornada la marca cada quien con el reloj.
+ *
+ * Correcciones del dueño (quedan en la bitácora):
+ * - "Cerrar turno" crea el OUT faltante de una jornada abierta/abandonada
+ *   (POST /api/asistencia/cerrar) — la hora la elige el admin, nunca se
+ *   inventa sola.
+ * - "Corregir" lista las marcas del periodo y permite mover la hora de una
+ *   o anotarla (PATCH /api/asistencia/[eventId]) sin invertir IN→OUT.
  */
 export function AsistenciaPanel() {
   const [staff, setStaff] = useState<StaffUser[]>([])
-  // userId → jornadas del checador en el periodo (vienen agrupadas del GET).
-  const [porUsuario, setPorUsuario] = useState<Map<string, { name: string; jornadas: Jornada[] }>>(new Map())
+  // userId → jornadas + marcas crudas del checador en el periodo.
+  const [porUsuario, setPorUsuario] = useState<Map<string, { name: string; jornadas: Jornada[]; events: ClockEventItem[] }>>(new Map())
   const [preset, setPreset] = useState<Preset>("hoy")
   const [periodo, setPeriodo] = useState<{ from: string; to: string } | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -87,6 +138,18 @@ export function AsistenciaPanel() {
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+
+  // Diálogo "Cerrar turno": apunta a la jornada sin salida más antigua del
+  // usuario (la misma candidata que el endpoint toma con outAt grande).
+  const [cerrarTarget, setCerrarTarget] = useState<{ userId: string; name: string; inAt: string; openEnded: boolean } | null>(null)
+  const [cerrarForm, setCerrarForm] = useState({ outAt: "", note: "" })
+  const [cerrando, setCerrando] = useState(false)
+
+  // Diálogo "Corregir": lista las marcas del usuario en el periodo; solo una
+  // fila entra en edición a la vez.
+  const [corregirTarget, setCorregirTarget] = useState<{ userId: string; name: string } | null>(null)
+  const [editando, setEditando] = useState<{ id: string; at: string; note: string } | null>(null)
+  const [guardando, setGuardando] = useState(false)
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -122,11 +185,12 @@ export function AsistenciaPanel() {
 
       // Respuesta: { period, users: [{ userId, name, events, jornadas }] }
       // — la vista de negocio solo incluye a quien sí checó en el rango.
-      const mapa = new Map<string, { name: string; jornadas: Jornada[] }>()
+      const mapa = new Map<string, { name: string; jornadas: Jornada[]; events: ClockEventItem[] }>()
       for (const u of data?.users ?? []) {
         mapa.set(u.userId, {
           name: typeof u.name === "string" ? u.name : "Usuario",
           jornadas: Array.isArray(u.jornadas) ? u.jornadas : [],
+          events: Array.isArray(u.events) ? u.events : [],
         })
       }
       setStaff(list.sort((a, b) => a.name.localeCompare(b.name)))
@@ -160,7 +224,8 @@ export function AsistenciaPanel() {
 
   const rows = useMemo(() => {
     const items = staff.map(user => {
-      const js = (porUsuario.get(user.id)?.jornadas ?? []).slice().sort((a, b) => a.inAt.localeCompare(b.inAt))
+      const data = porUsuario.get(user.id)
+      const js = (data?.jornadas ?? []).slice().sort((a, b) => a.inAt.localeCompare(b.inAt))
       const open = js.find(j => j.open === true) ?? null
       const abandonadas = js.filter(j => j.openEnded === true).length
       const totalMin = js.reduce((sum, j) =>
@@ -172,22 +237,29 @@ export function AsistenciaPanel() {
       // "Sin duración registrada" cuando todo lo marcado quedó abandonado.
       const hasTiempo = js.some(j => j.open === true || j.minutos !== null)
       const fuentes = [...new Set(js.map(j => j.source).filter((s): s is string => Boolean(s)))]
-      return { user, jornadas: js, open, cerradas: js.length - (open ? 1 : 0), abandonadas, totalMin, hasTiempo, fuentes }
+      // Jornada sin salida más antigua (abierta o abandonada): es la que
+      // "Cerrar turno" sugiere corregir.
+      const sinSalida = open ?? js.find(j => j.openEnded === true) ?? null
+      return { user, jornadas: js, events: data?.events ?? [], open, sinSalida, cerradas: js.length - (open ? 1 : 0), abandonadas, totalMin, hasTiempo, fuentes }
     })
     // Quien checó pero ya no aparece como staff vigente (suspendido después,
     // p. ej.): la bitácora del día no lo debe esconder — sale con el nombre
     // que devolvió la API, sin puesto.
     for (const [userId, m] of porUsuario) {
       if (!staff.some(s => s.id === userId)) {
+        const js = m.jornadas
+        const open = js.find(j => j.open === true) ?? null
         items.push({
           user: { id: userId, name: m.name, jobTitle: null, role: "" },
-          jornadas: m.jornadas,
-          open: m.jornadas.find(j => j.open === true) ?? null,
-          cerradas: m.jornadas.filter(j => j.open !== true).length,
-          abandonadas: m.jornadas.filter(j => j.openEnded === true).length,
-          totalMin: m.jornadas.reduce((sum, j) => sum + (j.minutos ?? 0), 0),
-          hasTiempo: m.jornadas.some(j => j.minutos !== null),
-          fuentes: [...new Set(m.jornadas.map(j => j.source).filter((s): s is string => Boolean(s)))],
+          jornadas: js,
+          events: m.events,
+          open,
+          sinSalida: open ?? js.find(j => j.openEnded === true) ?? null,
+          cerradas: js.filter(j => j.open !== true).length,
+          abandonadas: js.filter(j => j.openEnded === true).length,
+          totalMin: js.reduce((sum, j) => sum + (j.minutos ?? 0), 0),
+          hasTiempo: js.some(j => j.minutos !== null),
+          fuentes: [...new Set(js.map(j => j.source).filter((s): s is string => Boolean(s)))],
         })
       }
     }
@@ -213,6 +285,84 @@ export function AsistenciaPanel() {
   // La columna Fuente solo existe si el backend expone `source` en alguna
   // jornada; sin el campo se omite sin romper nada.
   const showFuente = rows.some(r => r.fuentes.length > 0)
+
+  const openCerrar = (r: (typeof rows)[number]) => {
+    if (!r.sinSalida) return
+    const sugerida = r.sinSalida.open === true ? new Date() : cierreSugerido(r.sinSalida.inAt)
+    setCerrarTarget({ userId: r.user.id, name: r.user.name, inAt: r.sinSalida.inAt, openEnded: r.sinSalida.openEnded === true })
+    setCerrarForm({ outAt: toLocalInput(sugerida), note: "" })
+  }
+
+  const submitCerrar = async () => {
+    if (!cerrarTarget) return
+    const iso = localInputToIso(cerrarForm.outAt)
+    if (!iso) {
+      toast.error("Revisa la hora de salida: no es una fecha válida.")
+      return
+    }
+    setCerrando(true)
+    try {
+      const res = await fetch("/api/asistencia/cerrar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: cerrarTarget.userId,
+          outAt: iso,
+          note: cerrarForm.note.trim() || undefined,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 201) {
+        toast.success("Jornada cerrada: se registró la salida corregida.")
+        setCerrarTarget(null)
+        void load()
+        return
+      }
+      toast.error(data.error || "No se pudo cerrar la jornada")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setCerrando(false)
+    }
+  }
+
+  const openCorregir = (r: (typeof rows)[number]) => {
+    setCorregirTarget({ userId: r.user.id, name: r.user.name })
+    setEditando(null)
+  }
+
+  const submitCorreccion = async (event: ClockEventItem) => {
+    if (!editando) return
+    const iso = localInputToIso(editando.at)
+    if (!iso) {
+      toast.error("Revisa la hora: no es una fecha válida.")
+      return
+    }
+    setGuardando(true)
+    try {
+      const res = await fetch(`/api/asistencia/${event.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ at: iso, note: editando.note.trim() || null }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        toast.success("Marca corregida")
+        setEditando(null)
+        void load()
+        return
+      }
+      toast.error(data.error || "No se pudo corregir la marca")
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  // Eventos visibles en el diálogo de corrección: salen del mismo mapa para
+  // que un PATCH exitoso se refleje al instante tras el refetch.
+  const eventosCorregir = (corregirTarget ? porUsuario.get(corregirTarget.userId)?.events : undefined) ?? []
 
   if (forbidden) {
     return (
@@ -360,12 +510,36 @@ export function AsistenciaPanel() {
                         </TableCell>
                       )}
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/admin/equipo?tab=actividad&actor=${r.user.id}&anombre=${encodeURIComponent(r.user.name)}`}>
-                            <History className="h-4 w-4 mr-1" />
-                            Ver
-                          </Link>
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          {r.sinSalida && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openCerrar(r)}
+                              title={r.open ? "Registrar la salida que falta" : "Cerrar una jornada sin salida"}
+                            >
+                              <DoorOpen className="h-4 w-4 mr-1" />
+                              Cerrar turno
+                            </Button>
+                          )}
+                          {r.events.length > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openCorregir(r)}
+                              title="Corregir la hora o la nota de una marca"
+                            >
+                              <Pencil className="h-4 w-4 mr-1" />
+                              Corregir
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/admin/equipo?tab=actividad&actor=${r.user.id}&anombre=${encodeURIComponent(r.user.name)}`}>
+                              <History className="h-4 w-4 mr-1" />
+                              Ver
+                            </Link>
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -378,6 +552,153 @@ export function AsistenciaPanel() {
           </>
         )}
       </CardContent>
+
+      {/* Cerrar turno: el admin elige la hora real de salida; el servidor
+          decide a qué entrada sin pareja se la asigna (la más antigua
+          compatible) y todo queda en la bitácora. */}
+      <Dialog open={cerrarTarget !== null} onOpenChange={open => { if (!open && !cerrando) setCerrarTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cerrar turno de {cerrarTarget?.name}</DialogTitle>
+            <DialogDescription>
+              {cerrarTarget && (
+                <>
+                  {cerrarTarget.openEnded
+                    ? `La entrada del ${fmtFechaHora(cerrarTarget.inAt)} quedó sin salida.`
+                    : `En turno desde las ${fmtHora(cerrarTarget.inAt)}.`}
+                  {" "}Se registrará una salida (OUT) con la hora que indiques; si hay
+                  varias jornadas sin salida se cierra la más antigua compatible.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="cerrar-out-at" className="text-xs">Hora de salida</Label>
+              <Input
+                id="cerrar-out-at"
+                type="datetime-local"
+                value={cerrarForm.outAt}
+                min={cerrarTarget ? toLocalInput(new Date(cerrarTarget.inAt)) : undefined}
+                max={toLocalInput(new Date())}
+                onChange={e => setCerrarForm(f => ({ ...f, outAt: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="cerrar-note" className="text-xs">Nota (opcional)</Label>
+              <Input
+                id="cerrar-note"
+                value={cerrarForm.note}
+                maxLength={280}
+                placeholder="Olvidó marcar la salida…"
+                onChange={e => setCerrarForm(f => ({ ...f, note: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCerrarTarget(null)} disabled={cerrando}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void submitCerrar()} disabled={cerrando || !cerrarForm.outAt}>
+              {cerrando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              Registrar salida
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Corregir marcas: historial crudo del periodo con edición inline de
+          hora y nota por evento. */}
+      <Dialog open={corregirTarget !== null} onOpenChange={open => { if (!open && !guardando) { setCorregirTarget(null); setEditando(null) } }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Corregir marcas de {corregirTarget?.name}</DialogTitle>
+            <DialogDescription>
+              Ajusta la hora de una entrada o salida (p. ej. una checada tardía u
+              olvidada) o edita su nota. Cada corrección queda en la bitácora.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 overflow-y-auto">
+            {eventosCorregir.length === 0 && (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Sin marcas en el periodo {periodo?.from} → {periodo?.to}.
+              </p>
+            )}
+            {eventosCorregir.map(ev => (
+              <div key={ev.id} className="rounded-lg border p-3">
+                {editando?.id === ev.id ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      {ev.type === "OUT"
+                        ? <LogOut className="h-4 w-4 text-muted-foreground" />
+                        : <LogIn className="h-4 w-4 text-muted-foreground" />}
+                      <span className="text-sm font-medium">{ev.type === "OUT" ? "Salida" : "Entrada"}</span>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <Label className="text-xs" htmlFor={`edit-at-${ev.id}`}>Hora</Label>
+                        <Input
+                          id={`edit-at-${ev.id}`}
+                          type="datetime-local"
+                          value={editando.at}
+                          max={toLocalInput(new Date())}
+                          onChange={e => setEditando(ed => ed ? { ...ed, at: e.target.value } : ed)}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs" htmlFor={`edit-note-${ev.id}`}>Nota</Label>
+                        <Input
+                          id={`edit-note-${ev.id}`}
+                          value={editando.note}
+                          maxLength={280}
+                          placeholder="Motivo de la corrección…"
+                          onChange={e => setEditando(ed => ed ? { ...ed, note: e.target.value } : ed)}
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setEditando(null)} disabled={guardando}>
+                        Cancelar
+                      </Button>
+                      <Button size="sm" onClick={() => void submitCorreccion(ev)} disabled={guardando || !editando.at}>
+                        {guardando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                        Guardar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {ev.type === "OUT"
+                        ? <LogOut className="h-4 w-4 text-muted-foreground shrink-0" />
+                        : <LogIn className="h-4 w-4 text-muted-foreground shrink-0" />}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">
+                          {ev.type === "OUT" ? "Salida" : "Entrada"} · {fmtFechaHora(ev.at)}
+                        </p>
+                        {ev.note && <p className="text-xs text-muted-foreground truncate">{ev.note}</p>}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditando({ id: ev.id, at: toLocalInput(new Date(ev.at)), note: ev.note ?? "" })}
+                      disabled={editando !== null}
+                      aria-label={`Corregir ${ev.type === "OUT" ? "salida" : "entrada"} de ${fmtFechaHora(ev.at)}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
