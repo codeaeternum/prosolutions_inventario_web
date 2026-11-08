@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest"
 import {
   findGoCommand,
   isEditableShortcutTarget,
+  resolveNewShortcut,
   GO_SEQUENCE_MS,
+  NEW_SHORTCUT_QUERY,
 } from "@/components/admin/command-palette"
 
 // La paleta no puede renderizarse en vitest (ambiente node, sin DOM): se
@@ -54,6 +56,54 @@ describe("isEditableShortcutTarget", () => {
     // Ni siquiera algo con pinta de input: el guard exige HTMLElement real.
     const fakeInput = { tagName: "INPUT" } as unknown as EventTarget
     expect(isEditableShortcutTarget(fakeInput)).toBe(false)
+  })
+})
+
+describe("resolveNewShortcut (tecla n)", () => {
+  // El mapa ruta→acción es puro; el gate de módulo/rol se aplica en el
+  // componente buscando el commandId en visibleCommands (igual que "g …").
+  it("taller (cualquier subruta) → comando recibir equipo", () => {
+    expect(resolveNewShortcut("/admin/taller")).toEqual({ kind: "command", commandId: "acc-recibir" })
+    expect(resolveNewShortcut("/admin/taller/recibir")).toEqual({ kind: "command", commandId: "acc-recibir" })
+    expect(resolveNewShortcut("/admin/taller/catalogo")).toEqual({ kind: "command", commandId: "acc-recibir" })
+  })
+
+  it("ventas → enfoca el buscador de producto", () => {
+    expect(resolveNewShortcut("/admin/ventas")).toEqual({ kind: "focus", selector: "#pos-product-search" })
+  })
+
+  it("inventario → comando nuevo producto", () => {
+    expect(resolveNewShortcut("/admin/inventario")).toEqual({ kind: "command", commandId: "acc-nuevo-producto" })
+  })
+
+  it("ficha 360 de cliente → nueva venta con cliente precargado, gated por ventas", () => {
+    expect(resolveNewShortcut("/admin/clientes/cus_123")).toEqual({
+      kind: "href",
+      href: "/admin/ventas?cliente=cus_123",
+      gatedBy: "acc-vender",
+    })
+  })
+
+  it("clientes (hub) → paleta: no existe alta de cliente en la página", () => {
+    expect(resolveNewShortcut("/admin/clientes")).toEqual({ kind: "palette", query: NEW_SHORTCUT_QUERY })
+  })
+
+  it("resto de páginas → paleta pre-cargada con «nuev»", () => {
+    for (const path of ["/admin", "/admin/caja", "/admin/equipo", "/admin/reportes", "/admin/configuracion", "/admin/mercado", "/admin/tickets/venta/abc"]) {
+      expect(resolveNewShortcut(path)).toEqual({ kind: "palette", query: NEW_SHORTCUT_QUERY })
+    }
+  })
+
+  it("prefijos no se confunden (ventasx, taller-extra sin slash)", () => {
+    expect(resolveNewShortcut("/admin/ventasx")).toEqual({ kind: "palette", query: NEW_SHORTCUT_QUERY })
+  })
+
+  it("«nuev» matchea tanto «nueva» como «nuevo» en el filtro de la paleta", () => {
+    // Mismo normalize del componente: la query del fallback debe ser
+    // prefijo de ambos para listar todas las acciones de alta.
+    expect("nueva venta".includes(NEW_SHORTCUT_QUERY)).toBe(true)
+    expect("nuevo producto".includes(NEW_SHORTCUT_QUERY)).toBe(true)
+    expect("nueva orden de servicio".includes(NEW_SHORTCUT_QUERY)).toBe(true)
   })
 })
 

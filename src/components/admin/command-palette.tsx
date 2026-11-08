@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { DialogOverlay } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
@@ -16,6 +16,7 @@ import {
   Loader2,
   Package,
   PackagePlus,
+  Plus,
   ReceiptText,
   ScanBarcode,
   ScanLine,
@@ -98,6 +99,53 @@ export function findGoCommand<T extends { shortcut?: string }>(
 ): T | null {
   const want = `g ${secondKey.toLowerCase()}`
   return commands.find(c => c.shortcut === want) ?? null
+}
+
+// Búsqueda pre-cargada de la paleta cuando "n" no tiene una acción obvia en
+// la página: "nuev" matchea "nueva" y "nuevo" a la vez → aparecen Nueva
+// venta, Recibir equipo (Nueva orden de servicio) y Nuevo producto.
+export const NEW_SHORTCUT_QUERY = "nuev"
+
+/**
+ * Acción de la tecla "n" («nueva…») según la ruta actual:
+ * - "command": ejecuta un comando de la paleta → hereda el gate de
+ *   módulo/rol (si el comando no es visible, cae al fallback de paleta).
+ * - "href": navega a una ruta calculada; solo si `gatedBy` (id de comando)
+ *   es visible — p. ej. la ficha de cliente enlaza "Nueva venta" pero solo
+ *   cuando el usuario puede vender.
+ * - "focus": enfoca un control de la página (el buscador del mostrador).
+ * - "palette": sin acción obvia → abrir la paleta buscando «nuev…».
+ * Nunca devuelve algo destructivo: a lo sumo navega o abre un alta vacía.
+ */
+export type NewShortcutAction =
+  | { kind: "command"; commandId: string }
+  | { kind: "href"; href: string; gatedBy: string }
+  | { kind: "focus"; selector: string }
+  | { kind: "palette"; query: string }
+
+export function resolveNewShortcut(pathname: string): NewShortcutAction {
+  // Ficha 360 del cliente (/admin/clientes/<id>): replica su botón «Nueva
+  // venta», que precarga al cliente en el mostrador.
+  const clienteId = /^\/admin\/clientes\/([^/?#]+)\/?$/.exec(pathname)?.[1]
+  if (clienteId) {
+    return { kind: "href", href: `/admin/ventas?cliente=${encodeURIComponent(clienteId)}`, gatedBy: "acc-vender" }
+  }
+  // Nueva orden de servicio — incluye /taller/recibir (reabrir el intake).
+  if (pathname === "/admin/taller" || pathname.startsWith("/admin/taller/")) {
+    return { kind: "command", commandId: "acc-recibir" }
+  }
+  // «Nueva venta» en el mostrador = empezar a capturar: foco al buscador
+  // (mismo destino que el atajo "/" de esa pantalla, no destructivo).
+  if (pathname === "/admin/ventas") {
+    return { kind: "focus", selector: "#pos-product-search" }
+  }
+  if (pathname === "/admin/inventario") {
+    return { kind: "command", commandId: "acc-nuevo-producto" }
+  }
+  // /admin/clientes no tiene alta propia (los registros se aprueban en
+  // Usuarios) ni el resto de hubs una acción «nueva» unívoca → la paleta
+  // pre-cargada con "nuev" enseña las altas disponibles para el rol.
+  return { kind: "palette", query: NEW_SHORTCUT_QUERY }
 }
 
 // ¿El evento de teclado nació en un campo editable? Entonces la letra le
@@ -186,8 +234,8 @@ const COMMANDS: CommandItem[] = [
 ]
 
 const HOME_COMMAND: CommandItem = { id: "nav-home", label: "Inicio", hint: "Panel principal", keywords: "dashboard resumen", href: "/admin", icon: LayoutDashboard, group: "Inicio", shortcut: "g d" }
-const PARTNER_COMMAND: CommandItem = { id: "nav-aliado", label: "Portal aliado", hint: "Captar y dar seguimiento", keywords: "aliado taller captador", href: "/aliado", icon: Handshake, group: "Clientes y mercado" }
-const PLATFORM_COMMAND: CommandItem = { id: "nav-platform", label: "Consola de plataforma", hint: "Operador Reficio", keywords: "superadmin plataforma tenants", href: "/platform", icon: Shield, group: "Negocio" }
+const PARTNER_COMMAND: CommandItem = { id: "nav-aliado", label: "Portal aliado", hint: "Captar y dar seguimiento", keywords: "aliado taller captador", href: "/aliado", icon: Handshake, group: "Clientes y mercado", shortcut: "g a" }
+const PLATFORM_COMMAND: CommandItem = { id: "nav-platform", label: "Consola de plataforma", hint: "Operador Reficio", keywords: "superadmin plataforma tenants", href: "/platform", icon: Shield, group: "Negocio", shortcut: "g p" }
 
 interface CommandPaletteProps {
   user: {
@@ -201,6 +249,7 @@ interface CommandPaletteProps {
 
 export function AdminCommandPalette({ user, hasPartner = false, businessKind }: CommandPaletteProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<EntityResult[]>([])
@@ -221,7 +270,7 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
   const visibleCommands = useMemo(() => {
     if (user.role === "WORKSHOP") {
       const items = [PARTNER_COMMAND]
-      items.push({ ...COMMANDS.find(c => c.id === "nav-mercado-cat")!, label: "Mercado", hint: "Comprar refacciones a aliados" })
+      items.push({ ...COMMANDS.find(c => c.id === "nav-mercado-cat")!, label: "Mercado", hint: "Comprar refacciones a aliados", shortcut: "g m" })
       return items
     }
     // El portal aliado se inserta al final del grupo "Clientes y mercado"
@@ -260,11 +309,52 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
     router.push(href)
   }, [router, resetPalette])
 
+  // Fallback de la tecla "n": la paleta pre-cargada con «nuev» enseña las
+  // acciones de alta que el rol sí tiene (Nueva venta, Recibir, Producto).
+  const openNewSearch = useCallback((query = NEW_SHORTCUT_QUERY) => {
+    setShowShortcuts(false)
+    setQuery(query)
+    setActiveIndex(0)
+    setOpen(true)
+  }, [])
+
+  // Tecla "n" = acción «nueva» de la página actual. Navegación/foco nada
+  // más — jamás confirma ni borra nada. Las acciones que apuntan a un
+  // comando heredan su gate de módulo/rol; sin acceso o sin acción obvia,
+  // cae a la paleta pre-cargada.
+  const runNewShortcut = useCallback(() => {
+    const action = resolveNewShortcut(pathname ?? "")
+    if (action.kind === "focus") {
+      const el = document.querySelector<HTMLElement>(action.selector)
+      if (el) {
+        el.focus()
+        return
+      }
+    } else if (action.kind === "command") {
+      const cmd = visibleCommands.find(c => c.id === action.commandId)
+      if (cmd) {
+        goTo(cmd.href)
+        return
+      }
+    } else if (action.kind === "href") {
+      if (visibleCommands.some(c => c.id === action.gatedBy)) {
+        goTo(action.href)
+        return
+      }
+    } else {
+      openNewSearch(action.query)
+      return
+    }
+    openNewSearch()
+  }, [pathname, visibleCommands, goTo, openNewSearch])
+
   // Atajos globales:
   // - ⌘K / Ctrl+K abre o cierra la paleta (único atajo con modificador).
   // - "?" abre la paleta en modo ayuda (bloque de atajos visible).
   // - "g" + letra (< GO_SEQUENCE_MS) navega como en GitHub, reutilizando
   //   la misma lista de comandos ya filtrada por módulo/rol.
+  // - "n" dispara la acción «nueva» de la página (nueva orden, capturar
+  //   producto, alta de producto…) o la paleta buscando «nuev».
   // Todo lo demás se ignora con modificadores, dentro de campos editables
   // o mientras haya un diálogo abierto (incluida la propia paleta).
   useEffect(() => {
@@ -309,7 +399,16 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
         armGo()
         return
       }
+      if (e.key === "n") {
+        e.preventDefault()
+        runNewShortcut()
+        return
+      }
       if (e.key === "?") {
+        // En el POS "?" abre la ayuda propia del punto de venta (más específica
+        // que la global); ambos escuchan keydown y preventDefault no detiene al
+        // otro handler, así que aquí se cede esa página.
+        if (pathname === "/admin/ventas") return
         e.preventDefault()
         setShowShortcuts(true)
         setOpen(true)
@@ -326,7 +425,7 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
       goPendingRef.current = false
       setGoPending(false)
     }
-  }, [visibleCommands, goTo])
+  }, [visibleCommands, goTo, runNewShortcut, pathname])
 
   // Precalienta las primeras rutas visibles al abrir: la navegación desde
   // la paleta (o con "g"+letra) se siente instantánea. Se deduplica por
@@ -549,11 +648,22 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
                     <ShortcutKeys shortcut={item.shortcut!} />
                   </button>
                 ))}
+                {/* "n" no es navegación: depende de la página — por eso va
+                    como fila informativa y no como comando con href. */}
+                <div className="flex w-full items-center gap-3 rounded-lg px-3 py-2">
+                  <Plus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    Acción «nueva» de la página (o busca «nuev…»)
+                  </span>
+                  <ShortcutKeys shortcut="n" />
+                </div>
                 <p className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs text-muted-foreground">
                   <kbd className="rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>
                   abre/cierra esta búsqueda ·
                   <kbd className="rounded border bg-muted px-1 font-mono text-[10px]">?</kbd>
-                  esta ayuda
+                  esta ayuda ·
+                  <kbd className="rounded border bg-muted px-1 font-mono text-[10px]">n</kbd>
+                  nuevo
                 </p>
               </div>
             )}

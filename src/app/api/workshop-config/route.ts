@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema } from "@/lib/domain/operations"
 import type { Transaction } from "@/lib/domain/operations"
-import { DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, WARRANTY_DAYS_KEY } from "@/lib/workshop-labels"
+import { DEFAULT_WARRANTY_DAYS, DEFAULT_WARRANTY_MAX_CYCLES, MAX_WARRANTY_DAYS, MAX_WARRANTY_MAX_CYCLES, WARRANTY_DAYS_KEY, WARRANTY_MAX_CYCLES_KEY } from "@/lib/workshop-labels"
 import { readSlaHours, SLA_HOURS_KEY, SLA_STAGES } from "@/lib/workshop-config"
 
 const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
@@ -20,6 +20,8 @@ const updateSchema = z.object({
   locations: z.array(z.string().trim().min(1).max(60)).min(1).max(30).optional(),
   // Vigencia de la garantía en días al reingresar un equipo entregado.
   warrantyDays: z.number().int().min(1).max(MAX_WARRANTY_DAYS).optional(),
+  // Máximo de reingresos por garantía por orden (absoluto, sin override).
+  warrantyMaxCycles: z.number().int().min(1).max(MAX_WARRANTY_MAX_CYCLES).optional(),
   // Semáforo del taller: horas máximas por etapa activa antes de declarar la
   // orden atrasada. Mapa parcial { etapa: horas } — los huecos caen al default.
   slaHours: z.partialRecord(z.enum(SLA_STAGES), z.number().int().min(0)).optional(),
@@ -40,14 +42,16 @@ function parseList(raw: string | undefined, fallback: string[]): string[] {
 const dedupe = (list: string[]) => [...new Set(list)]
 
 async function readConfig(tx: Pick<Transaction, "systemSettings">, businessId: string) {
-  const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY, WARRANTY_DAYS_KEY, SLA_HOURS_KEY] } } })
+  const rows = await tx.systemSettings.findMany({ where: { businessId, key: { in: [EQUIPMENT_TYPES_KEY, LOCATIONS_KEY, WARRANTY_DAYS_KEY, WARRANTY_MAX_CYCLES_KEY, SLA_HOURS_KEY] } } })
   const map = new Map(rows.map(row => [row.key, row.value]))
-  // warranty_days se guarda como entero en texto ("30"); inválido → default.
+  // warranty_days y warranty_max_cycles se guardan como entero en texto; inválido → default.
   const days = Number.parseInt(map.get(WARRANTY_DAYS_KEY) ?? "", 10)
+  const cycles = Number.parseInt(map.get(WARRANTY_MAX_CYCLES_KEY) ?? "", 10)
   return {
     equipmentTypes: parseList(map.get(EQUIPMENT_TYPES_KEY), DEFAULT_EQUIPMENT_TYPES),
     locations: parseList(map.get(LOCATIONS_KEY), DEFAULT_LOCATIONS),
     warrantyDays: days >= 1 && days <= MAX_WARRANTY_DAYS ? days : DEFAULT_WARRANTY_DAYS,
+    warrantyMaxCycles: cycles >= 1 && cycles <= MAX_WARRANTY_MAX_CYCLES ? cycles : DEFAULT_WARRANTY_MAX_CYCLES,
     slaHours: readSlaHours(map.get(SLA_HOURS_KEY)),
   }
 }
@@ -70,7 +74,7 @@ export async function POST(req: Request) {
     const actorId = session.user.id
     const businessId = businessIdOf(session)
     const { idempotencyKey, ...input } = updateSchema.parse(await req.json())
-    if (input.equipmentTypes === undefined && input.locations === undefined && input.warrantyDays === undefined && input.slaHours === undefined) throw new BusinessError("No hay cambios por guardar.")
+    if (input.equipmentTypes === undefined && input.locations === undefined && input.warrantyDays === undefined && input.warrantyMaxCycles === undefined && input.slaHours === undefined) throw new BusinessError("No hay cambios por guardar.")
     const result = await operation(prisma, { key: idempotencyKey, actorId, businessId, kind: "WORKSHOP_CONFIG_UPDATE", permission: "admin", payload: input }, async tx => {
       if (input.equipmentTypes !== undefined) {
         const value = JSON.stringify(dedupe(input.equipmentTypes))
@@ -94,6 +98,13 @@ export async function POST(req: Request) {
           where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } },
           create: { businessId, key: WARRANTY_DAYS_KEY, value: String(input.warrantyDays), type: "NUMBER" },
           update: { value: String(input.warrantyDays), type: "NUMBER" },
+        })
+      }
+      if (input.warrantyMaxCycles !== undefined) {
+        await tx.systemSettings.upsert({
+          where: { businessId_key: { businessId, key: WARRANTY_MAX_CYCLES_KEY } },
+          create: { businessId, key: WARRANTY_MAX_CYCLES_KEY, value: String(input.warrantyMaxCycles), type: "NUMBER" },
+          update: { value: String(input.warrantyMaxCycles), type: "NUMBER" },
         })
       }
       if (input.slaHours !== undefined) {

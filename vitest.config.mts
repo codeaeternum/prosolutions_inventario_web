@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config"
-import path from "path"
+import { fileURLToPath } from "node:url"
 
-const alias = { "@": path.resolve(__dirname, "./src") }
+// .mts = ESM real (sin el warning de configLoader "native"): __dirname no
+// existe en ESM, la ruta se deriva de import.meta.url.
+const alias = { "@": fileURLToPath(new URL("./src", import.meta.url)) }
 
 export default defineConfig({
   test: {

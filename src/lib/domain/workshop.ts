@@ -4,7 +4,7 @@ import { BusinessError, openRegister, operation, operationKeySchema, registerCas
 import { linkCustomerByPhone } from "./customers"
 import { nextOrderNumber } from "./tenant-sequence"
 import { syncLowStockAlerts } from "../low-stock"
-import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, MAX_WARRANTY_DAYS, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
+import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, DEFAULT_WARRANTY_MAX_CYCLES, MAX_WARRANTY_DAYS, MAX_WARRANTY_MAX_CYCLES, ORDER_FOLIO_DIGITS_KEY, WARRANTY_DAYS_KEY, WARRANTY_MAX_CYCLES_KEY, parseFolioDigits, repairDeliverableStages, repairFolio, repairLabels, repairNextStages } from "../workshop-labels"
 import { orderHeldCents, orderTotalCents } from "../workshop-money"
 import { newQuoteToken, newTrackingToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
@@ -87,6 +87,15 @@ async function warrantyDaysOf(tx: Prisma.TransactionClient, businessId: string):
   const setting = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: WARRANTY_DAYS_KEY } }, select: { value: true } })
   const configured = Number.parseInt(setting?.value ?? "", 10)
   return configured >= 1 && configured <= MAX_WARRANTY_DAYS ? configured : DEFAULT_WARRANTY_DAYS
+}
+/** Tope de reingresos por garantía por orden (SystemSettings
+ *  `warranty_max_cycles`, default 3). Agotado el contador la orden ya no
+ *  reabre por garantía — la vía correcta es dar de alta una orden nueva;
+ *  aplica parejo, sin excepción de administrador. */
+async function warrantyMaxCyclesOf(tx: Prisma.TransactionClient, businessId: string): Promise<number> {
+  const setting = await tx.systemSettings.findUnique({ where: { businessId_key: { businessId, key: WARRANTY_MAX_CYCLES_KEY } }, select: { value: true } })
+  const configured = Number.parseInt(setting?.value ?? "", 10)
+  return configured >= 1 && configured <= MAX_WARRANTY_MAX_CYCLES ? configured : DEFAULT_WARRANTY_MAX_CYCLES
 }
 async function registerPayment(tx: Prisma.TransactionClient, args: {
   orderId: string; orderNumber: number; branchId: string; actorId: string; businessId: string
@@ -504,6 +513,17 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // el texto libre del staff va después del punto y se trunca al publicar.
       eventPublic = true
       if (input.status === "WARRANTY") {
+        // Tope de ciclos de garantía: warrantyCount ya cuenta los reingresos
+        // previos (se incrementa abajo en el mismo update). Agotado el tope —
+        // SystemSettings `warranty_max_cycles` del negocio, default 3 — la
+        // salida correcta es una orden NUEVA: aplica parejo y se evalúa ANTES
+        // que la ventana vencida de abajo, que sí admite override de admin
+        // (darle ese mensaje a un empleado cuando la orden ya llegó al tope
+        // lo mandaría a pedir una autorización que igual va a fallar).
+        const maxCycles = await warrantyMaxCyclesOf(tx, businessId)
+        if (order.warrantyCount >= maxCycles) {
+          throw new BusinessError(`La orden alcanzó el máximo de reingresos por garantía (${maxCycles}). Crea una orden nueva.`, 409)
+        }
         // La ventana para reclamar garantía se fija en CADA entrega
         // (warrantyEligibleUntil — SETTLE_DELIVER y el cierre delegado la
         // renuevan como now + warranty_days). Vencida, un empleado de

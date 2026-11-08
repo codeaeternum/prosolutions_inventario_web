@@ -4,6 +4,7 @@ import { useState, useSyncExternalStore } from "react"
 import { AdminSidebar } from "@/components/admin/sidebar"
 import { AdminHeader } from "@/components/admin/header"
 import { AdminCommandPalette } from "@/components/admin/command-palette"
+import { GuidedTour } from "@/components/admin/guided-tour"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Undo2, Loader2 } from "lucide-react"
@@ -129,6 +130,15 @@ export function AdminShell({ user, homeBranchId, hasPartner, businessKind, child
         hasPartner={hasPartner}
         businessKind={businessKind}
       />
+      {/* Spotlight tour del primer login: se auto-muestra una vez por
+          navegador (localStorage). No durante impersonaciones ("Actuando
+          como…") ni para roles fuera del staff — el layout de /admin ya
+          garantiza ADMIN/EMPLOYEE, el check queda como defensa. hasTaller
+          replica el gate del sidebar (Taller oculto solo en PARTS) para no
+          mencionar atajos a un módulo inexistente. */}
+      {!user.impersonator && (user.role === "ADMIN" || user.role === "EMPLOYEE") && (
+        <GuidedTour hasTaller={businessKind !== "PARTS"} />
+      )}
     </div>
   )
 }

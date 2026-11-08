@@ -789,6 +789,79 @@ describe("ciclo de garantía con vigencia", () => {
     }))
   })
 
+  it("reabre por garantía mientras warrantyCount esté bajo el máximo (default 3)", async () => {
+    // warrantyCount 2 → este es el tercer y último reingreso permitido.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyCount: 2 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Tercera vez la misma falla" }))
+    expect(updateData().status).toBe("WARRANTY")
+    expect(updateData().warrantyCount).toEqual({ increment: 1 })
+    expect(statusEvent()?.data.detail).toContain("Garantía 3 —")
+  })
+
+  it("el cuarto reingreso se rechaza aunque la ventana siga vigente — parejo, sin override admin", async () => {
+    // warrantyCount 3 ya agotó el default: la ventana de reclamo vigente no
+    // lo salva y un ADMIN tampoco — la vía correcta es una orden nueva.
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "DELIVERED", warrantyCount: 3,
+      warrantyEligibleUntil: new Date(Date.now() + 10 * DAY_MS),
+    }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Cuarta vez" })))
+      .rejects.toMatchObject({ status: 409, message: "La orden alcanzó el máximo de reingresos por garantía (3). Crea una orden nueva." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+  })
+
+  it("un EMPLOYEE con la ventana vigente tampoco pasa el tope", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "DELIVERED", warrantyCount: 3,
+      warrantyEligibleUntil: new Date(Date.now() + 10 * DAY_MS),
+    }))
+    tx.user.findUnique.mockResolvedValue({ ...admin, id: "emp-1", role: "EMPLOYEE" })
+    await expect(updateRepair(db, "emp-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Otra vez" })))
+      .rejects.toMatchObject({ status: 409, message: "La orden alcanzó el máximo de reingresos por garantía (3). Crea una orden nueva." })
+    expect(tx.repairOrder.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("warrantyCount en el tope no bloquea el trabajo del ciclo abierto (WARRANTY→IN_REPAIR)", async () => {
+    // El tope solo frena NUEVAS entradas a garantía; la orden ya en ciclo
+    // (count 3) sigue moviéndose — este STATUS no es un reingreso.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "WARRANTY", warrantyCount: 3 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "IN_REPAIR", detail: "Se vuelve a revisar" }))
+    expect(updateData().status).toBe("IN_REPAIR")
+  })
+
+  it("warrantyCount en el tope tampoco bloquea la re-entrega que cierra el ciclo", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({
+      status: "WARRANTY", approvedQuoteCents: null, quoteCents: null,
+      warrantyUntil: new Date(Date.now() + 10 * DAY_MS), warrantyCount: 3,
+    }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "SETTLE_DELIVER", deliveredTo: "Recoge el cliente" }))
+    expect(updateData().status).toBe("DELIVERED")
+    expect(updateData().warrantyUntil).toBeNull()
+  })
+
+  it("el tope respeta warranty_max_cycles configurado por el negocio", async () => {
+    // Con 5 configurados, el quinto reingreso (count 4) todavía entra…
+    tx.systemSettings.findUnique.mockImplementation(({ where }: { where: { businessId_key: { key: string } } }) =>
+      Promise.resolve(where.businessId_key.key === "warranty_max_cycles" ? { value: "5" } : null))
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyCount: 4 }))
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Quinta vez" }))
+    expect(updateData().status).toBe("WARRANTY")
+    expect(statusEvent()?.data.detail).toContain("Garantía 5 —")
+    // …y el sexto se rechaza citando el tope configurado.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyCount: 5 }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Sexta vez" })))
+      .rejects.toMatchObject({ status: 409, message: "La orden alcanzó el máximo de reingresos por garantía (5). Crea una orden nueva." })
+  })
+
+  it("warranty_max_cycles inválido cae al default de 3", async () => {
+    tx.systemSettings.findUnique.mockImplementation(({ where }: { where: { businessId_key: { key: string } } }) =>
+      Promise.resolve(where.businessId_key.key === "warranty_max_cycles" ? { value: "0" } : null))
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", warrantyCount: 3 }))
+    await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "STATUS", status: "WARRANTY", detail: "Cuarta vez" })))
+      .rejects.toMatchObject({ status: 409, message: "La orden alcanzó el máximo de reingresos por garantía (3). Crea una orden nueva." })
+  })
+
   it("SETTLE_DELIVER tras cerrar el ciclo de garantía sin reparación re-fija closedWithoutRepair y cobra el diagnóstico", async () => {
     // La garantía tampoco pudo reparar (WARRANTY→NOT_REPAIRED): la entrega
     // cobra solo el cargo de diagnóstico y la marca queda otra vez en true.

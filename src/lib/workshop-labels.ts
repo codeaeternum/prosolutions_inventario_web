@@ -33,6 +33,13 @@ export const repairDeliverableStages: readonly RepairStage[] = ["READY", "NOT_RE
 export const WARRANTY_DAYS_KEY = "warranty_days"
 export const DEFAULT_WARRANTY_DAYS = 30
 export const MAX_WARRANTY_DAYS = 3650
+// Máximo de reingresos por garantía por orden: SystemSettings
+// ["warranty_max_cycles"] del negocio (default 3). Agotado el tope la salida
+// correcta es una orden NUEVA, no otro ciclo sobre la misma — el guard de
+// STATUS→WARRANTY (domain/workshop) lo aplica parejo, sin override de admin.
+export const WARRANTY_MAX_CYCLES_KEY = "warranty_max_cycles"
+export const DEFAULT_WARRANTY_MAX_CYCLES = 3
+export const MAX_WARRANTY_MAX_CYCLES = 20
 /** Prefijo de folio por defecto; el negocio lo cambia con el ajuste
  *  `order_prefix` de SystemSettings (p. ej. "PS" → PS-000001). */
 export const DEFAULT_ORDER_PREFIX = "OT"

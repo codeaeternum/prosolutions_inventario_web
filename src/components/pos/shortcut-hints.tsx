@@ -11,7 +11,7 @@ import { Keyboard } from "lucide-react"
 
 const HINTS: [string, string][] = [
     ["F2 / Ctrl+Enter", "Cobrar"],
-    ["/", "Ir al buscador"],
+    ["/ o n", "Ir al buscador"],
     ["F4", "Tickets / Devoluciones"],
     ["F9", "Suspender"],
     ["Esc", "Cerrar / limpiar búsqueda"],
@@ -31,7 +31,7 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
     {
         title: "Capturar productos",
         items: [
-            ["/", "Enfocar el buscador"],
+            ["/ o n", "Enfocar el buscador"],
             ["Enter (en el buscador)", "Agregar por código exacto"],
             ["5*código o 5x código", "Agregar 5 piezas en un escaneo"],
         ],
