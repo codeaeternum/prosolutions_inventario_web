@@ -262,8 +262,14 @@ export default function ReceiveEquipmentPage() {
           const branchList: Branch[] = data.branches ?? []
           setBranches(branchList)
           setStaff(data.staff ?? [])
-          if (branchList.length === 1) {
-            setForm(previous => previous.intakeBranchId ? previous : { ...previous, intakeBranchId: branchList[0].id })
+          // La sucursal activa del header (reficio-branch) es la recepción por
+          // defecto — recibir en otra sucursal sigue siendo posible con el select.
+          const cookieBranch = document.cookie.match(/(?:^|; )reficio-branch=([^;]*)/)?.[1]
+          const persisted = localStorage.getItem("reficio-branch") ?? (cookieBranch ? decodeURIComponent(cookieBranch) : null)
+          const preferred = persisted && branchList.some(branch => branch.id === persisted) ? persisted : null
+          const fallback = preferred ?? (branchList.length === 1 ? branchList[0].id : null)
+          if (fallback) {
+            setForm(previous => previous.intakeBranchId ? previous : { ...previous, intakeBranchId: fallback })
           }
           setMetaLoaded(true)
         }
@@ -948,8 +954,59 @@ export default function ReceiveEquipmentPage() {
 
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2">
-                  <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
-                    <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
+                  <div className="space-y-3 sm:col-span-2">
+                    <p className="text-sm">¿Quién trae el equipo? *</p>
+                    <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Quién trae el equipo">
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={!form.partnerDrop}
+                        onClick={() => update({ partnerDrop: false, originBusinessName: "", originContact: "", partnerPrice: "" })}
+                        className={`flex items-start gap-3 rounded-lg border p-3.5 text-left transition ${!form.partnerDrop ? "border-primary bg-primary/5" : "hover:border-primary/40"}`}
+                      >
+                        <UserRound size={18} className={`mt-0.5 shrink-0 ${!form.partnerDrop ? "text-primary" : "text-muted-foreground"}`} />
+                        <span>
+                          <span className="block text-sm font-medium">El cliente directamente</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">La persona trae su propio equipo al mostrador.</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={form.partnerDrop}
+                        onClick={() => update({ partnerDrop: true })}
+                        className={`flex items-start gap-3 rounded-lg border p-3.5 text-left transition ${form.partnerDrop ? "border-indigo-500 bg-indigo-500/5" : "hover:border-indigo-500/40"}`}
+                      >
+                        <Store size={18} className={`mt-0.5 shrink-0 ${form.partnerDrop ? "text-indigo-600 dark:text-indigo-300" : "text-muted-foreground"}`} />
+                        <span>
+                          <span className="block text-sm font-medium">Un negocio aliado</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">Otro negocio sin cuenta (p. ej. Telcel) capta equipos y nos los trae a precio convenio.</span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  {form.partnerDrop && (
+                    <div className="rounded-lg border border-indigo-200/70 bg-indigo-500/5 p-4 dark:border-indigo-500/30 sm:col-span-2">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <label className="block space-y-2 text-sm">Negocio aliado *
+                          <Input value={form.originBusinessName} onChange={event => update({ originBusinessName: event.target.value })} maxLength={80} autoComplete="off" placeholder="Ej. Telcel Centro" />
+                        </label>
+                        <label className="block space-y-2 text-sm">Quién lo trajo / teléfono del negocio
+                          <Input value={form.originContact} onChange={event => update({ originContact: event.target.value })} maxLength={120} autoComplete="off" placeholder="Ej. Marisol · 667 123 4567" />
+                        </label>
+                        <label className="block space-y-2 text-sm">Precio convenio al aliado (MXN)
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                            <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.partnerPrice} onChange={event => update({ partnerPrice: event.target.value })} placeholder="Según convenio" className="pl-7" />
+                          </div>
+                          <span className="block text-xs text-muted-foreground">Interno: lo que se cobra al negocio, no al cliente. Opcional.</span>
+                        </label>
+                        <p className="flex items-start gap-1.5 self-end text-xs text-muted-foreground"><ShieldCheck size={13} className="mt-0.5" aria-hidden />El cliente final conserva su flujo normal de cotización y autorización.</p>
+                      </div>
+                    </div>
+                  )}
+                  <label ref={nameBoxRef} className="relative block space-y-2 text-sm">{form.partnerDrop ? "Nombre del cliente final *" : "Nombre del cliente *"}
+                    <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder={form.partnerDrop ? "Dueño del equipo, no el negocio" : "Nombre y apellido"} />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </label>
                   <PhoneInput containerRef={phoneBoxRef} label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
@@ -990,35 +1047,6 @@ export default function ReceiveEquipmentPage() {
                       No hay sucursales del taller registradas. Crea una desde la pantalla de órdenes antes de recibir equipos.
                     </p>
                   )}
-                  <div className="rounded-lg border border-indigo-200/70 bg-indigo-500/5 p-4 dark:border-indigo-500/30 sm:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="flex items-center gap-2 text-sm font-medium"><Store size={15} className="text-indigo-600 dark:text-indigo-300" />Traída por taller aliado</p>
-                        <p className="text-xs text-muted-foreground">Un negocio sin cuenta (p. ej. Telcel) trae equipos y reparamos a precio convenio.</p>
-                      </div>
-                      <button type="button" role="switch" aria-checked={form.partnerDrop} aria-expanded={form.partnerDrop} aria-label="La orden la trae un taller aliado" onClick={() => update({ partnerDrop: !form.partnerDrop })} className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.partnerDrop ? "bg-indigo-600" : "bg-muted"}`}>
-                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-all ${form.partnerDrop ? "left-[1.375rem]" : "left-0.5"}`} />
-                      </button>
-                    </div>
-                    {form.partnerDrop && (
-                      <div className="mt-4 grid gap-4 border-t border-indigo-200/70 pt-4 dark:border-indigo-500/30 sm:grid-cols-2">
-                        <label className="block space-y-2 text-sm">Negocio aliado *
-                          <Input value={form.originBusinessName} onChange={event => update({ originBusinessName: event.target.value })} maxLength={80} autoComplete="off" placeholder="Ej. Telcel Centro" />
-                        </label>
-                        <label className="block space-y-2 text-sm">Quién lo trajo / teléfono del negocio
-                          <Input value={form.originContact} onChange={event => update({ originContact: event.target.value })} maxLength={120} autoComplete="off" placeholder="Ej. Marisol · 667 123 4567" />
-                        </label>
-                        <label className="block space-y-2 text-sm">Precio convenio al aliado (MXN)
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                            <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.partnerPrice} onChange={event => update({ partnerPrice: event.target.value })} placeholder="Según convenio" className="pl-7" />
-                          </div>
-                          <span className="block text-xs text-muted-foreground">Interno: lo que se cobra al negocio, no al cliente. Opcional.</span>
-                        </label>
-                        <p className="flex items-start gap-1.5 self-end text-xs text-muted-foreground"><ShieldCheck size={13} className="mt-0.5" aria-hidden />El cliente final conserva su flujo normal de cotización y autorización.</p>
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
 
