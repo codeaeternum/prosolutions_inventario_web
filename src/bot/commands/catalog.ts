@@ -7,10 +7,9 @@ import * as QRCode from 'qrcode'
 import * as path from 'path'
 import * as fs from 'fs'
 import type { BotContext } from '../lib/types'
-import { isAdmin } from '../lib/notify'
-import { requirePrisma } from '../lib/guards'
+import { getBotAccount, requirePrisma } from '../lib/guards'
 import { getBusinessSetting, getDefaultBusinessId } from '../../lib/settings'
-import { escapeMarkdownV1, escapeRegExp } from '../lib/format'
+import { clipMessage, escapeMarkdownV1, escapeRegExp, TG_CAPTION_MAX } from '../lib/format'
 
 export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // Helper: getSetting (duplicated here for independence; in production use a shared module)
@@ -60,7 +59,8 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // cat_ action
     bot.action(/^cat_(.+)$/, async (ctx) => {
         const categoryId = ctx.match[1]
-        await ctx.answerCbQuery()
+        // Toast cosmético: si la red falla aquí el resto del handler igual corre.
+        await ctx.answerCbQuery().catch(() => { })
 
         try {
             const businessId = await businessIdOf(ctx.from?.id?.toString())
@@ -110,10 +110,20 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // prod_ action — product detail
     bot.action(/^prod_(.+)$/, async (ctx) => {
         const productId = ctx.match[1]
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
 
         try {
-            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            // Un solo lookup del usuario: antes businessIdOf leía businessId y
+            // isAdmin releía la misma fila para rol+status.
+            const me = ctx.from
+                ? await prisma.user.findUnique({
+                    where: { telegramId: ctx.from.id.toString() },
+                    select: { businessId: true, role: true, status: true }
+                })
+                : null
+            const businessId = me?.businessId ?? (await getDefaultBusinessId())
+            const isAdminUser = me?.role === 'ADMIN' && me.status === 'APPROVED'
+
             const product = await prisma.product.findFirst({
                 where: { id: productId, businessId },
                 include: { category: true }
@@ -123,19 +133,20 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
                 return ctx.editMessageText('❌ Producto no encontrado.')
             }
 
-            const isAdminUser = await isAdmin(ctx.from.id.toString())
-
             const costInfo = isAdminUser && product.costPrice
                 ? `\n🏷️ *Costo:* $${product.costPrice.toLocaleString()}\n📊 *Ganancia:* $${(product.retailPrice - product.costPrice).toLocaleString()} (${Math.round(((product.retailPrice - product.costPrice) / product.costPrice) * 100)}%)`
                 : ''
 
-            const msg = `📦 *${escapeMarkdownV1(product.name)}*
+            // clipMessage: la descripción es texto libre de BD y puede empujar
+            // el mensaje/caption sobre el límite (4096 texto / 1024 caption).
+            const msg = clipMessage(`📦 *${escapeMarkdownV1(product.name)}*
 
 ${product.description ? `_${escapeMarkdownV1(product.description)}_\n` : ''}
 📂 *Categoría:* ${escapeMarkdownV1(product.category?.name || 'N/A')}
 💰 *Precio:* $${product.retailPrice.toLocaleString()}${costInfo}
 ✅ *Disponible:* ${product.stock} unidades
-${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
+${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
+            const caption = clipMessage(msg, TG_CAPTION_MAX)
 
             const buttons = []
 
@@ -186,7 +197,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
                     }
                 } else if (validMediaGroup.length === 1) {
                     try {
-                        await ctx.replyWithPhoto(validMediaGroup[0].media, { caption: msg, parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
+                        await ctx.replyWithPhoto(validMediaGroup[0].media, { caption, parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     } catch {
                         await ctx.reply(`⚠️ No pude cargar la imagen.`)
                         await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
@@ -207,16 +218,19 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     // showqr_ action — solo admin: el QR revela el barcode/id interno del producto.
     bot.action(/^showqr_(.+)$/, async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
-        await ctx.answerCbQuery()
         try {
-            const businessId = await businessIdOf(telegramId)
-            const product = await prisma.product.findFirst({ where: { id: productId, businessId } })
+            // Un solo lookup: antes isAdmin y businessIdOf leían la misma fila.
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.').catch(() => { })
+            }
+            await ctx.answerCbQuery().catch(() => { })
+            const product = await prisma.product.findFirst({ where: { id: productId, businessId: actor.businessId } })
             if (!product) return
             const qrData = product.barcode || product.id
             const qrBuffer = await QRCode.toBuffer(qrData)
-            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdownV1(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
+            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: clipMessage(`📱 *${escapeMarkdownV1(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, TG_CAPTION_MAX), parse_mode: 'Markdown' })
         } catch (e) {
             console.error('Error in showqr_:', e)
             await ctx.reply('❌ Error al generar el QR.').catch(() => { })
@@ -227,13 +241,16 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     // viejo o un callback reenviado no puede saltarse el gate: se revalida.
     bot.action(/^delprod_(.+)$/, async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
-        await ctx.answerCbQuery()
         try {
-            const businessId = await businessIdOf(telegramId)
+            // Un solo lookup: antes isAdmin y businessIdOf leían la misma fila.
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.').catch(() => { })
+            }
+            await ctx.answerCbQuery().catch(() => { })
             const product = await prisma.product.findFirst({
-                where: { id: productId, businessId },
+                where: { id: productId, businessId: actor.businessId },
                 include: { _count: { select: { reservations: true, movements: true } } }
             })
             if (!product) return
@@ -248,22 +265,21 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     // confirm_delete action
     bot.action(/^confirm_delete_(.+)$/, async (ctx) => {
         const telegramId = ctx.from!.id.toString()
-        if (!(await isAdmin(telegramId))) return
         const productId = ctx.match[1]
-        const deleteSession = sessions.deleteProduct[telegramId]
-
-        if (!deleteSession || deleteSession.step !== 'CONFIRM' || deleteSession.selectedProduct?.id !== productId) {
-            await ctx.answerCbQuery('Sesión expirada')
-            return ctx.editMessageText('❌ Sesión de eliminación expirada o inválida.')
-        }
 
         try {
-            // Multi-tenant: solo productos del negocio del admin.
-            const actor = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
-            if (!actor) {
-                delete sessions.deleteProduct[telegramId]
-                await ctx.answerCbQuery('Cuenta no disponible')
-                return ctx.editMessageText('❌ Cuenta no disponible.')
+            // Un solo lookup: rol + tenant en la misma fila. Antes el gate de
+            // isAdmin devolvía silencio puro a un no-admin (spinner colgado).
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                await ctx.answerCbQuery('⛔ Solo administradores.')
+                return ctx.editMessageText('🚫 Esta acción es solo para administradores.').catch(() => { })
+            }
+
+            const deleteSession = sessions.deleteProduct[telegramId]
+            if (!deleteSession || deleteSession.step !== 'CONFIRM' || deleteSession.selectedProduct?.id !== productId) {
+                await ctx.answerCbQuery('Sesión expirada')
+                return ctx.editMessageText('❌ Sesión de eliminación expirada o inválida.')
             }
             // Nunca borrar físicamente un producto con historial (reservas,
             // movimientos o ventas): se archiva con isActive=false para
@@ -300,7 +316,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
     // reserve_ action
     bot.action(/^reserve_(.+)$/, async (ctx) => {
         const productId = ctx.match[1]
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         const telegramId = ctx.from?.id.toString()
         if (!telegramId) return
 
@@ -345,19 +361,20 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
         }
     })
 
-    // Payment method actions
+    // Payment method actions — el toast es cosmético: si falla, la reserva
+    // igual debe procesarse (antes un throw aquí la dejaba muda).
     bot.action('pay_store', async (ctx) => {
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         await processReservation(ctx, 'STORE')
     })
 
     bot.action('pay_credit', async (ctx) => {
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         await processReservation(ctx, 'CREDIT')
     })
 
     bot.action('pay_transfer', async (ctx) => {
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         const telegramId = ctx.from!.id.toString()
         const session = sessions.reservation[telegramId]
         if (!session) return await ctx.reply('❌ Sesión expirada. Inicia de nuevo desde el producto.')
@@ -428,7 +445,9 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
 
 _Muestra este QR al recoger:_`
 
-            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: userMsg, parse_mode: 'Markdown' })
+            // Caption de foto: el límite es 1024, no 4096 — nombres largos lo
+            // cruzaban y el 400 de Telegram enterraba la confirmación.
+            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: clipMessage(userMsg, TG_CAPTION_MAX), parse_mode: 'Markdown' })
 
             // Multi-tenant: la reserva se avisa solo a los admins aprobados del
             // negocio del cliente — nunca a administradores de otras empresas.
@@ -460,7 +479,7 @@ ${adminFooter}`
 
     // back_categories
     bot.action('back_categories', async (ctx) => {
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         try {
             const businessId = await businessIdOf(ctx.from?.id?.toString())
             const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
@@ -518,7 +537,7 @@ ${adminFooter}`
 
     bot.action(/^brand_(.+)$/, async (ctx) => {
         const brand = ctx.match[1]
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         try {
             const businessId = await businessIdOf(ctx.from?.id?.toString())
             const products = await prisma.product.findMany({
@@ -549,7 +568,7 @@ ${adminFooter}`
     })
 
     bot.action('back_brands', async (ctx) => {
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         const brands = [
             { name: '📱 iPhone', query: 'iphone' },
             { name: '📱 Samsung', query: 'samsung' },

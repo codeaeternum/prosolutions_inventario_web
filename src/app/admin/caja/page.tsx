@@ -146,6 +146,7 @@ function CajaPanel() {
     const [branchId, setBranchId] = useState("")
     const [lastClosure, setLastClosure] = useState<ClosureResult | null>(null)
     const [weekRefresh, setWeekRefresh] = useState(0)
+    const [reprinting, setReprinting] = useState(false)
 
     // Pestaña activa desde la URL (?tab=caja|semana|solicitudes|proveedores).
     const searchParams = useSearchParams()
@@ -185,18 +186,31 @@ function CajaPanel() {
     // Versión de la última consulta de caja: una respuesta tardía de una
     // sucursal anterior nunca pisa los datos de la seleccionada ahora.
     const requestVersion = useRef(0)
+    // Marca del último fetch OK: el refetch al volver a la pestaña se
+    // throttles contra ella (nada de re-consultas en ráfaga <15s).
+    const lastFetchOkAt = useRef(0)
 
     const fetchRegister = useCallback(async () => {
         const version = ++requestVersion.current
         try {
             const res = await fetch(`/api/caja${branchId ? `?branchId=${branchId}` : ""}`)
-            const data = await res.json()
+            const data = res.ok ? await res.json() : null
             if (version !== requestVersion.current) return
+            if (!res.ok) {
+                // Un fallo transitorio no debe voltear la UI a "Caja Cerrada":
+                // se conserva el estado actual y solo se avisa.
+                toast.error("No se pudo actualizar la caja")
+                return
+            }
+            lastFetchOkAt.current = Date.now()
             if (data.active) {
                 setRegister(data.register)
             } else {
                 setRegister(null)
             }
+            // El último corte viaja en la misma respuesta: la tarjeta de
+            // cuadre y la reimpresión sobreviven a una recarga de página.
+            setLastClosure(data.lastClosure ?? null)
         } catch {
             if (version !== requestVersion.current) return
             toast.error("Error al cargar la caja")
@@ -242,6 +256,22 @@ function CajaPanel() {
         })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab])
+
+    // Al volver a la pestaña re-consulta el turno: otra terminal pudo cobrar,
+    // mover efectivo o cerrar la caja mientras esta estaba en segundo plano.
+    // visibilitychange (no focus) porque es lo único fiable en móviles. Solo
+    // corre con turno abierto cargado y «Turno actual» activo, y nunca si el
+    // último fetch exitoso fue hace menos de 15s.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState !== "visible") return
+            if (!register || tab !== "caja") return
+            if (Date.now() - lastFetchOkAt.current < 15_000) return
+            void fetchRegister()
+        }
+        document.addEventListener("visibilitychange", onVisible)
+        return () => document.removeEventListener("visibilitychange", onVisible)
+    }, [register, tab, fetchRegister])
 
     const handleOpen = async (event?: React.FormEvent<HTMLFormElement>) => {
         event?.preventDefault()
@@ -345,6 +375,35 @@ function CajaPanel() {
             toast.error("Error de conexión. Puedes reintentar sin duplicar la operación.")
         } finally {
             inFlight.current = false; setSubmitting(false)
+        }
+    }
+
+    // Reimprimir solo lee: re-consulta acotada a la sucursal en pantalla para
+    // abrir siempre el corte más reciente (el estado pudo quedar de otra).
+    const handleReprint = async () => {
+        if (reprinting) return
+        // La pestaña se abre EN el click: un window.open tras el await cae en
+        // el bloqueador de popups (tablet de mostrador). Se navega al ticket
+        // cuando la consulta responde.
+        const popup = window.open("", "_blank")
+        if (!popup) return toast.error("El navegador bloqueó la ventana de impresión")
+        setReprinting(true)
+        try {
+            const res = await fetch(`/api/caja${branchId ? `?branchId=${branchId}` : ""}`)
+            const data = await res.json().catch(() => null)
+            const target = data?.lastClosure?.registerId ?? lastClosure?.registerId
+            if (target) {
+                // El usuario pudo cerrar la pestaña en blanco antes de la respuesta.
+                if (!popup.closed) popup.location.href = `/admin/tickets/corte/${target}`
+            } else {
+                popup.close()
+                toast.error("No hay un cierre reciente para reimprimir")
+            }
+        } catch {
+            popup.close()
+            toast.error("Error de conexión al buscar el último cierre")
+        } finally {
+            setReprinting(false)
         }
     }
 
@@ -578,6 +637,22 @@ function CajaPanel() {
                             <p className="text-xs text-muted-foreground">
                                 Solo un administrador o {register.openedBy.name} (quien abrió el turno) puede cerrarlo.
                             </p>
+                        )}
+                        {/* El último corte (p. ej. el turno de la mañana) se
+                            puede reimprimir sin mutar nada; se oculta mientras
+                            el diálogo de cierre está abierto. */}
+                        {lastClosure && !closeOpen && (
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="w-full text-muted-foreground"
+                                onClick={() => void handleReprint()}
+                                disabled={reprinting}
+                            >
+                                {reprinting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Printer className="w-4 h-4 mr-2" />}
+                                {reprinting ? "Buscando el último corte…" : "Reimprimir último cierre"}
+                            </Button>
                         )}
                     </CardContent>
                 </Card>

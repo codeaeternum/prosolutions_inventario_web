@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { checkAndRecord, getClientIp, getRateLimitStats } from "@/lib/rate-limit"
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs() })
 describe("login throttling", () => {
   it("does not trust user supplied forwarding headers on desktop/direct access", () => {
@@ -49,5 +49,25 @@ describe("login throttling", () => {
     expect(checkAndRecord("login", "victima-legitima", 60_000, 5)).toBe(true)
     // La evicción es por lote: entran varias llaves nuevas sin quedarse a medias.
     expect(checkAndRecord("register", "otro-usuario", 60_000, 5)).toBe(true)
+  })
+  it("counts denied requests per scope for observability", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const before = getRateLimitStats()
+    const key = `deny-${Math.random()}`
+    expect(checkAndRecord(key, "op", 60_000, 1)).toBe(true)
+    expect(checkAndRecord(key, "op", 60_000, 1)).toBe(false)
+    expect(checkAndRecord(key, "op", 60_000, 1)).toBe(false)
+    const stats = getRateLimitStats()
+    expect(stats.deniedLast24h).toBe(before.deniedLast24h + 2)
+    expect(stats.byRoute[key]).toBe(2)
+  })
+  it("drops denied entries older than 24h from the stats", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const key = `stale-${Math.random()}`
+    expect(checkAndRecord(key, "op", 60_000, 1)).toBe(true)
+    expect(checkAndRecord(key, "op", 60_000, 1)).toBe(false)
+    // Fuera de la ventana de 24 h el scope desaparece del desglose.
+    vi.advanceTimersByTime(25 * 60 * 60 * 1000)
+    expect(getRateLimitStats().byRoute[key]).toBeUndefined()
   })
 })

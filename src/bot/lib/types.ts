@@ -24,6 +24,13 @@ export interface CartItem {
     stock: number
 }
 
+/**
+ * Tope de productos distintos en el carrito del wizard de ventas. Sin él la
+ * sesión crecía sin límite (memoria por usuario) y el listado de /carrito
+ * podía pasar de los 4096 chars de Telegram.
+ */
+export const CART_MAX_ITEMS = 30
+
 export interface CartSession {
     items: CartItem[]
     pendingAdd?: { id: string; name: string; price: number; stock: number }
@@ -99,6 +106,9 @@ export interface OrdenSession {
     brandChips?: string[]
     /** Llave de idempotencia fija del wizard: doble confirmación = misma orden. */
     operationKey?: string
+    /** Negocio del staff que inició el wizard (fijado en /orden): evita
+     *  releer la cuenta en cada paso solo para saber el tenant. */
+    businessId?: string
 }
 
 // ========== SESSION STORES ==========

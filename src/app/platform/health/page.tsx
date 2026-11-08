@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   Building2,
   HeartPulse,
+  ShieldAlert,
   ShoppingCart,
   Store,
   UserCheck,
@@ -32,6 +33,13 @@ export default async function PlatformHealthPage() {
   if (!session?.user?.isSuperAdmin) redirect("/")
 
   const health = await getPlatformHealth()
+
+  // Top scopes del rate-limiter para la tarjeta de 429 (memoria del proceso).
+  const rateLimitTop = Object.entries(health.rateLimits.byRoute)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([scope, n]) => `${scope}: ${n}`)
+    .join(" · ")
 
   const kpis = [
     {
@@ -98,7 +106,7 @@ export default async function PlatformHealthPage() {
       </div>
 
       {/* Señales secundarias */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <div className="space-y-1.5">
@@ -145,6 +153,24 @@ export default async function PlatformHealthPage() {
               {health.platformEvents.lastAt
                 ? `Último: ${formatDate(health.platformEvents.lastAt)}`
                 : "Sin eventos registrados"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1.5">
+              <CardTitle className="text-sm font-medium">Peticiones limitadas</CardTitle>
+              <CardDescription>Respuestas 429 del rate-limiter, últimas 24 h</CardDescription>
+            </div>
+            <span className="rounded-lg bg-primary/10 p-2 text-primary shrink-0">
+              <ShieldAlert className="h-4 w-4" />
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold tabular-nums">{health.rateLimits.deniedLast24h}</div>
+            <p className="text-xs text-muted-foreground">
+              {rateLimitTop || "Sin rechazos · conteo de este proceso"}
             </p>
           </CardContent>
         </Card>

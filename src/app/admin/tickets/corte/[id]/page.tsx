@@ -62,7 +62,7 @@ export default async function CorteTicketPage({
       status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
       createdAt: { gte: register.openedAt, lte: register.closedAt },
       ...(register.branchId
-        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }] }
+        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }, { encargo: { branchId: register.branchId } }] }
         : {}),
     },
     _sum: { amount: true },

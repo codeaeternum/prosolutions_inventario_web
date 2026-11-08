@@ -156,10 +156,12 @@ export interface PlatformBusinessDetail extends PlatformBusinessSummary {
   /** Staff (ADMIN/EMPLOYEE/WORKSHOP); los clientes solo cuentan en `counts.users`. */
   users: PlatformBusinessUser[]
   /**
-   * Total real de staff con el MISMO filtro que `users` (que se corta en 50).
-   * Sirve para mostrar "mostrando 50 de N" sin cargar la lista completa.
+   * Total real de staff con el MISMO filtro que `users` (paginado).
+   * `usersPage`/`usersPerPage` reflejan la página servida (ya saneada).
    */
   usersTotal: number
+  usersPage: number
+  usersPerPage: number
   recentRepairOrders: PlatformRecentOrder[]
   recentSales: PlatformRecentSale[]
   /** Acciones de plataforma sobre este negocio (suspender/reactivar/borrar). */
@@ -175,8 +177,20 @@ export interface PlatformEventItem {
 
 const saleFolio = (number: number) => `V-${String(number).padStart(6, "0")}`
 
-/** Detalle de una empresa para la consola; null si no existe. */
-export async function getPlatformBusinessDetail(id: string): Promise<PlatformBusinessDetail | null> {
+const USERS_PER_PAGE_DEFAULT = 50
+const USERS_PER_PAGE_MAX = 100
+
+/**
+ * Detalle de una empresa para la consola; null si no existe.
+ * `usersPage` (1-based) se clampea al rango válido una vez conocido el total:
+ * páginas fuera de rango devuelven la página válida más cercana.
+ * `usersPerPage` queda clampeado a [1, 100] — default 50.
+ */
+export async function getPlatformBusinessDetail(
+  id: string,
+  usersPage = 1,
+  usersPerPage = USERS_PER_PAGE_DEFAULT,
+): Promise<PlatformBusinessDetail | null> {
   const business = await prisma.business.findUnique({
     where: { id },
     select: {
@@ -193,11 +207,18 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
 
   // El folio de las órdenes recientes respeta los dígitos configurados por
   // ESE negocio (order_folio_digits), no un formato fijo de la consola.
+  const requestedPage = Number.isFinite(usersPage) ? Math.max(1, Math.trunc(usersPage)) : 1
+  const perPage = Number.isFinite(usersPerPage)
+    ? Math.min(Math.max(Math.trunc(usersPerPage), 1), USERS_PER_PAGE_MAX)
+    : USERS_PER_PAGE_DEFAULT
   const [users, usersTotal, orders, sales, salesTotal, lastOrder, lastSale, folioDigits, platformEvents] = await Promise.all([
     prisma.user.findMany({
       where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
       orderBy: { createdAt: "asc" },
-      take: 50,
+      // No conocemos aún el total: traemos la página pedida; si quedó vacía
+      // por pedir más allá del final, se relee la última página abajo.
+      take: perPage,
+      skip: (requestedPage - 1) * perPage,
       select: {
         id: true,
         name: true,
@@ -209,8 +230,8 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
         createdAt: true,
       },
     }),
-    // Total honesto del staff (mismo where): la lista se corta en 50 y la UI
-    // necesita saber si hay más ("mostrando 50 de N").
+    // Total honesto del staff (mismo where): la lista va paginada y la UI
+    // necesita saber si hay más ("mostrando 1–50 de N").
     prisma.user.count({
       where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
     }),
@@ -259,6 +280,30 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     }),
   ])
 
+  // Página pedida más allá del final (o borrado concurrente): se sirve la
+  // última página válida en vez de una tabla vacía engañosa.
+  let effectivePage = requestedPage
+  let staffUsers = users
+  if (staffUsers.length === 0 && usersTotal > 0 && requestedPage > 1) {
+    effectivePage = Math.max(1, Math.ceil(usersTotal / perPage))
+    staffUsers = await prisma.user.findMany({
+      where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
+      orderBy: { createdAt: "asc" },
+      take: perPage,
+      skip: (effectivePage - 1) * perPage,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        jobTitle: true,
+        isSuperAdmin: true,
+        createdAt: true,
+      },
+    })
+  }
+
   return {
     ...toSummary(business, (Math.round((salesTotal._sum.total ?? 0) * 100) - (salesTotal._sum.discountCents ?? 0)) / 100, lastOrder?.createdAt ?? null, lastSale?.createdAt ?? null),
     updatedAt: business.updatedAt,
@@ -267,8 +312,10 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     phone: business.phone,
     address: business.address,
     logoUrl: business.logoUrl,
-    users,
+    users: staffUsers,
     usersTotal,
+    usersPage: effectivePage,
+    usersPerPage: perPage,
     recentRepairOrders: orders.map(o => ({
       id: o.id,
       folio: repairFolio(o.number, folioDigits),

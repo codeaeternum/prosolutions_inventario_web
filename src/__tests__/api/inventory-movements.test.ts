@@ -311,9 +311,15 @@ describe("merge, orden y enriquecimiento", () => {
     }])
     mocks.movementCount.mockResolvedValue(1)
     mocks.reservationCount.mockResolvedValue(1)
-    mocks.movementAggregate.mockResolvedValue({ _sum: { quantity: 1 } })
-    // El groupBy por relatedId devuelve 1 pieza repuesta para m1.
-    mocks.movementGroupBy.mockResolvedValue([{ relatedId: "m1", _sum: { quantity: 1 } }])
+    // Ambos RETURNs se agregan por groupBy: relatedId para movimientos y
+    // reservationId para reservas — 1 pieza repuesta en cada uno.
+    mocks.movementGroupBy.mockImplementation((args: { by: string[] }) =>
+      Promise.resolve(
+        args.by.includes("reservationId")
+          ? [{ reservationId: "r1", _sum: { quantity: 1 } }]
+          : [{ relatedId: "m1", _sum: { quantity: 1 } }]
+      )
+    )
 
     const res = await get()
     expect(res.status).toBe(200)
@@ -329,17 +335,19 @@ describe("merge, orden y enriquecimiento", () => {
     expect(body.movements[1]).toMatchObject({
       id: "m1", type: "SALE", source: "MOVEMENT", quantity: 3, returnableQuantity: 2,
     })
-    // Los RETURN de movimientos se agregan en UN groupBy por relatedId; el
-    // aggregate por fila queda solo para reservas (reservationId).
+    // Los RETURN se agregan en UN groupBy por llave: relatedId para
+    // movimientos y reservationId para reservas (sin aggregate por fila).
     expect(mocks.movementGroupBy).toHaveBeenCalledWith({
       by: ["relatedId"],
       where: { businessId: "biz-1", type: "RETURN", relatedId: { in: ["m1"] } },
       _sum: { quantity: true },
     })
-    expect(mocks.movementAggregate).toHaveBeenCalledWith({
-      where: { businessId: "biz-1", type: "RETURN", reservationId: "r1" },
+    expect(mocks.movementGroupBy).toHaveBeenCalledWith({
+      by: ["reservationId"],
+      where: { businessId: "biz-1", type: "RETURN", reservationId: { in: ["r1"] } },
       _sum: { quantity: true },
     })
+    expect(mocks.movementAggregate).not.toHaveBeenCalled()
   })
 
   it("salida ligada a venta: returnableQuantity sale de SaleItem.returnedQuantity, no del ledger relatedId", async () => {

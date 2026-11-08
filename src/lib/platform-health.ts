@@ -1,5 +1,6 @@
 import type { RepairStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
+import { getRateLimitStats, type RateLimitStats } from "@/lib/rate-limit"
 
 /**
  * Salud global de la plataforma (consola Reficio, solo superadmin).
@@ -50,6 +51,8 @@ export interface PlatformHealth {
     total: number
     lastAt: Date | null
   }
+  /** 429 servidas por el rate-limiter en las últimas 24 h (memoria del proceso). */
+  rateLimits: RateLimitStats
   generatedAt: Date
 }
 
@@ -107,6 +110,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     },
     repairs: { openCount: ordersOpen },
     platformEvents: { total: eventsTotal, lastAt: eventsLast._max.createdAt },
+    rateLimits: getRateLimitStats(),
     generatedAt: new Date(),
   }
 }

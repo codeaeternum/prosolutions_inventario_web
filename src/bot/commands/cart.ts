@@ -1,9 +1,9 @@
 import { sell } from "../../lib/domain/sales"
 import { Markup } from 'telegraf'
+import { CART_MAX_ITEMS } from '../lib/types'
 import type { BotContext, CartItem } from '../lib/types'
-import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
-import { isAdmin } from '../lib/notify'
-import { escapeMarkdownV1 } from '../lib/format'
+import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
+import { clipMessage, escapeMarkdownV1 } from '../lib/format'
 
 export function registerCart({ bot, prisma, sessions }: BotContext) {
     // /carrito
@@ -28,7 +28,8 @@ Ejemplo:
         const total = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity * item.price, 0)
         const totalItems = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity, 0)
 
-        await ctx.reply(`🛒 *Tu Carrito* (${totalItems} productos)
+        // clipMessage: 30 items × nombres largos pueden rozar los 4096 chars.
+        await ctx.reply(clipMessage(`🛒 *Tu Carrito* (${totalItems} productos)
 
 ${itemsList}
 
@@ -37,14 +38,27 @@ ${itemsList}
 
 /confirmarc - Confirmar venta
 /vaciarc - Vaciar carrito
-/agregarc <producto> - Agregar más`, { parse_mode: 'Markdown' })
+/agregarc <producto> - Agregar más`), { parse_mode: 'Markdown' })
     })
 
     // /agregarc
     bot.command('agregarc', async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant (antes requireAdmin y
+        // getBotAccount hacían un lookup cada uno de la misma fila).
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
+
+        // Tope de items: sin él el carrito crecía sin límite en memoria y el
+        // listado podía pasar de 4096. Se revisa ANTES de buscar producto:
+        // el usuario ya sabe que no cabe nada más.
+        const existingCart = sessions.cart[telegramId]
+        if (existingCart && existingCart.items.length >= CART_MAX_ITEMS) {
+            return ctx.reply(`🛒 *Carrito lleno* (máx. ${CART_MAX_ITEMS} productos distintos)
+
+Confirma la venta con /confirmarc o vacía con /vaciarc antes de agregar más.`, { parse_mode: 'Markdown' })
+        }
 
         const args = ctx.message.text.split(' ').slice(1).join(' ').trim()
 
@@ -61,8 +75,6 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
         }
 
         try {
-            const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
                     businessId: actor.businessId,
@@ -153,21 +165,22 @@ Vas a registrar la venta de:
     // confirm_cart action
     bot.action('confirm_cart', async (ctx) => {
         const telegramId = ctx.from!.id.toString()
-        if (!(await requireAdmin(ctx))) return
-
-        const cart = sessions.cart[telegramId]
-        if (!cart || cart.items.length === 0) {
-            await ctx.answerCbQuery('Carrito vacío')
-            return ctx.editMessageText('🛒 El carrito está vacío.')
-        }
 
         try {
-            const adminUser = await prisma.user.findUnique({
-                where: { telegramId },
-                select: { id: true, businessId: true }
-            })
+            // Un solo lookup: rol + cuenta en la misma fila. Negar vía
+            // answerCbQuery (no ctx.reply): el toast frena el spinner del botón.
+            const adminUser = await getBotAccount(prisma, telegramId)
+            if (!adminUser || adminUser.role !== 'ADMIN' || adminUser.status !== 'APPROVED') {
+                await ctx.answerCbQuery('⛔ Solo administradores.')
+                return
+            }
 
-            if (!adminUser) return ctx.reply('Cuenta no disponible.')
+            const cart = sessions.cart[telegramId]
+            if (!cart || cart.items.length === 0) {
+                await ctx.answerCbQuery('Carrito vacío')
+                return ctx.editMessageText('🛒 El carrito está vacío.')
+            }
+
             const result = await sell(prisma, adminUser.id, adminUser.businessId, {
                 idempotencyKey: `bot-cart:${telegramId}:${ctx.callbackQuery.message?.message_id ?? ctx.update.update_id}`,
                 items: cart.items.map(item => ({ productId: item.id, quantity: item.quantity })), paymentMethod: 'EFECTIVO',
@@ -178,7 +191,9 @@ Vas a registrar la venta de:
 
             delete sessions.cart[telegramId]
 
-            await ctx.answerCbQuery('Venta registrada')
+            // El toast es cosmético: si falla la red ahí, la venta YA quedó
+            // registrada — no debe caer al catch y mostrar "Error" al usuario.
+            await ctx.answerCbQuery('Venta registrada').catch(() => { })
             await ctx.editMessageText(`✅ *¡Venta Registrada!*
 
 🛒 ${productCount} producto(s)
@@ -189,8 +204,8 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
 
         } catch (e) {
             console.error('Error confirming cart:', e)
-            await ctx.answerCbQuery('Error')
-            await ctx.editMessageText(`❌ Error: ${e instanceof Error ? e.message : 'Error al procesar venta'}`)
+            await ctx.answerCbQuery('Error').catch(() => { })
+            await ctx.editMessageText(`❌ Error: ${e instanceof Error ? e.message : 'Error al procesar venta'}`).catch(() => { })
         }
     })
 
@@ -212,12 +227,14 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
     // (admin); igual que fastsell_, el rol se revalida en el callback.
     bot.action(/^addtocart_(.+)$/, async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
 
         try {
+            // Un solo lookup: antes isAdmin y getBotAccount leían la misma fila.
             const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.answerCbQuery('❌ Cuenta no disponible')
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.')
+            }
             const product = await prisma.product.findUnique({ where: { id: productId, businessId: actor.businessId } })
             if (!product) return ctx.answerCbQuery('❌ Error')
 
@@ -235,6 +252,9 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
                 cart.items[existingIndex].quantity += 1
             } else {
                 if (product.stock < 1) return ctx.answerCbQuery('❌ Sin stock')
+                if (cart.items.length >= CART_MAX_ITEMS) {
+                    return ctx.answerCbQuery(`🛒 Carrito lleno (máx. ${CART_MAX_ITEMS}). Usa /confirmarc o /vaciarc.`)
+                }
                 cart.items.push({
                     id: product.id,
                     name: product.name,

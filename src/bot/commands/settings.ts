@@ -1,9 +1,9 @@
 import { Markup } from 'telegraf'
 import { message } from 'telegraf/filters'
 import type { BotContext } from '../lib/types'
-import { requireAdmin } from '../lib/guards'
+import { getBotAccount, requireAdminAccount } from '../lib/guards'
 import { DEFAULT_SETTINGS, getBusinessSetting, setBusinessSetting } from '../../lib/settings'
-import { escapeMarkdownV1 } from '../lib/format'
+import { clipMessage, escapeMarkdownV1 } from '../lib/format'
 
 // Llave pseudo-interna: las horas de expiración NO viven en SystemSettings
 // sino en la tabla Settings — la misma fila que lee domain/reservations.ts
@@ -11,16 +11,6 @@ import { escapeMarkdownV1 } from '../lib/format'
 const KEY_PENDING_HOURS = 'pending_verification_hours'
 
 export function registerSettings({ bot, prisma, sessions }: BotContext) {
-    // Resuelve el negocio del usuario de Telegram que invoca el comando.
-    // Sin fallback al negocio por defecto: si la cuenta no resuelve su propio
-    // businessId, escribir ajustes en el default sería una fuga cross-tenant.
-    async function businessIdOfTelegramUser(telegramId: string): Promise<string | null> {
-        const me = await prisma.user.findUnique({
-            where: { telegramId },
-            select: { businessId: true }
-        })
-        return me?.businessId ?? null
-    }
 
     // Helper to get setting value
     async function getSetting(businessId: string, key: string, defaultValue: string): Promise<string> {
@@ -89,21 +79,24 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
 
     // /ajustes command
     bot.command('ajustes', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
+        // Un solo findUnique para gate + businessId del actor. Sin fallback al
+        // negocio por defecto: escribir ajustes ajenos sería fuga cross-tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
-        const businessId = await businessIdOfTelegramUser(ctx.from.id.toString())
-        if (!businessId) return ctx.reply('Cuenta no disponible.')
+        const businessId = actor.businessId
         const hours = await getPendingVerificationHours(businessId)
         const bankTransfer = await getSetting(businessId, 'bank_transfer_info', 'Sin configurar')
         const bankCash = await getSetting(businessId, 'bank_cash_info', 'Sin configurar')
 
-        await ctx.reply(`⚙️ *Ajustes del Sistema*
+        // clipMessage: los datos bancarios son texto libre del negocio.
+        await ctx.reply(clipMessage(`⚙️ *Ajustes del Sistema*
 
 ⏳ *Horas p/ verificar depósito:* ${hours}
 🏦 *Transferencia:* ${escapeMarkdownV1(bankTransfer)}
 💵 *Depósito en efectivo:* ${escapeMarkdownV1(bankCash)}
 
-_Selecciona qué deseas modificar:_`, {
+_Selecciona qué deseas modificar:_`), {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
                 [Markup.button.callback('⏳ Cambiar Horas', 'set_hours')],
@@ -114,7 +107,6 @@ _Selecciona qué deseas modificar:_`, {
     })
 
     bot.action(['set_hours', 'set_bank', 'set_bank_cash'], async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         const telegramId = ctx.from!.id.toString()
 
         // Las llaves coinciden con las que lee el flujo real: catalog.ts usa
@@ -134,12 +126,23 @@ _Selecciona qué deseas modificar:_`, {
         const action = ctx.match[0]
         const key = keyMap[action]
 
-        const businessId = await businessIdOfTelegramUser(telegramId)
-        if (!businessId) return ctx.answerCbQuery('Cuenta no disponible')
-        sessions.settings[telegramId] = { key, businessId }
+        try {
+            // Un solo findUnique para gate + businessId (antes requireAdmin
+            // hacía uno y businessIdOfTelegramUser otro; además la negación por
+            // ctx.reply dejaba el spinner colgado — ahora responde el callback).
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.answerCbQuery('Cuenta no disponible')
+            if (actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.')
+            }
+            sessions.settings[telegramId] = { key, businessId: actor.businessId }
+        } catch (e) {
+            console.error('Error en ajustes (set_*):', e)
+            return ctx.answerCbQuery('❌ Error').catch(() => { })
+        }
 
         await ctx.reply(`✏️ *Ingresa el nuevo valor para ${labelMap[action]}:*`, { parse_mode: 'Markdown' })
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
     })
 
     // Export getSetting for use in other modules

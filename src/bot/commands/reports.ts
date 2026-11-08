@@ -7,7 +7,7 @@ import type { InlineKeyboardButton } from 'telegraf/types'
 import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
-import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { requireAdminAccount, requirePrisma } from '../lib/guards'
 import { clipMessage, escapeMarkdownV1 } from '../lib/format'
 
 function generateProgressBar(percent: number): string {
@@ -19,8 +19,11 @@ function generateProgressBar(percent: number): string {
 export function registerReports({ bot, prisma }: BotContext) {
     // /stock
     bot.command('stock', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + cuenta (incluye homeBranchId, que se
+        // usa abajo para resolver la sucursal del ajuste).
+        const adminUser = await requireAdminAccount(ctx, prisma)
+        if (!adminUser) return
 
         const args = ctx.message.text.split(' ')
         if (args.length !== 3) {
@@ -35,12 +38,6 @@ export function registerReports({ bot, prisma }: BotContext) {
         }
 
         try {
-            const adminUser = await prisma.user.findUnique({
-                where: { telegramId: ctx.from!.id.toString() },
-                select: { id: true, businessId: true, homeBranchId: true }
-            })
-            if (!adminUser) return ctx.reply('Cuenta no disponible.')
-
             // El producto se valida ANTES de tocar sucursal/existencias, y
             // siempre dentro del negocio del admin (multi-tenant).
             const product = await prisma.product.findUnique({ where: { id: productId, businessId: adminUser.businessId }, select: { id: true, name: true, stock: true } })
@@ -72,12 +69,12 @@ export function registerReports({ bot, prisma }: BotContext) {
 
     // /pendientes
     bot.command('pendientes', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const reservations = await prisma.reservation.findMany({
                 where: { businessId: actor.businessId, status: { in: ['PENDING', 'PENDING_PAYMENT'] } },
                 include: { user: true, product: true },
@@ -109,12 +106,12 @@ export function registerReports({ bot, prisma }: BotContext) {
 
     // /caja
     bot.command('caja', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const register = await prisma.cashRegister.findFirst({
                 where: { businessId: actor.businessId, status: 'OPEN' },
                 include: {
@@ -165,12 +162,12 @@ export function registerReports({ bot, prisma }: BotContext) {
 
     // /credito
     bot.command('credito', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const debtors = await prisma.user.findMany({
                 where: { businessId: actor.businessId, creditBalance: { gt: 0 } },
                 select: { name: true, creditBalance: true, creditLimit: true, phone: true },
@@ -204,12 +201,12 @@ export function registerReports({ bot, prisma }: BotContext) {
 
     // /reporte
     bot.command('reporte', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const today = new Date()
             today.setHours(0, 0, 0, 0)
 
@@ -421,7 +418,8 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
     bot.action(/^cancel_res_(.+)$/, async (ctx) => {
         const reservationId = ctx.match[1]
         const telegramId = ctx.from!.id.toString()
-        await ctx.answerCbQuery()
+        // Toast cosmético: la cancelación corre aunque falle.
+        await ctx.answerCbQuery().catch(() => { })
 
         try {
             const user = await prisma.user.findUnique({ where: { telegramId } })
@@ -452,8 +450,10 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
 
     // /entregar
     bot.command('entregar', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const args = ctx.message.text.split(' ')
         if (args.length !== 2) {
@@ -463,8 +463,6 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
         const reservationIdStart = args[1]
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             // El prefijo puede coincidir con varias reservas: entregar la
             // primera coincidencia era un riesgo de entregar la equivocada.
             const matches = await prisma.reservation.findMany({

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table"
 import { BusinessEditDialog, BusinessStatusButton } from "@/components/platform/business-status-button"
 import { BusinessDeleteButton } from "@/components/platform/business-delete-button"
+import { StaffUsersPagination } from "@/components/platform/staff-users-pagination"
 import {
   CreatePlatformUserDialog,
   EditPlatformUserDialog,
@@ -42,6 +43,7 @@ export const dynamic = "force-dynamic"
 
 interface PageProps {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ usersPage?: string }>
 }
 
 // cache() deduplica por request: generateMetadata + page comparten la consulta.
@@ -92,11 +94,16 @@ const saleStatusLabels: Record<string, string> = {
   VOIDED: "Anulada",
 }
 
-export default async function PlatformBusinessPage({ params }: PageProps) {
+export default async function PlatformBusinessPage({ params, searchParams }: PageProps) {
   const { id } = await params
-  const [business, session] = await Promise.all([getDetail(id), auth()])
+  const { usersPage: usersPageParam } = await searchParams
+  const usersPage = Math.max(1, Number.parseInt(usersPageParam ?? "1", 10) || 1)
+  const [business, session] = await Promise.all([getDetail(id, usersPage), auth()])
   if (!business) notFound()
   const currentUserId = session?.user?.id
+  const usersTotalPages = Math.max(1, Math.ceil(business.usersTotal / business.usersPerPage))
+  const usersRangeStart = (business.usersPage - 1) * business.usersPerPage + 1
+  const usersRangeEnd = usersRangeStart + business.users.length - 1
 
   const metrics = [
     { title: "Usuarios", value: business.counts.users, icon: Users },
@@ -285,7 +292,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
       </div>
 
       {/* Equipo */}
-      <Card>
+      <Card id="equipo" className="scroll-mt-6">
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2">
@@ -294,8 +301,8 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
             </CardTitle>
             <CardDescription>
               Staff con acceso al panel (los {business.counts.users} usuarios incluyen también clientes).
-              {business.usersTotal > business.users.length
-                ? ` Mostrando ${business.users.length} de ${business.usersTotal} usuarios de staff.`
+              {business.usersTotal > business.usersPerPage && business.users.length > 0
+                ? ` Mostrando ${usersRangeStart}–${usersRangeEnd} de ${business.usersTotal} usuarios de staff.`
                 : null}
             </CardDescription>
           </div>
@@ -303,6 +310,11 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
         </CardHeader>
         <CardContent>
           {business.users.length > 0 ? (
+            <StaffUsersPagination
+              businessId={business.id}
+              page={business.usersPage}
+              totalPages={usersTotalPages}
+            >
             <Table>
               <TableHeader>
                 <TableRow>
@@ -370,6 +382,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                 ))}
               </TableBody>
             </Table>
+            </StaffUsersPagination>
           ) : (
             <p className="text-muted-foreground">Sin usuarios de staff.</p>
           )}

@@ -209,7 +209,8 @@ export async function GET(request: NextRequest) {
             combined.map(row => (row.source === "MOVEMENT" ? row.saleId : null)).filter((id): id is string => Boolean(id)),
         )]
         const movementIds = combined.filter(row => row.source === "MOVEMENT").map(row => row.id)
-        const [sales, relatedReturns] = await Promise.all([
+        const reservationIds = combined.filter(row => row.source === "RESERVATION").map(row => row.id)
+        const [sales, relatedReturns, reservationReturns] = await Promise.all([
             saleIds.length
                 ? prisma.sale.findMany({
                     where: { businessId, id: { in: saleIds } },
@@ -223,12 +224,24 @@ export async function GET(request: NextRequest) {
                     _sum: { quantity: true },
                 })
                 : Promise.resolve([]),
+            // Igual que relatedReturns pero ligadas por reservationId: un solo
+            // groupBy reemplaza el aggregate por fila que hacía N+1 queries.
+            reservationIds.length
+                ? prisma.inventoryMovement.groupBy({
+                    by: ["reservationId"],
+                    where: { businessId, type: "RETURN", reservationId: { in: reservationIds } },
+                    _sum: { quantity: true },
+                })
+                : Promise.resolve([]),
         ])
         const saleById = new Map(sales.map(sale => [sale.id, sale]))
         const relatedReturnedById = new Map(
             relatedReturns.map(row => [row.relatedId, row._sum.quantity ?? 0] as const),
         )
-        const enriched = await Promise.all(combined.map(async row => {
+        const reservationReturnedById = new Map(
+            reservationReturns.map(row => [row.reservationId, row._sum.quantity ?? 0] as const),
+        )
+        const enriched = combined.map(row => {
             if (row.source === "MOVEMENT") {
                 const relatedReturned = relatedReturnedById.get(row.id) ?? 0
                 if (row.saleId) {
@@ -246,10 +259,13 @@ export async function GET(request: NextRequest) {
                 }
                 return { ...row, returnableQuantity: Math.max(0, row.quantity - relatedReturned) }
             }
-            const returned = await prisma.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", reservationId: row.id }, _sum: { quantity: true } })
-            return { ...row, returnableQuantity: Math.max(0, row.quantity - (returned._sum.quantity ?? 0)) }
-        }))
-        return NextResponse.json({ movements: enriched, total })
+            const returned = reservationReturnedById.get(row.id) ?? 0
+            return { ...row, returnableQuantity: Math.max(0, row.quantity - returned) }
+        })
+        return NextResponse.json(
+            { movements: enriched, total },
+            { headers: { "Cache-Control": "private, no-store" } }
+        )
     } catch (error) {
         console.error("Error fetching movements:", error)
         return NextResponse.json({ error: "Error al cargar movimientos" }, { status: 500 })

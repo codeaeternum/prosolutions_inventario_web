@@ -35,14 +35,19 @@ const patchSchema = z.object({
  *
  * Detalle operativo de una empresa: datos, conteos, métricas, últimas 5
  * órdenes/ventas y el equipo de usuarios (sin contraseñas).
+ * `?usersPage` (1-based, default 1) y `?usersPerPage` (default 50, máx 100)
+ * paginan la lista de staff; la respuesta ecoa usersPage/usersPerPage/usersTotal.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
 
   const { id } = await params
+  const sp = new URL(req.url).searchParams
+  const usersPage = sp.has("usersPage") ? Number(sp.get("usersPage")) : undefined
+  const usersPerPage = sp.has("usersPerPage") ? Number(sp.get("usersPerPage")) : undefined
   try {
-    const business = await getPlatformBusinessDetail(id)
+    const business = await getPlatformBusinessDetail(id, usersPage, usersPerPage)
     if (!business) {
       return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 })
     }

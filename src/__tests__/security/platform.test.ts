@@ -159,6 +159,50 @@ describe("platform console API", () => {
     expect(business.usersTotal).toBe(9)
   })
 
+  it("paginates staff via ?usersPage&usersPerPage and echoes the served page", async () => {
+    mocks.auth.mockResolvedValue(superAdmin)
+    const now = new Date("2026-03-01T00:00:00Z")
+    mocks.findBusiness.mockResolvedValue({
+      id: "b1", name: "Taller Uno", slug: "taller-uno", category: "electronics-repair", isActive: true,
+      createdAt: now, updatedAt: now, phone: null, address: null, logoUrl: null,
+      _count: { users: 95, products: 1, repairOrders: 1, sales: 1, branches: 1 },
+    })
+    mocks.userCount.mockResolvedValue(95)
+    mocks.findUsers.mockResolvedValue([
+      { id: "u11", name: "Empleado Once", email: null, role: "EMPLOYEE", status: "APPROVED", jobTitle: null, isSuperAdmin: false, createdAt: now },
+    ])
+    mocks.findOrders.mockResolvedValue([])
+    mocks.findSales.mockResolvedValue([])
+    mocks.saleAggregate.mockResolvedValue({ _sum: { total: 0, discountCents: 0 } })
+    mocks.findOrderFirst.mockResolvedValue(null)
+    mocks.findSaleFirst.mockResolvedValue(null)
+
+    // ?usersPage=2&usersPerPage=10 → skip/take 10/10 sobre el mismo where de staff.
+    const res = await businessDetail(
+      new Request("https://app.invalid/api/platform/businesses/b1?usersPage=2&usersPerPage=10"),
+      paramsOf("b1"),
+    )
+    expect(res.status).toBe(200)
+    expect(mocks.findUsers).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }))
+    const { business } = await res.json()
+    expect(business.usersPage).toBe(2)
+    expect(business.usersPerPage).toBe(10)
+    expect(business.usersTotal).toBe(95)
+    expect(business.users).toHaveLength(1)
+
+    // usersPerPage por encima del máximo (100) se clampea server-side.
+    mocks.findUsers.mockClear()
+    const res2 = await businessDetail(
+      new Request("https://app.invalid/api/platform/businesses/b1?usersPage=-3&usersPerPage=500"),
+      paramsOf("b1"),
+    )
+    expect(res2.status).toBe(200)
+    expect(mocks.findUsers).toHaveBeenCalledWith(expect.objectContaining({ skip: 0, take: 100 }))
+    const { business: b2 } = await res2.json()
+    expect(b2.usersPage).toBe(1)
+    expect(b2.usersPerPage).toBe(100)
+  })
+
   it("PATCH validates the body, 404s unknown ids and toggles isActive", async () => {
     mocks.auth.mockResolvedValue(superAdmin)
 

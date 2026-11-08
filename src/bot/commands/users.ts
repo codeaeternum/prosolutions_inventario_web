@@ -2,8 +2,7 @@ import { submitRegistration } from "../lib/registration"
 import { Markup } from 'telegraf'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
-import { isAdmin } from '../lib/notify'
-import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
 import { normalizePhone } from '../lib/utils'
 import { escapeHtml, escapeMarkdownV1 } from '../lib/format'
 
@@ -47,8 +46,10 @@ _Usa /cancelar para salir de cualquier proceso._`, { parse_mode: 'Markdown' })
 
     // /makeadmin
     bot.command('makeadmin', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant del actor.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const args = ctx.message.text.split(' ')
         if (args.length !== 2) {
@@ -59,9 +60,6 @@ _Usa /cancelar para salir de cualquier proceso._`, { parse_mode: 'Markdown' })
 
         try {
             // Multi-tenant: solo puede promover usuarios de SU negocio.
-            const actor = await getBotAccount(prisma, ctx.from.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
-
             const user = await prisma.user.findFirst({
                 where: {
                     businessId: actor.businessId,
@@ -105,8 +103,10 @@ Usa /admin para ver el panel de administración.`, { parse_mode: 'Markdown' }).c
 
     // /removeadmin
     bot.command('removeadmin', async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant del actor.
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const telegramId = ctx.from.id.toString()
         const args = ctx.message.text.split(' ')
@@ -118,9 +118,6 @@ Usa /admin para ver el panel de administración.`, { parse_mode: 'Markdown' }).c
 
         try {
             // Multi-tenant: solo puede degradar admins de SU negocio.
-            const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.reply('Cuenta no disponible.')
-
             const user = await prisma.user.findFirst({
                 where: {
                     businessId: actor.businessId,
@@ -175,7 +172,8 @@ Ahora tienes acceso como cliente regular.`, { parse_mode: 'Markdown' }).catch(()
             return ctx.answerCbQuery('⚠️ Sesión expirada o paso incorrecto.')
         }
 
-        await ctx.answerCbQuery()
+        // Toast cosmético: el paso del wizard lo lleva el editMessageText.
+        await ctx.answerCbQuery().catch(() => { })
 
         if (typeId === '1') {
             regSession.data.customerType = 'TECHNICIAN'
@@ -203,7 +201,8 @@ Ahora tienes acceso como cliente regular.`, { parse_mode: 'Markdown' }).catch(()
             return
         }
 
-        await ctx.answerCbQuery()
+        // Toast cosmético: el wizard continúa en submitRegistration aunque falle.
+        await ctx.answerCbQuery().catch(() => { })
 
         const goal = goalValue === 0 ? null : goalValue
 
@@ -251,14 +250,15 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
     // Approve user
     bot.action(/^approve_user_(.+)$/, async (ctx) => {
         const userId = ctx.match[1]
-        if (!(await isAdmin(ctx.from.id.toString()))) {
-            return ctx.answerCbQuery('Solo administradores pueden hacer esto')
-        }
 
         try {
-            // Multi-tenant: un admin solo aprueba solicitudes de SU negocio.
+            // Un solo lookup: antes isAdmin y getBotAccount leían la misma fila.
             const actor = await getBotAccount(prisma, ctx.from.id.toString())
             if (!actor) return ctx.answerCbQuery('Cuenta no disponible')
+            if (actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('Solo administradores pueden hacer esto')
+            }
+            // Multi-tenant: un admin solo aprueba solicitudes de SU negocio.
             const target = await prisma.user.findFirst({ where: { id: userId, businessId: actor.businessId } })
             if (!target) {
                 await ctx.answerCbQuery('Usuario no encontrado')
@@ -291,14 +291,15 @@ Esto nos ayuda a darte mejor atención. Selecciona una opción:`, {
     // Reject user
     bot.action(/^reject_user_(.+)$/, async (ctx) => {
         const userId = ctx.match[1]
-        if (!(await isAdmin(ctx.from.id.toString()))) {
-            return ctx.answerCbQuery('Solo administradores pueden hacer esto')
-        }
 
         try {
-            // Multi-tenant: un admin solo rechaza solicitudes de SU negocio.
+            // Un solo lookup: antes isAdmin y getBotAccount leían la misma fila.
             const actor = await getBotAccount(prisma, ctx.from.id.toString())
             if (!actor) return ctx.answerCbQuery('Cuenta no disponible')
+            if (actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('Solo administradores pueden hacer esto')
+            }
+            // Multi-tenant: un admin solo rechaza solicitudes de SU negocio.
             const target = await prisma.user.findFirst({ where: { id: userId, businessId: actor.businessId } })
             if (!target) {
                 await ctx.answerCbQuery('Usuario no encontrado')

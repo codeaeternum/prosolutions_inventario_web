@@ -6,6 +6,45 @@ const MAX_KEYS = 10000
 // vez, para no pagar un barrido por cada request que llega con el mapa lleno.
 const EVICTION_BATCH = Math.ceil(MAX_KEYS * 0.05)
 
+// Bitácora en memoria de rechazos (429) por scope: vive en el proceso, así
+// que se resetea con cada reinicio/deploy — observabilidad ligera para
+// /platform/health, no persistencia.
+const deniedLog = new Map<string, number[]>()
+const DENIED_WINDOW_MS = 24 * 60 * 60 * 1000
+// Techo por scope para que un flood sostenido no infle la memoria del mapa.
+const MAX_DENIED_STAMPS = 10000
+
+function recordDenied(scope: string, now: number) {
+  const stamps = (deniedLog.get(scope) ?? []).filter(t => now - t < DENIED_WINDOW_MS)
+  if (stamps.length < MAX_DENIED_STAMPS) stamps.push(now)
+  deniedLog.set(scope, stamps)
+}
+
+export interface RateLimitStats {
+  /** Respuestas 429 servidas en las últimas 24 h (memoria del proceso). */
+  deniedLast24h: number
+  /** Desglose por scope del limiter ("platform-business-update", "login", …). */
+  byRoute: Record<string, number>
+}
+
+/** Conteo de 429 servidas en las últimas 24 h, agregado por scope. */
+export function getRateLimitStats(): RateLimitStats {
+  const now = Date.now()
+  const byRoute: Record<string, number> = {}
+  let deniedLast24h = 0
+  for (const [scope, stamps] of deniedLog) {
+    const live = stamps.filter(t => now - t < DENIED_WINDOW_MS)
+    if (live.length === 0) {
+      deniedLog.delete(scope)
+      continue
+    }
+    deniedLog.set(scope, live)
+    byRoute[scope] = live.length
+    deniedLast24h += live.length
+  }
+  return { deniedLast24h, byRoute }
+}
+
 /**
  * Single desktop process limiter. Expired keys are removed on each call.
  * Fail-open on saturation: a full Map must not take down login/signup for
@@ -17,7 +56,10 @@ export function checkAndRecord(prefix: string, identifier: string, windowMs = WI
   const key = `${prefix}:${identifier}`
   const current = store.get(key)
   if (current) {
-    if (current.attempts >= maxAttempts) return false
+    if (current.attempts >= maxAttempts) {
+      recordDenied(prefix, now)
+      return false
+    }
     current.attempts++
     return true
   }

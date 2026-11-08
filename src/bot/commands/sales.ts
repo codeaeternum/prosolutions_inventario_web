@@ -2,17 +2,21 @@ import { sell } from "../../lib/domain/sales"
 import { actor, BusinessError, transaction } from "../../lib/domain/operations"
 import { Input, Markup } from 'telegraf'
 import * as QRCode from 'qrcode'
+import { CART_MAX_ITEMS } from '../lib/types'
 import type { BotContext, CartItem } from '../lib/types'
-import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
-import { isAdmin, notifyAdmins } from '../lib/notify'
-import { escapeHtml, escapeMarkdownV1 } from '../lib/format'
+import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
+import { notifyAdmins } from '../lib/notify'
+import { clipMessage, escapeHtml, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
 
 export function registerSales({ bot, prisma, sessions, isDev }: BotContext) {
     // /vender
     bot.command('vender', async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant (antes requireAdmin y
+        // getBotAccount leían la misma fila por separado).
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const args = ctx.message.text.split(' ').slice(1).join(' ').trim()
 
@@ -30,8 +34,6 @@ _O usa /agregarc para vender varios en el carrito._`, { parse_mode: 'Markdown' }
         }
 
         try {
-            const actor = await getBotAccount(prisma, ctx.from!.id.toString())
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
                     businessId: actor.businessId,
@@ -93,23 +95,26 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         delete sessions.qr[telegramId]
         const cart = sessions.cart[telegramId]
         if (cart) { cart.pendingAdd = undefined; cart.selecting = undefined }
-        await ctx.answerCbQuery()
-        await ctx.editMessageText('❌ Operación cancelada.')
+        await ctx.answerCbQuery().catch(() => { })
+        await ctx.editMessageText('❌ Operación cancelada.').catch(() => { })
     })
 
     // confirm_sale action
     bot.action(/^confirm_sale_(.+)_(\d+)$/, async (ctx) => {
         const telegramId = ctx.from!.id.toString()
-        if (!(await requireAdmin(ctx))) return
 
         const productId = ctx.match[1]
         const number = parseInt(ctx.match[2])
 
         try {
-            // getBotAccount ya trae name: el aviso a otros admins lo usa para
-            // atribuir la venta (no más "Por: Admin" genérico).
+            // Un solo lookup: rol + cuenta en la misma fila (getBotAccount ya
+            // trae name para atribuir la venta en el aviso a otros admins).
+            // Negar vía answerCbQuery: el toast frena el spinner del botón.
             const adminUser = await getBotAccount(prisma, telegramId)
-            if (!adminUser) return ctx.reply('Cuenta no disponible.')
+            if (!adminUser || adminUser.role !== 'ADMIN' || adminUser.status !== 'APPROVED') {
+                await ctx.answerCbQuery('⛔ Solo administradores.')
+                return
+            }
 
             const product = await prisma.product.findUnique({
                 where: { id: productId, businessId: adminUser.businessId },
@@ -136,7 +141,9 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
 💰 Total: $${total.toLocaleString()}
 📊 Stock restante: ${product.stock - number}`
 
-            await ctx.answerCbQuery('Venta confirmada')
+            // El toast es cosmético: si falla la red ahí, la venta YA quedó
+            // registrada — no debe caer al catch y mostrar "Error" al usuario.
+            await ctx.answerCbQuery('Venta confirmada').catch(() => { })
             await ctx.editMessageText(successMsg, { parse_mode: 'Markdown' })
 
             // notifyAdmins envía con parse_mode HTML: el aviso usa tags <b>
@@ -154,8 +161,8 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         } catch (e) {
             console.error('Error processing sale:', e)
             delete sessions.sale[telegramId]
-            await ctx.answerCbQuery('Error')
-            await ctx.editMessageText(`❌ Error al procesar la venta.`)
+            await ctx.answerCbQuery('Error').catch(() => { })
+            await ctx.editMessageText(`❌ Error al procesar la venta.`).catch(() => { })
         }
     })
 
@@ -163,13 +170,18 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
     // solo se muestra a admins pero el rol pudo cambiar o el teclado ser viejo.
     bot.action(/^fastsell_(.+)$/, async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
-        await ctx.answerCbQuery()
 
         try {
+            // Un solo lookup: antes isAdmin y getBotAccount leían la misma fila.
+            // El gate va ANTES del toast vacío: Telegram solo acepta una
+            // respuesta por callback y la de "Solo administradores" es la que
+            // cuenta en la negación.
             const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.reply('Cuenta no disponible.')
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.').catch(() => { })
+            }
+            await ctx.answerCbQuery().catch(() => { })
             const product = await prisma.product.findUnique({
                 where: { id: productId, businessId: actor.businessId },
                 select: { id: true, name: true, stock: true, retailPrice: true }
@@ -213,7 +225,7 @@ Cantidad: 1
                 const qrBuffer = await QRCode.toBuffer(qrData)
                 delete sessions.qr[telegramId]
                 await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), {
-                    caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``,
+                    caption: clipMessage(`📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, TG_CAPTION_MAX),
                     parse_mode: 'Markdown'
                 })
                 return
@@ -229,8 +241,22 @@ Cantidad: 1
 
                 const existingIndex = cart.items.findIndex(item => item.id === pending.id)
                 if (existingIndex >= 0) {
+                    // El chequeo es contra el TOTAL acumulado: antes sumaba sin
+                    // verificar y confirmarc podía reventar por stock insuficiente.
+                    if (cart.items[existingIndex].quantity + number > pending.stock) {
+                        return ctx.reply(`❌ Con eso serían ${cart.items[existingIndex].quantity + number} uds de ese producto y solo hay ${pending.stock} en stock.`)
+                    }
                     cart.items[existingIndex].quantity += number
                 } else {
+                    // Tope de productos distintos: memoria y límite de 4096 del
+                    // listado. Se libera pendingAdd para que el wizard no quede
+                    // esperando otra cantidad que tampoco cabría.
+                    if (cart.items.length >= CART_MAX_ITEMS) {
+                        cart.pendingAdd = undefined
+                        return ctx.reply(`🛒 El carrito ya tiene ${CART_MAX_ITEMS} productos distintos.
+
+Confirma la venta con /confirmarc o vacía con /vaciarc antes de agregar más.`)
+                    }
                     cart.items.push({
                         id: pending.id,
                         name: pending.name,

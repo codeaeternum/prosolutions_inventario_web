@@ -39,8 +39,11 @@ export function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Máximo de caracteres de un mensaje de Telegram (texto o caption de foto). */
+/** Máximo de caracteres de un mensaje de Telegram (texto). */
 export const TG_MESSAGE_MAX = 4096
+
+/** Máximo de caracteres del caption de una foto/media (más corto que el texto). */
+export const TG_CAPTION_MAX = 1024
 
 /**
  * Recorta un mensaje al máximo de Telegram terminando en '…' si hubo truncado.

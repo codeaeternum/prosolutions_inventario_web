@@ -11,10 +11,10 @@ import * as path from 'path'
 import type { Product } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { createProduct } from '../../lib/domain/products'
-import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
+import { requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
 import { getDefaultBusinessId } from '../../lib/settings'
 import { normalizePhone } from '../lib/utils'
-import { escapeMarkdownV1 } from '../lib/format'
+import { clipMessage, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
 
 type Intent = 'greeting' | 'help' | 'profile' | 'categories' | 'offers'
     | 'price_check' | 'stock_check' | 'reservation_status' | 'cancel'
@@ -64,8 +64,10 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
     // /eliminar
     bot.command('eliminar', async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant (antes eran dos lookups).
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const args = ctx.message.text.split(' ').slice(1).join(' ').trim()
         if (!args) {
@@ -73,8 +75,6 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
         }
 
         try {
-            const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: { businessId: actor.businessId, name: { contains: args, mode: 'insensitive' } },
                 take: 5,
@@ -124,8 +124,10 @@ Responde con el número (1-${products.length}) o /cancelar`, { parse_mode: 'Mark
     // /qr
     bot.command('qr', async (ctx) => {
         const telegramId = ctx.from.id.toString()
-        if (!(await requireAdmin(ctx))) return
         if (!(await requirePrisma(ctx))) return
+        // Un solo findUnique para gate + tenant (antes eran dos lookups).
+        const actor = await requireAdminAccount(ctx, prisma)
+        if (!actor) return
 
         const args = ctx.message.text.split(' ').slice(1).join(' ').trim()
         if (!args) {
@@ -140,8 +142,6 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
         }
 
         try {
-            const actor = await getBotAccount(prisma, telegramId)
-            if (!actor) return ctx.reply('Cuenta no disponible.')
             const products = await prisma.product.findMany({
                 where: {
                     businessId: actor.businessId,
@@ -162,7 +162,7 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                 // QR generado en local (igual que showqr_): el barcode es un
                 // dato interno y no debe viajar a servicios de terceros.
                 const qrBuffer = await QRCode.toBuffer(qrData)
-                await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
+                await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: clipMessage(`📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, TG_CAPTION_MAX), parse_mode: 'Markdown' })
                 return
             }
 
@@ -183,7 +183,9 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
 
         // Admin: add product photo
         if (adminSession && adminSession.step === 'PHOTO') {
-            if (!(await requireAdmin(ctx))) { delete sessions.adminProduct[telegramId]; return }
+            // Un solo findUnique para gate + cuenta (antes isAdmin + findUnique).
+            const adminUser = await requireAdminAccount(ctx, prisma)
+            if (!adminUser) { delete sessions.adminProduct[telegramId]; return }
             try {
                 const photo = ctx.message.photo[ctx.message.photo.length - 1]
                 const file = await ctx.telegram.getFile(photo.file_id)
@@ -202,11 +204,6 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                 await fs.promises.writeFile(path.join(uploadDir, fileName), bytes)
                 adminSession.data.imageUrl = `/uploads/products/${fileName}`
 
-                const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
-                if (!adminUser) {
-                    delete sessions.adminProduct[telegramId]
-                    return ctx.reply('Cuenta no disponible.')
-                }
                 const newProduct = await createProduct(prisma, adminUser.id, adminUser.businessId, {
                     name: adminSession.data.name!,
                     categoryId: adminSession.data.categoryId!,
@@ -259,9 +256,12 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
 
     // addcat_ action (category selection in wizard)
     bot.action(/^addcat_(.+)$/, async (ctx) => {
-        if (!(await requireAdmin(ctx))) return
+        // requireAdmin no responde el callback: se contesta aquí para que la
+        // negación no deje el spinner girando.
+        if (!(await requireAdmin(ctx))) { await ctx.answerCbQuery().catch(() => { }); return }
         const categoryId = ctx.match[1]
-        await ctx.answerCbQuery()
+        // Toast cosmético: el paso del wizard lo lleva el editMessageText.
+        await ctx.answerCbQuery().catch(() => { })
         const telegramId = ctx.from?.id.toString()
         if (!telegramId) return
         const adminSession = sessions.adminProduct[telegramId]
@@ -409,15 +409,17 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
 
             // --- ADMIN PRODUCT WIZARD ---
             if (adminSession) {
-                if (!(await requireAdmin(ctx))) { delete sessions.adminProduct[telegramId]; return }
+                // Un solo findUnique para gate + cuenta del admin: antes este
+                // paso hacía isAdmin (requireAdmin) y luego getBotAccount /
+                // user.findUnique otra vez para la misma fila.
+                const adminActor = await requireAdminAccount(ctx, prisma)
+                if (!adminActor) { delete sessions.adminProduct[telegramId]; return }
                 if (adminSession.step === 'NAME') {
                     adminSession.data.name = ctx.message.text
                     adminSession.step = 'CATEGORY'
                     // Multi-tenant: solo categorías del negocio del admin —
                     // el producto nuevo se ligará a una de ellas.
-                    const actor = await getBotAccount(prisma, telegramId)
-                    if (!actor) { delete sessions.adminProduct[telegramId]; return ctx.reply('Cuenta no disponible.') }
-                    const categories = await prisma.category.findMany({ where: { businessId: actor.businessId }, take: 10 })
+                    const categories = await prisma.category.findMany({ where: { businessId: adminActor.businessId }, take: 10 })
                     const buttons = categories.map((c) => [Markup.button.callback(c.name, `addcat_${c.id}`)])
                     await ctx.reply('2️⃣ *Selecciona la categoría:*', { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
                     return
@@ -459,9 +461,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     return
                 }
                 if (adminSession.step === 'PHOTO' && ctx.message.text.toLowerCase() === 'saltar') {
-                    const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
-                    if (!adminUser) { delete sessions.adminProduct[telegramId]; return ctx.reply('Cuenta no disponible.') }
-                    const newProduct = await createProduct(prisma, adminUser.id, adminUser.businessId, {
+                    const newProduct = await createProduct(prisma, adminActor.id, adminActor.businessId, {
                         name: adminSession.data.name!,
                         categoryId: adminSession.data.categoryId!,
                         costPrice: adminSession.data.costPrice || null,

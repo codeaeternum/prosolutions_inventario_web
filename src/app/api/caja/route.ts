@@ -49,6 +49,18 @@ const movementInclude = {
   },
 }
 
+/** Resumen del último turno cerrado: alcanza para la tarjeta de cuadre y para reimprimir el ticket (/admin/tickets/corte/[id]). */
+function lastClosureOf(closed: { id: string; initialAmount: number; finalAmount: number | null; movements: CashMovementLike[] }) {
+  const expectedCents = expectedCashCents(closed.initialAmount, closed.movements)
+  const countedCents = closed.finalAmount == null ? expectedCents : Math.round(closed.finalAmount * 100)
+  return {
+    registerId: closed.id,
+    counted: countedCents / 100,
+    expected: expectedCents / 100,
+    difference: (countedCents - expectedCents) / 100,
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const result = await requireModule("caja")
@@ -105,19 +117,34 @@ export async function GET(req: Request) {
       )
     }
 
-    const activeRegister = await prisma.cashRegister.findFirst({
-      where: { businessId, status: "OPEN", ...(branchScope ? { branchId: branchScope } : {}) },
-      orderBy: { openedAt: "desc" },
-      include: {
-        branch: { select: { id: true, name: true } },
-        openedBy: { select: { name: true } },
-        closedBy: { select: { name: true } },
-        movements: movementInclude
-      }
-    })
+    const [activeRegister, lastClosed] = await Promise.all([
+      prisma.cashRegister.findFirst({
+        where: { businessId, status: "OPEN", ...(branchScope ? { branchId: branchScope } : {}) },
+        orderBy: { openedAt: "desc" },
+        include: {
+          branch: { select: { id: true, name: true } },
+          openedBy: { select: { name: true } },
+          closedBy: { select: { name: true } },
+          movements: movementInclude
+        }
+      }),
+      // Último cierre del mismo alcance de sucursal: permite reimprimir el
+      // corte recién hecho aunque la página se haya recargado.
+      prisma.cashRegister.findFirst({
+        where: { businessId, status: "CLOSED", ...(branchScope ? { branchId: branchScope } : {}) },
+        orderBy: { closedAt: "desc" },
+        select: {
+          id: true,
+          initialAmount: true,
+          finalAmount: true,
+          movements: { select: { type: true, amount: true, payment: { select: { method: true, amount: true } } } },
+        },
+      }),
+    ])
+    const lastClosure = lastClosed ? lastClosureOf(lastClosed) : null
 
     if (!activeRegister) {
-      return NextResponse.json({ active: false }, { headers: NO_STORE })
+      return NextResponse.json({ active: false, lastClosure }, { headers: NO_STORE })
     }
 
     // initialAmount/amount son Float en pesos: la corrida se hace en centavos
@@ -138,6 +165,7 @@ export async function GET(req: Request) {
           expectedCash: expectedCashCents(activeRegister.initialAmount, activeRegister.movements as CashMovementLike[]) / 100,
           methodTotals: await methodTotals(businessId, activeRegister),
         },
+        lastClosure,
       },
       { headers: NO_STORE },
     )

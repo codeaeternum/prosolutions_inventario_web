@@ -97,11 +97,12 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
     }
 
     /** Resuelve las marcas sugeridas para el paso BRAND del wizard. Si la BD
-     *  falla el paso sigue funcionando — la marca también se acepta a texto. */
-    async function refreshBrandChips(session: OrdenSession, telegramId: string) {
+     *  falla el paso sigue funcionando — la marca también se acepta a texto.
+     *  Usa session.businessId (fijado en /orden): antes cada llamada hacía un
+     *  findUnique de la cuenta solo para saber el tenant. */
+    async function refreshBrandChips(session: OrdenSession) {
         try {
-            const user = await getBotAccount(prisma, telegramId)
-            session.brandChips = user ? await brandChipsOf(user.businessId) : []
+            session.brandChips = session.businessId ? await brandChipsOf(session.businessId) : []
         } catch {
             session.brandChips = []
         }
@@ -242,6 +243,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
                 branches,
                 equipmentTypes: await equipmentTypesOf(user.businessId),
                 operationKey: `bot-orden-${telegramId}-${Date.now()}`,
+                businessId: user.businessId,
             }
             await ctx.reply('🔧 <b>Nueva orden de reparación</b>\n\n<i>Usa /cancelar para salir en cualquier momento.</i>', { parse_mode: 'HTML' })
             await askNext(ctx, telegramId, sessions.orden[telegramId])
@@ -271,7 +273,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
         try {
             session.data.equipmentType = type
             session.step = 'BRAND'
-            await refreshBrandChips(session, telegramId)
+            await refreshBrandChips(session)
             await ctx.answerCbQuery(type)
             await askNext(ctx, telegramId, session)
         } catch (e) {
@@ -315,7 +317,9 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
         }
         session.data.brand = undefined
         session.step = 'MODEL'
-        await ctx.answerCbQuery()
+        // Toast cosmético: si falla la red aquí el wizard igual debe avanzar
+        // (antes un throw dejaba la sesión en MODEL sin mandar la pregunta).
+        await ctx.answerCbQuery().catch(() => { })
         await askNext(ctx, telegramId, session)
     })
 
@@ -328,7 +332,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
         }
         session.data.model = undefined
         session.step = 'ISSUE'
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         await askNext(ctx, telegramId, session)
     })
 
@@ -360,7 +364,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
     bot.action('orden_cancel', async (ctx) => {
         const telegramId = ctx.from.id.toString()
         delete sessions.orden[telegramId]
-        await ctx.answerCbQuery()
+        await ctx.answerCbQuery().catch(() => { })
         await ctx.editMessageText('❌ Orden cancelada.').catch(() => {})
     })
 
@@ -549,7 +553,7 @@ Por: ${escapeHtml(user.name)}`).catch(() => {})
                     if (text.length > 60) return ctx.reply('❌ Tipo de equipo demasiado largo (máx. 60 caracteres).')
                     session.data.equipmentType = text
                     session.step = 'BRAND'
-                    await refreshBrandChips(session, telegramId)
+                    await refreshBrandChips(session)
                     return askNext(ctx, telegramId, session)
                 }
                 case 'BRAND': {
