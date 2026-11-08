@@ -331,6 +331,13 @@ const actionSchema = z.object({
   deliveredTo: z.string().trim().min(2).max(80).optional(),
   deliveredToDoc: z.string().trim().max(40).optional(),
   deliverySignatureData: z.string().max(300000).regex(/^data:image\/png;base64,/).optional(),
+  // En órdenes captadas por aliado (originBusinessName/originBusinessId) el
+  // equipo puede entregarse al ALIADO (PARTNER) en lugar del cliente final:
+  // solo cambia el asiento del evento — el estado y el cobro no se alteran.
+  deliveredToParty: z.enum(["CUSTOMER", "PARTNER"]).optional(),
+  // Precio convenio editable post-recepción (hoy solo se captura al intake):
+  // nullable para poder limpiarlo; el cambio deja un NOTE privado.
+  partnerPriceCents: moneyCents.nullable().optional(),
 })
 // STATUS quedó fuera: el detalle del evento es la transición misma
 // ("Recibido → En diagnóstico."), así que el avance de etapa no exige texto.
@@ -371,6 +378,11 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       throw new BusinessError("La orden fue delegada al taller asociado; cobra al cliente por POS y gestiona el trabajo en el portal aliado.", 409)
     }
     const data: Parameters<typeof tx.repairOrder.update>[0]["data"] = { version: { increment: 1 } }
+    // Precio convenio capturado/corregido post-recepción: viaja con cualquier
+    // acción (un NOTE basta). El cambio queda en NOTE privado aparte — la
+    // bitácora de dinero entre negocios no se edita en silencio.
+    const partnerPriceChanged = input.partnerPriceCents !== undefined && input.partnerPriceCents !== order.partnerPriceCents
+    if (partnerPriceChanged) data.partnerPriceCents = input.partnerPriceCents
     let detail = input.detail ?? ""
     let eventType: string = input.action
     let eventPublic = false
@@ -610,6 +622,18 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       // porque quien recoge puede no ser el titular — familiar, empleado, etc.
       if (!input.deliveredTo) throw new BusinessError("Indica el nombre de quien recoge el equipo.")
       const recipientLabel = input.deliveredToDoc ? `${input.deliveredTo} · ID: ${input.deliveredToDoc}` : input.deliveredTo
+      // Entrega al ALIADO captador (deliveredToParty "PARTNER"): en órdenes
+      // de convenio el equipo puede regresar al negocio que lo trajo — él lo
+      // entrega a su cliente. Solo cambia el asiento del evento; el estado,
+      // el cobro y la constancia (deliveredTo/firma) siguen igual.
+      const isPartnerOrigin = order.originBusinessName != null || order.originBusinessId != null
+      const partnerRecipient = input.deliveredToParty === "PARTNER" && isPartnerOrigin
+        ? (order.originBusinessName
+            ?? (order.originBusinessId
+              ? (await tx.business.findUnique({ where: { id: order.originBusinessId }, select: { name: true } }))?.name
+              : null))
+        : null
+      const deliveryClause = partnerRecipient ? `Entregado al aliado ${partnerRecipient}` : `Entrega a: ${recipientLabel}`
       const withoutRepair = order.status === "NOT_AUTHORIZED" || order.status === "NOT_REPAIRED"
       const parts = await orderParts()
       const held = await heldCents()
@@ -641,8 +665,8 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       if (droppedRequests.count > 0) tail.push(`${droppedRequests.count} solicitud(es) de refacción pendientes se rechazaron con la entrega.`)
       if (balanceCents > 0) {
         await registerPayment(tx, { orderId: id, orderNumber: order.number, branchId: order.currentBranchId, actorId, businessId, amountCents: balanceCents, method: input.paymentMethod!, purpose: "SETTLEMENT", note: input.detail, reference: input.paymentReference })
-        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). Entrega a: ${recipientLabel}`
-      } else detail = `Sin saldo pendiente. Entrega a: ${recipientLabel}`
+        detail = `${withoutRepair ? "Cargo de diagnóstico/revisión" : "Liquidado"} ${(balanceCents / 100).toFixed(2)} MXN (${input.paymentMethod}). ${deliveryClause}`
+      } else detail = `Sin saldo pendiente. ${deliveryClause}`
       if (input.detail) detail = `${detail}. ${input.detail}`
       // Si el cliente pagó de más (anticipo mayor al cargo final) el excedente
       // queda documentado para registrar el reembolso con la acción REFUND.
@@ -777,6 +801,12 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
     const result = await tx.repairOrder.updateMany({ where: { id, businessId, version: input.expectedVersion }, data })
     if (result.count !== 1) throw new BusinessError("La orden cambió durante la operación.", 409)
     await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: eventType, detail, isPublic: eventPublic } })
+    if (partnerPriceChanged) {
+      // Bitácora privada del precio convenio: de dónde a dónde quedó — la
+      // cuenta B2B (convenio.ts) lee este campo al liquidar.
+      const priceText = (v: number | null) => v == null ? "—" : `$${(v / 100).toFixed(2)}`
+      await tx.repairEvent.create({ data: { businessId, actorId, orderId: id, type: "NOTE", detail: `Precio convenio: ${priceText(order.partnerPriceCents)} → ${priceText(input.partnerPriceCents ?? null)} MXN`, isPublic: false } })
+    }
     if (partReauthNotice) {
       // Aviso limpio para el cliente en seguimiento: el detalle de la pieza
       // quedó en el evento PART privado; aquí solo se comunica que la

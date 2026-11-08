@@ -61,6 +61,10 @@ type Order = {
   originBusinessName?: string | null;
   originContact?: string | null;
   partnerPriceCents?: number | null;
+  // Cuenta del convenio B2B saldada (cuándo y por cuánto se liquidó): llega
+  // en el detalle — el badge "Convenio saldado" solo se muestra con fecha.
+  convenioSettledAt?: string | null;
+  convenioSettledAmountCents?: number | null;
   // Marca de entrega real del servidor (SETTLE_DELIVER). Si el GET aún no la
   // expone, la UI cae al evento público "Entrega registrada".
   deliveredAt?: string | null;
@@ -370,7 +374,7 @@ export default function WorkshopPage() {
   const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
   // El nombre de quien recoge se prellena con el titular al abrir el panel:
   // solo cuenta como cambio si difiere del prellenado.
-  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null || settleForm.reference !== "")
+  const settleFormDirty = settleOpen && (settleForm.method !== "" || settleForm.deliveredTo !== (selected?.customerName ?? "") || settleForm.deliveredToDoc !== "" || settleForm.deliverySignatureData !== null || settleForm.reference !== "" || settleForm.deliveredToParty !== "CUSTOMER")
   const planFormDirty = selected !== null && (planForm.scheduledAt !== toLocalInput(selected.scheduledAt) || planForm.promisedAt !== toLocalInput(selected.promisedAt) || planForm.location !== (selected.location ?? ""))
   // Borradores internos de las secciones hijas (refacciones, etiqueta de
   // evidencias): los elevan con onDirtyChange para que el guard de descarte
@@ -390,7 +394,8 @@ export default function WorkshopPage() {
   const handleSettleChange = useCallback((form: SettleForm) => {
     setSettleForm(previous =>
       previous.method === form.method && previous.deliveredTo === form.deliveredTo &&
-      previous.deliveredToDoc === form.deliveredToDoc && previous.deliverySignatureData === form.deliverySignatureData
+      previous.deliveredToDoc === form.deliveredToDoc && previous.deliverySignatureData === form.deliverySignatureData &&
+      previous.deliveredToParty === form.deliveredToParty
         ? previous : form)
   }, [])
 
@@ -711,6 +716,9 @@ export default function WorkshopPage() {
         deliveredTo,
         deliveredToDoc: deliveredToDoc || undefined,
         deliverySignatureData: settleForm.deliverySignatureData ?? undefined,
+        // Solo en órdenes de convenio: el equipo puede salir con el ALIADO
+        // captador en vez del cliente final (asiento de la bitácora).
+        deliveredToParty: selected.originBusiness || selected.originBusinessName ? settleForm.deliveredToParty : undefined,
       })
       setSettleForm(emptySettleForm); setSettleOpen(false)
       await openOrder(selected.id, true); await load()
@@ -1194,6 +1202,13 @@ export default function WorkshopPage() {
                       Convenio: {money(selected.partnerPriceCents)}
                     </span>
                   )}
+                  {/* Cuenta del convenio saldada por el captador: lo que el
+                      aliado ya pagó (fecha + monto congelado al liquidar). */}
+                  {selected.convenioSettledAt && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                      Convenio saldado {day(selected.convenioSettledAt)}{selected.convenioSettledAmountCents != null ? ` · ${money(selected.convenioSettledAmountCents)}` : ""}
+                    </span>
+                  )}
                 </p>
               )}
               {selected.delegatedOrderId && (
@@ -1212,6 +1227,12 @@ export default function WorkshopPage() {
                   )}
                   {selected.delegatedAt && (
                     <span className="text-xs text-muted-foreground">Enviada {date(selected.delegatedAt)}</span>
+                  )}
+                  {/* Nuestra cuenta con el reparador saldada ("ya le pagué"). */}
+                  {selected.convenioSettledAt && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                      Convenio saldado {day(selected.convenioSettledAt)}{selected.convenioSettledAmountCents != null ? ` · ${money(selected.convenioSettledAmountCents)}` : ""}
+                    </span>
                   )}
                   <Link href="/aliado" className="text-xs font-medium text-primary underline-offset-4 hover:underline">
                     Ver en portal aliado
@@ -1383,6 +1404,9 @@ export default function WorkshopPage() {
               approvedQuoteCents={selected.approvedQuoteCents}
               diagnosticFeeCents={selected.diagnosticFeeCents}
               closedWithoutRepair={selected.closedWithoutRepair}
+              // Orden de convenio: habilita "¿Quién recoge?" (cliente final o
+              // aliado) en el formulario de entrega.
+              partnerName={selected.originBusiness?.name ?? selected.originBusinessName ?? null}
               parts={selectedParts}
               payments={selected.payments}
               // Una orden delegada no mueve dinero ni refacciones aquí (el dominio

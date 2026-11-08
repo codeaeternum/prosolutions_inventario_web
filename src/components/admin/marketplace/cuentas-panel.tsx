@@ -9,10 +9,12 @@
 // /admin/convenio redirige ahí).
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Clock, Handshake, Loader2, RefreshCw } from "lucide-react"
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Clock, Handshake, Loader2, RefreshCw, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useCurrency } from "@/components/currency-provider"
 import { formatDate, formatDay } from "@/lib/utils"
@@ -31,6 +33,9 @@ type CobrarRow = AgingFields & {
   orderId: string; folio: string; createdAt: string; convenioSettledAt: string | null
   convenioSettledAmountCents: number | null
   originFolio: string | null; captorName: string | null; status: string
+  // Captada de mostrador (partnerDrop): el aliado solo quedó como nombre en
+  // texto — sin tenant ligado ni espejo. La fila lleva el badge "mostrador".
+  walkIn: boolean
   partnerPriceCents: number | null; chargeable: boolean
 }
 type ConvenioReport = {
@@ -77,9 +82,20 @@ export function CuentasPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [busyId, setBusyId] = useState<string | null>(null)
+  // Filtro por captador/taller: recorta client-side porCobrar (captorName) y
+  // porPagar (partnerName) con el mismo texto.
+  const [nameFilter, setNameFilter] = useState("")
+  // Liquidación en lote (aliado que acumula y paga mensual): selección de
+  // cuentas porCobrar pendientes exigibles, confirmación inline y el flag de
+  // ingreso en caja para el pago en efectivo en ventanilla.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false)
+  const [recordCashIn, setRecordCashIn] = useState(false)
+  const [batchBusy, setBatchBusy] = useState(false)
   const requestVersion = useRef(0)
-  // Llave idempotente por (orden, estado destino): un reintento tras fallo de
-  // red reusa la misma llave y el servidor devuelve el resultado guardado.
+  // Llave idempotente por (orden, estado destino) — o "batch" para el lote—:
+  // un reintento tras fallo de red reusa la misma llave y el servidor
+  // devuelve el resultado guardado.
   const opKeys = useRef(new Map<string, ClientOperationKey>())
 
   const load = useCallback(async () => {
@@ -92,6 +108,18 @@ export function CuentasPanel() {
       if (version !== requestVersion.current) return
       if (!response.ok) { setError(data.error || "No se pudo cargar el convenio"); return }
       setReport(data)
+      // La selección del lote se poda contra el reporte fresco: una cuenta que
+      // ya no es exigible (o desapareció) no puede quedar marcada.
+      setSelectedIds(previous => {
+        if (previous.size === 0) return previous
+        const selectable = new Set(
+          ((data.porCobrar?.rows ?? []) as CobrarRow[])
+            .filter(row => row.chargeable && !row.convenioSettledAt)
+            .map(row => row.orderId),
+        )
+        const next = new Set([...previous].filter(id => selectable.has(id)))
+        return next.size === previous.size ? previous : next
+      })
     } catch {
       if (version !== requestVersion.current) return
       setError("No se pudo cargar el convenio")
@@ -125,6 +153,36 @@ export function CuentasPanel() {
       toast.error("Error de conexión")
     } finally {
       setBusyId(null)
+    }
+  }
+
+  // Liquidación en lote (settleConvenioBatch): UN POST con todas las cuentas
+  // seleccionadas del lado porCobrar. recordCashIn asienta un único
+  // CashMovement IN por el total — el pago en efectivo del aliado en
+  // ventanilla; por transferencia el flag queda apagado.
+  const settleBatch = async (orderIds: string[], cash: boolean) => {
+    if (batchBusy || orderIds.length === 0) return
+    const op = getClientOperationKey(opKeys.current.get("batch") ?? null, { orderIds: [...orderIds].sort(), recordCashIn: cash })
+    opKeys.current.set("batch", op)
+    setBatchBusy(true)
+    try {
+      const response = await fetch("/api/convenio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderIds, settled: true, recordCashIn: cash, idempotencyKey: op.key }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) { toast.error(data.error || "No se pudo liquidar la selección"); return }
+      const settledCount = Array.isArray(data.settled) ? data.settled.length : orderIds.length
+      toast.success(`${settledCount} cuenta(s) liquidada(s) · ${money(data.totalCents ?? 0)}${cash ? " — ingreso registrado en caja" : ""}`)
+      setSelectedIds(new Set())
+      setBatchConfirmOpen(false)
+      setRecordCashIn(false)
+      await load()
+    } catch {
+      toast.error("Error de conexión")
+    } finally {
+      setBatchBusy(false)
     }
   }
 
@@ -240,6 +298,51 @@ export function CuentasPanel() {
   const porPagar = report?.porPagar ?? { rows: [], totals: { pendingCents: 0, settledCents: 0, unpricedPending: 0 } }
   const porCobrar = report?.porCobrar ?? { rows: [], totals: { pendingCents: 0, settledCents: 0, unpricedPending: 0 } }
 
+  // El mismo texto filtra porCobrar por captorName y porPagar por
+  // partnerName — un aliado puede aparecer en ambas caras del convenio.
+  const filterText = nameFilter.trim().toLowerCase()
+  const matchesName = (name: string | null) => (name ?? "").toLowerCase().includes(filterText)
+  const visibleCobrarRows = filterText ? porCobrar.rows.filter(row => matchesName(row.captorName)) : porCobrar.rows
+  const visiblePagarRows = filterText ? porPagar.rows.filter(row => matchesName(row.partnerName)) : porPagar.rows
+  // Subtotal pendiente del filtro activo, agrupado por captador ("Telcel
+  // Centro: 3 órdenes · $1,240"): solo cuentas exigibles sin saldar.
+  const filterSubtotals = new Map<string, { count: number; cents: number }>()
+  if (filterText) {
+    for (const row of visibleCobrarRows) {
+      if (!row.chargeable || row.convenioSettledAt) continue
+      const entry = filterSubtotals.get(row.captorName ?? "Sin captador") ?? { count: 0, cents: 0 }
+      entry.count += 1
+      entry.cents += row.partnerPriceCents ?? 0
+      filterSubtotals.set(row.captorName ?? "Sin captador", entry)
+    }
+  }
+
+  // Selección del lote: solo cuentas porCobrar pendientes y exigibles — una
+  // saldada o aún en proceso no forma parte de una liquidación.
+  const selectableRows = visibleCobrarRows.filter(row => row.chargeable && !row.convenioSettledAt)
+  const selectedRows = selectableRows.filter(row => selectedIds.has(row.orderId))
+  const selectedTotalCents = selectedRows.reduce((sum, row) => sum + (row.partnerPriceCents ?? 0), 0)
+  const allSelected = selectableRows.length > 0 && selectableRows.every(row => selectedIds.has(row.orderId))
+  const someSelected = selectableRows.some(row => selectedIds.has(row.orderId))
+  const toggleRowSelected = (orderId: string, checked: boolean) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous)
+      if (checked) next.add(orderId)
+      else next.delete(orderId)
+      return next
+    })
+  }
+  const toggleAllSelected = (checked: boolean) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous)
+      for (const row of selectableRows) {
+        if (checked) next.add(row.orderId)
+        else next.delete(row.orderId)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -265,6 +368,30 @@ export function CuentasPanel() {
         pagada; el otro taller ve la suya de forma independiente.
       </p>
 
+      {/* Filtro por nombre de aliado: recorta las dos tablas (porCobrar por
+          captorName, porPagar por partnerName). Debajo va el subtotal
+          pendiente de lo filtrado. */}
+      <div className="space-y-1.5">
+        <div className="relative max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={nameFilter}
+            onChange={event => setNameFilter(event.target.value)}
+            placeholder="Filtrar por captador o taller…"
+            aria-label="Filtrar por captador o taller"
+            maxLength={80}
+            className="pl-8"
+          />
+        </div>
+        {filterText && (
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {filterSubtotals.size > 0
+              ? [...filterSubtotals.entries()].map(([name, sub]) => `${name}: ${sub.count} ${sub.count === 1 ? "orden" : "órdenes"} · ${money(sub.cents)}`).join("   ·   ")
+              : "Sin cuentas pendientes con este filtro."}
+          </p>
+        )}
+      </div>
+
       {/* Debo a talleres (lado captador) */}
       <Card>
         <CardHeader>
@@ -277,6 +404,8 @@ export function CuentasPanel() {
         <CardContent className="space-y-4">
           {porPagar.rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">No has delegado órdenes a talleres asociados.</p>
+          ) : visiblePagarRows.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Ninguna cuenta coincide con el filtro.</p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -291,7 +420,7 @@ export function CuentasPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {porPagar.rows.map(row => (
+                  {visiblePagarRows.map(row => (
                     <TableRow key={row.orderId}>
                       <TableCell className="font-medium">{row.folio}</TableCell>
                       <TableCell>{row.partnerName ?? "—"}</TableCell>
@@ -327,11 +456,23 @@ export function CuentasPanel() {
         <CardContent className="space-y-4">
           {porCobrar.rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">Ningún negocio asociado te ha traído órdenes.</p>
+          ) : visibleCobrarRows.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Ninguna cuenta coincide con el filtro.</p>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {report?.canSettle && (
+                      <TableHead className="w-10">
+                        <Checkbox
+                          aria-label="Seleccionar todas las cuentas pendientes"
+                          checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                          disabled={selectableRows.length === 0 || batchBusy}
+                          onCheckedChange={checked => toggleAllSelected(checked === true)}
+                        />
+                      </TableHead>
+                    )}
                     <TableHead>Mi orden</TableHead>
                     <TableHead>Captador</TableHead>
                     <TableHead>Orden origen</TableHead>
@@ -342,10 +483,31 @@ export function CuentasPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {porCobrar.rows.map(row => (
+                  {visibleCobrarRows.map(row => (
                     <TableRow key={row.orderId}>
+                      {report?.canSettle && (
+                        <TableCell>
+                          <Checkbox
+                            aria-label={`Seleccionar la cuenta de la orden ${row.folio}`}
+                            checked={selectedIds.has(row.orderId)}
+                            disabled={!row.chargeable || Boolean(row.convenioSettledAt) || batchBusy}
+                            onCheckedChange={checked => toggleRowSelected(row.orderId, checked === true)}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-medium">{row.folio}</TableCell>
-                      <TableCell>{row.captorName ?? "—"}</TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1.5">
+                          {row.captorName ?? "—"}
+                          {/* Alta de mostrador (partnerDrop): el aliado no tiene
+                              cuenta ligada — solo su nombre en texto. */}
+                          {row.walkIn && (
+                            <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+                              mostrador
+                            </Badge>
+                          )}
+                        </span>
+                      </TableCell>
                       <TableCell>{row.originFolio ?? "—"}</TableCell>
                       <TableCell>{statusBadge(row.status)}</TableCell>
                       <TableCell>{priceCell(row)}</TableCell>
@@ -355,6 +517,43 @@ export function CuentasPanel() {
                   ))}
                 </TableBody>
               </Table>
+            </div>
+          )}
+          {/* Liquidación en lote: para el aliado que acumula equipos y paga
+              mensual. La confirmación inline muestra el total y permite
+              asentar el ingreso en caja cuando paga en efectivo. */}
+          {report?.canSettle && selectedRows.length > 0 && (
+            <div className="rounded-lg border border-emerald-300/70 bg-emerald-50/60 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
+              {batchConfirmOpen ? (
+                <div className="space-y-3">
+                  <p className="text-sm">
+                    Se marcarán <strong>{selectedRows.length}</strong> {selectedRows.length === 1 ? "cuenta" : "cuentas"} como pagadas por un total de <strong>{money(selectedTotalCents)}</strong>.
+                  </p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={recordCashIn} disabled={batchBusy} onCheckedChange={checked => setRecordCashIn(checked === true)} />
+                    Registrar ingreso en caja
+                    <span className="text-xs text-muted-foreground">(el aliado paga en efectivo en ventanilla)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={batchBusy} onClick={() => void settleBatch(selectedRows.map(row => row.orderId), recordCashIn)}>
+                      {batchBusy && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+                      Confirmar liquidación
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={batchBusy} onClick={() => { setBatchConfirmOpen(false); setRecordCashIn(false) }}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    {selectedRows.length} {selectedRows.length === 1 ? "cuenta seleccionada" : "cuentas seleccionadas"}
+                  </p>
+                  <Button size="sm" onClick={() => setBatchConfirmOpen(true)}>
+                    Liquidar seleccionadas ({selectedRows.length} · {money(selectedTotalCents)})
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           {agingChips(porCobrar.rows)}

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { convenioReport, convenioTotals, isConvenioChargeable, settleConvenio } from "@/lib/domain/convenio"
+import { convenioReport, convenioTotals, isConvenioChargeable, settleConvenio, settleConvenioBatch } from "@/lib/domain/convenio"
+import { updateRepair } from "@/lib/domain/workshop"
 
 /**
  * Convenio B2B entre talleres: agregado de saldos (puro) y el toggle de
@@ -71,17 +72,22 @@ describe("isConvenioChargeable", () => {
 // ── settleConvenio sobre tx falso ────────────────────────────────────────────
 
 const tx = {
-  user: { findUnique: vi.fn() },
+  user: { findUnique: vi.fn(), findFirst: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-  repairOrder: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+  repairOrder: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
   repairEvent: { create: vi.fn() },
+  repairPart: { findMany: vi.fn(), updateMany: vi.fn() },
+  payment: { findMany: vi.fn() },
+  cashRegister: { findFirst: vi.fn() },
+  cashMovement: { create: vi.fn() },
+  systemSettings: { findMany: vi.fn(), findUnique: vi.fn() },
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
 const convenioOrder = (over: Record<string, unknown> = {}) => ({
-  id: "o1", businessId: BIZ, convenioSettledAt: null, convenioSettledAmountCents: null,
+  id: "o1", businessId: BIZ, number: 7, convenioSettledAt: null, convenioSettledAmountCents: null,
   partnerPriceCents: null,
-  delegatedOrderId: "m1", originBusinessId: null, delegatedFromOrderId: null,
+  delegatedOrderId: "m1", originBusinessId: null, delegatedFromOrderId: null, originBusinessName: null,
   ...over,
 })
 const payload = { orderId: "o1", idempotencyKey: "convenio-test-1" }
@@ -95,8 +101,19 @@ beforeEach(() => {
   tx.repairOrder.findFirst.mockResolvedValue(convenioOrder())
   // La espejo del lado "pagar": el precio convenio se lee de ella por id.
   tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000 })
+  tx.repairOrder.findMany.mockResolvedValue([])
   tx.repairOrder.update.mockResolvedValue({})
+  tx.repairOrder.updateMany.mockResolvedValue({ count: 1 })
+  tx.repairOrder.findUniqueOrThrow.mockResolvedValue({})
   tx.repairEvent.create.mockResolvedValue({})
+  tx.repairPart.findMany.mockResolvedValue([])
+  tx.repairPart.updateMany.mockResolvedValue({ count: 0 })
+  tx.payment.findMany.mockResolvedValue([])
+  // Sin caja abierta por defecto: los tests de recordCashIn la habilitan.
+  tx.cashRegister.findFirst.mockResolvedValue(null)
+  tx.cashMovement.create.mockResolvedValue({})
+  tx.systemSettings.findMany.mockResolvedValue([])
+  tx.systemSettings.findUnique.mockResolvedValue(null)
 })
 
 describe("settleConvenio", () => {
@@ -135,6 +152,40 @@ describe("settleConvenio", () => {
     expect(result.side).toBe("cobrar")
     const event = tx.repairEvent.create.mock.calls[0][0] as { data: { detail: string } }
     expect(event.data.detail).toContain("pago del negocio captador")
+  })
+
+  it("el lado cobrar también aplica a la captada de mostrador (solo originBusinessName)", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000 }))
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
+    expect(result.side).toBe("cobrar")
+    // El snapshot congela el partnerPriceCents propio: no hay espejo que leer.
+    expect(result.convenioSettledAmountCents).toBe(25000)
+    expect(tx.repairOrder.findUnique).not.toHaveBeenCalled()
+    expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ convenioSettledAmountCents: 25000 }),
+    }))
+  })
+
+  it("recordCashIn registra UN CashMovement IN en la caja abierta del negocio", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000 }))
+    tx.cashRegister.findFirst.mockResolvedValue({ id: "reg-1" })
+    await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true, recordCashIn: true })
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        businessId: BIZ, registerId: "reg-1", type: "IN", amount: 250,
+        referenceType: "CONVENIO",
+        description: "Convenio Telcel Centro · OT-000007",
+      }),
+    }))
+  })
+
+  it("recordCashIn sin caja abierta falla ANTES de tocar la orden", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000 }))
+    await expect(settleConvenio(db, admin.id, BIZ, { ...payload, settled: true, recordCashIn: true }))
+      .rejects.toMatchObject({ status: 409, message: "Abre la caja para registrar el ingreso en efectivo." })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+    expect(tx.cashMovement.create).not.toHaveBeenCalled()
   })
 
   it("el lado cobrar congela su propio partnerPriceCents sin leer espejos", async () => {
@@ -198,6 +249,8 @@ describe("convenioReport", () => {
     id: "m9", number: 3, status: "READY", createdAt: new Date("2026-01-05"),
     convenioSettledAt: null, partnerPriceCents: 42000,
     originContact: "OT-000007", originBusinessName: "Captador SA",
+    // Aliado con tenant ligado (intake /api/workshop/partner): no es mostrador.
+    originBusinessId: "biz-cap", delegatedFromOrderId: null,
     originBusiness: { name: "Captador SA" },
   }
 
@@ -281,6 +334,27 @@ describe("convenioReport", () => {
     expect(report.porPagar.totals.settledCents).toBe(30000)
     expect(report.porCobrar.rows[0].convenioSettledAmountCents).toBe(42000)
     expect(report.porCobrar.totals.settledCents).toBe(42000)
+  })
+
+  it("porCobrar incluye la captada de mostrador (solo originBusinessName) marcada walkIn", async () => {
+    const db = fakeDb({
+      incoming: [
+        // Aliado sin cuenta: originBusinessName en texto, sin ligadura
+        // (originBusinessId ni espejo) — el WHERE del dominio la recoge por
+        // el tercer OR y el reporte la distingue con walkIn.
+        { id: "w1", number: 21, status: "READY", createdAt: new Date("2026-01-05"),
+          convenioSettledAt: null, partnerPriceCents: 18000,
+          originContact: "Mostrador", originBusinessName: "Telcel Centro",
+          originBusinessId: null, delegatedFromOrderId: null, originBusiness: null },
+        incomingRow,
+      ],
+    })
+    const report = await convenioReport(db, BIZ)
+    const walkIn = report.porCobrar.rows.find(r => r.orderId === "w1")!
+    expect(walkIn).toMatchObject({ captorName: "Telcel Centro", walkIn: true, partnerPriceCents: 18000 })
+    // La del aliado ligado (originBusinessId) no es mostrador.
+    expect(report.porCobrar.rows.find(r => r.orderId === "m9")!.walkIn).toBe(false)
+    expect(report.porCobrar.totals.pendingCents).toBe(18000 + 42000)
   })
 
   it("espejo sin precio convenio marca unpricedPending y fila sin monto", async () => {
@@ -367,5 +441,206 @@ describe("convenioReport", () => {
     expect(report.porCobrar.rows[0].chargeable).toBe(true)
     expect(report.porCobrar.rows[0].daysPending).toBeNull()
     expect(report.porCobrar.rows[0].chargeableAt).toBeNull()
+  })
+})
+
+// ── settleConvenioBatch: liquidación en lote del mismo lado ─────────────────
+// repairOrder.findMany discrimina por `where`: con businessId son las órdenes
+// propias del lote; solo por id son las espejos del lado pagar (cross-tenant
+// acotado — mismo patrón que convenioReport).
+const batchOrders = (rows: unknown[], mirrors: unknown[] = []) =>
+  tx.repairOrder.findMany.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+    Promise.resolve(where.businessId ? rows : mirrors))
+
+describe("settleConvenioBatch", () => {
+  const batchPayload = (over: Record<string, unknown> = {}) => ({
+    orderIds: ["o1", "o2"], settled: true, idempotencyKey: "convenio-batch-1", ...over,
+  })
+  const cobrar = (id: string, over: Record<string, unknown> = {}) =>
+    convenioOrder({ id, delegatedOrderId: null, originBusinessName: "Telcel Centro", ...over })
+
+  it("salda N órdenes del mismo lado con su snapshot y suma el total", async () => {
+    batchOrders([
+      cobrar("o1", { number: 21, partnerPriceCents: 20000 }),
+      cobrar("o2", { number: 22, partnerPriceCents: 30000 }),
+    ])
+    const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload())
+    expect(result.side).toBe("cobrar")
+    expect(result.settled).toEqual([
+      { orderId: "o1", amountCents: 20000 },
+      { orderId: "o2", amountCents: 30000 },
+    ])
+    expect(result.skipped).toEqual([])
+    expect(result.totalCents).toBe(50000)
+    // Un update y UN solo RepairEvent por cada orden marcada.
+    expect(tx.repairOrder.update).toHaveBeenCalledTimes(2)
+    expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "o2" },
+      data: expect.objectContaining({ convenioSettledAt: expect.any(Date), convenioSettledAmountCents: 30000 }),
+    }))
+    expect(tx.repairEvent.create).toHaveBeenCalledTimes(2)
+  })
+
+  it("del lado pagar toma el snapshot de la espejo por id", async () => {
+    batchOrders(
+      [convenioOrder({ id: "o1" })],           // delegatedOrderId "m1" → pagar
+      [{ id: "m1", partnerPriceCents: 35000 }],
+    )
+    const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ orderIds: ["o1"] }))
+    expect(result.side).toBe("pagar")
+    expect(result.settled).toEqual([{ orderId: "o1", amountCents: 35000 }])
+    expect(result.totalCents).toBe(35000)
+    // La espejo se leyó solo por id (sin businessId: cross-tenant acotado).
+    const mirrorCall = tx.repairOrder.findMany.mock.calls
+      .map(call => call[0] as { where: Record<string, unknown> })
+      .find(args => !args.where.businessId)
+    expect(mirrorCall?.where).toEqual({ id: { in: ["m1"] } })
+  })
+
+  it("salta idempotentemente las que ya están en el estado pedido", async () => {
+    batchOrders([
+      cobrar("o1", { partnerPriceCents: 20000 }),
+      cobrar("o2", { convenioSettledAt: new Date(), convenioSettledAmountCents: 15000 }),
+    ])
+    const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload())
+    expect(result.skipped).toEqual(["o2"])
+    expect(result.settled).toEqual([{ orderId: "o1", amountCents: 20000 }])
+    expect(result.totalCents).toBe(20000)
+    expect(tx.repairOrder.update).toHaveBeenCalledTimes(1)
+    expect(tx.repairEvent.create).toHaveBeenCalledTimes(1)
+  })
+
+  it("rechaza un lote que mezcla lado cobrar y lado pagar", async () => {
+    batchOrders([
+      cobrar("o1"),
+      convenioOrder({ id: "o2" }), // delegatedOrderId → pagar
+    ])
+    await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload()))
+      .rejects.toMatchObject({ status: 409 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+  })
+
+  it("rechaza una orden que no pertenece a ningún convenio", async () => {
+    batchOrders([
+      cobrar("o1"),
+      convenioOrder({ id: "o2", delegatedOrderId: null }), // sin origen: no es cuenta B2B
+    ])
+    await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload()))
+      .rejects.toMatchObject({ status: 409 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+  })
+
+  it("si falta alguna orden (ajena o inexistente) responde 404 sin tocar nada", async () => {
+    batchOrders([]) // las dos pedidas son de otro tenant / no existen
+    await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload()))
+      .rejects.toMatchObject({ status: 404 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+  })
+
+  it("recordCashIn crea UN CashMovement IN por el total con los folios en la descripción", async () => {
+    batchOrders([
+      cobrar("o1", { number: 21, partnerPriceCents: 20000 }),
+      cobrar("o2", { number: 22, partnerPriceCents: 30000 }),
+    ])
+    tx.cashRegister.findFirst.mockResolvedValue({ id: "reg-1" })
+    const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ recordCashIn: true }))
+    expect(result.totalCents).toBe(50000)
+    expect(tx.cashMovement.create).toHaveBeenCalledTimes(1)
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        businessId: BIZ, registerId: "reg-1", type: "IN", amount: 500,
+        referenceType: "CONVENIO",
+        description: "Convenio Telcel Centro · OT-000021, OT-000022",
+      }),
+    }))
+  })
+
+  it("recordCashIn sin caja abierta falla antes de marcar ninguna orden", async () => {
+    batchOrders([
+      cobrar("o1", { partnerPriceCents: 20000 }),
+      cobrar("o2", { partnerPriceCents: 30000 }),
+    ])
+    await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload({ recordCashIn: true })))
+      .rejects.toMatchObject({ status: 409, message: "Abre la caja para registrar el ingreso en efectivo." })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+    expect(tx.cashMovement.create).not.toHaveBeenCalled()
+  })
+})
+
+// ── updateRepair: entrega al aliado y precio convenio editable ───────────────
+// Mismo tx falso: el dominio corre de verdad — para SETTLE_DELIVER se pueblan
+// las lecturas de refacciones/pagos/ajustes que la acción consulta.
+
+const workshopOrder = (over: Record<string, unknown> = {}) => ({
+  id: "o1", businessId: BIZ, number: 7, version: 3, status: "READY",
+  customerId: "cust-1", customerPhone: "8112345678", customerPhoneAlt: null,
+  quoteCents: null, approvedQuoteCents: null, quoteApprovedAt: null, diagnosticFeeCents: null,
+  closedWithoutRepair: false, currentBranchId: "b1",
+  warrantyUntil: null, warrantyCount: 0, warrantyEligibleUntil: null,
+  delegatedOrderId: null, delegatedFromOrderId: null,
+  originBusinessId: null, originBusinessName: null, partnerPriceCents: null,
+  ...over,
+})
+let deliverOp = 0
+const deliverPayload = (over: Record<string, unknown>) => ({ idempotencyKey: `deliver-op-${++deliverOp}`, expectedVersion: 3, ...over })
+
+describe("deliveredToParty en SETTLE_DELIVER", () => {
+  it("PARTNER en una orden de convenio asienta 'Entregado al aliado {nombre}' sin mover dinero ni receptor", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(workshopOrder({ originBusinessName: "Telcel Centro" }))
+    await updateRepair(db, admin.id, BIZ, "o1", deliverPayload({ action: "SETTLE_DELIVER", deliveredTo: "Encargado Telcel", deliveredToParty: "PARTNER" }))
+    const paymentEvent = tx.repairEvent.create.mock.calls
+      .map(call => (call[0] as { data: { type: string; detail: string } }).data)
+      .find(event => event.type === "PAYMENT")
+    expect(paymentEvent?.detail).toContain("Entregado al aliado Telcel Centro")
+    expect(paymentEvent?.detail).not.toContain("Entrega a:")
+    // Estado y constancia intactos: sigue siendo entrega con receptor propio.
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "DELIVERED", deliveredTo: "Encargado Telcel" }),
+    }))
+  })
+
+  it("CUSTOMER (o sin el flag) conserva el texto habitual 'Entrega a:'", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(workshopOrder({ originBusinessName: "Telcel Centro" }))
+    await updateRepair(db, admin.id, BIZ, "o1", deliverPayload({ action: "SETTLE_DELIVER", deliveredTo: "La clienta", deliveredToParty: "CUSTOMER" }))
+    const paymentEvent = tx.repairEvent.create.mock.calls
+      .map(call => (call[0] as { data: { type: string; detail: string } }).data)
+      .find(event => event.type === "PAYMENT")
+    expect(paymentEvent?.detail).toContain("Entrega a: La clienta")
+  })
+})
+
+describe("partnerPriceCents editable por updateRepair", () => {
+  it("persiste el cambio y deja NOTE privado 'Precio convenio: $X → $Y'", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(workshopOrder({ partnerPriceCents: 20000 }))
+    await updateRepair(db, admin.id, BIZ, "o1", deliverPayload({ action: "NOTE", detail: "Ajuste de convenio", partnerPriceCents: 25000 }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ partnerPriceCents: 25000 }),
+    }))
+    const priceNote = tx.repairEvent.create.mock.calls
+      .map(call => (call[0] as { data: { type: string; detail: string; isPublic: boolean } }).data)
+      .find(event => event.detail.startsWith("Precio convenio"))
+    expect(priceNote?.detail).toBe("Precio convenio: $200.00 → $250.00 MXN")
+    expect(priceNote?.isPublic).toBe(false)
+  })
+
+  it("se puede limpiar con null y no deja nota cuando el valor no cambia", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(workshopOrder({ partnerPriceCents: 20000 }))
+    await updateRepair(db, admin.id, BIZ, "o1", deliverPayload({ action: "NOTE", detail: "Sin convenio", partnerPriceCents: null }))
+    expect(tx.repairOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ partnerPriceCents: null }),
+    }))
+    // Segundo update con el MISMO valor: no se reescribe ni se anota.
+    tx.repairOrder.findUnique.mockResolvedValue(workshopOrder({ partnerPriceCents: 20000 }))
+    await updateRepair(db, admin.id, BIZ, "o1", deliverPayload({ action: "NOTE", detail: "Sin cambio", partnerPriceCents: 20000 }))
+    const lastData = (tx.repairOrder.updateMany.mock.calls.at(-1)![0] as { data: Record<string, unknown> }).data
+    expect("partnerPriceCents" in lastData).toBe(false)
+    // En ambas llamadas solo hubo UN "Precio convenio" (el primer cambio).
+    const priceNotes = tx.repairEvent.create.mock.calls
+      .map(call => (call[0] as { data: { detail: string } }).data)
+      .filter(event => event.detail.startsWith("Precio convenio"))
+    expect(priceNotes).toHaveLength(1)
   })
 })

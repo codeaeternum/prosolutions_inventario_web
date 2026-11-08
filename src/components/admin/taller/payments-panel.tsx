@@ -22,10 +22,13 @@ export type PaymentForm = { amount: string; method: string; note: string; refere
 // Entrega estructurada: nombre de quien recoge (obligatorio, puede no ser el
 // titular), identificación opcional y firma de quien recibe (PNG data URL).
 // `reference`: folio SPEI/autorización — obligatorio al cobrar por TRANSFER.
-export type SettleForm = { method: string; deliveredTo: string; deliveredToDoc: string; deliverySignatureData: string | null; reference: string }
+// `deliveredToParty`: en órdenes de convenio el equipo puede salir con el
+// ALIADO captador (él se lo entrega a su cliente) en vez del cliente final.
+// Default CUSTOMER — marcar PARTNER es una decisión explícita del staff.
+export type SettleForm = { method: string; deliveredTo: string; deliveredToDoc: string; deliverySignatureData: string | null; reference: string; deliveredToParty: "CUSTOMER" | "PARTNER" }
 export type RefundForm = { amount: string; method: string; note: string }
 export const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "", reference: "" }
-export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "" }
+export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "", deliveredToParty: "CUSTOMER" }
 export const emptyRefundForm: RefundForm = { amount: "", method: "", note: "" }
 
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
@@ -53,6 +56,9 @@ export function PaymentsPanel(props: {
   status: string; quoteCents: number | null; approvedQuoteCents: number | null; diagnosticFeeCents: number | null
   /** Persistido al entregar sin reparación: tras DELIVERED el total sigue siendo solo el cargo de diagnóstico. */
   closedWithoutRepair?: boolean | null
+  /** Nombre del aliado captador (originBusiness/originBusinessName): habilita
+   *  el selector "¿Quién recoge el equipo?" en la entrega. */
+  partnerName?: string | null
   parts?: PartLike[]; payments: WorkshopPayment[] | undefined
   canCharge: boolean; canDeliver: boolean; canRefund: boolean; disabled: boolean
   paymentForm: PaymentForm; onPaymentChange: (form: PaymentForm) => void; onPaymentSubmit: (event: React.FormEvent<HTMLFormElement>) => void
@@ -131,7 +137,25 @@ export function PaymentsPanel(props: {
           {balance > 0 && props.settleForm.method === "TRANSFER" && (
             <label className="block text-xs">Referencia de la transferencia<Input required maxLength={200} value={props.settleForm.reference} onChange={e => props.onSettleChange({ ...props.settleForm, reference: e.target.value })} placeholder="Clave SPEI o folio de autorización" className="mt-1" /></label>
           )}
-          <label className="block text-xs">Nombre de quien recoge<Input required minLength={2} maxLength={80} value={props.settleForm.deliveredTo} onChange={e => props.onSettleChange({ ...props.settleForm, deliveredTo: e.target.value })} placeholder="Puede ser un familiar o empleado del titular" className="mt-1" /></label>
+          {props.partnerName && (
+            <div className="space-y-1.5">
+              <p className="text-xs">¿Quién recoge el equipo?</p>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Quién recoge el equipo">
+                <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs transition ${props.settleForm.deliveredToParty === "CUSTOMER" ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground hover:border-primary/40"}`}>
+                  <input type="radio" name="deliveredToParty" className="accent-primary" checked={props.settleForm.deliveredToParty === "CUSTOMER"} onChange={() => props.onSettleChange({ ...props.settleForm, deliveredToParty: "CUSTOMER" })} />
+                  Cliente final
+                </label>
+                <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs transition ${props.settleForm.deliveredToParty === "PARTNER" ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground hover:border-primary/40"}`}>
+                  <input type="radio" name="deliveredToParty" className="accent-primary" checked={props.settleForm.deliveredToParty === "PARTNER"} onChange={() => props.onSettleChange({ ...props.settleForm, deliveredToParty: "PARTNER" })} />
+                  Aliado ({props.partnerName})
+                </label>
+              </div>
+              {props.settleForm.deliveredToParty === "PARTNER" && (
+                <p className="text-[11px] text-muted-foreground">El equipo sale del taller con el aliado; él se lo entrega a su cliente.</p>
+              )}
+            </div>
+          )}
+          <label className="block text-xs">Nombre de quien recoge<Input required minLength={2} maxLength={80} value={props.settleForm.deliveredTo} onChange={e => props.onSettleChange({ ...props.settleForm, deliveredTo: e.target.value })} placeholder={props.settleForm.deliveredToParty === "PARTNER" ? "Quien recoge por el negocio aliado" : "Puede ser un familiar o empleado del titular"} className="mt-1" /></label>
           <label className="block text-xs">Identificación (INE/licencia, opcional)<Input maxLength={40} value={props.settleForm.deliveredToDoc} onChange={e => props.onSettleChange({ ...props.settleForm, deliveredToDoc: e.target.value })} placeholder="Número o folio de la identificación" className="mt-1" /></label>
           <SignaturePad label="Firma de quien recibe" hint="La firma queda como constancia de entrega del equipo." onChange={dataUrl => props.onSettleChange({ ...props.settleForm, deliverySignatureData: dataUrl })} />
         </fieldset>

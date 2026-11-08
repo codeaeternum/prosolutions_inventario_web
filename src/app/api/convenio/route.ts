@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { convenioReport, settleConvenio } from "@/lib/domain/convenio"
+import { convenioReport, settleConvenio, settleConvenioBatch } from "@/lib/domain/convenio"
 import { businessFailure } from "@/lib/domain/http"
 
 // Cuentas del convenio B2B entre talleres asociados: lo que debo a talleres
@@ -26,9 +26,12 @@ export async function POST(req: Request) {
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const body = await req.json()
-    const result = await settleConvenio(prisma, session.user.id, businessIdOf(session), {
-      ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),
-    })
+    // Liquidación individual (orderId) o en lote (orderIds): la llave
+    // idempotente llega en el body o por header, como en el resto del API.
+    const input = { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") }
+    const result = Array.isArray(body?.orderIds)
+      ? await settleConvenioBatch(prisma, session.user.id, businessIdOf(session), input)
+      : await settleConvenio(prisma, session.user.id, businessIdOf(session), input)
     return NextResponse.json(result)
   } catch (error) { return businessFailure(error) }
 }

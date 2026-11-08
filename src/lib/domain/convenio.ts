@@ -1,6 +1,6 @@
 import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema } from "./operations"
+import { BusinessError, operation, operationKeySchema, type Transaction } from "./operations"
 import { formatFolio, parseFolioDigits } from "../workshop-labels"
 
 /**
@@ -10,9 +10,10 @@ import { formatFolio, parseFolioDigits } from "../workshop-labels"
  *  - porPagar (lado captador): mis órdenes con delegatedOrderId — el trabajo
  *    vive en la espejo del taller reparador y partnerPriceCents es lo que él
  *    me cobra. convenioSettledAt = "ya le pagué".
- *  - porCobrar (lado reparador): mis órdenes con originBusinessId o
- *    delegatedFromOrderId — yo reparo lo que el captador trajo.
- *    convenioSettledAt = "ya me pagó".
+ *  - porCobrar (lado reparador): mis órdenes con originBusinessId,
+ *    delegatedFromOrderId u originBusinessName — yo reparo lo que el
+ *    captador trajo; el nombre libre cubre al aliado de MOSTRADOR sin
+ *    cuenta (partnerDrop en la recepción). convenioSettledAt = "ya me pagó".
  *
  * La lectura cross-tenant se limita a las espejos vinculadas desde mis
  * órdenes (delegatedOrderId), mismo patrón que delegation.ts. El folio se
@@ -66,8 +67,33 @@ export function convenioTotals(rows: ConvenioTotalsRow[]) {
   return { pendingCents, settledCents, unpricedPending }
 }
 
+/** Lado del convenio al que pertenece una orden PROPIA (null = no es cuenta
+ *  B2B): la ORIGEN delegada (delegatedOrderId) es "pagar"; la captada por un
+ *  aliado —tenant ligado (originBusinessId), espejo de delegación
+ *  (delegatedFromOrderId) o alta de mostrador con solo el nombre en texto
+ *  (originBusinessName)— es "cobrar". */
+const convenioSide = (order: {
+  delegatedOrderId: string | null
+  originBusinessId: string | null
+  delegatedFromOrderId: string | null
+  originBusinessName: string | null
+}): "pagar" | "cobrar" | null =>
+  order.delegatedOrderId ? "pagar"
+    : (order.originBusinessId || order.delegatedFromOrderId || order.originBusinessName) ? "cobrar" : null
+
+/** Lector mínimo de SystemSettings: admite el cliente global y el de la
+ *  transacción (folioFormatter corre dentro de la tx en los settles). */
+type SettingsReader = {
+  systemSettings: {
+    findMany: (args: {
+      where: { businessId: { in: string[] }; key: { in: string[] } }
+      select: { businessId: true; key: true; value: true }
+    }) => Promise<{ businessId: string; key: string; value: string }[]>
+  }
+}
+
 /** Folio con los ajustes de cada tenant involucrado, leídos una sola vez. */
-async function folioFormatter(db: PrismaClient, businessIds: string[]) {
+async function folioFormatter(db: SettingsReader, businessIds: string[]) {
   const rows = await db.systemSettings.findMany({
     where: { businessId: { in: businessIds }, key: { in: ["order_prefix", "order_folio_digits"] } },
     select: { businessId: true, key: true, value: true },
@@ -98,15 +124,17 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       },
     }),
     // Lado reparador: órdenes mías captadas por un negocio aliado (intake
-    // aliado o espejo de una delegación saliente del captador).
+    // aliado, espejo de una delegación saliente del captador, o alta de
+    // mostrador con solo el nombre del aliado en texto — originBusinessName).
     db.repairOrder.findMany({
-      where: { businessId, OR: [{ originBusinessId: { not: null } }, { delegatedFromOrderId: { not: null } }] },
+      where: { businessId, OR: [{ originBusinessId: { not: null } }, { delegatedFromOrderId: { not: null } }, { originBusinessName: { not: null } }] },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 200,
       select: {
         id: true, number: true, status: true, createdAt: true, convenioSettledAt: true,
         convenioSettledAmountCents: true,
         partnerPriceCents: true, originContact: true, originBusinessName: true,
+        originBusinessId: true, delegatedFromOrderId: true,
         originBusiness: { select: { name: true } },
       },
     }),
@@ -205,6 +233,10 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
       // captador; en el intake aliado es el texto de "quién lo trajo".
       originFolio: order.originContact,
       captorName: order.originBusiness?.name ?? order.originBusinessName ?? null,
+      // Captada de mostrador (partnerDrop): el aliado no tiene cuenta ligada
+      // (sin originBusinessId ni espejo) — solo quedó su nombre en texto. La
+      // UI la distingue del intake/espejo con este marcador.
+      walkIn: order.originBusinessId == null && order.delegatedFromOrderId == null,
       status: order.status,
       partnerPriceCents: order.partnerPriceCents,
       chargeable,
@@ -223,8 +255,49 @@ export async function convenioReport(db: PrismaClient, businessId: string) {
 const settleSchema = z.object({
   orderId: z.string().min(1),
   settled: z.boolean(),
+  // Ingreso en ventanilla: al saldar una cuenta por COBRAR registra el
+  // CashMovement IN en la caja abierta (aliado que paga en efectivo). Quien
+  // liquida por transferencia no manda el flag.
+  recordCashIn: z.boolean().optional(),
   idempotencyKey: operationKeySchema,
 })
+
+const settleBatchSchema = z.object({
+  orderIds: z.array(z.string().min(1)).min(1).max(50),
+  settled: z.boolean(),
+  recordCashIn: z.boolean().optional(),
+  idempotencyKey: operationKeySchema,
+})
+
+/** Caja abierta del negocio para el ingreso en efectivo del convenio. */
+const openConvenioRegister = (tx: Transaction, businessId: string) =>
+  tx.cashRegister.findFirst({ where: { businessId, closedAt: null } })
+
+/** El ingreso en caja solo existe del lado COBRAR (el aliado me paga a mí);
+ *  del lado pagar el dinero sale hacia el taller — un IN lo falsearía. */
+function assertCashInApplies(side: "pagar" | "cobrar") {
+  if (side !== "cobrar") throw new BusinessError("El ingreso en caja solo aplica a lo que el aliado te debe; el pago al taller se registra como salida aparte.", 409)
+}
+
+/** UN solo CashMovement IN por el total liquidado en ventanilla. */
+async function convenioCashIn(tx: Transaction, args: {
+  businessId: string; actorId: string; registerId: string; totalCents: number
+  allyLabel: string; folios: string[]
+}) {
+  const description = `Convenio ${args.allyLabel} · ${args.folios.join(", ")}`.slice(0, 200)
+  await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: args.registerId, userId: args.actorId, type: "IN", amount: args.totalCents / 100, description, referenceType: "CONVENIO" } })
+}
+
+/** Texto de la bitácora privada del settle (individual y lote comparten el
+ *  formato para que el historial de la orden se lea igual). */
+const settleEventDetail = (settled: boolean, side: "pagar" | "cobrar", amountCents: number | null) => {
+  const amountNote = amountCents != null ? ` por ${(amountCents / 100).toFixed(2)} MXN` : ""
+  return settled
+    ? side === "pagar"
+      ? `Convenio saldado${amountNote}: se registró el pago al taller asociado.`
+      : `Convenio saldado${amountNote}: se registró el pago del negocio captador.`
+    : "Convenio reabierto: la cuenta vuelve a quedar pendiente."
+}
 
 /**
  * Marca/desmarca la cuenta del convenio en una orden PROPIA. Cada lado salda
@@ -235,11 +308,12 @@ const settleSchema = z.object({
 export async function settleConvenio(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = settleSchema.parse(raw)
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "CONVENIO_SETTLE", permission: "admin", payload: input }, async tx => {
-    const order = await tx.repairOrder.findFirst({ where: { id: input.orderId, businessId } })
+    const order = await tx.repairOrder.findFirst({ where: { id: input.orderId, businessId }, include: { originBusiness: { select: { name: true } } } })
     if (!order) throw new BusinessError("Orden no encontrada.", 404)
-    const side = order.delegatedOrderId ? "pagar" : (order.originBusinessId || order.delegatedFromOrderId) ? "cobrar" : null
+    const side = convenioSide(order)
     if (!side) throw new BusinessError("La orden no pertenece a un convenio entre talleres.", 409)
-    // Toggle idempotente: pedir el estado que ya tiene no reescribe nada.
+    // Toggle idempotente: pedir el estado que ya tiene no reescribe nada ni
+    // duplica el asiento de caja — el reintento devuelve el mismo recibo.
     if ((order.convenioSettledAt != null) === input.settled) {
       return { orderId: order.id, convenioSettledAt: order.convenioSettledAt, convenioSettledAmountCents: order.convenioSettledAmountCents, side }
     }
@@ -254,15 +328,93 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
         ? (await tx.repairOrder.findUnique({ where: { id: order.delegatedOrderId! }, select: { partnerPriceCents: true } }))?.partnerPriceCents ?? null
         : order.partnerPriceCents
       : null
+    // Cobro en ventanilla: la caja se valida ANTES de tocar la orden — sin
+    // caja abierta la marca tampoco ocurre (todo o nada dentro de la tx).
+    let cashRegister: { id: string } | null = null
+    if (input.settled && input.recordCashIn && (settledAmountCents ?? 0) > 0) {
+      assertCashInApplies(side)
+      cashRegister = await openConvenioRegister(tx, businessId)
+      if (!cashRegister) throw new BusinessError("Abre la caja para registrar el ingreso en efectivo.", 409, "REGISTER_REQUIRED")
+    }
     const settledAt = input.settled ? new Date() : null
     await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, version: { increment: 1 } } })
-    const amountNote = settledAmountCents != null ? ` por ${(settledAmountCents / 100).toFixed(2)} MXN` : ""
-    const detail = input.settled
-      ? side === "pagar"
-        ? `Convenio saldado${amountNote}: se registró el pago al taller asociado.`
-        : `Convenio saldado${amountNote}: se registró el pago del negocio captador.`
-      : "Convenio reabierto: la cuenta vuelve a quedar pendiente."
-    await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail, isPublic: false } })
+    await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail: settleEventDetail(input.settled, side, settledAmountCents), isPublic: false } })
+    if (cashRegister && settledAmountCents != null) {
+      const folio = (await folioFormatter(tx, [businessId]))(businessId, order.number)
+      const allyLabel = order.originBusiness?.name ?? order.originBusinessName ?? "aliado"
+      await convenioCashIn(tx, { businessId, actorId, registerId: cashRegister.id, totalCents: settledAmountCents, allyLabel, folios: [folio] })
+    }
     return { orderId: order.id, convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, side }
+  })
+}
+
+/**
+ * Liquidación EN LOTE de cuentas del convenio (el aliado que acumula y paga
+ * mensual): una sola operación durable marca varias órdenes propias del
+ * MISMO lado, cada una con su snapshot del partnerPriceCents vigente. Las
+ * que ya están en el estado pedido se saltan idempotentemente y se reportan
+ * aparte. Solo admin — misma clase de decisión que el settle individual.
+ */
+export async function settleConvenioBatch(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
+  const input = settleBatchSchema.parse(raw)
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "CONVENIO_SETTLE_BATCH", permission: "admin", payload: input }, async tx => {
+    const requestedIds = [...new Set(input.orderIds)]
+    const orders = await tx.repairOrder.findMany({
+      where: { id: { in: requestedIds }, businessId },
+      include: { originBusiness: { select: { name: true } } },
+    })
+    // Todo o nada: una orden ajena (o inexistente) invalida el lote completo.
+    if (orders.length !== requestedIds.length) throw new BusinessError("Orden no encontrada.", 404)
+    const sides = orders.map(convenioSide)
+    if (sides.some(s => s === null)) throw new BusinessError("Todas las órdenes deben pertenecer a un convenio entre talleres.", 409)
+    // Un lote es UNA cuenta: mezclar "te debo" con "me debes" haría el total
+    // y el asiento de caja ambiguos.
+    const side = sides[0] as "pagar" | "cobrar"
+    if (sides.some(s => s !== side)) throw new BusinessError("El lote mezcla cuentas por cobrar y por pagar; liqúidalas por separado.", 409)
+    if (input.settled && input.recordCashIn) assertCashInApplies(side)
+    // Snapshots del lado pagar: el precio convenio vive en la espejo del
+    // reparador — lectura cross-tenant acotada por id, como convenioReport.
+    const mirrorIds = side === "pagar"
+      ? orders.map(o => o.delegatedOrderId).filter((id): id is string => Boolean(id))
+      : []
+    const mirrors = mirrorIds.length
+      ? await tx.repairOrder.findMany({ where: { id: { in: mirrorIds } }, select: { id: true, partnerPriceCents: true } })
+      : []
+    const mirrorPriceById = new Map(mirrors.map(m => [m.id, m.partnerPriceCents]))
+    const snapshotOf = (order: (typeof orders)[number]): number | null =>
+      !input.settled ? null
+        : side === "pagar" ? (order.delegatedOrderId ? mirrorPriceById.get(order.delegatedOrderId) ?? null : null)
+          : order.partnerPriceCents
+    // Toggle idempotente por orden: pedir el estado que ya tiene la salta.
+    const toSettle = orders.filter(o => (o.convenioSettledAt != null) !== input.settled)
+    const skipped = orders.filter(o => (o.convenioSettledAt != null) === input.settled).map(o => o.id)
+    const totalCents = toSettle.reduce((sum, o) => sum + (snapshotOf(o) ?? 0), 0)
+    // La caja se valida ANTES de marcar nada: si el ingreso en efectivo no se
+    // puede asentar, el lote entero espera (todo o nada en la tx).
+    let cashRegister: { id: string } | null = null
+    if (input.settled && input.recordCashIn && totalCents > 0) {
+      cashRegister = await openConvenioRegister(tx, businessId)
+      if (!cashRegister) throw new BusinessError("Abre la caja para registrar el ingreso en efectivo.", 409, "REGISTER_REQUIRED")
+    }
+    const settledAt = input.settled ? new Date() : null
+    const settled: { orderId: string; amountCents: number | null }[] = []
+    for (const order of toSettle) {
+      const amountCents = snapshotOf(order)
+      await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, convenioSettledAmountCents: amountCents, version: { increment: 1 } } })
+      // Un solo evento por orden marcada — el historial de cada folio cuenta
+      // su propia liquidación aunque el cobro fue en lote.
+      await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail: settleEventDetail(input.settled, side, amountCents), isPublic: false } })
+      settled.push({ orderId: order.id, amountCents })
+    }
+    if (cashRegister) {
+      const folio = await folioFormatter(tx, [businessId])
+      const allyNames = new Set(toSettle.map(o => o.originBusiness?.name ?? o.originBusinessName ?? null).filter((name): name is string => Boolean(name)))
+      await convenioCashIn(tx, {
+        businessId, actorId, registerId: cashRegister.id, totalCents,
+        allyLabel: [...allyNames].join(", ") || "aliado",
+        folios: toSettle.map(o => folio(businessId, o.number)),
+      })
+    }
+    return { settled, skipped, totalCents, side }
   })
 }
