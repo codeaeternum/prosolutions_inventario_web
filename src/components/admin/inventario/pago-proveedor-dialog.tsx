@@ -207,7 +207,7 @@ function PagoForm({ supplier, purchases, fixedPurchase, onSaved, close, onBusyCh
                             autoFocus
                         />
                         {exceedsOc && (
-                            <p className="text-xs text-red-600">
+                            <p className="text-xs text-red-600 dark:text-red-400">
                                 Excede el saldo de {selected.folio} ({formatPrice(selected.saldoCents / 100)}).
                             </p>
                         )}

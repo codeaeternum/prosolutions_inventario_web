@@ -284,7 +284,7 @@ export default function ConfiguracionPage() {
             {saving ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             ) : saved ? (
-              <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
+              <CheckCircle className="h-4 w-4 mr-2 text-green-500 dark:text-green-400" />
             ) : (
               <Save className="h-4 w-4 mr-2" />
             )}

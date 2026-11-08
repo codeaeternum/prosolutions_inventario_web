@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Tags } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface Category {
   id: string
@@ -193,14 +194,16 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
       </div>
 
       {categories.length === 0 && !showForm && (
-        <div className="text-center py-12 text-muted-foreground">
-          <Tags className="h-16 w-16 mx-auto mb-4 opacity-50" />
-          <p>No hay categorías registradas</p>
-          <Button className="mt-4" onClick={() => setShowForm(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Agregar primera categoría
-          </Button>
-        </div>
+        <EmptyState
+          icon={Tags}
+          title="No hay categorías registradas"
+          description="Las categorías agrupan tus productos para que los clientes los encuentren más fácil."
+          action={{
+            label: "Agregar primera categoría",
+            icon: Plus,
+            onClick: () => setShowForm(true),
+          }}
+        />
       )}
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

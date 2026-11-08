@@ -24,6 +24,7 @@ import {
   PieChart,
   ChartLine,
 } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -391,10 +392,37 @@ export default function ReportsPage() {
     link.click()
   }
 
+  // Primera carga: esqueleto con la misma estructura de la página — el
+  // spinner a pantalla completa producía un salto de layout al llegar datos.
   if (loading && !stats) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]" role="status" aria-label="Cargando reportes">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6" role="status" aria-label="Cargando reportes">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <Skeleton className="h-9 w-40" />
+            <Skeleton className="h-4 w-64" />
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Skeleton className="h-9 flex-1 sm:flex-initial sm:w-28" />
+            <Skeleton className="h-9 flex-1 sm:flex-initial sm:w-36" />
+          </div>
+        </div>
+        <div className="rounded-xl border bg-card p-6 space-y-4">
+          <Skeleton className="h-5 w-56" />
+          <div className="flex flex-wrap gap-1.5">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-8 w-20" />
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="rounded-xl border bg-card p-4 space-y-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-7 w-16" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -621,10 +649,10 @@ export default function ReportsPage() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Stock Bajo</CardTitle>
-                <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                <AlertTriangle className="h-4 w-4 text-yellow-500 dark:text-yellow-400" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-yellow-600">
+                <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
                   {stats.lowStockProducts}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -824,7 +852,7 @@ export default function ReportsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                  <AlertTriangle className="h-5 w-5 text-yellow-500 dark:text-yellow-400" />
                   Stock Bajo por Categoría
                 </CardTitle>
                 <CardDescription>Productos con stock bajo agrupados por categoría</CardDescription>
@@ -849,7 +877,7 @@ export default function ReportsPage() {
                             className="flex items-center justify-between gap-2 text-sm p-2 bg-muted/50 rounded"
                           >
                             <span className="truncate min-w-0">{product.name}</span>
-                            <span className={`font-medium shrink-0 ${product.stock === 0 ? "text-red-500" : "text-yellow-600"}`}>
+                            <span className={`font-medium shrink-0 ${product.stock === 0 ? "text-red-500 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"}`}>
                               {product.stock} / {product.minStock} UD
                             </span>
                           </div>
@@ -1263,7 +1291,7 @@ export default function ReportsPage() {
                     className={
                       cashTotals.inC - cashTotals.outC < 0
                         ? "text-destructive font-medium"
-                        : "text-green-600 font-medium"
+                        : "text-green-600 dark:text-green-400 font-medium"
                     }
                   >
                     {money(cashTotals.inC - cashTotals.outC)}

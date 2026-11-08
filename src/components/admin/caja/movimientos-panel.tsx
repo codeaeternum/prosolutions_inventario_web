@@ -98,7 +98,7 @@ function SignedAmount({ movement }: { movement: MoneyMovement }) {
     }
     const positive = movement.amountCents >= 0
     return (
-        <span className={`tabular-nums font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
+        <span className={`tabular-nums font-semibold ${positive ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
             {positive ? "+" : "−"}{formatPrice(Math.abs(pesos))}
         </span>
     )
@@ -268,7 +268,47 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                         Sin movimientos que coincidan con el filtro seleccionado.
                     </p>
                 ) : (
-                    <div className="overflow-x-auto">
+                    <>
+                    {/* Vista móvil: tarjetas — la tabla de 8 columnas no cabe en <768px */}
+                    <div className="grid gap-3 md:hidden">
+                        {filtered.map(m => {
+                            const meta = KIND_META[m.kind]
+                            return (
+                                <div key={m.id} className="rounded-lg border bg-card p-3 space-y-2">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div className="flex flex-wrap items-center gap-1 min-w-0">
+                                            <Badge className={meta?.badgeClass}>{meta?.label ?? m.kind}</Badge>
+                                            {m.duplicatesCash && (
+                                                <Badge variant="outline" className="text-[10px] font-normal" title="Este dinero también asienta su propia fila de caja — no sumar dos veces">
+                                                    también en caja
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <SignedAmount movement={m} />
+                                    </div>
+                                    <p className="text-sm leading-snug">{m.description}</p>
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                        <span className="whitespace-nowrap">{formatDate(m.occurredAt)}</span>
+                                        {m.branchName && <span className="truncate">{m.branchName}</span>}
+                                        <span className="truncate">{m.actorName}</span>
+                                        {m.method && <span>{METHOD_LABELS[m.method] ?? m.method}</span>}
+                                    </div>
+                                    {(m.href || m.reference) && (
+                                        <div className="text-xs">
+                                            {m.href ? (
+                                                <Link href={m.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                                                    {m.reference ?? "Ver"} <ExternalLink className="h-3 w-3" />
+                                                </Link>
+                                            ) : (
+                                                <span className="text-muted-foreground">{m.reference}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                    <div className="hidden md:block overflow-x-auto">
                         <table className="w-full min-w-[860px] text-sm">
                             <thead>
                                 <tr className="border-b text-xs text-muted-foreground">
@@ -324,6 +364,7 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                             </tbody>
                         </table>
                     </div>
+                    </>
                 )}
             </CardContent>
         </Card>

@@ -19,6 +19,7 @@ import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller
 import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
 import { CatalogoPanel } from "@/components/admin/taller/catalogo-panel"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { semaforo, SemaforoBadge } from "@/components/admin/taller/semaforo"
@@ -810,17 +811,26 @@ export default function WorkshopPage() {
     }
   }
 
+  const isFirstReception = total === 0 && !search && !stage && !branch && view === "board"
   const emptyList = (
     <div className="rounded-xl border border-dashed p-12 text-center">
       <ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
       <h2 className="text-lg font-semibold">
-        {total === 0 && !search && !stage && !branch && view === "board"
+        {isFirstReception
           ? "Todo listo para la primera recepción"
           : "No hay órdenes con estos filtros"}
       </h2>
       <p className="mt-2 text-muted-foreground">
         {branches.length ? "Usa Recibir equipo para comenzar." : "Registra abajo las sucursales del taller."}
       </p>
+      {isFirstReception && branches.length > 0 && (
+        <Button asChild className="mt-6 gap-2">
+          <Link href="/admin/taller/recibir">
+            <Wrench className="h-4 w-4" />
+            Recibir equipo
+          </Link>
+        </Button>
+      )}
     </div>
   )
 
@@ -1023,7 +1033,29 @@ export default function WorkshopPage() {
                 </label>
               </div>
               {loading ? (
-                <p role="status">Cargando órdenes…</p>
+                // Esqueleto kanban: el texto "Cargando…" dejaba hueco y el
+                // tablero saltaba al llegar las órdenes (CLS en cada filtro).
+                <div role="status" aria-label="Cargando órdenes" className="flex items-start gap-3 overflow-x-auto pb-2">
+                  {[3, 2, 2].map((cards, col) => (
+                    <section key={col} aria-hidden className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3">
+                      <header className="mb-3 flex items-center gap-2 px-1">
+                        <Skeleton className="h-2.5 w-2.5 rounded-full" />
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="ml-auto h-5 w-8 rounded-full" />
+                      </header>
+                      <div className="space-y-2">
+                        {Array.from({ length: cards }).map((_, card) => (
+                          <div key={card} className="space-y-2 rounded-lg border bg-card p-3">
+                            <Skeleton className="h-3 w-16" />
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-3 w-28" />
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                  <span className="sr-only">Cargando órdenes…</span>
+                </div>
               ) : kanbanMode ? (
                 total === 0 ? (
                   emptyList

@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import QRCode from "qrcode"
 import { Camera, ImagePlus, Link2, Loader2, QrCode, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -58,7 +57,9 @@ export function EvidenceSection(props: {
     // Solo en cliente (window no existe durante el SSR de este componente).
     useEffect(() => {
         if (qrOpen && linkUrl) {
-            QRCode.toDataURL(linkUrl, { width: 220, margin: 1 })
+            // `qrcode` se importa al abrir el diálogo, no con el bundle del taller.
+            import("qrcode")
+                .then(m => m.default.toDataURL(linkUrl, { width: 220, margin: 1 }))
                 .then(dataUrl => setQrDataUrl(dataUrl))
                 .catch(() => setQrDataUrl(null))
         }

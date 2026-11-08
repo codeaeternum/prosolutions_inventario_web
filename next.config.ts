@@ -20,6 +20,8 @@ const nextConfig: NextConfig = {
     ],
   },
   images: {
+    // AVIF ~30-50% más ligero que WebP; el optimizador negocia por Accept.
+    formats: ["image/avif", "image/webp"],
     remotePatterns: [
       {
         protocol: "https",
@@ -32,6 +34,10 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "10mb",
     },
+    // "radix-ui" es un barrel que re-exporta ~40 primitivas; sin optimización
+    // cada chunk cliente que toca un Dialog/Tabs arrastra el paquete entero.
+    // (lucide-react ya viene optimizado por defecto en Next).
+    optimizePackageImports: ["radix-ui"],
   },
   async redirects() {
     return [

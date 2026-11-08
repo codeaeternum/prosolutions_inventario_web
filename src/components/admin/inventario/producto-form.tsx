@@ -1133,9 +1133,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 {isAdmin && formData.costPrice && formData.retailPrice && parseFloat(formData.costPrice) > 0 && (() => {
                     const cost = parseFloat(formData.costPrice)
                     const tiers = [
-                        { label: "Público", fieldLabel: "Precio público", raw: formData.retailPrice, color: "text-green-600" },
-                        ...(formData.wholesalePrice ? [{ label: "Taller", fieldLabel: "Precio taller", raw: formData.wholesalePrice, color: "text-blue-600" }] : []),
-                        ...(formData.internalPrice ? [{ label: "Taller propio", fieldLabel: "Taller propio", raw: formData.internalPrice, color: "text-violet-600" }] : []),
+                        { label: "Público", fieldLabel: "Precio público", raw: formData.retailPrice, color: "text-green-600 dark:text-green-400" },
+                        ...(formData.wholesalePrice ? [{ label: "Taller", fieldLabel: "Precio taller", raw: formData.wholesalePrice, color: "text-blue-600 dark:text-blue-400" }] : []),
+                        ...(formData.internalPrice ? [{ label: "Taller propio", fieldLabel: "Taller propio", raw: formData.internalPrice, color: "text-violet-600 dark:text-violet-400" }] : []),
                     ]
                     const lossTiers = tiers.filter((t) => {
                         const val = parseFloat(t.raw)

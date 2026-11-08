@@ -239,6 +239,18 @@ body {
   #main-content > * {
     animation: none;
   }
+
+  /* Apaga las animaciones no esenciales: tw-animate-css (animate-in/out,
+     spin lento, ping), keyframes propios y transiciones de hover/scroll.
+     Los spinner de carga conservan su estado visual aunque no giren. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Micro-interacciones en tarjetas clicables */

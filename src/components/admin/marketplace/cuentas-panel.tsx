@@ -70,9 +70,9 @@ const AGING_ORDER: readonly AgingBucket[] = ["0-7", "8-15", "16-30", "30+"]
 const agingBucketOf = (days: number): AgingBucket =>
   days <= 7 ? "0-7" : days <= 15 ? "8-15" : days <= 30 ? "16-30" : "30+"
 const agingBucketMeta: Record<AgingBucket, { label: string; className: string }> = {
-  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 border-green-500/30" },
-  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
-  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 border-orange-500/30" },
+  "0-7": { label: "0-7 días", className: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30" },
+  "8-15": { label: "8-15 días", className: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30" },
+  "16-30": { label: "16-30 días", className: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30" },
   "30+": { label: "+30 días", className: "bg-destructive/10 text-destructive border-destructive/30" },
 }
 
@@ -396,7 +396,7 @@ export function CuentasPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ArrowUpRight className="h-5 w-5 text-rose-500" />
+            <ArrowUpRight className="h-5 w-5 text-rose-500 dark:text-rose-400" />
             Debo a talleres
           </CardTitle>
           <CardDescription>Órdenes que envié a un taller asociado; debo el precio convenio al reparador</CardDescription>
@@ -448,7 +448,7 @@ export function CuentasPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ArrowDownLeft className="h-5 w-5 text-emerald-600" />
+            <ArrowDownLeft className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             Me deben captadores
           </CardTitle>
           <CardDescription>Órdenes que negocios asociados me trajeron; me deben el precio convenio</CardDescription>

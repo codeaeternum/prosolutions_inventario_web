@@ -408,7 +408,7 @@ function FotosForm({ products, onDone, close, onBusyChange }: { products: FotoIm
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="text-muted-foreground hover:text-red-500"
+                                        className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400"
                                         onClick={() => removeRow(row.key)}
                                         disabled={working}
                                         aria-label={`Quitar ${row.file.name}`}

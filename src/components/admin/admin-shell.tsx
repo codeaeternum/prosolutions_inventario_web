@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react"
 import { AdminSidebar } from "@/components/admin/sidebar"
 import { AdminHeader } from "@/components/admin/header"
+import { AdminCommandPalette } from "@/components/admin/command-palette"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Undo2, Loader2 } from "lucide-react"
@@ -116,10 +117,18 @@ export function AdminShell({ user, homeBranchId, hasPartner, businessKind, child
             </Button>
           </div>
         )}
-        <main id="main-content" className="p-4 lg:p-8" role="main">
+        {/* max-w centrado: en monitores 1440+ el contenido no se estira al
+            infinito y las filas de datos conservan un ancho legible. */}
+        <main id="main-content" className="mx-auto w-full max-w-[1600px] p-4 lg:p-8" role="main">
           {children}
         </main>
       </div>
+      {/* Paleta ⌘K: navegación, acciones rápidas y búsqueda de entidades. */}
+      <AdminCommandPalette
+        user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }}
+        hasPartner={hasPartner}
+        businessKind={businessKind}
+      />
     </div>
   )
 }

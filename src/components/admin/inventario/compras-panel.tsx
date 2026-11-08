@@ -501,7 +501,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="h-8 w-8 text-blue-600"
+                                                                    className="h-8 w-8 text-blue-600 dark:text-blue-400"
                                                                     onClick={() => requestAction(p, "ORDER")}
                                                                     title="Marcar como ordenada"
                                                                     aria-label="Marcar como ordenada"
@@ -514,7 +514,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="icon"
-                                                                className="h-8 w-8 text-green-600"
+                                                                className="h-8 w-8 text-green-600 dark:text-green-400"
                                                                 onClick={() => requestAction(p, "RECEIVE")}
                                                                 title="Recibir mercancía (entra stock)"
                                                                 aria-label="Recibir mercancía"
@@ -526,7 +526,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="icon"
-                                                                className="h-8 w-8 text-amber-600"
+                                                                className="h-8 w-8 text-amber-600 dark:text-amber-400"
                                                                 onClick={() => setPayTarget(p)}
                                                                 title={`Registrar pago (saldo ${formatPrice((p.totalCents - p.paidCents) / 100)})`}
                                                                 aria-label={`Registrar pago de ${folio(p.number)}`}
@@ -538,7 +538,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="icon"
-                                                                className="h-8 w-8 text-red-600"
+                                                                className="h-8 w-8 text-red-600 dark:text-red-400"
                                                                 onClick={() => requestAction(p, "CANCEL")}
                                                                 title="Cancelar orden"
                                                                 aria-label="Cancelar orden"
@@ -698,14 +698,14 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                                     </div>
                                     <div className="flex justify-between gap-2">
                                         <span className="text-muted-foreground">Saldo</span>
-                                        <span className={`font-medium tabular-nums ${detail.totalCents - detail.paidCents > 0 ? "text-red-600" : "text-muted-foreground"}`}>
+                                        <span className={`font-medium tabular-nums ${detail.totalCents - detail.paidCents > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
                                             {detail.totalCents - detail.paidCents > 0
                                                 ? formatPrice((detail.totalCents - detail.paidCents) / 100)
                                                 : "Liquidada"}
                                         </span>
                                     </div>
                                     {detail.dueAt && detail.totalCents - detail.paidCents > 0 && (
-                                        <p className={`text-xs ${new Date(detail.dueAt) < new Date() ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                                        <p className={`text-xs ${new Date(detail.dueAt) < new Date() ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>
                                             Promesa de pago: {formatDay(detail.dueAt)}
                                         </p>
                                     )}

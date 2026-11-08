@@ -286,8 +286,8 @@ export function ClientesPanel() {
               className="pl-9"
             />
           </div>
-          <Button type="submit" variant="secondary" aria-label="Ejecutar búsqueda de clientes">
-            Buscar
+          <Button type="submit" variant="secondary" disabled={loading} aria-label="Ejecutar búsqueda de clientes">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Buscar"}
           </Button>
         </form>
         <div className="flex gap-2 flex-wrap items-center">
@@ -381,7 +381,7 @@ export function ClientesPanel() {
                         target="_blank"
                         rel="noreferrer"
                         aria-label={`Contactar por WhatsApp a ${cliente.name} al ${cliente.phone}`}
-                        className="inline-flex items-center gap-1.5 text-green-600 hover:underline w-fit max-w-full"
+                        className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400 hover:underline w-fit max-w-full"
                       >
                         <Phone className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{cliente.phone}</span>
@@ -452,7 +452,7 @@ export function ClientesPanel() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-9 w-9 text-green-600 hover:text-green-700"
+                        className="h-9 w-9 text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300"
                         asChild
                       >
                         <a
@@ -560,7 +560,7 @@ export function ClientesPanel() {
                                 target="_blank"
                                 rel="noreferrer"
                                 aria-label={`Contactar por WhatsApp a ${cliente.name} al ${cliente.phone}`}
-                                className="inline-flex items-center gap-1.5 text-green-600 hover:underline"
+                                className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400 hover:underline"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <Phone className="h-3.5 w-3.5" />
@@ -617,7 +617,7 @@ export function ClientesPanel() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 text-green-600 hover:text-green-700"
+                                className="h-8 w-8 text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300"
                                 asChild
                               >
                                 <a
@@ -764,7 +764,7 @@ export function ClientesPanel() {
                     target="_blank"
                     rel="noreferrer"
                     aria-label={`Contactar por WhatsApp a ${selected.name} al ${selected.phone}`}
-                    className="flex items-center gap-2 text-green-600 hover:underline w-fit max-w-full"
+                    className="flex items-center gap-2 text-green-600 dark:text-green-400 hover:underline w-fit max-w-full"
                   >
                     <Phone className="h-3.5 w-3.5 shrink-0" />
                     <span className="truncate">{selected.phone}</span>
@@ -838,7 +838,7 @@ export function ClientesPanel() {
                       const isDebt = mov.type === "DEBT"
                       return (
                         <div key={mov.id} className="flex items-center gap-3 p-2 border-b last:border-0">
-                          <div className={`p-1.5 rounded-full ${isDebt ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-500"}`}>
+                          <div className={`p-1.5 rounded-full ${isDebt ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-500 dark:text-green-400"}`}>
                             {isDebt ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -846,7 +846,7 @@ export function ClientesPanel() {
                               <p className="text-xs font-medium truncate">
                                 {creditMovementLabels[mov.type]}{mov.notes ? ` · ${mov.notes}` : ""}
                               </p>
-                              <p className={`text-xs font-bold shrink-0 ${isDebt ? "text-destructive" : "text-green-600"}`}>
+                              <p className={`text-xs font-bold shrink-0 ${isDebt ? "text-destructive" : "text-green-600 dark:text-green-400"}`}>
                                 {isDebt ? "+" : "-"}{formatPrice(mov.amount)}
                               </p>
                             </div>

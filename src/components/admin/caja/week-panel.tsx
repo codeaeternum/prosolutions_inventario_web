@@ -71,7 +71,7 @@ export function WeekPanel(props: { branchId: string; refreshKey: number }) {
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground">Diferencia</p>
-                            <p className={`font-semibold ${reg.difference == null ? "" : reg.difference > 0 ? "text-green-600" : reg.difference < 0 ? "text-destructive" : ""}`}>
+                            <p className={`font-semibold ${reg.difference == null ? "" : reg.difference > 0 ? "text-green-600 dark:text-green-400" : reg.difference < 0 ? "text-destructive" : ""}`}>
                                 {reg.difference == null ? "—" : reg.difference === 0 ? "Cuadrada" : `${reg.difference > 0 ? "+" : ""}${formatPrice(reg.difference)}`}
                             </p>
                         </div>

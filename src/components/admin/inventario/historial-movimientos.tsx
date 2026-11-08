@@ -471,7 +471,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                             {mov.type === "SALE" && (
                                 <button
                                     role="menuitem"
-                                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted w-full text-left text-yellow-600 disabled:pointer-events-none disabled:opacity-50"
+                                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted w-full text-left text-yellow-600 dark:text-yellow-400 disabled:pointer-events-none disabled:opacity-50"
                                     disabled={mov.returnableQuantity <= 0}
                                     onClick={() => {
                                         setReturnTarget(mov)

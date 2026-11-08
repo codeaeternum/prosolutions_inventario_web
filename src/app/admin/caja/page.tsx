@@ -333,7 +333,7 @@ function CajaPanel() {
                             </div>
                             <div>
                                 <p className="text-xs text-muted-foreground">Diferencia</p>
-                                <p className={`font-semibold ${lastClosure.difference > 0 ? "text-green-600" : lastClosure.difference < 0 ? "text-destructive" : ""}`}>
+                                <p className={`font-semibold ${lastClosure.difference > 0 ? "text-green-600 dark:text-green-400" : lastClosure.difference < 0 ? "text-destructive" : ""}`}>
                                     {lastClosure.difference === 0 ? "Cuadrada" : `${lastClosure.difference > 0 ? "+" : ""}${formatPrice(lastClosure.difference)}`}
                                 </p>
                             </div>
@@ -515,7 +515,7 @@ function CajaPanel() {
                                     </p>
                                     <p className="text-xs text-muted-foreground">{formatDate(mov.createdAt)} • {mov.user.name}</p>
                                 </div>
-                                <div className={`font-bold ${mov.type === 'IN' ? 'text-green-600' : 'text-destructive'}`}>
+                                <div className={`font-bold ${mov.type === 'IN' ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>
                                     {mov.type === 'IN' ? '+' : '-'}{formatPrice(mov.amount)}
                                 </div>
                             </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -12,7 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { BarcodeScanner } from "@/components/barcode-scanner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { readPreferredBranchId } from "@/components/admin/productos/stock-editor"
 import {
@@ -26,6 +27,12 @@ import {
     Zap,
 } from "lucide-react"
 import { toast } from "sonner"
+
+// html5-qrcode pesa ~350 KB y toca `window`: se difiere al abrir el diálogo.
+const BarcodeScanner = dynamic(
+    () => import("@/components/barcode-scanner").then(m => m.BarcodeScanner),
+    { ssr: false, loading: () => <Skeleton className="aspect-square w-full" /> }
+)
 
 const selectClassName =
     "flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -674,7 +681,7 @@ export function CapturaRapidaPanel() {
                         <ul className="space-y-2">
                             {captured.map((row, i) => (
                                 <li key={`${row.id}-${i}`} className="flex items-start gap-2 text-sm">
-                                    <CheckCircle2 className="h-4 w-4 mt-0.5 text-green-600 shrink-0" />
+                                    <CheckCircle2 className="h-4 w-4 mt-0.5 text-green-600 dark:text-green-400 shrink-0" />
                                     <div className="min-w-0">
                                         <p className="truncate font-medium">{row.name}</p>
                                         <p className="text-xs text-muted-foreground">

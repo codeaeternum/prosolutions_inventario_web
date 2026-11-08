@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import dynamic from "next/dynamic"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -33,7 +34,13 @@ import {
     CheckCircle,
     Layers
 } from "lucide-react"
-import { BarcodeScanner } from "@/components/barcode-scanner"
+import { Skeleton } from "@/components/ui/skeleton"
+
+// html5-qrcode pesa ~350 KB y toca `window`: se difiere al abrir el diálogo.
+const BarcodeScanner = dynamic(
+    () => import("@/components/barcode-scanner").then(m => m.BarcodeScanner),
+    { ssr: false, loading: () => <Skeleton className="aspect-square w-full" /> }
+)
 
 interface Product {
     id: string
@@ -56,13 +63,13 @@ interface Branch {
 }
 
 const movementTypes = [
-    { value: "IN", label: "Entrada (Compra)", icon: ArrowDownCircle, color: "text-green-600", help: "Suma stock nuevo proveniente de una compra." },
-    { value: "OUT", label: "Salida", icon: ArrowUpCircle, color: "text-red-600", help: "Resta stock por uso interno, regalo, etc." },
-    { value: "ADJUSTMENT_IN", label: "Ajuste (+)", icon: Plus, color: "text-green-600", help: "Suma stock por descuadre de inventario físico." },
-    { value: "ADJUSTMENT_OUT", label: "Ajuste (-)", icon: Minus, color: "text-red-600", help: "Resta stock por descuadre de inventario físico." },
-    { value: "DAMAGED", label: "Dañado / Merma", icon: ArrowUpCircle, color: "text-orange-600", help: "Resta stock porque el producto se echó a perder o rompió." },
+    { value: "IN", label: "Entrada (Compra)", icon: ArrowDownCircle, color: "text-green-600 dark:text-green-400", help: "Suma stock nuevo proveniente de una compra." },
+    { value: "OUT", label: "Salida", icon: ArrowUpCircle, color: "text-red-600 dark:text-red-400", help: "Resta stock por uso interno, regalo, etc." },
+    { value: "ADJUSTMENT_IN", label: "Ajuste (+)", icon: Plus, color: "text-green-600 dark:text-green-400", help: "Suma stock por descuadre de inventario físico." },
+    { value: "ADJUSTMENT_OUT", label: "Ajuste (-)", icon: Minus, color: "text-red-600 dark:text-red-400", help: "Resta stock por descuadre de inventario físico." },
+    { value: "DAMAGED", label: "Dañado / Merma", icon: ArrowUpCircle, color: "text-orange-600 dark:text-orange-400", help: "Resta stock porque el producto se echó a perder o rompió." },
     { value: "LOST", label: "Perdido", icon: ArrowUpCircle, color: "text-muted-foreground", help: "Resta stock por robo o pérdida desconocida." },
-    { value: "TRANSFER", label: "Traspaso", icon: ArrowDownCircle, color: "text-blue-600", help: "Mueve existencias de esta sucursal a otra." },
+    { value: "TRANSFER", label: "Traspaso", icon: ArrowDownCircle, color: "text-blue-600 dark:text-blue-400", help: "Mueve existencias de esta sucursal a otra." },
 ]
 
 export default function MovimientosInventario({ lockedBranchId }: { lockedBranchId?: string | null }) {
@@ -304,7 +311,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                             </div>
                                         )}
                                         <div className="sm:col-span-1 flex justify-end">
-                                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500" onClick={() => removeItem(item.id)}>
+                                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400" onClick={() => removeItem(item.id)}>
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>

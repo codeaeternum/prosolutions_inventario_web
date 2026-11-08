@@ -231,14 +231,14 @@ export function ComparadorSucursales() {
                               <span
                                 className={
                                   isBest
-                                    ? "font-semibold text-green-600"
+                                    ? "font-semibold text-green-600 dark:text-green-400"
                                     : undefined
                                 }
                               >
                                 {m.format(v)}
                               </span>
                               {isBest && (
-                                <Trophy className="ml-1 inline h-3 w-3 text-green-500" />
+                                <Trophy className="ml-1 inline h-3 w-3 text-green-500 dark:text-green-400" />
                               )}
                               {deltaPct !== null && (
                                 <p className="text-[11px] text-muted-foreground">

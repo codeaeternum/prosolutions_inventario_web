@@ -384,7 +384,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                             <div>
                                 <CardTitle className="text-lg flex items-center gap-2">
-                                    <ClipboardList className="h-5 w-5 text-blue-600" />
+                                    <ClipboardList className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                                     Conteo abierto — {detail?.branch.name ?? openCounts[0].branch.name}
                                     {detail?.blind && (
                                         <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300">
@@ -541,7 +541,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                         variant="outline"
                                         onClick={() => setConfirmCancel(true)}
                                         disabled={saving || acting}
-                                        className="text-red-600"
+                                        className="text-red-600 dark:text-red-400"
                                     >
                                         <XCircle className="mr-2 h-4 w-4" />
                                         Cancelar conteo

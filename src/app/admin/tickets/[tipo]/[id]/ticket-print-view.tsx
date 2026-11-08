@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Printer, Share2, ArrowLeft, Scissors } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatPrice, formatDate } from "@/lib/utils"
-import QRCode from "qrcode"
+// `qrcode` se importa de forma perezosa dentro del efecto que genera el QR.
 
 interface TicketData {
   title: string
@@ -150,7 +150,8 @@ export function TicketPrintView({ data }: { data: TicketData }) {
 
   useEffect(() => {
     if (data.qrCode) {
-      QRCode.toDataURL(data.qrCode, { width: 160, margin: 1 })
+      import("qrcode")
+        .then(m => m.default.toDataURL(data.qrCode!, { width: 160, margin: 1 }))
         .then(url => setQrDataUrl(url))
         .catch(() => {})
     }

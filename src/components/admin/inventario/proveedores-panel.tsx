@@ -397,7 +397,7 @@ export function ProveedoresPanel() {
                                 ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
                                 : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                         </button>
-                        <span className="text-sm font-semibold text-red-600 tabular-nums">
+                        <span className="text-sm font-semibold text-red-600 dark:text-red-400 tabular-nums">
                             Debes {formatPrice(aging.totals.total / 100)}
                         </span>
                     </CardHeader>
@@ -434,10 +434,10 @@ export function ProveedoresPanel() {
                                             >
                                                 <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{row.name}</td>
                                                 <AgingCell value={row.current} />
-                                                <AgingCell value={row.d1_15} className="text-amber-600" />
-                                                <AgingCell value={row.d16_30} className="text-orange-600" />
-                                                <AgingCell value={row.d31_60} className="text-red-600" />
-                                                <AgingCell value={row.d60plus} className="text-red-700 font-semibold" />
+                                                <AgingCell value={row.d1_15} className="text-amber-600 dark:text-amber-400" />
+                                                <AgingCell value={row.d16_30} className="text-orange-600 dark:text-orange-400" />
+                                                <AgingCell value={row.d31_60} className="text-red-600 dark:text-red-400" />
+                                                <AgingCell value={row.d60plus} className="text-red-700 dark:text-red-300 font-semibold" />
                                                 <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
                                                     {formatPrice(row.total / 100)}
                                                 </td>
@@ -448,10 +448,10 @@ export function ProveedoresPanel() {
                                         <tr className="border-t text-xs font-semibold">
                                             <td className="px-2 py-1.5">Totales</td>
                                             <AgingCell value={aging.totals.current} />
-                                            <AgingCell value={aging.totals.d1_15} className="text-amber-600" />
-                                            <AgingCell value={aging.totals.d16_30} className="text-orange-600" />
-                                            <AgingCell value={aging.totals.d31_60} className="text-red-600" />
-                                            <AgingCell value={aging.totals.d60plus} className="text-red-700" />
+                                            <AgingCell value={aging.totals.d1_15} className="text-amber-600 dark:text-amber-400" />
+                                            <AgingCell value={aging.totals.d16_30} className="text-orange-600 dark:text-orange-400" />
+                                            <AgingCell value={aging.totals.d31_60} className="text-red-600 dark:text-red-400" />
+                                            <AgingCell value={aging.totals.d60plus} className="text-red-700 dark:text-red-300" />
                                             <td className="px-2 py-1.5 text-right tabular-nums">
                                                 {formatPrice(aging.totals.total / 100)}
                                             </td>
@@ -536,12 +536,12 @@ export function ProveedoresPanel() {
                                             <div className="flex items-center justify-between gap-2">
                                                 <span className="text-muted-foreground">Saldo</span>
                                                 {bal.saldoCents > 0 ? (
-                                                    <span className="font-semibold text-red-600 tabular-nums">
+                                                    <span className="font-semibold text-red-600 dark:text-red-400 tabular-nums">
                                                         Debes {formatPrice(bal.saldoCents / 100)}
                                                     </span>
                                                 ) : bal.saldoCents < 0 ? (
                                                     // Anticipos a OCs aún no recibidas: posición a favor.
-                                                    <span className="font-medium text-blue-600 tabular-nums">
+                                                    <span className="font-medium text-blue-600 dark:text-blue-400 tabular-nums">
                                                         A favor {formatPrice(-bal.saldoCents / 100)}
                                                     </span>
                                                 ) : (
@@ -554,7 +554,7 @@ export function ProveedoresPanel() {
                                                 </p>
                                             )}
                                             {bal.proximoVencimiento && bal.saldoCents > 0 && (
-                                                <p className={`flex items-center gap-1.5 text-xs ${new Date(bal.proximoVencimiento) < new Date() ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                                                <p className={`flex items-center gap-1.5 text-xs ${new Date(bal.proximoVencimiento) < new Date() ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>
                                                     <CalendarClock className="h-3.5 w-3.5" />
                                                     Vence {formatDay(bal.proximoVencimiento)}
                                                 </p>

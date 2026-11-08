@@ -386,7 +386,7 @@ function CompraForm({ suppliers, branches, onSaved, close, purchase, onBusyChang
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
-                                                className="text-muted-foreground hover:text-red-500"
+                                                className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400"
                                                 onClick={() => removeLine(line.key)}
                                                 title={`Quitar ${line.product.name}`}
                                                 aria-label={`Quitar ${line.product.name}`}

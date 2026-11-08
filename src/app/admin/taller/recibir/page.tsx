@@ -933,7 +933,7 @@ export default function ReceiveEquipmentPage() {
 
       {created ? (
         <section className="rounded-xl border bg-card p-6 text-center sm:p-8">
-          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
+          <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500 dark:text-emerald-400" />
           <h2 className="mt-3 text-2xl font-bold">Orden {createdFolio} creada</h2>
           <p className="mt-2 text-muted-foreground">El equipo de {created.customerName} quedó registrado como recibido{created.originBusinessName ? ` — captada por ${created.originBusinessName}` : ""}. Entrega el ticket al cliente.</p>
           {advanceCents > 0 && (

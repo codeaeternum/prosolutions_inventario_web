@@ -14,6 +14,8 @@ import { auth } from "@/lib/auth"
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+  // Default de next/font; explícito para que quede claro que no bloquea el FCP.
+  display: "swap",
 })
 
 const siteName = "Reficio"

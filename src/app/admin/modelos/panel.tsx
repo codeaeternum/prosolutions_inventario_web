@@ -18,6 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Layers } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface Brand {
   id: string
@@ -251,14 +252,16 @@ export function ModelsPanel({ embedded = false }: { embedded?: boolean }) {
       ))}
 
       {models.length === 0 && brands.length > 0 && !showForm && (
-        <div className="text-center py-12 text-muted-foreground">
-          <Layers className="h-16 w-16 mx-auto mb-4 opacity-50" />
-          <p>No hay modelos registrados</p>
-          <Button className="mt-4" onClick={() => setShowForm(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Agregar primer modelo
-          </Button>
-        </div>
+        <EmptyState
+          icon={Layers}
+          title="No hay modelos registrados"
+          description="Asocia modelos a cada marca para clasificar tus productos."
+          action={{
+            label: "Agregar primer modelo",
+            icon: Plus,
+            onClick: () => setShowForm(true),
+          }}
+        />
       )}
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

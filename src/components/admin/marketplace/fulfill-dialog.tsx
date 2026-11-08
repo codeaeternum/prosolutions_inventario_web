@@ -68,7 +68,7 @@ export function MarketplaceFulfillDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <PackageCheck className="h-5 w-5 text-violet-600" />
+            <PackageCheck className="h-5 w-5 text-violet-600 dark:text-violet-400" />
             Surtir solicitud
           </DialogTitle>
           <DialogDescription>

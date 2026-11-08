@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import QRCode from "qrcode"
+// `qrcode` se carga de forma perezosa dentro del efecto que genera los PNG.
 import {
   Copy, Download, ExternalLink, Globe, ImagePlus, Info, Loader2, LocateFixed,
   MapPin, Printer, QrCode, Save, Trash2, Upload,
@@ -368,12 +368,15 @@ export function PublicProfileCard() {
     if (links.length === 0) return
     let cancelled = false
     const origin = `${window.location.protocol}//${host}`
-    void Promise.all(
-      links.map(async link => {
-        const dataUrl = await QRCode.toDataURL(`${origin}${link.path}`, QR_OPTIONS)
-        return [link.path, dataUrl] as const
-      })
-    )
+    void (async () => {
+      const QRCode = (await import("qrcode")).default
+      return Promise.all(
+        links.map(async link => {
+          const dataUrl = await QRCode.toDataURL(`${origin}${link.path}`, QR_OPTIONS)
+          return [link.path, dataUrl] as const
+        })
+      )
+    })()
       .then(entries => {
         if (!cancelled) setQrCodes(Object.fromEntries(entries))
       })

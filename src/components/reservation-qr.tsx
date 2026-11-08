@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import QRCode from "qrcode"
 import { cn } from "@/lib/utils"
 
 interface ReservationQRProps {
@@ -25,6 +24,8 @@ export function ReservationQR({
   useEffect(() => {
     const generateQR = async () => {
       try {
+        // `qrcode` (~200 KB con shims de node) se carga solo cuando hay QR que pintar.
+        const QRCode = (await import("qrcode")).default
         // El contenido del QR es una URL que puede ser escaneada
         const qrContent = `${typeof window !== "undefined" ? window.location.origin : ""}/verificar/${qrCode}`
         const dataUrl = await QRCode.toDataURL(qrContent, {

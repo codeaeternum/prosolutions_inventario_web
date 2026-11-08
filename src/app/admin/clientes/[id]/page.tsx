@@ -347,7 +347,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
             {cliente.phone ? (
               <span className="inline-flex items-center gap-1.5">
                 <a href={waLink(cliente.phone)} target="_blank" rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-green-600 hover:underline">
+                  className="inline-flex items-center gap-1.5 text-green-600 dark:text-green-400 hover:underline">
                   <Phone className="h-4 w-4" />{cliente.phone}
                 </a>
                 <button type="button" aria-label="Copiar teléfono" title="Copiar teléfono"
@@ -397,7 +397,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
             {canCredit && (
               <Button
                 variant="outline"
-                className="text-green-700 border-green-600/40 hover:bg-green-600/10"
+                className="text-green-700 dark:text-green-300 border-green-600/40 hover:bg-green-600/10"
                 onClick={() => setAbonarOpen(true)}
               >
                 <Wallet className="mr-2 h-4 w-4" />Abonar
@@ -410,7 +410,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <p className="text-xs text-muted-foreground font-medium">Saldo de crédito</p>
-                    <p className={`text-2xl font-bold ${cliente.creditBalance > 0 ? "text-destructive" : "text-green-600"}`}>
+                    <p className={`text-2xl font-bold ${cliente.creditBalance > 0 ? "text-destructive" : "text-green-600 dark:text-green-400"}`}>
                       {formatPrice(cliente.creditBalance)}
                     </p>
                   </div>
@@ -577,7 +577,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                   <li key={mov.id} className="ml-8 pb-5">
                     <span
                       className={`absolute -left-4 flex h-8 w-8 items-center justify-center rounded-full border bg-background ${
-                        isDebt ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-600"
+                        isDebt ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-600 dark:text-green-400"
                       }`}
                     >
                       {isDebt ? <ArrowUpRight className="h-4 w-4" /> : <ArrowDownRight className="h-4 w-4" />}
@@ -590,7 +590,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                           href={`/admin/tickets/abono/${mov.id}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs text-blue-500 hover:underline"
+                          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
                         >
                           Ver ticket
                         </a>
@@ -599,7 +599,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                     </div>
                     {mov.notes && <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{mov.notes}</p>}
                     <p className="text-sm mt-0.5">
-                      <span className={`font-semibold ${isDebt ? "text-destructive" : "text-green-600"}`}>
+                      <span className={`font-semibold ${isDebt ? "text-destructive" : "text-green-600 dark:text-green-400"}`}>
                         {isDebt ? "+" : "−"}{formatPrice(mov.amount)}
                       </span>
                       <span className="text-xs text-muted-foreground"> · saldo: {formatPrice(mov.balanceAfter)}</span>
@@ -631,7 +631,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
                   <div className="w-full flex flex-wrap items-center justify-between gap-2 text-sm">
                     <span className="text-muted-foreground">
                       Total {formatPrice(doc.total)} · abonado{" "}
-                      <span className="text-green-600 font-medium">{formatPrice(doc.paid)}</span> · resta{" "}
+                      <span className="text-green-600 dark:text-green-400 font-medium">{formatPrice(doc.paid)}</span> · resta{" "}
                       <span className={doc.balance > 0 ? "text-destructive font-semibold" : "font-medium"}>
                         {formatPrice(doc.balance)}
                       </span>

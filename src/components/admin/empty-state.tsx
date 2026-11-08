@@ -8,8 +8,11 @@ interface EmptyStateProps {
   description?: string
   action?: {
     label: string
-    href: string
     icon?: LucideIcon
+    /** Navegación (CTA principal). Si se omite junto con onClick no hay CTA. */
+    href?: string
+    /** Acción en la misma página (p. ej. abrir un formulario). */
+    onClick?: () => void
   }
 }
 
@@ -25,14 +28,19 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
           {description}
         </p>
       )}
-      {action && (
+      {action?.href ? (
         <Button asChild className="mt-6" variant="outline">
           <Link href={action.href} className="flex items-center gap-2">
             {action.icon && <action.icon className="h-4 w-4" />}
             {action.label}
           </Link>
         </Button>
-      )}
+      ) : action?.onClick ? (
+        <Button className="mt-6" variant="outline" onClick={action.onClick}>
+          {action.icon && <action.icon className="h-4 w-4 mr-2" />}
+          {action.label}
+        </Button>
+      ) : null}
     </div>
   )
 }

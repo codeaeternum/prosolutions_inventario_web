@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { guardedClose } from "@/lib/dialog-guard"
 import { Button } from "@/components/ui/button"
@@ -21,9 +22,15 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { BarcodeScanner } from "@/components/barcode-scanner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Loader2, PackagePlus, ScanBarcode, Search } from "lucide-react"
 import { toast } from "sonner"
+
+// html5-qrcode pesa ~350 KB y toca `window`: se difiere al abrir el diálogo.
+const BarcodeScanner = dynamic(
+    () => import("@/components/barcode-scanner").then(m => m.BarcodeScanner),
+    { ssr: false, loading: () => <Skeleton className="aspect-square w-full" /> }
+)
 
 interface Branch {
     id: string

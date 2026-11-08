@@ -172,6 +172,28 @@ export function TurnosPanel() {
         {[...porDia.entries()].map(([dia, rows]) => (
           <div key={dia} className="mb-6 last:mb-0">
             <h3 className="text-sm font-semibold text-muted-foreground capitalize mb-2">{fmtDia(dia)}</h3>
+            {/* Vista móvil: tarjetas por empleado — la tabla no cabe en <768px */}
+            <div className="grid gap-3 md:hidden">
+              {rows.map(t => (
+                <div key={`${t.actorId}-${t.dia}`} className="rounded-lg border bg-card p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium truncate">{t.actorName}</p>
+                    <Badge variant="secondary">{fmtDuracion(t.minutosActivo)}</Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                    <span className="tabular-nums">{fmtHora(t.firstAt)} – {fmtHora(t.lastAt)}</span>
+                    <span className="text-xs">· {t.eventos} movimientos</span>
+                  </div>
+                  <Button variant="outline" size="sm" asChild className="w-full">
+                    <Link href={`/admin/equipo?tab=actividad&actor=${t.actorId}&anombre=${encodeURIComponent(t.actorName)}`}>
+                      <History className="h-4 w-4 mr-1" />
+                      Ver actividad
+                    </Link>
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -207,6 +229,7 @@ export function TurnosPanel() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           </div>
         ))}
       </CardContent>

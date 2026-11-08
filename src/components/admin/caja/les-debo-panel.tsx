@@ -334,22 +334,22 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                                                     <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{row.name}</td>
                                                     <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
                                                         {row.saldoCents > 0 ? (
-                                                            <span className="text-red-600">{formatPrice(row.saldoCents / 100)}</span>
+                                                            <span className="text-red-600 dark:text-red-400">{formatPrice(row.saldoCents / 100)}</span>
                                                         ) : row.saldoCents < 0 ? (
                                                             // Anticipos sin aplicar: posición a favor del negocio.
-                                                            <span className="text-blue-600 font-medium">A favor {formatPrice(-row.saldoCents / 100)}</span>
+                                                            <span className="text-blue-600 dark:text-blue-400 font-medium">A favor {formatPrice(-row.saldoCents / 100)}</span>
                                                         ) : (
                                                             <span className="text-muted-foreground/40">—</span>
                                                         )}
                                                     </td>
-                                                    <AgingCell value={row.aging?.current ?? 0} formatPrice={formatPrice} className="text-green-600" />
-                                                    <AgingCell value={row.aging?.d1_15 ?? 0} formatPrice={formatPrice} className="text-amber-600" />
-                                                    <AgingCell value={row.aging?.d16_30 ?? 0} formatPrice={formatPrice} className="text-orange-600" />
-                                                    <AgingCell value={row.aging?.d31_60 ?? 0} formatPrice={formatPrice} className="text-red-600" />
-                                                    <AgingCell value={row.aging?.d60plus ?? 0} formatPrice={formatPrice} className="text-red-700 font-semibold" />
+                                                    <AgingCell value={row.aging?.current ?? 0} formatPrice={formatPrice} className="text-green-600 dark:text-green-400" />
+                                                    <AgingCell value={row.aging?.d1_15 ?? 0} formatPrice={formatPrice} className="text-amber-600 dark:text-amber-400" />
+                                                    <AgingCell value={row.aging?.d16_30 ?? 0} formatPrice={formatPrice} className="text-orange-600 dark:text-orange-400" />
+                                                    <AgingCell value={row.aging?.d31_60 ?? 0} formatPrice={formatPrice} className="text-red-600 dark:text-red-400" />
+                                                    <AgingCell value={row.aging?.d60plus ?? 0} formatPrice={formatPrice} className="text-red-700 dark:text-red-300 font-semibold" />
                                                     <td className="px-2 py-1.5 text-xs whitespace-nowrap">
                                                         {row.proximoVencimiento ? (
-                                                            <span className={`flex items-center gap-1 ${vencido(row.proximoVencimiento) ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                                                            <span className={`flex items-center gap-1 ${vencido(row.proximoVencimiento) ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>
                                                                 <CalendarClock className="h-3.5 w-3.5" />
                                                                 {formatDay(row.proximoVencimiento)}
                                                                 {vencido(row.proximoVencimiento) && " · vencida"}
@@ -371,12 +371,12 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                                         <tfoot>
                                             <tr className="border-t text-xs font-semibold">
                                                 <td className="px-2 py-1.5">Total</td>
-                                                <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{formatPrice(totals.saldo / 100)}</td>
-                                                <AgingCell value={totals.current} formatPrice={formatPrice} className="text-green-600" />
-                                                <AgingCell value={totals.d1_15} formatPrice={formatPrice} className="text-amber-600" />
-                                                <AgingCell value={totals.d16_30} formatPrice={formatPrice} className="text-orange-600" />
-                                                <AgingCell value={totals.d31_60} formatPrice={formatPrice} className="text-red-600" />
-                                                <AgingCell value={totals.d60plus} formatPrice={formatPrice} className="text-red-700" />
+                                                <td className="px-2 py-1.5 text-right tabular-nums text-red-600 dark:text-red-400">{formatPrice(totals.saldo / 100)}</td>
+                                                <AgingCell value={totals.current} formatPrice={formatPrice} className="text-green-600 dark:text-green-400" />
+                                                <AgingCell value={totals.d1_15} formatPrice={formatPrice} className="text-amber-600 dark:text-amber-400" />
+                                                <AgingCell value={totals.d16_30} formatPrice={formatPrice} className="text-orange-600 dark:text-orange-400" />
+                                                <AgingCell value={totals.d31_60} formatPrice={formatPrice} className="text-red-600 dark:text-red-400" />
+                                                <AgingCell value={totals.d60plus} formatPrice={formatPrice} className="text-red-700 dark:text-red-300" />
                                                 <td colSpan={2} />
                                             </tr>
                                         </tfoot>

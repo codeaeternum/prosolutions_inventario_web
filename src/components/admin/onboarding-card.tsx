@@ -130,7 +130,7 @@ export function OnboardingCard() {
 
         {complete ? (
           <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm">
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600" />
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
             <span>
               Todo listo. Si ya no necesitas esta guía, usa «Ocultar» para
               quitarla del dashboard.
@@ -142,7 +142,7 @@ export function OnboardingCard() {
               <li key={step.key}>
                 {step.done ? (
                   <div className="flex items-center gap-3 py-2.5">
-                    <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600" />
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
                     <span className="text-sm text-muted-foreground">
                       {step.label}
                     </span>

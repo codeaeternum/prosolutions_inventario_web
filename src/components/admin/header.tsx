@@ -6,7 +6,7 @@ import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { SearchBar } from "@/components/search-bar"
+import { openCommandPalette } from "@/components/admin/command-palette"
 import { NotificationsDropdown } from "@/components/notifications-dropdown"
 import {
   DropdownMenu,
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { BranchSwitcher } from "@/components/admin/branch-switcher"
 import { UserSwitcher } from "@/components/admin/user-switcher"
-import { LogOut, Home, Search, X, PanelLeft, PanelLeftClose, UserCog } from "lucide-react"
+import { LogOut, Home, Search, PanelLeft, PanelLeftClose, UserCog } from "lucide-react"
 import type { UserRole, CustomerType, UserStatus } from "@prisma/client"
 
 interface AdminHeaderProps {
@@ -37,7 +37,6 @@ interface AdminHeaderProps {
 }
 
 export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSidebar }: AdminHeaderProps) {
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const [switcherOpen, setSwitcherOpen] = useState(false)
 
   const initials = user.name
@@ -67,18 +66,27 @@ export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSide
               )}
             </Button>
           )}
-          {/* Desktop search */}
-          <SearchBar className="hidden sm:block max-w-md flex-1" />
+          {/* Desktop search: abre la paleta de comandos (⌘K) */}
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            aria-label="Abrir buscador y navegación (⌘K)"
+            className="hidden sm:flex max-w-md flex-1 h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="flex-1 truncate text-left">Buscar…</span>
+            <kbd className="inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">⌘K</kbd>
+          </button>
           <BranchSwitcher homeBranchId={homeBranchId} />
-          {/* Mobile search toggle */}
+          {/* Mobile search: misma paleta (el diálogo funciona en táctil) */}
           <Button
             variant="ghost"
             size="icon"
             className="sm:hidden"
-            aria-label={mobileSearchOpen ? "Cerrar buscador" : "Abrir buscador"}
-            onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
+            aria-label="Abrir buscador y navegación"
+            onClick={openCommandPalette}
           >
-            {mobileSearchOpen ? <X className="h-5 w-5" /> : <Search className="h-5 w-5" />}
+            <Search className="h-5 w-5" />
           </Button>
         </div>
 
@@ -126,13 +134,6 @@ export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSide
           </DropdownMenu>
         </div>
       </div>
-
-      {/* Mobile search bar - expandable */}
-      {mobileSearchOpen && (
-        <div className="sm:hidden px-4 pb-3 border-t">
-          <SearchBar className="w-full" />
-        </div>
-      )}
 
       <UserSwitcher
         open={switcherOpen}

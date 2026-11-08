@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Plus, Loader2, Pencil, Trash2, Smartphone } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface Brand {
   id: string
@@ -193,14 +194,16 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
       </div>
 
       {brands.length === 0 && !showForm && (
-        <div className="text-center py-12 text-muted-foreground">
-          <Smartphone className="h-16 w-16 mx-auto mb-4 opacity-50" />
-          <p>No hay marcas registradas</p>
-          <Button className="mt-4" onClick={() => setShowForm(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Agregar primera marca
-          </Button>
-        </div>
+        <EmptyState
+          icon={Smartphone}
+          title="No hay marcas registradas"
+          description="Registra las marcas de los equipos que vendes o reparas."
+          action={{
+            label: "Agregar primera marca",
+            icon: Plus,
+            onClick: () => setShowForm(true),
+          }}
+        />
       )}
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

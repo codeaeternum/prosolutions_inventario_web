@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { adminPathAllowed, moduleForAdminPath } from "@/lib/access"
 import { Button } from "@/components/ui/button"
 import { BusinessName } from "@/components/admin/business-name"
+import { openCommandPalette } from "@/components/admin/command-palette"
 import {
   LayoutDashboard,
   Users,
@@ -15,6 +16,7 @@ import {
   X,
   Menu,
   Boxes,
+  Search,
   ShoppingCart,
   Wallet,
   Wrench,
@@ -253,6 +255,20 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
             <X className="h-5 w-5" />
           </Button>
         </div>
+        {/* Búsqueda global: abre la paleta de comandos */}
+        <div className="p-4 pb-0">
+          <button
+            type="button"
+            onClick={() => {
+              setMobileMenuOpen(false)
+              openCommandPalette()
+            }}
+            className="flex w-full h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="flex-1 text-left">Buscar…</span>
+          </button>
+        </div>
         <nav className="flex-1 overflow-y-auto p-4 pb-24">
           <ul role="list" className="space-y-6">
             {filteredNavigation.map((group) => (
@@ -346,6 +362,26 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
               </div>
             )}
           </div>
+          {/* Búsqueda global (⌘K): mismo campo que el header */}
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            aria-label="Abrir buscador y navegación (⌘K)"
+            title={collapsed ? "Buscar (⌘K)" : undefined}
+            className={cn(
+              "mt-4 flex h-9 items-center gap-2 rounded-md border border-input bg-background text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground",
+              collapsed ? "justify-center px-0" : "px-3"
+            )}
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            {!collapsed && (
+              <>
+                <span className="flex-1 truncate text-left">Buscar…</span>
+                <kbd className="inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">⌘K</kbd>
+              </>
+            )}
+            {collapsed && <span className="sr-only">Buscar</span>}
+          </button>
           <nav className="flex flex-1 flex-col">
             <ul role="list" className="flex flex-1 flex-col gap-y-7 pt-4">
               {filteredNavigation.map((group, groupIndex) => (

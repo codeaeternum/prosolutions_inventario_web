@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
@@ -11,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
-import { BarcodeScanner } from "@/components/barcode-scanner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { CheckCircle, ClipboardList, QrCode, ReceiptText, RotateCcw, ScanBarcode, ShoppingCart } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
@@ -29,6 +30,12 @@ import {
     cartTotalOf, cartUnitsOf, exactCodeMatches,
     type CartItem, type CheckoutResult, type PosCustomer, type PosProduct,
 } from "@/components/pos/types"
+
+// html5-qrcode pesa ~350 KB y toca `window`: se difiere al abrir el diálogo.
+const BarcodeScanner = dynamic(
+    () => import("@/components/barcode-scanner").then(m => m.BarcodeScanner),
+    { ssr: false, loading: () => <Skeleton className="aspect-square w-full" /> }
+)
 
 interface LastTicket { kind: CheckoutResult["kind"]; description: string; quantity: number; total: number; ticketUrl?: string }
 const KIND_BADGE: Record<CheckoutResult["kind"], string | null> = { SALE: null, WORKSHOP: "Nota a taller", LAYAWAY: "Apartado", QUOTE: "Cotización" }
@@ -389,7 +396,7 @@ export default function VentasPage() {
             {encargoCtx && (
                 <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
                     <CardContent className="p-3 flex items-center gap-3">
-                        <ClipboardList className="h-5 w-5 text-amber-600 shrink-0" />
+                        <ClipboardList className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
                         <p className="text-sm text-amber-800 dark:text-amber-300 flex-1 min-w-0">
                             <span className="font-medium">Encargo:</span> {encargoCtx.description}
                             {encargoCtx.priceQuoted != null && ` · Cotizado ${formatPrice(encargoCtx.priceQuoted)}`}
@@ -408,7 +415,7 @@ export default function VentasPage() {
             {lastTicket && (
                 <Card className="border-green-200 bg-green-50 dark:bg-green-950/20">
                     <CardContent className="p-4 flex items-center gap-3">
-                        <CheckCircle className="h-7 w-7 text-green-600 shrink-0" />
+                        <CheckCircle className="h-7 w-7 text-green-600 dark:text-green-400 shrink-0" />
                         <div className="flex-1 min-w-0">
                             <p className="font-medium text-green-800 dark:text-green-400 text-sm">
                                 Último movimiento registrado

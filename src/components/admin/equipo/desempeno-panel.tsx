@@ -253,7 +253,64 @@ export function DesempenoPanel() {
                 Sin empleados que coincidan con &ldquo;{searchQuery}&rdquo;.
               </p>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* Vista móvil: tarjetas — la tabla de 8 columnas no cabe en <768px */}
+              <div className="grid gap-3 md:hidden">
+                {filteredUsuarios.map(u => (
+                  <div key={u.id} className="rounded-lg border bg-card p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{u.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {u.jobTitle?.trim() || ROLE_LABELS[u.role] || u.role}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-semibold">{formatPrice(u.ventas)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {u.ventasCount} {u.ventasCount === 1 ? "venta" : "ventas"}
+                        </p>
+                      </div>
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground">Piezas</dt>
+                        <dd><Badge variant="outline">{u.piezasVendidas}</Badge></dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground">Movs. inventario</dt>
+                        <dd><Badge variant="outline">{u.movimientos}</Badge></dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground">OT creadas</dt>
+                        <dd><Badge variant="secondary">{u.ordenesCreadas}</Badge></dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground">OT entregadas</dt>
+                        <dd><Badge variant="secondary">{u.ordenesEntregadas}</Badge></dd>
+                      </div>
+                      <div className="col-span-2 flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground">Acciones totales</dt>
+                        <dd><Badge variant="outline">{u.acciones}</Badge></dd>
+                      </div>
+                    </dl>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" asChild className="flex-1" title="Ver su actividad">
+                        <Link href={`/admin/equipo?tab=actividad&actor=${u.id}&anombre=${encodeURIComponent(u.name)}`}>
+                          <History className="h-4 w-4 mr-1" />
+                          Actividad
+                        </Link>
+                      </Button>
+                      <Button variant="outline" size="sm" asChild title="Ver turnos del equipo" aria-label={`Ver turnos (desde ${u.name})`}>
+                        <Link href="/admin/equipo?tab=turnos">
+                          <Clock className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -315,6 +372,7 @@ export function DesempenoPanel() {
                   </TableBody>
                 </Table>
               </div>
+              </>
             )}
           </>
         )}

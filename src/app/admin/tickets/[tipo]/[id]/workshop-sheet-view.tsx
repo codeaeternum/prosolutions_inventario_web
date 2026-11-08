@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { ArrowLeft, Printer } from "lucide-react"
-import QRCode from "qrcode"
+// `qrcode` se importa de forma perezosa dentro del efecto que genera el QR.
 import { Button } from "@/components/ui/button"
 import { cn, formatAccessPattern, formatDate, formatPrice } from "@/lib/utils"
 
@@ -553,7 +553,8 @@ export function WorkshopSheetView({ data }: { data: WorkshopSheetData }) {
     const url = data.evidenceLinkDisabled ? undefined : data.evidenceUrl
     if (!url) return
     let cancelled = false
-    QRCode.toDataURL(url, { width: 200, margin: 1 })
+    import("qrcode")
+      .then(m => m.default.toDataURL(url, { width: 200, margin: 1 }))
       .then(d => { if (!cancelled) setEvidenceQrDataUrl(d) })
       .catch(() => { if (!cancelled) setEvidenceQrDataUrl(null) })
     return () => { cancelled = true }
