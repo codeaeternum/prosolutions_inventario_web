@@ -200,6 +200,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
             }
         } catch (e) {
             console.error('[Catalog] CRITICAL ERROR:', e)
+            await ctx.reply('❌ Error al cargar el producto.').catch(() => { })
         }
     })
 
@@ -209,12 +210,17 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
-        const businessId = await businessIdOf(telegramId)
-        const product = await prisma.product.findFirst({ where: { id: productId, businessId } })
-        if (!product) return
-        const qrData = product.barcode || product.id
-        const qrBuffer = await QRCode.toBuffer(qrData)
-        await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdownV1(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
+        try {
+            const businessId = await businessIdOf(telegramId)
+            const product = await prisma.product.findFirst({ where: { id: productId, businessId } })
+            if (!product) return
+            const qrData = product.barcode || product.id
+            const qrBuffer = await QRCode.toBuffer(qrData)
+            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: `📱 *${escapeMarkdownV1(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, parse_mode: 'Markdown' })
+        } catch (e) {
+            console.error('Error in showqr_:', e)
+            await ctx.reply('❌ Error al generar el QR.').catch(() => { })
+        }
     })
 
     // delprod_ action — el botón solo se renderiza a admins, pero un teclado
@@ -224,14 +230,19 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
-        const businessId = await businessIdOf(telegramId)
-        const product = await prisma.product.findFirst({
-            where: { id: productId, businessId },
-            include: { _count: { select: { reservations: true, movements: true } } }
-        })
-        if (!product) return
-        sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: product }
-        await ctx.reply(`🗑️ *¿Eliminar este producto?*\n\n📦 ${escapeMarkdownV1(product.name)}\n⚠️ Ten cuidado, esta acción es irreversible.\n\nResponde SI para confirmar.`, { parse_mode: 'Markdown' })
+        try {
+            const businessId = await businessIdOf(telegramId)
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId },
+                include: { _count: { select: { reservations: true, movements: true } } }
+            })
+            if (!product) return
+            sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: product }
+            await ctx.reply(`🗑️ *¿Eliminar este producto?*\n\n📦 ${escapeMarkdownV1(product.name)}\n⚠️ Ten cuidado, esta acción es irreversible.\n\nResponde SI para confirmar.`, { parse_mode: 'Markdown' })
+        } catch (e) {
+            console.error('Error in delprod_:', e)
+            await ctx.reply('❌ Error al preparar la eliminación.').catch(() => { })
+        }
     })
 
     // confirm_delete action
@@ -293,24 +304,25 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
         const telegramId = ctx.from?.id.toString()
         if (!telegramId) return
 
-        const user = await prisma.user.findUnique({ where: { telegramId } })
-        if (!user) return ctx.reply('⚠️ Debes estar registrado para reservar. Usa /start')
-        // Solo cuentas APPROVED reservan; el dominio aplica la misma regla al confirmar.
-        if (user.status !== 'APPROVED') {
-            return ctx.reply('⏳ Tu cuenta está pendiente de verificación.')
-        }
+        try {
+            const user = await prisma.user.findUnique({ where: { telegramId } })
+            if (!user) return ctx.reply('⚠️ Debes estar registrado para reservar. Usa /start')
+            // Solo cuentas APPROVED reservan; el dominio aplica la misma regla al confirmar.
+            if (user.status !== 'APPROVED') {
+                return ctx.reply('⏳ Tu cuenta está pendiente de verificación.')
+            }
 
-        const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
-        if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
+            const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
+            if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
 
-        // Lista de taller para clientes STORE/TECHNICIAN o cuenta aliada
-        // WORKSHOP — el mismo criterio que reservations.ts/sell: el "Total"
-        // mostrado y el cupo de crédito deben calcularse con el precio que
-        // realmente cobrará createReservations, no siempre retail.
-        const wholesale = user.customerType === 'STORE' || user.customerType === 'TECHNICIAN' || user.role === 'WORKSHOP'
-        const unitPrice = wholesale ? product.wholesalePrice : product.retailPrice
+            // Lista de taller para clientes STORE/TECHNICIAN o cuenta aliada
+            // WORKSHOP — el mismo criterio que reservations.ts/sell: el "Total"
+            // mostrado y el cupo de crédito deben calcularse con el precio que
+            // realmente cobrará createReservations, no siempre retail.
+            const wholesale = user.customerType === 'STORE' || user.customerType === 'TECHNICIAN' || user.role === 'WORKSHOP'
+            const unitPrice = wholesale ? product.wholesalePrice : product.retailPrice
 
-        await ctx.reply(`🛒 *Reservar: ${escapeMarkdownV1(product.name)}*
+            await ctx.reply(`🛒 *Reservar: ${escapeMarkdownV1(product.name)}*
 
 💰 Precio: $${unitPrice.toLocaleString()}
 ✅ Stock: ${product.stock} uds
@@ -320,12 +332,16 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`
 
 _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
 
-        sessions.reservation[telegramId] = {
-            productId: product.id,
-            productName: product.name,
-            price: unitPrice,
-            maxStock: product.stock,
-            step: 'QUANTITY'
+            sessions.reservation[telegramId] = {
+                productId: product.id,
+                productName: product.name,
+                price: unitPrice,
+                maxStock: product.stock,
+                step: 'QUANTITY'
+            }
+        } catch (e) {
+            console.error('Error in reserve_:', e)
+            await ctx.reply('❌ No se pudo iniciar la reserva. Intenta de nuevo.').catch(() => { })
         }
     })
 
@@ -346,15 +362,18 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
         const session = sessions.reservation[telegramId]
         if (!session) return await ctx.reply('❌ Sesión expirada. Inicia de nuevo desde el producto.')
 
-        session.step = 'PROOF_UPLOAD'
-        const total = (session.price * (session.quantity || 1)).toLocaleString()
-        const me = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
-        const businessId = me?.businessId ?? (await getDefaultBusinessId())
-        const bankTransferRaw = await getSetting(businessId, 'bank_transfer_info', '')
-        const bankCashRaw = await getSetting(businessId, 'bank_cash_info', '')
+        try {
+            const total = (session.price * (session.quantity || 1)).toLocaleString()
+            const me = await prisma.user.findUnique({ where: { telegramId }, select: { businessId: true } })
+            const businessId = me?.businessId ?? (await getDefaultBusinessId())
+            const bankTransferRaw = await getSetting(businessId, 'bank_transfer_info', '')
+            const bankCashRaw = await getSetting(businessId, 'bank_cash_info', '')
 
-        if (!bankTransferRaw && !bankCashRaw) return ctx.reply('El taller aún no ha configurado sus datos de pago. Consulta en recepción antes de transferir.')
-        await ctx.reply(`🏦 *Opciones de Pago*
+            if (!bankTransferRaw && !bankCashRaw) return ctx.reply('El taller aún no ha configurado sus datos de pago. Consulta en recepción antes de transferir.')
+            // El paso cambia solo cuando los datos cargaron: si algo falla la
+            // sesión queda en PAYMENT_METHOD y el usuario puede reintentar.
+            session.step = 'PROOF_UPLOAD'
+            await ctx.reply(`🏦 *Opciones de Pago*
 
 *1️⃣ TRANSFERENCIA / SPEI*
 Realiza el pago de *$${total}* a:
@@ -365,6 +384,10 @@ ${escapeMarkdownV1(bankCashRaw)}
 
 📸 *Envía la FOTO del comprobante aquí cuando hayas pagado.*
 _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
+        } catch (e) {
+            console.error('Error in pay_transfer:', e)
+            await ctx.reply('❌ Error al cargar los datos de pago. Intenta de nuevo.').catch(() => { })
+        }
     })
 
     // Process reservation
@@ -438,13 +461,18 @@ ${adminFooter}`
     // back_categories
     bot.action('back_categories', async (ctx) => {
         await ctx.answerCbQuery()
-        const businessId = await businessIdOf(ctx.from?.id?.toString())
-        const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
-        const buttons = categories.map((c) => [Markup.button.callback(c.name, `cat_${c.id}`)])
-        await ctx.editMessageText('📂 *Selecciona una categoría:*', {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard(buttons)
-        })
+        try {
+            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const categories = await prisma.category.findMany({ where: { businessId }, take: 20 })
+            const buttons = categories.map((c) => [Markup.button.callback(c.name, `cat_${c.id}`)])
+            await ctx.editMessageText('📂 *Selecciona una categoría:*', {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard(buttons)
+            })
+        } catch (e) {
+            console.error('Error in back_categories:', e)
+            await ctx.reply('❌ Error al cargar categorías. Usa /categorias.').catch(() => { })
+        }
     })
 
     // /ofertas

@@ -7,12 +7,18 @@ import prisma from "@/lib/prisma"
 
 const METHODS = ["CASH", "CARD", "TRANSFER", "CREDIT"] as const
 
+// Las respuestas de caja son datos de dinero por usuario/sucursal: nunca
+// servibles desde un caché compartido (tableta de recepción, proxy LAN).
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 /** Totales cobrados por método durante el turno (neto: cobros − reembolsos). */
 async function methodTotals(businessId: string, register: { branchId: string | null; openedAt: Date; closedAt: Date | null }) {
   // Los pagos no llevan registerId: se acotan a la ventana apertura→cierre y a
-  // la sucursal de la caja vía su venta u orden de taller. Un pago de tarjeta o
-  // transferencia no genera CashMovement, así que este total no sale de los
-  // movimientos sino directo de Payment.
+  // la sucursal de la caja vía su venta, orden de taller o encargo (mismo
+  // alcance que el feed unificado de /api/caja/movements — un anticipo de
+  // encargo cobrado en mostrador sí forma parte del turno de esa sucursal).
+  // Un pago de tarjeta o transferencia no genera CashMovement, así que este
+  // total no sale de los movimientos sino directo de Payment.
   // VOIDED entra en la suma: al anular una venta del mismo turno el cobro
   // positivo queda VOIDED y su reembolso REFUNDED (−X) — contar solo el
   // negativo inflaba "Cobrado por método" en rojo; juntos cancelan a 0.
@@ -23,7 +29,7 @@ async function methodTotals(businessId: string, register: { branchId: string | n
       status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
       createdAt: { gte: register.openedAt, ...(register.closedAt ? { lte: register.closedAt } : {}) },
       ...(register.branchId
-        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }] }
+        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }, { encargo: { branchId: register.branchId } }] }
         : {}),
     },
     _sum: { amount: true },
@@ -74,26 +80,29 @@ export async function GET(req: Request) {
           movements: { select: { type: true, amount: true, payment: { select: { method: true, amount: true } } } },
         },
       })
-      return NextResponse.json({
-        view: "week",
-        registers: registers.map(register => {
-          const expectedCents = expectedCashCents(register.initialAmount, register.movements as CashMovementLike[])
-          const countedCents = register.finalAmount == null ? null : Math.round(register.finalAmount * 100)
-          return {
-            id: register.id,
-            branch: register.branch,
-            openedAt: register.openedAt,
-            closedAt: register.closedAt,
-            openedBy: register.openedBy,
-            closedBy: register.closedBy,
-            initialAmount: register.initialAmount,
-            finalAmount: register.finalAmount,
-            expectedCash: expectedCents / 100,
-            difference: countedCents == null ? null : (countedCents - expectedCents) / 100,
-            notes: register.notes,
-          }
-        }),
-      })
+      return NextResponse.json(
+        {
+          view: "week",
+          registers: registers.map(register => {
+            const expectedCents = expectedCashCents(register.initialAmount, register.movements as CashMovementLike[])
+            const countedCents = register.finalAmount == null ? null : Math.round(register.finalAmount * 100)
+            return {
+              id: register.id,
+              branch: register.branch,
+              openedAt: register.openedAt,
+              closedAt: register.closedAt,
+              openedBy: register.openedBy,
+              closedBy: register.closedBy,
+              initialAmount: register.initialAmount,
+              finalAmount: register.finalAmount,
+              expectedCash: expectedCents / 100,
+              difference: countedCents == null ? null : (countedCents - expectedCents) / 100,
+              notes: register.notes,
+            }
+          }),
+        },
+        { headers: NO_STORE },
+      )
     }
 
     const activeRegister = await prisma.cashRegister.findFirst({
@@ -108,7 +117,7 @@ export async function GET(req: Request) {
     })
 
     if (!activeRegister) {
-      return NextResponse.json({ active: false })
+      return NextResponse.json({ active: false }, { headers: NO_STORE })
     }
 
     // initialAmount/amount son Float en pesos: la corrida se hace en centavos
@@ -118,17 +127,20 @@ export async function GET(req: Request) {
     }, Math.round(activeRegister.initialAmount * 100))
     const calculatedTotal = calculatedCents / 100
 
-    return NextResponse.json({
-      active: true,
-      register: {
-        ...activeRegister,
-        calculatedTotal,
-        // Efectivo esperado real: solo movimientos que tocaron el cajón
-        // (countsAsCash en domain/cash). Hoy coincide con calculatedTotal.
-        expectedCash: expectedCashCents(activeRegister.initialAmount, activeRegister.movements as CashMovementLike[]) / 100,
-        methodTotals: await methodTotals(businessId, activeRegister),
-      }
-    })
+    return NextResponse.json(
+      {
+        active: true,
+        register: {
+          ...activeRegister,
+          calculatedTotal,
+          // Efectivo esperado real: solo movimientos que tocaron el cajón
+          // (countsAsCash en domain/cash). Hoy coincide con calculatedTotal.
+          expectedCash: expectedCashCents(activeRegister.initialAmount, activeRegister.movements as CashMovementLike[]) / 100,
+          methodTotals: await methodTotals(businessId, activeRegister),
+        },
+      },
+      { headers: NO_STORE },
+    )
   } catch {
     return NextResponse.json({ error: "Error al obtener caja" }, { status: 500 })
   }

@@ -1,7 +1,7 @@
 import * as cron from 'node-cron'
 import type { BotContext } from '../lib/types'
 import { notifyAdmins } from '../lib/notify'
-import { escapeHtml } from '../lib/format'
+import { clipMessage, escapeHtml } from '../lib/format'
 
 /**
  * Stock Alert Module
@@ -14,9 +14,9 @@ import { escapeHtml } from '../lib/format'
 const notifiedProducts = new Map<string, number>() // productId → timestamp
 const NOTIFY_COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24 hours
 
-export function registerAlerts({ bot, prisma, isDev }: BotContext) {
+export function registerAlerts({ bot, prisma, isDev }: BotContext): cron.ScheduledTask {
     // Check stock every hour
-    cron.schedule('0 * * * *', async () => {
+    const task = cron.schedule('0 * * * *', async () => {
         if (isDev) console.log('🔔 [Alerts] Checking for out-of-stock products...')
 
         try {
@@ -56,13 +56,20 @@ export function registerAlerts({ bot, prisma, isDev }: BotContext) {
             }
 
             for (const [businessId, products] of byBusiness) {
+                // La lista crece con el catálogo: sin tope el mensaje pasa de
+                // 4096 chars, Telegram responde 400 y la alerta se pierde.
+                const MAX_LISTED = 25
+                const listed = products.slice(0, MAX_LISTED)
                 let msg = `🚨 <b>¡Alerta de Stock Agotado!</b>\n\n`
                 msg += `${products.length} producto(s) sin stock:\n\n`
-                products.forEach((p, i) => {
+                listed.forEach((p, i) => {
                     msg += `${i + 1}. ❌ <b>${escapeHtml(p.name)}</b>\n`
                 })
+                if (products.length > listed.length) {
+                    msg += `…y ${products.length - listed.length} más\n`
+                }
                 msg += `\n⚠️ <i>Reponer inventario desde el panel web.</i>`
-                await notifyAdmins(bot, businessId, msg)
+                await notifyAdmins(bot, businessId, clipMessage(msg))
             }
 
             // Mark as notified
@@ -84,4 +91,6 @@ export function registerAlerts({ bot, prisma, isDev }: BotContext) {
     })
 
     console.log('🔔 Stock alerts registered (hourly out-of-stock check)')
+    // El handle se devuelve para que el shutdown de index.ts lo detenga.
+    return task
 }

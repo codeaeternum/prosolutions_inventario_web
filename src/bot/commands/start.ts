@@ -97,7 +97,15 @@ export function registerStart(
     }
 
     if (prisma) {
-      const user = await prisma.user.findUnique({ where: { telegramId } })
+      let user
+      try {
+        user = await prisma.user.findUnique({ where: { telegramId } })
+      } catch (e) {
+        // Con la BD caída no se puede registrar ni saludar por nombre: avisar
+        // en vez de dejar el /start en silencio.
+        console.error("[Start] Error consultando cuenta:", e)
+        return ctx.reply("⚠️ No pude consultar tu cuenta. Intenta de nuevo en unos minutos.")
+      }
       if (user) {
         const adminBadge = user.role === "ADMIN" ? " 👑" : ""
         return ctx.reply(

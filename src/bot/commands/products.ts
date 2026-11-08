@@ -187,6 +187,7 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
             try {
                 const photo = ctx.message.photo[ctx.message.photo.length - 1]
                 const file = await ctx.telegram.getFile(photo.file_id)
+                if (!file.file_path) throw new Error('Telegram no devolvió file_path')
                 const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
 
                 const fileName = `${Date.now()}_${randomBytes(4).toString('hex')}.jpg`
@@ -202,7 +203,11 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                 adminSession.data.imageUrl = `/uploads/products/${fileName}`
 
                 const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
-                const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
+                if (!adminUser) {
+                    delete sessions.adminProduct[telegramId]
+                    return ctx.reply('Cuenta no disponible.')
+                }
+                const newProduct = await createProduct(prisma, adminUser.id, adminUser.businessId, {
                     name: adminSession.data.name!,
                     categoryId: adminSession.data.categoryId!,
                     costPrice: adminSession.data.costPrice || null,
@@ -234,6 +239,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             try {
                 const photo = ctx.message.photo[ctx.message.photo.length - 1]
                 const file = await ctx.telegram.getFile(photo.file_id)
+                if (!file.file_path) throw new Error('Telegram no devolvió file_path')
                 const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
 
                 const user = await prisma.user.findUnique({ where: { telegramId } })
@@ -454,7 +460,8 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 }
                 if (adminSession.step === 'PHOTO' && ctx.message.text.toLowerCase() === 'saltar') {
                     const adminUser = await prisma.user.findUnique({ where: { telegramId }, select: { id: true, businessId: true } })
-                    const newProduct = await createProduct(prisma, adminUser!.id, adminUser!.businessId, {
+                    if (!adminUser) { delete sessions.adminProduct[telegramId]; return ctx.reply('Cuenta no disponible.') }
+                    const newProduct = await createProduct(prisma, adminUser.id, adminUser.businessId, {
                         name: adminSession.data.name!,
                         categoryId: adminSession.data.categoryId!,
                         costPrice: adminSession.data.costPrice || null,

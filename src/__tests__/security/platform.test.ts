@@ -36,10 +36,11 @@ const mocks = vi.hoisted(() => {
   )
   const businessDelete = vi.fn().mockResolvedValue({})
   const platformEventCreate = vi.fn().mockResolvedValue({})
+  const userCount = vi.fn().mockResolvedValue(9)
   const prisma: Record<string, unknown> = {
     business: { findMany: findBusinesses, findUnique: findBusiness, update: updateBusiness, delete: businessDelete },
     platformEvent: { create: platformEventCreate, findMany: vi.fn().mockResolvedValue([]) },
-    user: { findMany: findUsers, deleteMany: del.user },
+    user: { findMany: findUsers, deleteMany: del.user, count: userCount },
     businessOperation: { deleteMany: del.businessOperation },
     auditEvent: { deleteMany: del.auditEvent },
     pushSubscription: { deleteMany: del.pushSubscription },
@@ -63,7 +64,7 @@ const mocks = vi.hoisted(() => {
   return {
     auth: vi.fn(), findBusinesses, findBusiness, updateBusiness, saleGroup,
     orderGroup, findUsers, findOrders, findOrderFirst, findSales, findSaleFirst,
-    saleAggregate, count, del, businessDelete, platformEventCreate, prisma,
+    saleAggregate, count, del, businessDelete, platformEventCreate, userCount, prisma,
   }
 })
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -153,6 +154,9 @@ describe("platform console API", () => {
     expect(business.recentSales[0].folio).toBe("V-000003")
     expect(business.users[0].email).toBe("d@t.invalid")
     expect(business.users[0]).not.toHaveProperty("password")
+    // usersTotal es el conteo real del staff (prisma.user.count), no el largo
+    // de la lista cortada en 50 ni el _count de TODOS los usuarios (=5).
+    expect(business.usersTotal).toBe(9)
   })
 
   it("PATCH validates the body, 404s unknown ids and toggles isActive", async () => {

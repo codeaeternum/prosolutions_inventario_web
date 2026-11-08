@@ -8,7 +8,7 @@ import * as QRCode from 'qrcode'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
 import { getBotAccount, requireAdmin, requirePrisma } from '../lib/guards'
-import { escapeMarkdownV1 } from '../lib/format'
+import { clipMessage, escapeMarkdownV1 } from '../lib/format'
 
 function generateProgressBar(percent: number): string {
     const filled = Math.min(10, Math.floor(percent / 10))
@@ -99,7 +99,8 @@ export function registerReports({ bot, prisma }: BotContext) {
             })
             msg += '_Gestiona en la web: Admin → Reservas_'
 
-            await ctx.reply(msg, { parse_mode: 'Markdown' })
+            // clipMessage: 15 reservas × nombres largos pueden pasar de 4096.
+            await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
             console.error(e)
             await ctx.reply('❌ Error al obtener reservas. Usa /cancelar si estabas en otro proceso.')
@@ -194,7 +195,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             msg += `\n━━━━━━━━━━━━━━\n💰 *Total adeudado: $${totalDebt.toLocaleString()}*`
             msg += `\n\n_Gestiona en la web: Admin → Crédito y Cartera_`
 
-            await ctx.reply(msg, { parse_mode: 'Markdown' })
+            await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
             console.error(e)
             await ctx.reply('❌ Error al consultar créditos.')
@@ -260,14 +261,14 @@ export function registerReports({ bot, prisma }: BotContext) {
     bot.command('historial', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
 
-        const telegramId = ctx.from.id.toString()
-        const user = await prisma.user.findUnique({ where: { telegramId } })
-        if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
-            return ctx.reply('⏳ Tu cuenta está pendiente de verificación o fue rechazada.')
-        }
-        if (!user) return ctx.reply('⚠️ No estás registrado. Usa /start')
-
         try {
+            const telegramId = ctx.from.id.toString()
+            const user = await prisma.user.findUnique({ where: { telegramId } })
+            if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
+                return ctx.reply('⏳ Tu cuenta está pendiente de verificación o fue rechazada.')
+            }
+            if (!user) return ctx.reply('⚠️ No estás registrado. Usa /start')
+
             const history = await prisma.reservation.findMany({
                 where: { userId: user.id, status: { in: ['COMPLETED', 'CANCELLED'] } },
                 include: { product: true },
@@ -287,7 +288,7 @@ export function registerReports({ bot, prisma }: BotContext) {
                 msg += `   📊 ${r.quantity} uds\n\n`
             })
 
-            await ctx.reply(msg, { parse_mode: 'Markdown' })
+            await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
             console.error(e)
             await ctx.reply('❌ Error al obtener historial.')
@@ -298,8 +299,14 @@ export function registerReports({ bot, prisma }: BotContext) {
     bot.command('perfil', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
 
-        const telegramId = ctx.from.id.toString()
-        const user = await prisma.user.findUnique({ where: { telegramId } })
+        let user
+        try {
+            const telegramId = ctx.from.id.toString()
+            user = await prisma.user.findUnique({ where: { telegramId } })
+        } catch (e) {
+            console.error(e)
+            return ctx.reply('❌ Error al obtener perfil.')
+        }
         if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
             return ctx.reply('⏳ Tu cuenta está pendiente de verificación o fue rechazada.')
         }
@@ -354,14 +361,14 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
     bot.command('misreservas', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
 
-        const telegramId = ctx.from.id.toString()
-        const user = await prisma.user.findUnique({ where: { telegramId } })
-        if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
-            return ctx.reply('⏳ Tu cuenta está pendiente de verificación o fue rechazada.')
-        }
-        if (!user) return ctx.reply('⚠️ No estás registrado. Usa /start')
-
         try {
+            const telegramId = ctx.from.id.toString()
+            const user = await prisma.user.findUnique({ where: { telegramId } })
+            if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
+                return ctx.reply('⏳ Tu cuenta está pendiente de verificación o fue rechazada.')
+            }
+            if (!user) return ctx.reply('⚠️ No estás registrado. Usa /start')
+
             const reservations = await prisma.reservation.findMany({
                 where: { userId: user.id },
                 include: { product: true },

@@ -6,9 +6,11 @@ const mocks = vi.hoisted(() => ({
   userUpdate: vi.fn(),
   platformEventCreate: vi.fn(),
   transaction: vi.fn(),
+  checkAndRecord: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
+vi.mock("@/lib/rate-limit", () => ({ checkAndRecord: mocks.checkAndRecord }))
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: {
@@ -46,6 +48,7 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.auth.mockResolvedValue(superAdminSession)
+    mocks.checkAndRecord.mockReturnValue(true)
     mocks.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops))
     mocks.userFindUnique.mockResolvedValue({
       id: "u-target",
@@ -62,6 +65,24 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
       isSuperAdmin: true,
     })
     mocks.platformEventCreate.mockResolvedValue({ id: "ev-1" })
+  })
+
+  it("rate limit: responde 429 con Retry-After sin tocar la base", async () => {
+    mocks.checkAndRecord.mockReturnValue(false)
+    const res = await PATCH(patchReq({ isSuperAdmin: true }), {
+      params: Promise.resolve({ id: "u-target" }),
+    })
+    expect(res.status).toBe(429)
+    expect(res.headers.get("retry-after")).toBe("900")
+    // El freno es por operador autenticado, no por IP.
+    expect(mocks.checkAndRecord).toHaveBeenCalledWith(
+      "platform-user-update",
+      "op-1",
+      15 * 60 * 1000,
+      15,
+    )
+    expect(mocks.userFindUnique).not.toHaveBeenCalled()
+    expect(mocks.userUpdate).not.toHaveBeenCalled()
   })
 
   it("bloquea con 403 a un ADMIN de negocio que no es superadmin", async () => {

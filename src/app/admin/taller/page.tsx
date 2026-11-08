@@ -29,6 +29,7 @@ import { ClosedRail } from "@/components/admin/taller/closed-rail"
 import { DropColumn } from "@/components/admin/taller/drop-column"
 import { PhaseNav } from "@/components/admin/taller/phase-nav"
 import { useBoardDrag, type BoardDrag, type BoardDropResult } from "@/components/admin/taller/use-board-drag"
+import { useBoardAutoScroll } from "@/components/admin/taller/use-board-autoscroll"
 import { BOARD_PHASES, phaseOrders, phaseStageCounts, phaseTotal, type BoardPhase } from "@/lib/taller-board"
 import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
 import { localDateTimeToIso, textOrUndefined } from "@/lib/workshop-form"
@@ -607,6 +608,10 @@ export default function WorkshopPage() {
     return data
   }
   const boardDrag = useBoardDrag()
+  // Auto-scroll del contenedor cuando la tarjeta en arrastre se acerca a los
+  // bordes — sin esto no hay forma de soltar en una fase fuera de pantalla.
+  const boardScrollRef = useRef<HTMLDivElement>(null)
+  useBoardAutoScroll(boardScrollRef, boardDrag.draggingOrderId !== null)
   // Drop de una tarjeta sobre una fase: la etapa destino canónica la eligió
   // dropTargetForPhase y el servidor valida la transición (expectedVersion
   // viaja en el payload del arrastre). El WhatsApp de "lista" sale igual que
@@ -1113,7 +1118,7 @@ export default function WorkshopPage() {
                     )}
                     {/* snap-x: en pantallas angostas las columnas se hojean de
                         a una; en desktop (fase) las 5 caben sin scroll. */}
-                    <div className="flex snap-x snap-mandatory items-start gap-3 overflow-x-auto pb-2">
+                    <div ref={boardScrollRef} className="flex snap-x snap-mandatory items-start gap-3 overflow-x-auto pb-2">
                       {columnMode === "fase" ? (
                         BOARD_PHASES.map(phase => {
                           const phaseTotalCount = phaseTotal(phase, board?.totals)

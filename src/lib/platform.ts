@@ -155,6 +155,11 @@ export interface PlatformBusinessDetail extends PlatformBusinessSummary {
   logoUrl: string | null
   /** Staff (ADMIN/EMPLOYEE/WORKSHOP); los clientes solo cuentan en `counts.users`. */
   users: PlatformBusinessUser[]
+  /**
+   * Total real de staff con el MISMO filtro que `users` (que se corta en 50).
+   * Sirve para mostrar "mostrando 50 de N" sin cargar la lista completa.
+   */
+  usersTotal: number
   recentRepairOrders: PlatformRecentOrder[]
   recentSales: PlatformRecentSale[]
   /** Acciones de plataforma sobre este negocio (suspender/reactivar/borrar). */
@@ -188,7 +193,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
 
   // El folio de las órdenes recientes respeta los dígitos configurados por
   // ESE negocio (order_folio_digits), no un formato fijo de la consola.
-  const [users, orders, sales, salesTotal, lastOrder, lastSale, folioDigits, platformEvents] = await Promise.all([
+  const [users, usersTotal, orders, sales, salesTotal, lastOrder, lastSale, folioDigits, platformEvents] = await Promise.all([
     prisma.user.findMany({
       where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
       orderBy: { createdAt: "asc" },
@@ -203,6 +208,11 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
         isSuperAdmin: true,
         createdAt: true,
       },
+    }),
+    // Total honesto del staff (mismo where): la lista se corta en 50 y la UI
+    // necesita saber si hay más ("mostrando 50 de N").
+    prisma.user.count({
+      where: { businessId: id, role: { in: ["ADMIN", "EMPLOYEE", "WORKSHOP"] } },
     }),
     prisma.repairOrder.findMany({
       where: { businessId: id },
@@ -258,6 +268,7 @@ export async function getPlatformBusinessDetail(id: string): Promise<PlatformBus
     address: business.address,
     logoUrl: business.logoUrl,
     users,
+    usersTotal,
     recentRepairOrders: orders.map(o => ({
       id: o.id,
       folio: repairFolio(o.number, folioDigits),

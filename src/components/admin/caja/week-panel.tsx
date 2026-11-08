@@ -1,10 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { toast } from "sonner"
 import { formatPrice, formatDay } from "@/lib/utils"
-import { CalendarDays, ExternalLink } from "lucide-react"
+import { CalendarDays, ExternalLink, Loader2 } from "lucide-react"
 
 interface WeekRegister {
     id: string
@@ -24,18 +23,50 @@ interface WeekRegister {
 export function WeekPanel(props: { branchId: string; refreshKey: number }) {
     const [registers, setRegisters] = useState<WeekRegister[]>([])
     const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const requestVersion = useRef(0)
+
+    const load = useCallback(async () => {
+        const version = ++requestVersion.current
+        setError(null)
+        setLoading(true)
+        try {
+            const res = await fetch(`/api/caja?view=week${props.branchId ? `&branchId=${props.branchId}` : ""}`)
+            const data = await res.json().catch(() => null)
+            if (version !== requestVersion.current) return
+            if (!res.ok) throw new Error(data?.error || "No se pudieron cargar los cortes.")
+            setRegisters(data?.registers ?? [])
+        } catch (e) {
+            if (version !== requestVersion.current) return
+            // Error visible con reintento: la lista vacía no puede hacerse
+            // pasar por "sin cortes" cuando lo que falló fue la consulta.
+            setRegisters([])
+            setError(e instanceof Error ? e.message : "Error al cargar los cortes.")
+        } finally {
+            if (version === requestVersion.current) setLoading(false)
+        }
+    }, [props.branchId])
 
     useEffect(() => {
-        let cancelled = false
-        fetch(`/api/caja?view=week${props.branchId ? `&branchId=${props.branchId}` : ""}`)
-            .then(res => (res.ok ? res.json() : null))
-            .then(data => { if (!cancelled) setRegisters(data?.registers ?? []) })
-            .catch(() => { if (!cancelled) toast.error("Error al cargar la semana") })
-            .finally(() => { if (!cancelled) setLoading(false) })
-        return () => { cancelled = true }
-    }, [props.branchId, props.refreshKey])
+        // Diferido (patrón del centro de dinero): sin setState sincrónico en el efecto.
+        void Promise.resolve().then(() => load())
+    }, [load, props.refreshKey])
 
-    if (loading) return <p className="text-sm text-muted-foreground text-center py-8">Cargando cortes…</p>
+    if (loading) {
+        return (
+            <p className="text-sm text-muted-foreground text-center py-8 flex items-center justify-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> Cargando cortes…
+            </p>
+        )
+    }
+    if (error) {
+        return (
+            <div role="alert" className="rounded-lg border p-6 space-y-3 text-sm">
+                <p>{error}</p>
+                <Button variant="outline" size="sm" onClick={() => void load()}>Reintentar</Button>
+            </div>
+        )
+    }
     if (registers.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">Sin cortes en los últimos 7 días.</p>
 
     return (

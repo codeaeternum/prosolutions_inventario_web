@@ -2,7 +2,7 @@ import { Markup } from 'telegraf'
 import { message } from 'telegraf/filters'
 import type { BotContext } from '../lib/types'
 import { requireAdmin } from '../lib/guards'
-import { DEFAULT_SETTINGS, getBusinessSetting, getDefaultBusinessId, setBusinessSetting } from '../../lib/settings'
+import { DEFAULT_SETTINGS, getBusinessSetting, setBusinessSetting } from '../../lib/settings'
 import { escapeMarkdownV1 } from '../lib/format'
 
 // Llave pseudo-interna: las horas de expiración NO viven en SystemSettings
@@ -12,12 +12,14 @@ const KEY_PENDING_HOURS = 'pending_verification_hours'
 
 export function registerSettings({ bot, prisma, sessions }: BotContext) {
     // Resuelve el negocio del usuario de Telegram que invoca el comando.
-    async function businessIdOfTelegramUser(telegramId: string): Promise<string> {
+    // Sin fallback al negocio por defecto: si la cuenta no resuelve su propio
+    // businessId, escribir ajustes en el default sería una fuga cross-tenant.
+    async function businessIdOfTelegramUser(telegramId: string): Promise<string | null> {
         const me = await prisma.user.findUnique({
             where: { telegramId },
             select: { businessId: true }
         })
-        return me?.businessId ?? (await getDefaultBusinessId())
+        return me?.businessId ?? null
     }
 
     // Helper to get setting value
@@ -90,6 +92,7 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
         if (!(await requireAdmin(ctx))) return
 
         const businessId = await businessIdOfTelegramUser(ctx.from.id.toString())
+        if (!businessId) return ctx.reply('Cuenta no disponible.')
         const hours = await getPendingVerificationHours(businessId)
         const bankTransfer = await getSetting(businessId, 'bank_transfer_info', 'Sin configurar')
         const bankCash = await getSetting(businessId, 'bank_cash_info', 'Sin configurar')
@@ -131,7 +134,9 @@ _Selecciona qué deseas modificar:_`, {
         const action = ctx.match[0]
         const key = keyMap[action]
 
-        sessions.settings[telegramId] = { key, businessId: await businessIdOfTelegramUser(telegramId) }
+        const businessId = await businessIdOfTelegramUser(telegramId)
+        if (!businessId) return ctx.answerCbQuery('Cuenta no disponible')
+        sessions.settings[telegramId] = { key, businessId }
 
         await ctx.reply(`✏️ *Ingresa el nuevo valor para ${labelMap[action]}:*`, { parse_mode: 'Markdown' })
         await ctx.answerCbQuery()

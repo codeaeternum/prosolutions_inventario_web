@@ -215,35 +215,40 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
         if (!(await isAdmin(telegramId))) return ctx.answerCbQuery('⛔ Solo administradores.')
         const productId = ctx.match[1]
 
-        const actor = await getBotAccount(prisma, telegramId)
-        if (!actor) return ctx.answerCbQuery('❌ Cuenta no disponible')
-        const product = await prisma.product.findUnique({ where: { id: productId, businessId: actor.businessId } })
-        if (!product) return ctx.answerCbQuery('❌ Error')
+        try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.answerCbQuery('❌ Cuenta no disponible')
+            const product = await prisma.product.findUnique({ where: { id: productId, businessId: actor.businessId } })
+            if (!product) return ctx.answerCbQuery('❌ Error')
 
-        if (!sessions.cart[telegramId]) {
-            sessions.cart[telegramId] = { items: [] }
-        }
-
-        const cart = sessions.cart[telegramId]
-        const existingIndex = cart.items.findIndex(p => p.id === productId)
-
-        if (existingIndex >= 0) {
-            if (cart.items[existingIndex].quantity + 1 > product.stock) {
-                return ctx.answerCbQuery('❌ Stock insuficiente')
+            if (!sessions.cart[telegramId]) {
+                sessions.cart[telegramId] = { items: [] }
             }
-            cart.items[existingIndex].quantity += 1
-        } else {
-            if (product.stock < 1) return ctx.answerCbQuery('❌ Sin stock')
-            cart.items.push({
-                id: product.id,
-                name: product.name,
-                quantity: 1,
-                price: product.retailPrice,
-                stock: product.stock
-            })
-        }
 
-        await ctx.answerCbQuery('✅ Agregado al carrito')
-        await ctx.reply(`🛒 ${product.name} agregado al carrito.\nUsa /carrito para ver.`)
+            const cart = sessions.cart[telegramId]
+            const existingIndex = cart.items.findIndex(p => p.id === productId)
+
+            if (existingIndex >= 0) {
+                if (cart.items[existingIndex].quantity + 1 > product.stock) {
+                    return ctx.answerCbQuery('❌ Stock insuficiente')
+                }
+                cart.items[existingIndex].quantity += 1
+            } else {
+                if (product.stock < 1) return ctx.answerCbQuery('❌ Sin stock')
+                cart.items.push({
+                    id: product.id,
+                    name: product.name,
+                    quantity: 1,
+                    price: product.retailPrice,
+                    stock: product.stock
+                })
+            }
+
+            await ctx.answerCbQuery('✅ Agregado al carrito')
+            await ctx.reply(`🛒 ${product.name} agregado al carrito.\nUsa /carrito para ver.`)
+        } catch (e) {
+            console.error('Error in addtocart_:', e)
+            await ctx.answerCbQuery('❌ Error al agregar al carrito').catch(() => { })
+        }
     })
 }

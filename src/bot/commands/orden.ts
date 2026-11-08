@@ -96,10 +96,15 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
         }
     }
 
-    /** Resuelve las marcas sugeridas para el paso BRAND del wizard. */
+    /** Resuelve las marcas sugeridas para el paso BRAND del wizard. Si la BD
+     *  falla el paso sigue funcionando — la marca también se acepta a texto. */
     async function refreshBrandChips(session: OrdenSession, telegramId: string) {
-        const user = await getBotAccount(prisma, telegramId)
-        session.brandChips = user ? await brandChipsOf(user.businessId) : []
+        try {
+            const user = await getBotAccount(prisma, telegramId)
+            session.brandChips = user ? await brandChipsOf(user.businessId) : []
+        } catch {
+            session.brandChips = []
+        }
     }
 
     /** Folio impreso con order_prefix/order_folio_digits del negocio — mismo
@@ -263,11 +268,17 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery('Tipo inválido')
             return ctx.reply('❌ Tipo inválido. Elige un botón o escribe el tipo de equipo.')
         }
-        session.data.equipmentType = type
-        session.step = 'BRAND'
-        await refreshBrandChips(session, telegramId)
-        await ctx.answerCbQuery(type)
-        await askNext(ctx, telegramId, session)
+        try {
+            session.data.equipmentType = type
+            session.step = 'BRAND'
+            await refreshBrandChips(session, telegramId)
+            await ctx.answerCbQuery(type)
+            await askNext(ctx, telegramId, session)
+        } catch (e) {
+            console.error('[Orden] Error en orden_type_:', e)
+            await ctx.answerCbQuery('Error').catch(() => { })
+            await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
+        }
     })
 
     // Marca sugerida (chip del catálogo de modelos).
@@ -283,10 +294,16 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery('Marca inválida')
             return ctx.reply('❌ Marca inválida. Escríbela o pulsa "Omitir".')
         }
-        session.data.brand = brand
-        session.step = 'MODEL'
-        await ctx.answerCbQuery(brand)
-        await askNext(ctx, telegramId, session)
+        try {
+            session.data.brand = brand
+            session.step = 'MODEL'
+            await ctx.answerCbQuery(brand)
+            await askNext(ctx, telegramId, session)
+        } catch (e) {
+            console.error('[Orden] Error en orden_brand_:', e)
+            await ctx.answerCbQuery('Error').catch(() => { })
+            await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
+        }
     })
 
     bot.action('orden_skip_brand', async (ctx) => {
@@ -328,10 +345,16 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery('Sucursal inválida')
             return ctx.reply('❌ Sucursal inválida. Elige una de las opciones.')
         }
-        session.data.branchId = branch.id
-        session.step = 'CONFIRM'
-        await ctx.answerCbQuery(branch.name)
-        await askNext(ctx, telegramId, session)
+        try {
+            session.data.branchId = branch.id
+            session.step = 'CONFIRM'
+            await ctx.answerCbQuery(branch.name)
+            await askNext(ctx, telegramId, session)
+        } catch (e) {
+            console.error('[Orden] Error en orden_branch_:', e)
+            await ctx.answerCbQuery('Error').catch(() => { })
+            await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
+        }
     })
 
     bot.action('orden_cancel', async (ctx) => {
@@ -497,77 +520,83 @@ Por: ${escapeHtml(user.name)}`).catch(() => {})
             return ctx.reply('❌ Orden cancelada.')
         }
 
-        switch (session.step) {
-            case 'NAME': {
-                if (text.length < 2 || text.length > 200) {
-                    return ctx.reply('❌ Ingresa un nombre válido (2–200 caracteres).')
+        try {
+            switch (session.step) {
+                case 'NAME': {
+                    if (text.length < 2 || text.length > 200) {
+                        return ctx.reply('❌ Ingresa un nombre válido (2–200 caracteres).')
+                    }
+                    session.data.customerName = text
+                    session.step = 'PHONE'
+                    return askNext(ctx, telegramId, session)
                 }
-                session.data.customerName = text
-                session.step = 'PHONE'
-                return askNext(ctx, telegramId, session)
-            }
-            case 'PHONE': {
-                // Mismo contrato que el intake web: [+\d\s()-], 7–15 dígitos.
-                // normalizePhone asume MX (+52) cuando llegan 10 dígitos.
-                if (!/^[+\d\s()-]+$/.test(text)) {
-                    return ctx.reply('❌ Teléfono inválido: solo números, espacios y + ( ) -. Ej: <code>55 1234 5678</code>', { parse_mode: 'HTML' })
+                case 'PHONE': {
+                    // Mismo contrato que el intake web: [+\d\s()-], 7–15 dígitos.
+                    // normalizePhone asume MX (+52) cuando llegan 10 dígitos.
+                    if (!/^[+\d\s()-]+$/.test(text)) {
+                        return ctx.reply('❌ Teléfono inválido: solo números, espacios y + ( ) -. Ej: <code>55 1234 5678</code>', { parse_mode: 'HTML' })
+                    }
+                    const digits = text.replace(/\D/g, '')
+                    if (digits.length < 7 || digits.length > 15) {
+                        return ctx.reply('❌ Ingresa un teléfono de 7 a 15 dígitos. Ej: <code>55 1234 5678</code>', { parse_mode: 'HTML' })
+                    }
+                    session.data.customerPhone = normalizePhone(text)
+                    session.step = 'TYPE'
+                    return askNext(ctx, telegramId, session)
                 }
-                const digits = text.replace(/\D/g, '')
-                if (digits.length < 7 || digits.length > 15) {
-                    return ctx.reply('❌ Ingresa un teléfono de 7 a 15 dígitos. Ej: <code>55 1234 5678</code>', { parse_mode: 'HTML' })
+                case 'TYPE': {
+                    // Además de los botones se acepta texto libre (tipo personalizado).
+                    if (text.length > 60) return ctx.reply('❌ Tipo de equipo demasiado largo (máx. 60 caracteres).')
+                    session.data.equipmentType = text
+                    session.step = 'BRAND'
+                    await refreshBrandChips(session, telegramId)
+                    return askNext(ctx, telegramId, session)
                 }
-                session.data.customerPhone = normalizePhone(text)
-                session.step = 'TYPE'
-                return askNext(ctx, telegramId, session)
-            }
-            case 'TYPE': {
-                // Además de los botones se acepta texto libre (tipo personalizado).
-                if (text.length > 60) return ctx.reply('❌ Tipo de equipo demasiado largo (máx. 60 caracteres).')
-                session.data.equipmentType = text
-                session.step = 'BRAND'
-                await refreshBrandChips(session, telegramId)
-                return askNext(ctx, telegramId, session)
-            }
-            case 'BRAND': {
-                if (isSkip(text)) {
-                    session.data.brand = undefined
-                } else {
-                    if (text.length > 100) return ctx.reply('❌ Marca demasiado larga (máx. 100 caracteres).')
-                    session.data.brand = text
+                case 'BRAND': {
+                    if (isSkip(text)) {
+                        session.data.brand = undefined
+                    } else {
+                        if (text.length > 100) return ctx.reply('❌ Marca demasiado larga (máx. 100 caracteres).')
+                        session.data.brand = text
+                    }
+                    session.step = 'MODEL'
+                    return askNext(ctx, telegramId, session)
                 }
-                session.step = 'MODEL'
-                return askNext(ctx, telegramId, session)
-            }
-            case 'MODEL': {
-                if (isSkip(text)) {
-                    session.data.model = undefined
-                } else {
-                    if (text.length > 100) return ctx.reply('❌ Modelo demasiado largo (máx. 100 caracteres).')
-                    session.data.model = text
+                case 'MODEL': {
+                    if (isSkip(text)) {
+                        session.data.model = undefined
+                    } else {
+                        if (text.length > 100) return ctx.reply('❌ Modelo demasiado largo (máx. 100 caracteres).')
+                        session.data.model = text
+                    }
+                    session.step = 'ISSUE'
+                    return askNext(ctx, telegramId, session)
                 }
-                session.step = 'ISSUE'
-                return askNext(ctx, telegramId, session)
-            }
-            case 'ISSUE': {
-                if (text.length < 2 || text.length > 500) {
-                    return ctx.reply('❌ Describe la falla en 2–500 caracteres.')
+                case 'ISSUE': {
+                    if (text.length < 2 || text.length > 500) {
+                        return ctx.reply('❌ Describe la falla en 2–500 caracteres.')
+                    }
+                    session.data.reportedIssue = text
+                    return advancePastIssue(ctx, telegramId, session)
                 }
-                session.data.reportedIssue = text
-                return advancePastIssue(ctx, telegramId, session)
-            }
-            case 'BRANCH': {
-                // También acepta el número de la opción (1..n) además del botón.
-                const index = Number(text)
-                const branch = Number.isInteger(index) ? session.branches?.[index - 1] : undefined
-                if (!branch) {
-                    return ctx.reply(`❌ Elige una sucursal con los botones o responde con un número (1-${session.branches?.length ?? 0}).`)
+                case 'BRANCH': {
+                    // También acepta el número de la opción (1..n) además del botón.
+                    const index = Number(text)
+                    const branch = Number.isInteger(index) ? session.branches?.[index - 1] : undefined
+                    if (!branch) {
+                        return ctx.reply(`❌ Elige una sucursal con los botones o responde con un número (1-${session.branches?.length ?? 0}).`)
+                    }
+                    session.data.branchId = branch.id
+                    session.step = 'CONFIRM'
+                    return askNext(ctx, telegramId, session)
                 }
-                session.data.branchId = branch.id
-                session.step = 'CONFIRM'
-                return askNext(ctx, telegramId, session)
+                case 'CONFIRM':
+                    return ctx.reply('👆 Usa los botones de arriba para <b>crear</b> la orden o /cancelar para salir.', { parse_mode: 'HTML' })
             }
-            case 'CONFIRM':
-                return ctx.reply('👆 Usa los botones de arriba para <b>crear</b> la orden o /cancelar para salir.', { parse_mode: 'HTML' })
+        } catch (e) {
+            // La sesión se conserva: el usuario puede reintentar el mismo paso.
+            console.error('[Orden] Error en el wizard de texto:', e)
+            await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
         }
     })
 }

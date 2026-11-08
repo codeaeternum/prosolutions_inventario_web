@@ -4,6 +4,7 @@ import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { listPlatformBusinesses } from "@/lib/platform"
+import { checkAndRecord } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
 import { generateSlug, normalizePhone } from "@/lib/utils"
 import { SUGGESTED_SERVICES } from "@/lib/workshop-service-suggestions"
@@ -53,6 +54,14 @@ export async function GET() {
 export async function POST(req: Request) {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
+
+  // Freno por operador (la sesión ya está autenticada): 15 altas cada 15 min.
+  if (!checkAndRecord("platform-business-create", auth.session.user.id, 15 * 60 * 1000, 15)) {
+    return NextResponse.json(
+      { error: "Demasiadas operaciones, espera un momento" },
+      { status: 429, headers: { "Retry-After": "900" } }
+    )
+  }
 
   let body: unknown
   try {

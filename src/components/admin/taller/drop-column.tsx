@@ -25,8 +25,11 @@ type DropColumnProps = {
  *   el cursor muestra "move" en columnas válidas y "prohibido" en las demás;
  * - onDragLeave ignora las salidas falsas (entrar a un hijo también dispara
  *   dragleave) comparando relatedTarget;
- * - el highlight es un ring sobre la columna mientras dragOverPhaseId ===
- *   phaseId (el hook solo lo fija cuando el drop es válido ahí).
+ * - el highlight (dragOverPhaseId === phaseId; el hook solo lo fija cuando
+ *   el drop es válido ahí) suma tres pistas: ring sobre la columna, tinte
+ *   bg-primary/5 que se transparenta por el bg-muted/40 de la sección hija
+ *   y una tira punteada "Suelta para mover aquí" arriba del contenido —
+ *   estática, sin animación, así que respeta prefers-reduced-motion.
  */
 export function DropColumn({ phaseId, hook, id, className, onDropResult, children }: DropColumnProps) {
   const highlighted = hook.dragOverPhaseId === phaseId
@@ -54,9 +57,17 @@ export function DropColumn({ phaseId, hook, id, className, onDropResult, childre
     }}
     className={cn(
       className,
-      highlighted && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+      highlighted && "bg-primary/5 ring-2 ring-primary ring-offset-2 ring-offset-background",
     )}
   >
+    {/* Tira de confirmación del drop: solo existe mientras la fase está
+        resaltada, así que no desplaza el layout fuera del arrastre. El
+        pointer-events-none evita que sea target de dragover propio. */}
+    {highlighted && (
+      <div className="pointer-events-none mb-1.5 rounded-md border border-dashed border-primary/50 bg-primary/10 px-3 py-1.5 text-center text-xs font-medium text-primary">
+        Suelta para mover aquí
+      </div>
+    )}
     {children}
   </div>
 }

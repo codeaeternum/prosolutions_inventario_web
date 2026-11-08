@@ -294,6 +294,9 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
             </CardTitle>
             <CardDescription>
               Staff con acceso al panel (los {business.counts.users} usuarios incluyen también clientes).
+              {business.usersTotal > business.users.length
+                ? ` Mostrando ${business.users.length} de ${business.usersTotal} usuarios de staff.`
+                : null}
             </CardDescription>
           </div>
           <CreatePlatformUserDialog businessId={business.id} businessName={business.name} />

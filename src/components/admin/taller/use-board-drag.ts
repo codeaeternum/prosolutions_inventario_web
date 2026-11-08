@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, type DragEvent } from "react"
 import { dropTargetForPhase, type BoardPhaseId } from "@/lib/taller-board"
-import type { RepairStage } from "@/lib/workshop-labels"
+import { repairLabels, type RepairStage } from "@/lib/workshop-labels"
 
 // MIME propio del payload del arrastre (JSON con {id,status,version}).
 // setData además es lo que "arma" el drag en Firefox: sin él, el dragstart
@@ -48,6 +48,43 @@ export type BoardDrag = {
 }
 
 /**
+ * Imagen de arrastre ligera: un div con "folio · etiqueta de etapa" en vez
+ * del snapshot de la tarjeta completa (que arrastra semáforo, chips y el
+ * botón "Avisar" → ghost ruidoso y ancho). El folio sale del <strong> de la
+ * tarjeta y la etapa del payload; si falta alguno cae al textContent plano
+ * (≤60 chars). Se monta fuera de pantalla —setDragImage exige nodo en el
+ * documento y renderizado— y se quita en el siguiente frame: el navegador
+ * ya lo rasterizó al procesar el dragstart.
+ */
+function createDragGhost(source: HTMLElement, order: DraggableBoardOrder): HTMLDivElement {
+  const ghost = document.createElement("div")
+  const folio = source.querySelector("strong")?.textContent?.trim()
+  const stage = repairLabels[order.status]
+  const plain = (source.textContent ?? "").replace(/\s+/g, " ").trim()
+  const base = folio || plain
+  ghost.textContent = (base ? `${base} · ${stage}` : stage).slice(0, 60)
+  ghost.setAttribute("aria-hidden", "true")
+  Object.assign(ghost.style, {
+    position: "absolute",
+    left: "-1000px",
+    top: "0",
+    maxWidth: "260px",
+    padding: "8px 12px",
+    border: "1px solid #3f3f46",
+    borderRadius: "8px",
+    background: "#18181b",
+    color: "#fafafa",
+    font: "500 12px/1.4 system-ui, sans-serif",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)",
+    pointerEvents: "none",
+  })
+  return ghost
+}
+
+/**
  * Estado del drag & drop del tablero por fases con DnD nativo de HTML5
  * (atributo draggable + dataTransfer).
  *
@@ -73,6 +110,16 @@ export function useBoardDrag(): BoardDrag {
       const payload = { id: order.id, status: order.status, version: order.version }
       event.dataTransfer.setData(ORDER_DRAG_MIME, JSON.stringify(payload))
       event.dataTransfer.effectAllowed = "move"
+      try {
+        const ghost = createDragGhost(event.currentTarget, order)
+        document.body.appendChild(ghost)
+        // La remoción va antes del setDragImage: si este lanza, el rAF ya
+        // programado limpia el nodo igual.
+        requestAnimationFrame(() => ghost.remove())
+        event.dataTransfer.setDragImage(ghost, 16, 16)
+      } catch {
+        // Sin ghost propio: el navegador usa la imagen por defecto.
+      }
       payloadRef.current = payload
       setDraggingOrderId(order.id)
     },

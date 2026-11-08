@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -34,33 +34,46 @@ const requestStatusMeta: Record<CashRequestItem["status"], { label: string; vari
 export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; userId: string; onChanged: () => void }) {
     const [requests, setRequests] = useState<CashRequestItem[]>([])
     const [loadingRequests, setLoadingRequests] = useState(true)
+    const [loadError, setLoadError] = useState<string | null>(null)
     const [amount, setAmount] = useState("")
     const [concept, setConcept] = useState("")
     const [busy, setBusy] = useState(false)
-    const [rejectTarget, setRejectTarget] = useState<CashRequestItem | null>(null)
-    const [rejectNote, setRejectNote] = useState("")
+    // Una autorización asienta salida de efectivo real e irreversible: igual
+    // que el rechazo, pasa por confirmación con el detalle de la solicitud.
+    const [decisionTarget, setDecisionTarget] = useState<{ req: CashRequestItem; decision: "APPROVE" | "REJECT" } | null>(null)
+    const [decisionNote, setDecisionNote] = useState("")
     const createKey = useRef<ClientOperationKey | null>(null)
     const decideKeys = useRef<Record<string, ClientOperationKey | null>>({})
+    const requestVersion = useRef(0)
 
-    const fetchRequests = async () => {
+    const fetchRequests = useCallback(async () => {
+        const version = ++requestVersion.current
+        setLoadError(null)
         try {
             const res = await fetch(`/api/cash-requests${props.branchId ? `?branchId=${props.branchId}` : ""}`)
-            const data = await res.json()
-            if (res.ok) setRequests(data.requests ?? [])
-        } catch {
-            // silencioso: el historial de caja sigue funcionando aunque falle esta lista
+            const data = await res.json().catch(() => null)
+            if (version !== requestVersion.current) return
+            if (!res.ok) throw new Error(data?.error || "No se pudieron cargar las solicitudes.")
+            setRequests(data?.requests ?? [])
+        } catch (e) {
+            if (version !== requestVersion.current) return
+            // La cola de autorización maneja dinero: la lista vacía por error
+            // NO puede hacerse pasar por "sin solicitudes" — se muestra el fallo.
+            setRequests([])
+            setLoadError(e instanceof Error ? e.message : "Error al cargar las solicitudes.")
+        } finally {
+            if (version === requestVersion.current) setLoadingRequests(false)
         }
-    }
+    }, [props.branchId])
 
     useEffect(() => {
-        let cancelled = false
-        fetch(`/api/cash-requests${props.branchId ? `?branchId=${props.branchId}` : ""}`)
-            .then(res => (res.ok ? res.json() : null))
-            .then(data => { if (!cancelled && data) setRequests(data.requests ?? []) })
-            .catch(() => {})
-            .finally(() => { if (!cancelled) setLoadingRequests(false) })
-        return () => { cancelled = true }
-    }, [props.branchId])
+        // Diferido (patrón del centro de dinero): el spinner y la carga no
+        // disparan setState sincrónico dentro del efecto.
+        void Promise.resolve().then(() => {
+            setLoadingRequests(true)
+            void fetchRequests()
+        })
+    }, [fetchRequests])
 
     const pending = requests.filter(r => r.status === "PENDING")
     const history = requests.filter(r => r.status !== "PENDING").slice(0, 10)
@@ -108,10 +121,8 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "No se pudo decidir la solicitud")
             decideKeys.current[id] = null
-            if (decision === "REJECT") {
-                setRejectTarget(null)
-                setRejectNote("")
-            }
+            setDecisionTarget(null)
+            setDecisionNote("")
             toast.success(decision === "APPROVE" ? "Gasto autorizado y asentado en caja" : "Solicitud rechazada")
             await fetchRequests()
             props.onChanged()
@@ -131,18 +142,23 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
             <CardContent className="space-y-5">
                 <form onSubmit={e => void submitRequest(e)} className="grid gap-3 sm:grid-cols-[9rem_1fr_auto] sm:items-end">
                     <div className="space-y-2">
-                        <Label>Monto</Label>
-                        <Input type="number" min="0" step="0.01" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
+                        <Label htmlFor="cash-request-amount">Monto</Label>
+                        <Input id="cash-request-amount" type="number" min="0" step="0.01" inputMode="decimal" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                        <Label>Concepto</Label>
-                        <Input maxLength={200} placeholder="Ej. Pago de luz, mensajería…" value={concept} onChange={e => setConcept(e.target.value)} />
+                        <Label htmlFor="cash-request-concept">Concepto</Label>
+                        <Input id="cash-request-concept" maxLength={200} placeholder="Ej. Pago de luz, mensajería…" value={concept} onChange={e => setConcept(e.target.value)} />
                     </div>
                     <Button type="submit" disabled={busy}>Solicitar gasto</Button>
                 </form>
 
                 {loadingRequests ? (
                     <p className="text-sm text-muted-foreground">Cargando solicitudes…</p>
+                ) : loadError ? (
+                    <div role="alert" className="rounded-lg border p-6 space-y-3 text-sm">
+                        <p>{loadError}</p>
+                        <Button variant="outline" size="sm" onClick={() => void fetchRequests()}>Reintentar</Button>
+                    </div>
                 ) : (
                     <>
                         {pending.length > 0 && (
@@ -166,10 +182,10 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
                                         </div>
                                         {props.isAdmin && req.requestedBy.id !== props.userId ? (
                                             <div className="flex gap-2">
-                                                <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => void decide(req.id, "APPROVE")}>
+                                                <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={busy} onClick={() => { setDecisionTarget({ req, decision: "APPROVE" }); setDecisionNote("") }}>
                                                     <Check className="w-4 h-4 mr-1" /> Autorizar
                                                 </Button>
-                                                <Button size="sm" variant="destructive" disabled={busy} onClick={() => { setRejectTarget(req); setRejectNote("") }}>
+                                                <Button size="sm" variant="destructive" disabled={busy} onClick={() => { setDecisionTarget({ req, decision: "REJECT" }); setDecisionNote("") }}>
                                                     <X className="w-4 h-4 mr-1" /> Rechazar
                                                 </Button>
                                             </div>
@@ -203,31 +219,40 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
                 )}
 
                 <Dialog
-                    open={Boolean(rejectTarget)}
+                    open={Boolean(decisionTarget)}
                     onOpenChange={open => {
                         if (!busy && !open) {
-                            setRejectTarget(null)
-                            setRejectNote("")
+                            setDecisionTarget(null)
+                            setDecisionNote("")
                         }
                     }}
                 >
                     <DialogContent className="space-y-4 sm:max-w-md">
                         <DialogHeader>
-                            <DialogTitle>Rechazar solicitud de gasto</DialogTitle>
+                            <DialogTitle>
+                                {decisionTarget?.decision === "APPROVE" ? "Autorizar gasto" : "Rechazar solicitud de gasto"}
+                            </DialogTitle>
                             <DialogDescription>
-                                {rejectTarget
-                                    ? `${formatPrice(rejectTarget.amountCents / 100)} · ${rejectTarget.concept} (${rejectTarget.requestedBy.name})`
-                                    : "Indica el motivo del rechazo (opcional)."}
+                                {decisionTarget
+                                    ? `${formatPrice(decisionTarget.req.amountCents / 100)} · ${decisionTarget.req.concept} (${decisionTarget.req.requestedBy.name})`
+                                    : "Confirma la decisión sobre la solicitud."}
                             </DialogDescription>
                         </DialogHeader>
+                        {decisionTarget?.decision === "APPROVE" && (
+                            <p className="text-sm rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-900 dark:text-amber-200">
+                                Se registrará una salida de efectivo de {formatPrice(decisionTarget.req.amountCents / 100)} en la caja abierta de {decisionTarget.req.branch.name}. Esta operación no se puede deshacer.
+                            </p>
+                        )}
                         <div className="space-y-2">
-                            <Label htmlFor="reject-cash-request-note">Motivo del rechazo (opcional)</Label>
+                            <Label htmlFor="cash-request-decision-note">
+                                {decisionTarget?.decision === "APPROVE" ? "Nota (opcional)" : "Motivo del rechazo (opcional)"}
+                            </Label>
                             <Input
-                                id="reject-cash-request-note"
+                                id="cash-request-decision-note"
                                 maxLength={200}
-                                placeholder="Ej. Gasto no autorizado o comprobante pendiente…"
-                                value={rejectNote}
-                                onChange={e => setRejectNote(e.target.value)}
+                                placeholder={decisionTarget?.decision === "APPROVE" ? "Ej. Autorizado por gerencia…" : "Ej. Gasto no autorizado o comprobante pendiente…"}
+                                value={decisionNote}
+                                onChange={e => setDecisionNote(e.target.value)}
                                 autoFocus
                             />
                         </div>
@@ -237,21 +262,21 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
                                 variant="outline"
                                 disabled={busy}
                                 onClick={() => {
-                                    setRejectTarget(null)
-                                    setRejectNote("")
+                                    setDecisionTarget(null)
+                                    setDecisionNote("")
                                 }}
                             >
                                 Cancelar
                             </Button>
                             <Button
                                 type="button"
-                                variant="destructive"
-                                disabled={busy || !rejectTarget}
+                                variant={decisionTarget?.decision === "APPROVE" ? "default" : "destructive"}
+                                disabled={busy || !decisionTarget}
                                 onClick={() => {
-                                    if (rejectTarget) void decide(rejectTarget.id, "REJECT", rejectNote.trim() || undefined)
+                                    if (decisionTarget) void decide(decisionTarget.req.id, decisionTarget.decision, decisionNote.trim() || undefined)
                                 }}
                             >
-                                Confirmar rechazo
+                                {decisionTarget?.decision === "APPROVE" ? "Autorizar y descontar de caja" : "Confirmar rechazo"}
                             </Button>
                         </DialogFooter>
                     </DialogContent>

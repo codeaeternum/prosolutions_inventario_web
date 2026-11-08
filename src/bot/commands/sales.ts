@@ -167,25 +167,30 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
         const productId = ctx.match[1]
         await ctx.answerCbQuery()
 
-        const actor = await getBotAccount(prisma, telegramId)
-        if (!actor) return ctx.reply('Cuenta no disponible.')
-        const product = await prisma.product.findUnique({
-            where: { id: productId, businessId: actor.businessId },
-            select: { id: true, name: true, stock: true, retailPrice: true }
-        })
-        if (!product || product.stock < 1) return ctx.reply('❌ Sin stock.')
-        sessions.sale[telegramId] = {
-            step: 'CONFIRM',
-            selectedProduct: product,
-            quantity: 1
-        }
+        try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor) return ctx.reply('Cuenta no disponible.')
+            const product = await prisma.product.findUnique({
+                where: { id: productId, businessId: actor.businessId },
+                select: { id: true, name: true, stock: true, retailPrice: true }
+            })
+            if (!product || product.stock < 1) return ctx.reply('❌ Sin stock.')
+            sessions.sale[telegramId] = {
+                step: 'CONFIRM',
+                selectedProduct: product,
+                quantity: 1
+            }
 
-        await ctx.reply(`📦 *Venta Rápida: ${escapeMarkdownV1(product.name)}*
+            await ctx.reply(`📦 *Venta Rápida: ${escapeMarkdownV1(product.name)}*
 
 Precio: $${product.retailPrice}
 Cantidad: 1
 
 ¿Confirmar venta? (Escribe SI)`, { parse_mode: 'Markdown' })
+        } catch (e) {
+            console.error('Error in fastsell_:', e)
+            await ctx.reply('❌ Error al preparar la venta. Intenta de nuevo.').catch(() => { })
+        }
     })
 
     // Number handler for sale sessions, QR, cart, delete
@@ -194,142 +199,149 @@ Cantidad: 1
         if (sessions.registration[telegramId]?.step === 'GOAL') {
             return next()
         }
-        const number = parseInt(ctx.message.text)
+        try {
+            const number = parseInt(ctx.message.text)
 
-        // QR session
-        const qrSession = sessions.qr[telegramId]
-        if (qrSession && qrSession.step === 'SELECT' && qrSession.products) {
-            if (number < 1 || number > qrSession.products.length) {
-                return ctx.reply(`Ingresa un número entre 1 y ${qrSession.products.length}`)
-            }
-            const p = qrSession.products[number - 1]
-            const qrData = p.barcode || p.id
-            const qrBuffer = await QRCode.toBuffer(qrData)
-            delete sessions.qr[telegramId]
-            await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), {
-                caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``,
-                parse_mode: 'Markdown'
-            })
-            return
-        }
-
-        // Cart pending add
-        const cart = sessions.cart[telegramId]
-        if (cart?.pendingAdd) {
-            const pending = cart.pendingAdd
-            if (number < 1 || number > pending.stock) {
-                return ctx.reply(`❌ Cantidad inválida. Stock disponible: ${pending.stock}`)
-            }
-
-            const existingIndex = cart.items.findIndex(item => item.id === pending.id)
-            if (existingIndex >= 0) {
-                cart.items[existingIndex].quantity += number
-            } else {
-                cart.items.push({
-                    id: pending.id,
-                    name: pending.name,
-                    quantity: number,
-                    price: pending.price,
-                    stock: pending.stock
+            // QR session
+            const qrSession = sessions.qr[telegramId]
+            if (qrSession && qrSession.step === 'SELECT' && qrSession.products) {
+                if (number < 1 || number > qrSession.products.length) {
+                    return ctx.reply(`Ingresa un número entre 1 y ${qrSession.products.length}`)
+                }
+                const p = qrSession.products[number - 1]
+                const qrData = p.barcode || p.id
+                const qrBuffer = await QRCode.toBuffer(qrData)
+                delete sessions.qr[telegramId]
+                await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), {
+                    caption: `📱 *${escapeMarkdownV1(p.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``,
+                    parse_mode: 'Markdown'
                 })
+                return
             }
-            cart.pendingAdd = undefined
 
-            const total = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity * item.price, 0)
-            return ctx.reply(`✅ *Agregado al carrito*
-
-📦 ${escapeMarkdownV1(pending.name)} × ${number}
-💰 Subtotal: $${(pending.price * number).toLocaleString()}
-
-🛒 *Total carrito: $${total.toLocaleString()}*
-
-/carrito - Ver carrito
-/agregarc <producto> - Agregar más
-/confirmarc - Confirmar venta`, { parse_mode: 'Markdown' })
-        }
-
-        // Cart multi-select (de /agregarc con >1 coincidencia): el número elige
-        // el producto y queda pendingAdd para la cantidad — nunca sale session.
-        if (cart?.selecting?.length) {
-            const options = cart.selecting
-            if (number < 1 || number > options.length) {
-                return ctx.reply(`Ingresa un número entre 1 y ${options.length}`)
-            }
-            const chosen = options[number - 1]
-            cart.selecting = undefined
-            cart.pendingAdd = { id: chosen.id, name: chosen.name, price: chosen.retailPrice, stock: chosen.stock }
-            return ctx.reply(`📦 *${escapeMarkdownV1(chosen.name)}*
-
-📊 Stock: ${chosen.stock} unidades
-💰 Precio: $${chosen.retailPrice.toLocaleString()}
-
-¿Cuántas unidades agregar? (escribe un número)`, { parse_mode: 'Markdown' })
-        }
-
-        // Sale session
-        const session = sessions.sale[telegramId]
-        if (session) {
-            if (session.step === 'SELECT_PRODUCT' && session.products) {
-                if (number < 1 || number > session.products.length) {
-                    return ctx.reply(`Ingresa un número entre 1 y ${session.products.length}`)
+            // Cart pending add
+            const cart = sessions.cart[telegramId]
+            if (cart?.pendingAdd) {
+                const pending = cart.pendingAdd
+                if (number < 1 || number > pending.stock) {
+                    return ctx.reply(`❌ Cantidad inválida. Stock disponible: ${pending.stock}`)
                 }
-                const selected = session.products[number - 1]
-                sessions.sale[telegramId] = { step: 'CONFIRM', selectedProduct: selected, quantity: 1 }
-                return ctx.reply(`📦 *${escapeMarkdownV1(selected.name)}*
 
-📊 Stock: ${selected.stock} unidades
-💰 Precio: $${selected.retailPrice.toLocaleString()}
+                const existingIndex = cart.items.findIndex(item => item.id === pending.id)
+                if (existingIndex >= 0) {
+                    cart.items[existingIndex].quantity += number
+                } else {
+                    cart.items.push({
+                        id: pending.id,
+                        name: pending.name,
+                        quantity: number,
+                        price: pending.price,
+                        stock: pending.stock
+                    })
+                }
+                cart.pendingAdd = undefined
 
-¿Cuántas unidades vender?`, { parse_mode: 'Markdown' })
+                const total = cart.items.reduce((sum: number, item: CartItem) => sum + item.quantity * item.price, 0)
+                return ctx.reply(`✅ *Agregado al carrito*
+
+    📦 ${escapeMarkdownV1(pending.name)} × ${number}
+    💰 Subtotal: $${(pending.price * number).toLocaleString()}
+
+    🛒 *Total carrito: $${total.toLocaleString()}*
+
+    /carrito - Ver carrito
+    /agregarc <producto> - Agregar más
+    /confirmarc - Confirmar venta`, { parse_mode: 'Markdown' })
             }
 
-            if (session.step === 'CONFIRM' && session.selectedProduct) {
-                if (number < 1 || number > session.selectedProduct.stock) {
-                    return ctx.reply(`❌ Cantidad inválida. Stock disponible: ${session.selectedProduct.stock}`)
+            // Cart multi-select (de /agregarc con >1 coincidencia): el número elige
+            // el producto y queda pendingAdd para la cantidad — nunca sale session.
+            if (cart?.selecting?.length) {
+                const options = cart.selecting
+                if (number < 1 || number > options.length) {
+                    return ctx.reply(`Ingresa un número entre 1 y ${options.length}`)
                 }
-                sessions.sale[telegramId] = { step: 'CONFIRM', selectedProduct: session.selectedProduct, quantity: number }
-                const total = session.selectedProduct.retailPrice * number
-                return ctx.reply(`📦 *Resumen de venta*
+                const chosen = options[number - 1]
+                cart.selecting = undefined
+                cart.pendingAdd = { id: chosen.id, name: chosen.name, price: chosen.retailPrice, stock: chosen.stock }
+                return ctx.reply(`📦 *${escapeMarkdownV1(chosen.name)}*
 
-Producto: ${escapeMarkdownV1(session.selectedProduct.name)}
-Cantidad: ${number}
-Total: *$${total.toLocaleString()}*
+    📊 Stock: ${chosen.stock} unidades
+    💰 Precio: $${chosen.retailPrice.toLocaleString()}
 
-¿Confirmar venta?`, {
+    ¿Cuántas unidades agregar? (escribe un número)`, { parse_mode: 'Markdown' })
+            }
+
+            // Sale session
+            const session = sessions.sale[telegramId]
+            if (session) {
+                if (session.step === 'SELECT_PRODUCT' && session.products) {
+                    if (number < 1 || number > session.products.length) {
+                        return ctx.reply(`Ingresa un número entre 1 y ${session.products.length}`)
+                    }
+                    const selected = session.products[number - 1]
+                    sessions.sale[telegramId] = { step: 'CONFIRM', selectedProduct: selected, quantity: 1 }
+                    return ctx.reply(`📦 *${escapeMarkdownV1(selected.name)}*
+
+    📊 Stock: ${selected.stock} unidades
+    💰 Precio: $${selected.retailPrice.toLocaleString()}
+
+    ¿Cuántas unidades vender?`, { parse_mode: 'Markdown' })
+                }
+
+                if (session.step === 'CONFIRM' && session.selectedProduct) {
+                    if (number < 1 || number > session.selectedProduct.stock) {
+                        return ctx.reply(`❌ Cantidad inválida. Stock disponible: ${session.selectedProduct.stock}`)
+                    }
+                    sessions.sale[telegramId] = { step: 'CONFIRM', selectedProduct: session.selectedProduct, quantity: number }
+                    const total = session.selectedProduct.retailPrice * number
+                    return ctx.reply(`📦 *Resumen de venta*
+
+    Producto: ${escapeMarkdownV1(session.selectedProduct.name)}
+    Cantidad: ${number}
+    Total: *$${total.toLocaleString()}*
+
+    ¿Confirmar venta?`, {
+                        parse_mode: 'Markdown',
+                        ...Markup.inlineKeyboard([
+                            [Markup.button.callback('✅ Confirmar', `confirm_sale_${session.selectedProduct.id}_${number}`)],
+                            [Markup.button.callback('❌ Cancelar', 'cancel_sale')]
+                        ])
+                    })
+                }
+            }
+
+            // Delete product session
+            const deleteSession = sessions.deleteProduct[telegramId]
+            if (deleteSession && deleteSession.step === 'SELECT' && deleteSession.products) {
+                if (number < 1 || number > deleteSession.products.length) {
+                    return ctx.reply(`Ingresa un número entre 1 y ${deleteSession.products.length}`)
+                }
+                const selected = deleteSession.products[number - 1]
+                sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: selected }
+                return ctx.reply(`🗑️ *¿Eliminar este producto?*
+
+    📦 *${escapeMarkdownV1(selected.name)}*
+    📊 Stock: ${selected.stock}
+    🔗 Reservas: ${selected._count?.reservations ?? 0}
+    📋 Movimientos: ${selected._count?.movements ?? 0}
+
+    ¿Confirmar eliminación?`, {
                     parse_mode: 'Markdown',
                     ...Markup.inlineKeyboard([
-                        [Markup.button.callback('✅ Confirmar', `confirm_sale_${session.selectedProduct.id}_${number}`)],
+                        [Markup.button.callback('✅ Eliminar', `confirm_delete_${selected.id}`)],
                         [Markup.button.callback('❌ Cancelar', 'cancel_sale')]
                     ])
                 })
             }
+
+            return next()
+        } catch (e) {
+            // Un fallo a mitad del reparto (QR, carrito, venta, borrado) no
+            // puede quedar mudo: el usuario vería "nada" tras mandar un número.
+            console.error('[Digits] Error:', e)
+            try { await ctx.reply('❌ Algo falló. Usa /cancelar e intenta de nuevo.') } catch { }
         }
-
-        // Delete product session
-        const deleteSession = sessions.deleteProduct[telegramId]
-        if (deleteSession && deleteSession.step === 'SELECT' && deleteSession.products) {
-            if (number < 1 || number > deleteSession.products.length) {
-                return ctx.reply(`Ingresa un número entre 1 y ${deleteSession.products.length}`)
-            }
-            const selected = deleteSession.products[number - 1]
-            sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: selected }
-            return ctx.reply(`🗑️ *¿Eliminar este producto?*
-
-📦 *${escapeMarkdownV1(selected.name)}*
-📊 Stock: ${selected.stock}
-🔗 Reservas: ${selected._count?.reservations ?? 0}
-📋 Movimientos: ${selected._count?.movements ?? 0}
-
-¿Confirmar eliminación?`, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
-                    [Markup.button.callback('✅ Eliminar', `confirm_delete_${selected.id}`)],
-                    [Markup.button.callback('❌ Cancelar', 'cancel_sale')]
-                ])
-            })
-        }
-
-        return next()
     })
 
     // Legacy SI confirmation

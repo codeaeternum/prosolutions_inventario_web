@@ -38,3 +38,17 @@ export function escapeHtml(value: unknown): string {
 export function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+/** Máximo de caracteres de un mensaje de Telegram (texto o caption de foto). */
+export const TG_MESSAGE_MAX = 4096
+
+/**
+ * Recorta un mensaje al máximo de Telegram terminando en '…' si hubo truncado.
+ * Para listados que crecen con datos de BD (nombres de hasta ~200 chars):
+ * sin el recorte, sendMessage devuelve 400 "message is too long" y el aviso
+ * se pierde en silencio.
+ */
+export function clipMessage(text: string, max = TG_MESSAGE_MAX): string {
+    if (text.length <= max) return text
+    return `${text.slice(0, max - 1)}…`
+}

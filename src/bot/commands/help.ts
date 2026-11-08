@@ -4,7 +4,8 @@ import { isAdmin } from "../lib/notify"
 export function registerHelp(bot: Telegraf) {
   bot.help(async (ctx) => {
     const telegramId = ctx.from.id.toString()
-    const userIsAdmin = await isAdmin(telegramId)
+    // BD caída → ayuda de nivel usuario (la alternativa es un /ayuda mudo).
+    const userIsAdmin = await isAdmin(telegramId).catch(() => false)
 
     let msg = `📋 *Ayuda — Reficio*
 
@@ -30,7 +31,7 @@ export function registerHelp(bot: Telegraf) {
   // Añadir alias de ayuda
   bot.command('ayuda', async (ctx) => {
     const telegramId = ctx.from.id.toString()
-    const userIsAdmin = await isAdmin(telegramId)
+    const userIsAdmin = await isAdmin(telegramId).catch(() => false)
 
     let msg = `📋 *Ayuda — Reficio*
 

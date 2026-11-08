@@ -28,7 +28,8 @@ import {
     Banknote,
     CalendarDays,
     Truck,
-    ArrowLeftRight
+    ArrowLeftRight,
+    Loader2
 } from "lucide-react"
 
 const CashRequestsPanel = dynamic(
@@ -113,6 +114,16 @@ interface ClosureResult {
     difference: number
 }
 
+/** Importe capturado en pesos → centavos; null cuando no es un monto válido (≥0, ≤2 decimales). */
+function parseMoneyCents(value: string): number | null {
+    if (value.trim() === "") return null
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed < 0) return null
+    const result = Math.round(parsed * 100)
+    if (Math.abs(parsed * 100 - result) > 0.000001) return null
+    return result
+}
+
 export default function CajaPage() {
     // useSearchParams exige un boundary de Suspense (la página es 100% cliente).
     return (
@@ -171,19 +182,26 @@ function CajaPanel() {
     const [manualAmount, setManualAmount] = useState("")
     const [closeNotes, setCloseNotes] = useState("")
 
+    // Versión de la última consulta de caja: una respuesta tardía de una
+    // sucursal anterior nunca pisa los datos de la seleccionada ahora.
+    const requestVersion = useRef(0)
+
     const fetchRegister = useCallback(async () => {
+        const version = ++requestVersion.current
         try {
             const res = await fetch(`/api/caja${branchId ? `?branchId=${branchId}` : ""}`)
             const data = await res.json()
+            if (version !== requestVersion.current) return
             if (data.active) {
                 setRegister(data.register)
             } else {
                 setRegister(null)
             }
         } catch {
+            if (version !== requestVersion.current) return
             toast.error("Error al cargar la caja")
         } finally {
-            setLoading(false)
+            if (version === requestVersion.current) setLoading(false)
         }
     }, [branchId])
 
@@ -196,15 +214,44 @@ function CajaPanel() {
     }, [])
 
     useEffect(() => {
-        const timer = setTimeout(() => { if (branchId || branches.length === 0) void fetchRegister() }, 0)
+        const timer = setTimeout(() => {
+            if (branchId || branches.length === 0) {
+                // Al cambiar de sucursal la vista anterior pertenece a OTRA
+                // caja: se limpia (incluido el último corte) para no mostrar
+                // el efectivo esperado ni el cuadre de una sucursal ajena.
+                setLoading(true)
+                setRegister(null)
+                setLastClosure(null)
+                void fetchRegister()
+            }
+        }, 0)
         return () => clearTimeout(timer)
     }, [branchId, branches.length, fetchRegister])
 
-    const handleOpen = async () => {
+    // Al VOLVER a «Turno actual» desde otra pestaña re-consulta sin spinner:
+    // el esperado cambia con cada cobro/retiro registrado desde otra pantalla
+    // (POS, taller, solicitudes autorizadas). No corre en el montaje — la
+    // carga inicial la hace el efecto de sucursal de arriba.
+    const prevTab = useRef(tab)
+    useEffect(() => {
+        const prev = prevTab.current
+        prevTab.current = tab
+        if (prev === tab || tab !== "caja") return
+        void Promise.resolve().then(() => {
+            if (branchId || branches.length === 0) void fetchRegister()
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tab])
+
+    const handleOpen = async (event?: React.FormEvent<HTMLFormElement>) => {
+        event?.preventDefault()
         if (inFlight.current) return
+        // Vacío = abrir sin fondo; si se capturó algo debe ser un importe válido.
+        const openCents = openAmount.trim() === "" ? 0 : parseMoneyCents(openAmount)
+        if (openCents === null) return toast.error("Indica un fondo inicial válido (máx. dos decimales)")
         inFlight.current = true; setSubmitting(true)
         try {
-            const res = await postCash({ action: "OPEN", amount: parseFloat(openAmount) || 0 })
+            const res = await postCash({ action: "OPEN", amount: openCents / 100 })
             if (res.ok) {
                 toast.success("Caja abierta correctamente")
                 setLastClosure(null)
@@ -220,23 +267,27 @@ function CajaPanel() {
         }
     }
 
-    const countedCents = DENOMINATIONS.reduce((sum, d) => sum + d.cents * (parseInt(denomCounts[d.key] || "0", 10) || 0), 0)
+    // Piezas por denominación: el input numérico admite teclear "-"/"e" — se
+    // acota a enteros ≥0 aquí para que el subtotal en vivo nunca salga raro
+    // (el servidor vuelve a validar con la whitelist de dominio).
+    const denomQty = (key: string) => Math.max(0, Math.floor(parseInt(denomCounts[key] || "0", 10) || 0))
+    const countedCents = DENOMINATIONS.reduce((sum, d) => sum + d.cents * denomQty(d.key), 0)
     const expectedCents = register ? Math.round(register.expectedCash * 100) : 0
     const liveDifferenceCents = countedCents - expectedCents
-    const manualCents = Math.round((parseFloat(manualAmount) || 0) * 100)
+    const manualCents = parseMoneyCents(manualAmount) ?? 0
     const manualDifferenceCents = manualCents - expectedCents
 
     const handleClose = async () => {
         if (inFlight.current || !register) return
         // Sin conteo, el cierre clásico solo manda el monto capturado.
         const payload: Record<string, unknown> = manualClose
-            ? { action: "CLOSE", amount: manualCents / 100, description: closeNotes || undefined }
+            ? { action: "CLOSE", amount: manualCents / 100, description: closeNotes.trim() || undefined }
             : {
                 action: "CLOSE",
                 amount: countedCents / 100,
-                description: closeNotes || undefined,
+                description: closeNotes.trim() || undefined,
                 denominations: Object.fromEntries(
-                    DENOMINATIONS.map(d => [d.key, parseInt(denomCounts[d.key] || "0", 10) || 0])
+                    DENOMINATIONS.map(d => [d.key, denomQty(d.key)])
                 ),
             }
         inFlight.current = true; setSubmitting(true)
@@ -272,12 +323,15 @@ function CajaPanel() {
         }
     }
 
-    const handleMovement = async () => {
+    const handleMovement = async (event?: React.FormEvent<HTMLFormElement>) => {
+        event?.preventDefault()
         if (inFlight.current) return
-        if (!movAmount || !movDesc) return toast.error("Llena todos los campos")
+        const movCents = parseMoneyCents(movAmount)
+        if (movCents === null || movCents === 0) return toast.error("Indica un monto válido mayor a cero (máx. dos decimales)")
+        if (!movDesc.trim()) return toast.error("Describe el concepto del movimiento")
         inFlight.current = true; setSubmitting(true)
         try {
-            const res = await postCash({ action: "MOVEMENT", type: movType, amount: parseFloat(movAmount), description: movDesc })
+            const res = await postCash({ action: "MOVEMENT", type: movType, amount: movCents / 100, description: movDesc.trim() })
             const data = await res.json().catch(() => null)
             if (res.ok) {
                 toast.success("Movimiento registrado")
@@ -297,12 +351,12 @@ function CajaPanel() {
     const differenceBadge = (diffCents: number) => {
         if (diffCents === 0) return <Badge variant="success">Cuadrado</Badge>
         if (diffCents > 0) return <Badge variant="success">Sobrante +{formatPrice(diffCents / 100)}</Badge>
-        return <Badge variant="destructive">Faltante {formatPrice(diffCents / 100)}</Badge>
+        return <Badge variant="destructive">Faltante {formatPrice(Math.abs(diffCents) / 100)}</Badge>
     }
 
     const branchSelector = branches.length > 1 ? (
         <Select value={branchId} onValueChange={setBranchId}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full" aria-label="Sucursal de la caja">
                 <SelectValue placeholder="Sucursal" />
             </SelectTrigger>
             <SelectContent>
@@ -315,6 +369,16 @@ function CajaPanel() {
 
     const openCard = (
         <div className="max-w-2xl mx-auto mt-6 space-y-6">
+            <div className="text-center space-y-1">
+                <h1 className="text-2xl font-bold tracking-tight flex items-center justify-center gap-2">
+                    <Wallet className="h-6 w-6" /> Control de Caja
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                    {lastClosure
+                        ? "Turno cerrado — revisa el corte o abre el siguiente."
+                        : "Abre un turno para registrar cobros y movimientos de efectivo."}
+                </p>
+            </div>
             {lastClosure && (
                 <Card className="max-w-md mx-auto border-primary/30">
                     <CardHeader className="text-center pb-3">
@@ -352,21 +416,27 @@ function CajaPanel() {
                     <CardTitle>Caja Cerrada</CardTitle>
                     <CardDescription>Abre la caja para comenzar a operar hoy.</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    {branchSelector}
-                    <div className="space-y-2">
-                        <Label>Efectivo inicial en caja</Label>
-                        <Input
-                            type="number"
-                            min="0"
-                            placeholder="Ej. 500"
-                            value={openAmount}
-                            onChange={(e) => setOpenAmount(e.target.value)}
-                        />
-                    </div>
-                    <Button className="w-full" onClick={handleOpen} disabled={submitting}>
-                        Abrir Turno
-                    </Button>
+                <CardContent>
+                    <form onSubmit={e => void handleOpen(e)} className="space-y-4">
+                        {branchSelector}
+                        <div className="space-y-2">
+                            <Label htmlFor="caja-open-amount">Efectivo inicial en caja</Label>
+                            <Input
+                                id="caja-open-amount"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                inputMode="decimal"
+                                placeholder="Ej. 500 — vacío abre sin fondo"
+                                value={openAmount}
+                                onChange={(e) => setOpenAmount(e.target.value)}
+                            />
+                        </div>
+                        <Button type="submit" className="w-full" disabled={submitting}>
+                            {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            {submitting ? "Abriendo…" : "Abrir Turno"}
+                        </Button>
+                    </form>
                 </CardContent>
             </Card>
             {/* Los gastos pueden solicitarse aunque la caja esté cerrada (pestaña «Solicitudes»); autorizarlos requiere caja abierta. */}
@@ -382,6 +452,7 @@ function CajaPanel() {
                     </h1>
                     <p className="text-muted-foreground">
                         Abierta por {register.openedBy.name} el {formatDate(register.openedAt)}
+                        {register.branch ? ` · ${register.branch.name}` : ""}
                     </p>
                 </div>
                 {branchSelector && <div className="w-full sm:w-44">{branchSelector}</div>}
@@ -433,11 +504,14 @@ function CajaPanel() {
                         <CardTitle>Nuevo Movimiento</CardTitle>
                         <CardDescription>Retiros de dinero, pagos a proveedores o ingresos extra.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-2">
+                    <CardContent>
+                        <form onSubmit={e => void handleMovement(e)} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de movimiento">
                             <Button
+                                type="button"
                                 variant={movType === "IN" ? "default" : "outline"}
                                 onClick={() => setMovType("IN")}
+                                aria-pressed={movType === "IN"}
                                 className={movType === "IN" ? "bg-green-600 hover:bg-green-700" : ""}
                             >
                                 <ArrowDownCircle className="w-4 h-4 mr-2" /> Ingreso
@@ -445,9 +519,11 @@ function CajaPanel() {
                             {/* La salida directa de efectivo es solo de admin; el empleado
                                 solicita el gasto y otro admin lo autoriza (pestaña «Solicitudes»). */}
                             <Button
+                                type="button"
                                 variant={movType === "OUT" ? "destructive" : "outline"}
                                 onClick={() => { if (isAdmin) setMovType("OUT") }}
                                 disabled={!isAdmin}
+                                aria-pressed={movType === "OUT"}
                                 title={isAdmin ? undefined : "Requiere aprobación — usa Solicitar gasto"}
                             >
                                 <ArrowUpCircle className="w-4 h-4 mr-2" /> Retiro / Gasto
@@ -459,14 +535,18 @@ function CajaPanel() {
                             </p>
                         )}
                         <div className="space-y-2">
-                            <Label>Monto</Label>
-                            <Input type="number" placeholder="0.00" value={movAmount} onChange={e => setMovAmount(e.target.value)} />
+                            <Label htmlFor="caja-mov-amount">Monto</Label>
+                            <Input id="caja-mov-amount" type="number" min="0" step="0.01" inputMode="decimal" placeholder="0.00" value={movAmount} onChange={e => setMovAmount(e.target.value)} />
                         </div>
                         <div className="space-y-2">
-                            <Label>Concepto</Label>
-                            <Input placeholder="Ej. Pago de luz, Compra refacciones..." value={movDesc} onChange={e => setMovDesc(e.target.value)} />
+                            <Label htmlFor="caja-mov-desc">Concepto</Label>
+                            <Input id="caja-mov-desc" maxLength={200} placeholder="Ej. Pago de luz, Compra refacciones..." value={movDesc} onChange={e => setMovDesc(e.target.value)} />
                         </div>
-                        <Button className="w-full" onClick={handleMovement} disabled={submitting}>Registrar</Button>
+                        <Button type="submit" className="w-full" disabled={submitting}>
+                            {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            {submitting ? "Registrando…" : "Registrar"}
+                        </Button>
+                        </form>
                     </CardContent>
                 </Card>
 
@@ -483,14 +563,22 @@ function CajaPanel() {
                             <p className="text-muted-foreground mt-1">Al cerrar contarás los billetes y monedas físicas para cuadrar el turno.</p>
                         </div>
                         <Button
+                            type="button"
                             variant="destructive"
                             className="w-full"
-                            onClick={() => setCloseOpen(true)}
+                            onClick={() => { setCloseOpen(true); void fetchRegister() }}
                             disabled={submitting || (!isAdmin && register.openedById !== userId)}
                             title={!isAdmin && register.openedById !== userId ? "Solo un administrador o quien abrió el turno puede cerrarlo" : undefined}
                         >
                             <Coins className="w-4 h-4 mr-2" /> Contar y cerrar caja
                         </Button>
+                        {/* El motivo del bloqueo va en texto visible: `title` no se
+                            muestra en táctil ni en botones deshabilitados. */}
+                        {!isAdmin && register.openedById !== userId && (
+                            <p className="text-xs text-muted-foreground">
+                                Solo un administrador o {register.openedBy.name} (quien abrió el turno) puede cerrarlo.
+                            </p>
+                        )}
                     </CardContent>
                 </Card>
             </div>
@@ -588,7 +676,7 @@ function CajaPanel() {
             </TabsContent>
 
             {/* Diálogo de cierre con conteo de billetes */}
-            <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
+            <Dialog open={closeOpen} onOpenChange={open => { if (open || !submitting) setCloseOpen(open) }}>
                 <DialogContent className="space-y-4">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2"><Banknote className="h-5 w-5" /> Corte de caja</DialogTitle>
@@ -603,14 +691,15 @@ function CajaPanel() {
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Billetes</p>
                                 <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                                     {DENOMINATIONS.filter(d => d.kind === "bill").map(d => {
-                                        const qty = parseInt(denomCounts[d.key] || "0", 10) || 0
+                                        const qty = denomQty(d.key)
                                         return (
                                             <div key={d.key} className="flex items-center gap-2">
-                                                <span className="w-14 text-sm font-medium">{d.label}</span>
-                                                <span className="text-xs text-muted-foreground">×</span>
+                                                <span className="w-14 text-sm font-medium" aria-hidden="true">{d.label}</span>
+                                                <span className="text-xs text-muted-foreground" aria-hidden="true">×</span>
                                                 <Input
                                                     type="number" min="0" step="1" inputMode="numeric"
                                                     className="h-8 w-20"
+                                                    aria-label={`Piezas de ${d.label}`}
                                                     value={denomCounts[d.key] ?? ""}
                                                     onChange={e => setDenomCounts(prev => ({ ...prev, [d.key]: e.target.value }))}
                                                 />
@@ -622,14 +711,15 @@ function CajaPanel() {
                                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide pt-2">Monedas</p>
                                 <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                                     {DENOMINATIONS.filter(d => d.kind === "coin").map(d => {
-                                        const qty = parseInt(denomCounts[d.key] || "0", 10) || 0
+                                        const qty = denomQty(d.key)
                                         return (
                                             <div key={d.key} className="flex items-center gap-2">
-                                                <span className="w-14 text-sm font-medium">{d.label}</span>
-                                                <span className="text-xs text-muted-foreground">×</span>
+                                                <span className="w-14 text-sm font-medium" aria-hidden="true">{d.label}</span>
+                                                <span className="text-xs text-muted-foreground" aria-hidden="true">×</span>
                                                 <Input
                                                     type="number" min="0" step="1" inputMode="numeric"
                                                     className="h-8 w-20"
+                                                    aria-label={`Piezas de ${d.label}`}
                                                     value={denomCounts[d.key] ?? ""}
                                                     onChange={e => setDenomCounts(prev => ({ ...prev, [d.key]: e.target.value }))}
                                                 />
@@ -640,7 +730,7 @@ function CajaPanel() {
                                 </div>
                             </div>
 
-                            <div className="rounded-lg border p-3 space-y-1.5 text-sm">
+                            <div className="rounded-lg border p-3 space-y-1.5 text-sm" aria-live="polite">
                                 <div className="flex justify-between"><span className="text-muted-foreground">Total contado</span><span className="font-bold">{formatPrice(countedCents / 100)}</span></div>
                                 <div className="flex justify-between"><span className="text-muted-foreground">Esperado en sistema</span><span className="font-medium">{formatPrice(expectedCents / 100)}</span></div>
                                 <div className="flex justify-between items-center border-t pt-1.5">
@@ -652,10 +742,10 @@ function CajaPanel() {
                     ) : (
                         <>
                             <div className="space-y-2">
-                                <Label>Efectivo real contado</Label>
-                                <Input type="number" min="0" step="0.01" value={manualAmount} onChange={e => setManualAmount(e.target.value)} />
+                                <Label htmlFor="caja-close-manual-amount">Efectivo real contado</Label>
+                                <Input id="caja-close-manual-amount" type="number" min="0" step="0.01" inputMode="decimal" value={manualAmount} onChange={e => setManualAmount(e.target.value)} />
                             </div>
-                            <div className="rounded-lg border p-3 space-y-1.5 text-sm">
+                            <div className="rounded-lg border p-3 space-y-1.5 text-sm" aria-live="polite">
                                 <div className="flex justify-between"><span className="text-muted-foreground">Esperado en sistema</span><span className="font-medium">{formatPrice(expectedCents / 100)}</span></div>
                                 <div className="flex justify-between items-center border-t pt-1.5">
                                     <span className="text-muted-foreground">Diferencia</span>
@@ -666,8 +756,8 @@ function CajaPanel() {
                     )}
 
                     <div className="space-y-2">
-                        <Label>Notas (opcional)</Label>
-                        <Input placeholder="Justificación de faltantes/sobrantes" value={closeNotes} onChange={e => setCloseNotes(e.target.value)} />
+                        <Label htmlFor="caja-close-notes">Notas (opcional)</Label>
+                        <Input id="caja-close-notes" maxLength={500} placeholder="Justificación de faltantes/sobrantes" value={closeNotes} onChange={e => setCloseNotes(e.target.value)} />
                     </div>
 
                     <button
@@ -679,12 +769,14 @@ function CajaPanel() {
                     </button>
 
                     <Button
+                        type="button"
                         variant="destructive"
                         className="w-full"
                         onClick={handleClose}
-                        disabled={submitting || (manualClose && !(parseFloat(manualAmount) >= 0 && manualAmount !== ""))}
+                        disabled={submitting || (manualClose && parseMoneyCents(manualAmount) === null)}
                     >
-                        Confirmar cierre de caja
+                        {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                        {submitting ? "Cerrando…" : "Confirmar cierre de caja"}
                     </Button>
                 </DialogContent>
             </Dialog>

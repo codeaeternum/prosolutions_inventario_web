@@ -37,37 +37,24 @@ const prisma = _prisma!
 
 console.log('🤖 ProSolutions Bot Starting...')
 
-// Account data and every bot command are restricted to direct private conversations.
-bot.use(async (ctx, next) => {
-    if (ctx.chat?.type !== 'private' || !ctx.from) return
-    if (!_prisma) return next()
-    try {
-        const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
-        if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
-    } catch (e) {
-        // Fail-open: si Prisma (o el reply) falla, el update pasa y cada
-        // comando aplica sus propios guards. Un throw aquí era unhandled
-        // rejection y abortaba el proceso (Node ≥22).
-        console.error('Error en gate de cuenta:', e)
-    }
-    return next()
-})
-
-// Throttle por telegramId: máx 1 mensaje de texto/comando por segundo y 3
-// callback queries por segundo. Un flood de un mismo chat se frena aquí,
-// antes de llegar a los handlers. Map telegramId→timestamps recientes; las
-// entradas sin actividad >60s se purgan en barridos ocasionales para que el
-// Map no crezca sin límite.
+// Throttle por telegramId: máx 1 mensaje por segundo y 3 callback queries por
+// segundo. Es el PRIMER middleware: el gate de cuenta de abajo hace un
+// findUnique por update, así que un flood debe morir aquí, antes de pegarle a
+// la BD. Cuenta todo tipo de mensaje (texto, foto, contacto…) — antes solo
+// texto y un spam de fotos llegaba libre a los handlers. Map
+// telegramId→timestamps recientes; las entradas sin actividad >60s se purgan
+// en barridos ocasionales para que el Map no crezca sin límite.
 const RATE_WINDOW_MS = 1_000
 const RATE_SWEEP_MS = 60_000
 const rateHits = new Map<string, number[]>()
 let rateSweepAt = 0
 bot.use(async (ctx, next) => {
+    if (ctx.chat?.type !== 'private') return next()
     const id = ctx.from?.id?.toString()
     if (!id) return next()
     const isCallback = ctx.updateType === 'callback_query'
-    const isText = ctx.updateType === 'message' && !!ctx.message && 'text' in ctx.message
-    if (!isCallback && !isText) return next()
+    const isMessage = ctx.updateType === 'message'
+    if (!isCallback && !isMessage) return next()
     const now = Date.now()
     if (now >= rateSweepAt) {
         rateSweepAt = now + RATE_SWEEP_MS
@@ -86,6 +73,22 @@ bot.use(async (ctx, next) => {
     }
     window.push(now)
     rateHits.set(id, window)
+    return next()
+})
+
+// Account data and every bot command are restricted to direct private conversations.
+bot.use(async (ctx, next) => {
+    if (ctx.chat?.type !== 'private' || !ctx.from) return
+    if (!_prisma) return next()
+    try {
+        const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
+        if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
+    } catch (e) {
+        // Fail-open: si Prisma (o el reply) falla, el update pasa y cada
+        // comando aplica sus propios guards. Un throw aquí era unhandled
+        // rejection y abortaba el proceso (Node ≥22).
+        console.error('Error en gate de cuenta:', e)
+    }
     return next()
 })
 
@@ -202,12 +205,16 @@ registerCart(ctx)
 registerReports(ctx)
 const { processReservation } = registerCatalog(ctx)
 registerProducts(ctx, processReservation)
-registerAlerts(ctx)
+const alertsTask = registerAlerts(ctx)
 
 // ======= CRON JOBS =======
 
+// Handles de los crons: el shutdown ordenado los detiene para que un job a
+// media ejecución (o sus timers) no mantenga el proceso vivo tras SIGTERM.
+const scheduledTasks: cron.ScheduledTask[] = [alertsTask]
+
 // Cancel expired reservations and prune abandoned sessions every 30 min
-cron.schedule('*/30 * * * *', async () => {
+scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {
     pruneStaleSessions(sessions)
     if (!_prisma) return
     if (isDev) console.log('⏳ Checking for expired reservations...')
@@ -218,12 +225,12 @@ cron.schedule('*/30 * * * *', async () => {
     } catch (e) {
         console.error('Error in expiration job:', e)
     }
-})
+}))
 
 // Purga diaria (04:17) de altas de negocio cuyo owner sigue PENDING — nunca
 // verificaron su contacto. El endpoint /api/cron/purge-pending-signups usa
 // la misma lógica para forzarla a mano o desde schedulers externos.
-cron.schedule('17 4 * * *', async () => {
+scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
     if (!_prisma) return
     try {
         const result = await purgePendingSignups(_prisma)
@@ -233,12 +240,12 @@ cron.schedule('17 4 * * *', async () => {
     } catch (e) {
         console.error('Error in pending signup purge job:', e)
     }
-})
+}))
 
 // Retención diaria (04:25) de bitácoras: AuditEvent >AUDIT_RETENTION_DAYS
 // (default 90d) y PlatformEvent >PLATFORM_RETENTION_DAYS (default 365d).
 // El endpoint /api/cron/purge-events usa la misma lógica para disparo manual.
-cron.schedule('25 4 * * *', async () => {
+scheduledTasks.push(cron.schedule('25 4 * * *', async () => {
     if (!_prisma) return
     try {
         const result = await purgeOldEvents(_prisma)
@@ -248,14 +255,14 @@ cron.schedule('25 4 * * *', async () => {
     } catch (e) {
         console.error('Error in event retention job:', e)
     }
-})
+}))
 
 // Reconciliación diaria (04:35) de delegaciones cross-tenant: la espejo en el
 // tenant reparador y la marca local son commits separados — un fallo a media
 // operación deja vínculos divergentes. El barrido solo DETECTA (issue en la
 // respuesta + RepairEvent privado de alerta en la orden); la corrección es
 // manual. El endpoint /api/cron/reconcile-delegations la dispara a mano.
-cron.schedule('35 4 * * *', async () => {
+scheduledTasks.push(cron.schedule('35 4 * * *', async () => {
     if (!_prisma) return
     try {
         const result = await reconcileDelegations(_prisma)
@@ -267,7 +274,7 @@ cron.schedule('35 4 * * *', async () => {
     } catch (e) {
         console.error('Error in delegation reconcile job:', e)
     }
-})
+}))
 
 // ======= LAUNCH =======
 
@@ -302,5 +309,27 @@ bot.launch(async () => {
     process.exit(1)
 })
 
-process.once('SIGINT', () => bot.stop('SIGINT'))
-process.once('SIGTERM', () => bot.stop('SIGTERM'))
+// ======= SHUTDOWN =======
+
+// Docker envía SIGTERM al recrear el contenedor. bot.stop() solo corta el
+// polling: los timers de node-cron y los sockets del pool pg mantienen vivo
+// el event loop, así que el proceso colgaba hasta que Docker lo mataba a
+// SIGKILL tras el timeout. Aquí se corta polling, se detienen los crons, se
+// cierra Prisma y se sale; el setTimeout es la red de seguridad si el cierre
+// ordenado se atasca.
+let shuttingDown = false
+function shutdown(signal: string) {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`🛑 ${signal} recibido: deteniendo bot…`)
+    setTimeout(() => process.exit(0), 4_000).unref()
+    try { bot.stop(signal) } catch (e) { console.error('Error deteniendo el bot:', e) }
+    for (const task of scheduledTasks) {
+        try { task.stop() } catch { /* task ya detenido */ }
+    }
+    void Promise.resolve(_prisma?.$disconnect())
+        .catch(e => console.error('Error cerrando Prisma:', e))
+        .finally(() => process.exit(0))
+}
+process.once('SIGINT', () => shutdown('SIGINT'))
+process.once('SIGTERM', () => shutdown('SIGTERM'))

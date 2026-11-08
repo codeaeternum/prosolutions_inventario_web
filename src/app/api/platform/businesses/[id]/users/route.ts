@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { checkAndRecord } from "@/lib/rate-limit"
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -21,6 +22,14 @@ const createUserSchema = z.object({
 export async function POST(req: Request, { params }: Params) {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
+
+  // Freno por operador (la sesión ya está autenticada): 15 altas cada 15 min.
+  if (!checkAndRecord("platform-user-create", auth.session.user.id, 15 * 60 * 1000, 15)) {
+    return NextResponse.json(
+      { error: "Demasiadas operaciones, espera un momento" },
+      { status: 429, headers: { "Retry-After": "900" } }
+    )
+  }
 
   const { id: businessId } = await params
 
