@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { CheckCircle, ClipboardList, Keyboard, QrCode, ReceiptText, RotateCcw, ScanBarcode, ShoppingCart, Volume2, VolumeX } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
+import type { ClientOperationKey } from "@/lib/client-operation-key"
 import { CartPanel } from "@/components/pos/cart-panel"
 import { CheckoutDialog } from "@/components/pos/checkout-dialog"
 import { LayawaysSheet } from "@/components/pos/layaways-sheet"
@@ -69,6 +70,11 @@ export default function VentasPage() {
     const [customer, setCustomer] = useState<PosCustomer | null>(() => restoredTicket?.customer ?? null)
     // Nota a taller: precio de taller. Un cliente STORE/TECHNICIAN la fuerza.
     const [workshopSale, setWorkshopSale] = useState(() => restoredTicket?.workshopSale ?? false)
+    // Llave de idempotencia del cobro: viaja en el borrador — un crash a
+    // medio POST la restaura y el reintento del mismo ticket la reusa (el
+    // servidor deduplica → no hay doble cobro). CheckoutDialog la reporta
+    // al generarla (submit) y la limpia al cobrar (null).
+    const [checkoutKey, setCheckoutKey] = useState<ClientOperationKey | null>(() => restoredTicket?.checkoutKey ?? null)
     const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number; kind?: string } | null>(null)
     const [lastTicket, setLastTicket] = useState<LastTicket | null>(null)
     const [processing, setProcessing] = useState(false)
@@ -187,9 +193,9 @@ export default function VentasPage() {
     useEffect(() => {
         try {
             if (cart.length === 0) localStorage.removeItem(POS_TICKET_STORAGE_KEY)
-            else localStorage.setItem(POS_TICKET_STORAGE_KEY, serializePosTicket({ cart, customer, workshopSale }, activeBranchId))
+            else localStorage.setItem(POS_TICKET_STORAGE_KEY, serializePosTicket({ cart, customer, workshopSale, checkoutKey }, activeBranchId))
         } catch { /* storage lleno o modo privado: el ticket sigue en memoria */ }
-    }, [cart, customer, workshopSale, activeBranchId])
+    }, [cart, customer, workshopSale, checkoutKey, activeBranchId])
 
     useEffect(() => {
         // activeBranchId ya espera a la sesión y cae en una sucursal visible:
@@ -220,7 +226,7 @@ export default function VentasPage() {
     const workshopActive = workshopSale || workshopCustomer
     const cartTotal = cartTotalOf(cart, workshopActive)
     const cartUnits = cartUnitsOf(cart)
-    const clearTicket = useCallback(() => { setCart([]); setCustomer(null); setWorkshopSale(false); setResumedDoc(null); setFlash(null) }, [])
+    const clearTicket = useCallback(() => { setCart([]); setCustomer(null); setWorkshopSale(false); setResumedDoc(null); setFlash(null); setCheckoutKey(null) }, [])
 
     // Un documento suspendido se cobra con sus líneas snapshot: si el cajero
     // edita el ticket retomado, se desliga y cobra como venta nueva (la
@@ -244,9 +250,15 @@ export default function VentasPage() {
             : item))
     }
 
+    // Espejo del ticket para lecturas fuera del ciclo de render: el escáner
+    // continuo encadena scans con awaits de por medio — `cart` en la clausura
+    // puede no traer aún la línea recién agregada y el tope de stock mentiría.
+    const cartRef = useRef(cart)
+    useEffect(() => { cartRef.current = cart }, [cart])
+
     const addToCart = (product: PosProduct, quantity = 1) => {
         if (submitting.current) return
-        const existing = cart.find(item => item.product.id === product.id)
+        const existing = cartRef.current.find(item => item.product.id === product.id)
         const room = product.stock - (existing?.quantity ?? 0)
         if (product.stock < 1 || room <= 0) {
             if (soundOn) playPosTone("error")
@@ -260,8 +272,13 @@ export default function VentasPage() {
         detachIfResumed()
         setCart(prev => {
             const found = prev.find(item => item.product.id === product.id)
-            if (found) return prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + addQty) } : item)
-            return [...prev, { product, quantity: addQty }]
+            const next = found
+                ? prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + addQty) } : item)
+                : [...prev, { product, quantity: addQty }]
+            // El espejo se actualiza aquí también: otro scan a continuación
+            // ya ve esta línea aunque el efecto todavía no corra.
+            cartRef.current = next
+            return next
         })
         setSearchQuery("")
         setFlash(prev => ({ productId: product.id, nonce: (prev?.nonce ?? 0) + 1 }))
@@ -321,14 +338,18 @@ export default function VentasPage() {
     const handleScan = async (code: string) => {
         const clean = code.trim()
         if (!clean) return
-        setShowScanner(false)
+        // Los códigos que NAVEGAN (folio de ticket, QR de apartado) cierran el
+        // diálogo siempre; los de producto lo dejan abierto en modo continuo —
+        // el cajero pasa pieza tras pieza y sale con «Listo (N)».
         if (/^V-\d+$/i.test(clean)) {
+            setShowScanner(false)
             setSalesInitialQuery(clean)
             setShowSalesHistory(true)
             return
         }
         const saleTicketMatch = /\/admin\/tickets\/venta\/([^/?#\s]+)/.exec(clean)
         if (saleTicketMatch) {
+            setShowScanner(false)
             const ticketRef = decodeURIComponent(saleTicketMatch[1])
             if (/^V-\d+$/i.test(ticketRef)) {
                 setSalesInitialQuery(ticketRef)
@@ -338,6 +359,7 @@ export default function VentasPage() {
         }
         const verifyMatch = clean.match(/\/verificar\/([^/?#\s]+)/)
         if (scanMode === "qr" || verifyMatch) {
+            setShowScanner(false)
             const reservationCode = verifyMatch ? verifyMatch[1] : clean
             router.push(`/verificar/${encodeURIComponent(reservationCode)}`)
             return
@@ -548,14 +570,18 @@ export default function VentasPage() {
             <Dialog open={showScanner} onOpenChange={setShowScanner}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader><DialogTitle>{scanMode === "qr" ? "Escanear QR del apartado" : "Escanear producto"}</DialogTitle></DialogHeader>
-                    <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />
+                    {/* Producto: modo continuo (mostrador con muchos items).
+                        QR de apartado sigue single-shot: navega a /verificar. */}
+                    <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} continuous={scanMode === "producto"} />
                 </DialogContent>
             </Dialog>
 
             <CheckoutDialog open={showCheckout} onOpenChange={setShowCheckout} cart={cart} cartTotal={cartTotal}
                 workshopActive={workshopActive} workshopCustomer={workshopCustomer} onWorkshopSaleChange={setWorkshopSale}
                 customer={customer} onCustomerChange={setCustomer} branchId={activeBranchId} cajaOpen={cajaOpen}
-                resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket} onCompleted={handleCompleted} />
+                resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket}
+                initialOperationKey={checkoutKey} onOperationKeyChange={setCheckoutKey}
+                onCompleted={handleCompleted} />
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
             <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} hasTicket={cart.length > 0} />
             <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={activeBranchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />

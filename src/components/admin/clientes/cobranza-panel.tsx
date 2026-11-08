@@ -239,6 +239,8 @@ export function CobranzaPanel() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
+                id="cobranza-search"
+                name="debtor-search"
                 placeholder="Buscar deudor por nombre o teléfono..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}

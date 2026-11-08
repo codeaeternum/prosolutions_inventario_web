@@ -370,9 +370,12 @@ export function SalesReturnsSheet({
                     <div className="relative">
                         <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                         <Input
+                            id="pos-returns-search"
+                            name="returns-search"
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Buscar por folio (V-000123), cliente o artículo..."
+                            aria-label="Buscar tickets por folio, cliente o artículo"
                             className="pl-9"
                         />
                     </div>
@@ -548,6 +551,7 @@ export function SalesReturnsSheet({
                                                                         <Minus className="h-3 w-3" />
                                                                     </Button>
                                                                     <Input
+                                                                        id={`return-qty-${item.id}`}
                                                                         type="number"
                                                                         min={0}
                                                                         max={maxQty}

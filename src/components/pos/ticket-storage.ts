@@ -3,6 +3,7 @@
 // ya capturadas. Es un BORRADOR — el servidor revalida precios y existencias
 // al cobrar; lo restaurado equivale a una suspendida local sin folio.
 
+import type { ClientOperationKey } from "@/lib/client-operation-key"
 import type { CartItem, PosCustomer, PosProduct } from "./types"
 
 export const POS_TICKET_STORAGE_KEY = "pos:ticket"
@@ -13,6 +14,13 @@ export interface PosTicketState {
     cart: CartItem[]
     customer: PosCustomer | null
     workshopSale: boolean
+    /**
+     * Llave de idempotencia del cobro en vuelo. Si la pestaña muere a medio
+     * POST, el borrador la restaura y el reintento del MISMO ticket reusa la
+     * llave real — el servidor deduplica y no hay doble cobro. Ticket editado
+     * → fingerprint ya no coincide → llave nueva.
+     */
+    checkoutKey?: ClientOperationKey | null
 }
 
 interface PosTicketDraft extends PosTicketState {
@@ -58,6 +66,17 @@ function sanitizeCustomer(raw: unknown): PosCustomer | null {
     }
 }
 
+// La llave restaurada debe venir íntegra (fingerprint + key): una corrupta
+// se descarta sin tirar el borrador — getClientOperationKey generaría una
+// nueva al cobrar, como antes de persistirla.
+function sanitizeCheckoutKey(raw: unknown): ClientOperationKey | null {
+    if (!raw || typeof raw !== "object") return null
+    const k = raw as Partial<ClientOperationKey>
+    if (typeof k.key !== "string" || !k.key || k.key.length > 200) return null
+    if (typeof k.fingerprint !== "string" || k.fingerprint.length > 100_000) return null
+    return { fingerprint: k.fingerprint, key: k.key }
+}
+
 export function serializePosTicket(state: PosTicketState, branchId: string, nowMs = Date.now()): string {
     const draft: PosTicketDraft = { savedAt: nowMs, branchId, ...state }
     return JSON.stringify(draft)
@@ -82,6 +101,7 @@ export function parsePosTicket(json: string | null, nowMs: number): PosTicketSta
             cart,
             customer: sanitizeCustomer(draft.customer),
             workshopSale: draft.workshopSale === true,
+            checkoutKey: sanitizeCheckoutKey(draft.checkoutKey),
         }
     } catch {
         return null

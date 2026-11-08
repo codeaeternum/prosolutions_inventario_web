@@ -1,7 +1,6 @@
 import Link from "next/link"
 import type { ReactNode } from "react"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { ConnectivityBanner } from "@/components/connectivity-banner"
 
 interface PublicShellProps {
   /** Nombre que se muestra en la barra superior (negocio o taller). */
@@ -98,9 +97,6 @@ export function PublicShell({ brandName, homeHref, logoUrl, headerRight, childre
           </Link>
         </div>
       </footer>
-
-      {/* Aviso persistente de pérdida de red en las vitrinas públicas. */}
-      <ConnectivityBanner />
     </div>
   )
 }

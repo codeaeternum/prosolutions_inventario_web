@@ -362,27 +362,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
               </div>
             )}
           </div>
-          {/* Búsqueda global (⌘K): mismo campo que el header */}
-          <button
-            type="button"
-            onClick={openCommandPalette}
-            aria-label="Abrir buscador y navegación (⌘K)"
-            title={collapsed ? "Buscar (⌘K)" : undefined}
-            className={cn(
-              "mt-4 flex h-9 items-center gap-2 rounded-md border border-input bg-background text-sm text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground",
-              collapsed ? "justify-center px-0" : "px-3"
-            )}
-          >
-            <Search className="h-4 w-4 shrink-0" />
-            {!collapsed && (
-              <>
-                <span className="flex-1 truncate text-left">Buscar…</span>
-                <kbd className="inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">⌘K</kbd>
-              </>
-            )}
-            {collapsed && <span className="sr-only">Buscar</span>}
-          </button>
-          <nav className="flex flex-1 flex-col">
+          <nav className="mt-4 flex flex-1 flex-col">
             <ul role="list" className="flex flex-1 flex-col gap-y-7 pt-4">
               {filteredNavigation.map((group, groupIndex) => (
                 <li key={group.name}>

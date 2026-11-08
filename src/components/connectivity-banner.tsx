@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Wifi, WifiOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -28,13 +28,10 @@ async function pingServer(): Promise<boolean> {
   }
 }
 
-interface ConnectivityBannerProps {
-  /**
-   * Reserva espacio sobre la barra de navegación inferior fija (<lg en admin).
-   * En páginas públicas sin barra, el aviso queda pegado al borde inferior.
-   */
-  aboveBottomNav?: boolean
-}
+// Rutas con barra de navegación inferior fija en móvil: la de admin (<lg) y
+// la MobileNav de la tienda del cliente (mismos prefijos que mobile-nav.tsx).
+// Ahí el aviso flota sobre la barra; en el resto va pegado al borde inferior.
+const BOTTOM_NAV_PREFIXES = ["/admin", "/catalogo", "/carrito", "/mis-reservas", "/perfil", "/seguimiento"]
 
 /**
  * Indicador persistente de conectividad. Los eventos online/offline del
@@ -43,9 +40,14 @@ interface ConnectivityBannerProps {
  * verificados a /api/health: al montar, en cada evento "online" y cada 30s.
  * Al recuperarse muestra un aviso verde breve y revalida los datos (RSC) para
  * que la pantalla se refresque sola, sin recarga manual.
+ *
+ * Se monta UNA vez en el layout raíz: cubre admin, vitrina, tienda del
+ * cliente, login, /aliado y /platform sin montajes por shell.
  */
-export function ConnectivityBanner({ aboveBottomNav = false }: ConnectivityBannerProps) {
+export function ConnectivityBanner() {
   const router = useRouter()
+  const pathname = usePathname()
+  const aboveBottomNav = BOTTOM_NAV_PREFIXES.some(p => pathname === p || pathname.startsWith(`${p}/`))
   const [status, setStatus] = useState<ConnectivityStatus>("online")
   // Espejo del estado: permite saber, dentro del ping asíncrono, si venimos de
   // una caída real (→ flash verde + refresh) o solo es una confirmación más.

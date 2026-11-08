@@ -67,7 +67,7 @@ const nextConfig: NextConfig = {
     // CSP en modo report-only: no bloquea, solo reporta. Ajustar y pasar a enforce cuando esté estable.
     const cspReportOnly = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Compatibilidad de Next.js; pendiente endurecer con nonces
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com", // Compatibilidad de Next.js + beacon de Cloudflare Insights (analítica del túnel); pendiente endurecer con nonces
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https:",

@@ -4,7 +4,6 @@ import { useState, useSyncExternalStore } from "react"
 import { AdminSidebar } from "@/components/admin/sidebar"
 import { AdminHeader } from "@/components/admin/header"
 import { AdminCommandPalette } from "@/components/admin/command-palette"
-import { ConnectivityBanner } from "@/components/connectivity-banner"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Undo2, Loader2 } from "lucide-react"
@@ -124,8 +123,6 @@ export function AdminShell({ user, homeBranchId, hasPartner, businessKind, child
           {children}
         </main>
       </div>
-      {/* Aviso persistente de pérdida de red (por encima de la barra inferior móvil). */}
-      <ConnectivityBanner aboveBottomNav />
       {/* Paleta ⌘K: navegación, acciones rápidas y búsqueda de entidades. */}
       <AdminCommandPalette
         user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }}

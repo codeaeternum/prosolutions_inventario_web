@@ -67,6 +67,11 @@ interface CheckoutDialogProps {
     onBusyChange: (busy: boolean) => void
     /** Auto-impresión del ticket: abre la pestaña en el gesto del click, antes del await. */
     autoOpenTicket?: boolean
+    /** Llave de idempotencia restaurada del borrador local: un crash a medio
+        POST la devuelve y el reintento del mismo ticket la reusa (no doble-cobra). */
+    initialOperationKey?: ClientOperationKey | null
+    /** Se llama al generar la llave del cobro (persistirla en el borrador) y al liberarla (null). */
+    onOperationKeyChange?: (key: ClientOperationKey | null) => void
     onCompleted: (result: CheckoutResult, popup?: Window | null) => void
 }
 
@@ -145,7 +150,8 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
 function CheckoutForm({
     onOpenChange, cart, cartTotal, workshopActive, workshopCustomer, onWorkshopSaleChange,
-    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, autoOpenTicket, onCompleted,
+    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, autoOpenTicket,
+    initialOperationKey, onOperationKeyChange, onCompleted,
 }: CheckoutDialogProps) {
     // Caja cerrada: el efectivo siempre rebota con 409 REGISTER_REQUIRED.
     // Se bloquea en todos lados (pago único, dividido y anticipo de apartado)
@@ -169,7 +175,9 @@ function CheckoutForm({
     const submitting = useRef(false)
     const cashInputRef = useRef<HTMLInputElement>(null)
     const transferInputRef = useRef<HTMLInputElement>(null)
-    const pendingOperation = useRef<ClientOperationKey | null>(null)
+    // Semilla con la llave del borrador: si hubo crash a medio cobro, el
+    // primer submit del ticket restaurado reusa ESA llave (mismo fingerprint).
+    const pendingOperation = useRef<ClientOperationKey | null>(initialOperationKey ?? null)
     // Llave del paso "suspender" cuando una venta nueva con descuento primero
     // fotografía sus líneas como documento y luego lo cobra (mismo endpoint
     // de checkout que una suspendida recuperada).
@@ -422,6 +430,9 @@ function CheckoutForm({
             // uno: el mismo payload sobre otro documento es otra operación.
             pendingOperation.current = getClientOperationKey(pendingOperation.current,
                 checkoutDocId ? { ...payload, saleId: checkoutDocId } : payload)
+            // El borrador guarda la llave ANTES de que salga el POST: un
+            // crash en vuelo la restaura y el retry reusa la misma.
+            onOperationKeyChange?.(pendingOperation.current)
             const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -433,6 +444,7 @@ function CheckoutForm({
             // suspender, el reintento reusa el MISMO documento (no duplica).
             pendingOperation.current = null
             pendingPark.current = null
+            onOperationKeyChange?.(null)
 
             const ticketId = data?.sale?.id ?? data?.document?.sale?.id ?? data?.id ?? null
             const number = data?.sale?.number ?? data?.document?.sale?.number ?? data?.number ?? null
@@ -580,6 +592,7 @@ function CheckoutForm({
                                 <div className="space-y-2 rounded-lg border p-3">
                                     <div className="flex gap-2 items-center">
                                         <Input
+                                            id="pos-discount-amount"
                                             type="number" min="0" step="0.01" placeholder="0.00"
                                             aria-label="Monto del descuento"
                                             disabled={processing}
@@ -608,6 +621,7 @@ function CheckoutForm({
                                         ))}
                                     </div>
                                     <Input
+                                        id="pos-discount-reason"
                                         placeholder="Motivo del descuento *"
                                         aria-label="Motivo del descuento"
                                         maxLength={200}
@@ -729,6 +743,7 @@ function CheckoutForm({
                                             />
                                         </div>
                                         <Input
+                                            id={`pos-split-amount-${i}`}
                                             type="number" min="0" placeholder="0.00"
                                             aria-label={`Monto pago ${i + 1}`}
                                             disabled={processing}
@@ -745,6 +760,7 @@ function CheckoutForm({
                                     </div>
                                     {p.method === "TRANSFERENCIA" && (
                                         <Input
+                                            id={`pos-split-ref-${i}`}
                                             placeholder="Referencia SPEI / folio *"
                                             aria-label={`Referencia transferencia ${i + 1}`}
                                             maxLength={200}
@@ -805,6 +821,7 @@ function CheckoutForm({
                                             />
                                         </div>
                                         <Input
+                                            id="pos-deposit-amount"
                                             type="number" min="0" max={cartTotal} placeholder="0.00"
                                             aria-label="Monto del anticipo"
                                             disabled={processing}
@@ -815,7 +832,9 @@ function CheckoutForm({
                                     </div>
                                     {deposit.method === "TRANSFERENCIA" && (
                                         <Input
+                                            id="pos-deposit-ref"
                                             placeholder="Referencia SPEI / folio del anticipo *"
+                                            aria-label="Referencia SPEI / folio del anticipo"
                                             maxLength={200}
                                             disabled={processing}
                                             value={deposit.reference ?? ""}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type ReactNode, type Ref } from "react"
+import { useEffect, useId, useState, type ReactNode, type Ref } from "react"
 import { Input } from "@/components/ui/input"
 
 // Mismo estilo de inputClass del asistente, con ancho fijo compacto para la lada.
@@ -76,13 +76,18 @@ type PhoneInputProps = {
   onDialCode: (dial: string) => void
   label?: string
   required?: boolean
+  /** Id base del campo telefónico: lada y "otro" derivan `${id}-dial…`. */
+  id?: string
   /** Ref del contenedor: permite detectar clics fuera del campo y sus sugerencias. */
   containerRef?: Ref<HTMLDivElement>
   children?: ReactNode
 }
 
-export function PhoneInput({ value, onChange, dialCode, onDialCode, label, required, containerRef, children }: PhoneInputProps) {
+export function PhoneInput({ value, onChange, dialCode, onDialCode, label, required, id, containerRef, children }: PhoneInputProps) {
   const parsed = parsePhone(value)
+  // Chrome/lectores exigen id o name en cada campo; useId cubre usos sin prop.
+  const generatedId = useId()
+  const inputId = id ?? generatedId
 
   // "+1" es compartido por EE.UU. y Canadá: el teléfono guarda solo "+1", así
   // que la bandera elegida se recuerda localmente (EE.UU. por defecto).
@@ -104,9 +109,10 @@ export function PhoneInput({ value, onChange, dialCode, onDialCode, label, requi
 
   return (
     <div ref={containerRef} className="relative space-y-2 text-sm">
-      {label ? <p>{label}{required ? " *" : ""}</p> : null}
+      {label ? <label htmlFor={inputId} className="block">{label}{required ? " *" : ""}</label> : null}
       <div className="flex items-center gap-2">
         <select
+          id={`${inputId}-dial`}
           aria-label="Código de país"
           className={dialSelectClass}
           value={selectValue}
@@ -130,6 +136,7 @@ export function PhoneInput({ value, onChange, dialCode, onDialCode, label, requi
         </select>
         {isCustomDial && (
           <Input
+            id={`${inputId}-dial-custom`}
             aria-label="Código de país (otro)"
             inputMode="tel"
             autoComplete="off"
@@ -144,6 +151,8 @@ export function PhoneInput({ value, onChange, dialCode, onDialCode, label, requi
           />
         )}
         <Input
+          id={inputId}
+          name={id}
           type="tel"
           inputMode="tel"
           autoComplete="off"

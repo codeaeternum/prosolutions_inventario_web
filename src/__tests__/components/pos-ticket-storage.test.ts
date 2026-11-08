@@ -75,4 +75,31 @@ describe("pos ticket storage", () => {
         expect(restored!.cart).toHaveLength(1)
         expect(restored!.customer).toBeNull()
     })
+
+    // La llave viaja en el borrador: un crash a medio POST la restaura y el
+    // reintento del mismo ticket la reusa — el servidor deduplica el cobro.
+    it("round-trip: la llave de idempotencia del cobro sobrevive al reload", () => {
+        const checkoutKey = { fingerprint: '{"cart":[…]}', key: "op_abc123" }
+        const json = serializePosTicket({ ...state, checkoutKey }, "b1", NOW)
+        const restored = parsePosTicket(json, NOW + 60_000)
+        expect(restored!.checkoutKey).toEqual(checkoutKey)
+    })
+
+    it("sin llave guardada restaura null (borrador anterior a la función)", () => {
+        const json = serializePosTicket(state, "b1", NOW)
+        expect(parsePosTicket(json, NOW + 60_000)!.checkoutKey).toBeNull()
+    })
+
+    it("una llave corrupta se descarta sin tirar el ticket", () => {
+        for (const bad of ['"texto"', '{"key":""}', '{"key":"x"}', 'null']) {
+            const json = JSON.stringify({
+                savedAt: NOW,
+                cart: [{ product: product(), quantity: 1 }],
+                checkoutKey: JSON.parse(bad),
+            })
+            const restored = parsePosTicket(json, NOW + 1000)
+            expect(restored).not.toBeNull()
+            expect(restored!.checkoutKey).toBeNull()
+        }
+    })
 })

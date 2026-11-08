@@ -965,15 +965,15 @@ export default function ReceiveEquipmentPage() {
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2">
                   <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
-                    <Input value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
+                    <Input id="intake-customer-name" name="customerName" value={form.customerName} onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }} onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }} maxLength={100} autoComplete="off" placeholder="Nombre y apellido" />
                     {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </label>
-                  <PhoneInput containerRef={phoneBoxRef} label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
+                  <PhoneInput id="intake-customer-phone" containerRef={phoneBoxRef} label="Teléfono de contacto" required value={form.customerPhone} dialCode={form.customerPhoneDial} onDialCode={setPhoneDial("customerPhone")} onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}>
                     {lookupField === "customerPhone" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
                   </PhoneInput>
                   {form.phoneAltVisible || form.customerPhoneAlt ? (
                     <div className="space-y-1.5">
-                      <PhoneInput label="Otro contacto (opcional)" value={form.customerPhoneAlt} dialCode={form.customerPhoneAltDial} onDialCode={setPhoneDial("customerPhoneAlt")} onChange={phone => update({ customerPhoneAlt: phone })} />
+                      <PhoneInput id="intake-customer-phone-alt" label="Otro contacto (opcional)" value={form.customerPhoneAlt} dialCode={form.customerPhoneAltDial} onDialCode={setPhoneDial("customerPhoneAlt")} onChange={phone => update({ customerPhoneAlt: phone })} />
                       <button type="button" onClick={() => update({ phoneAltVisible: false, customerPhoneAlt: "" })} className="text-xs text-muted-foreground transition hover:text-destructive">Quitar contacto alterno</button>
                     </div>
                   ) : (
@@ -990,13 +990,13 @@ export default function ReceiveEquipmentPage() {
                     </div>
                   )}
                   <label className="block space-y-2 text-sm">Sucursal de recepción *
-                    <select className={inputClass} value={form.intakeBranchId} onChange={event => update({ intakeBranchId: event.target.value })}>
+                    <select id="intake-branch" name="intakeBranchId" className={inputClass} value={form.intakeBranchId} onChange={event => update({ intakeBranchId: event.target.value })}>
                       <option value="" disabled>Selecciona la sucursal de recepción</option>
                       {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
                     </select>
                   </label>
                   <label className="block space-y-2 text-sm">Responsable técnico
-                    <select className={inputClass} value={form.assignedToId} onChange={event => update({ assignedToId: event.target.value })}>
+                    <select id="intake-assigned-to" name="assignedToId" className={inputClass} value={form.assignedToId} onChange={event => update({ assignedToId: event.target.value })}>
                       <option value="">Asignar después</option>
                       {staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}
                     </select>
@@ -1020,6 +1020,8 @@ export default function ReceiveEquipmentPage() {
                       <div className="mt-4 grid gap-4 border-t border-indigo-200/70 pt-4 dark:border-indigo-500/30 sm:grid-cols-2">
                         <label className="block space-y-2 text-sm">Negocio aliado *
                           <Input
+                            id="intake-partner-business"
+                            name="originBusinessName"
                             list="aliados-conocidos"
                             value={form.originBusinessName}
                             onChange={event => {
@@ -1041,12 +1043,12 @@ export default function ReceiveEquipmentPage() {
                           </datalist>
                         </label>
                         <label className="block space-y-2 text-sm">Quién lo trajo / teléfono del negocio
-                          <Input value={form.originContact} onChange={event => update({ originContact: event.target.value })} maxLength={120} autoComplete="off" placeholder="Ej. Marisol · 667 123 4567" />
+                          <Input id="intake-partner-contact" name="originContact" value={form.originContact} onChange={event => update({ originContact: event.target.value })} maxLength={120} autoComplete="off" placeholder="Ej. Marisol · 667 123 4567" />
                         </label>
                         <label className="block space-y-2 text-sm">Precio convenio al aliado (MXN)
                           <div className="relative">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                            <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.partnerPrice} onChange={event => update({ partnerPrice: event.target.value })} placeholder="Según convenio" className="pl-7" />
+                            <Input id="intake-partner-price" name="partnerPrice" type="number" inputMode="decimal" min="0" step="0.01" value={form.partnerPrice} onChange={event => update({ partnerPrice: event.target.value })} placeholder="Según convenio" className="pl-7" />
                           </div>
                           <span className="block text-xs text-muted-foreground">Interno: es lo que el aliado te paga a ti; su cliente le paga a él su propio precio. Opcional.</span>
                         </label>
@@ -1084,7 +1086,7 @@ export default function ReceiveEquipmentPage() {
                       })}
                     </div>
                     {form.equipmentType === "Otro" && (
-                      <Input value={form.equipmentTypeOther} onChange={event => update({ equipmentTypeOther: event.target.value })} maxLength={100} placeholder="¿Qué equipo es? Ej. smartwatch, bocina, drone…" autoFocus className="mt-2 max-w-sm" />
+                      <Input id="intake-equipment-type-other" name="equipmentTypeOther" value={form.equipmentTypeOther} onChange={event => update({ equipmentTypeOther: event.target.value })} maxLength={100} placeholder="¿Qué equipo es? Ej. smartwatch, bocina, drone…" aria-label="Tipo de equipo (otro)" autoFocus className="mt-2 max-w-sm" />
                     )}
                     {form.equipmentType && profile.extraHints.map(hint => (
                       <p key={hint} className="text-xs text-muted-foreground">{hint}</p>
@@ -1113,7 +1115,7 @@ export default function ReceiveEquipmentPage() {
                       {form.services.length < MAX_SERVICES ? (
                         <div className="relative" ref={serviceBoxRef}>
                           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                          <Input value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder={form.services.length ? "Agregar otro servicio…" : "Buscar: cambio de pantalla, batería…"} className="pl-9" />
+                          <Input id="intake-service-search" name="serviceQuery" value={serviceQuery} onChange={event => setServiceQuery(event.target.value)} maxLength={80} autoComplete="off" placeholder={form.services.length ? "Agregar otro servicio…" : "Buscar: cambio de pantalla, batería…"} aria-label="Buscar servicio del catálogo" className="pl-9" />
                           {visibleServiceResults.length > 0 && (
                             <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                               {visibleServiceResults.map(service => (
@@ -1141,12 +1143,12 @@ export default function ReceiveEquipmentPage() {
                       {!serviceSearching && !serviceCatalogDown && serviceResults.length === 0 && serviceSearched === serviceQuery.trim() && serviceSearched.length >= 2 && <p className="text-xs text-muted-foreground">Sin coincidencias en el catálogo.</p>}
                     </div>
                     <label className="block space-y-2 text-sm">Otro servicio
-                      <Input value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio que no está en el catálogo" />
+                      <Input id="intake-other-service" name="otherService" value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio que no está en el catálogo" />
                     </label>
                     <label className="block space-y-2 text-sm">Presupuesto estimado (MXN)
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                        <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.budgetAmount} onChange={event => update({ budgetAmount: event.target.value })} placeholder="Según diagnóstico" className="pl-7" />
+                        <Input id="intake-budget-amount" name="budgetAmount" type="number" inputMode="decimal" min="0" step="0.01" value={form.budgetAmount} onChange={event => update({ budgetAmount: event.target.value })} placeholder="Según diagnóstico" className="pl-7" />
                       </div>
                       <span className="block text-xs text-muted-foreground">Se propone al elegir un servicio con precio fijo; puedes ajustarlo o dejarlo vacío.</span>
                     </label>
@@ -1167,7 +1169,7 @@ export default function ReceiveEquipmentPage() {
                       </div>
                     </div>
                     <label ref={brandBoxRef} className="relative block space-y-2 text-sm">Marca
-                      <Input value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
+                      <Input id="intake-brand" name="brand" value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
                       {brandOptions.length > 0 && (
                         <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                           {brandOptions.map(option => (
@@ -1182,7 +1184,7 @@ export default function ReceiveEquipmentPage() {
                       {!brandSearching && !brandCatalogDown && brandOptions.length === 0 && brandSearched === brandTerm.trim() && brandSearched.length >= 2 && <span className="block text-xs text-muted-foreground">Sin coincidencias — escríbela a mano o dala de alta en Taller → Catálogo.</span>}
                     </label>
                     <label ref={modelBoxRef} className="relative block space-y-2 text-sm">Modelo
-                      <Input value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null); setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: null, equipmentType: previous.equipmentType || null }) })) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
+                      <Input id="intake-model" name="model" value={form.model} onChange={event => { update({ model: event.target.value }); setModelTerm(event.target.value); setPickedModel(null); setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: null, equipmentType: previous.equipmentType || null }) })) }} maxLength={120} autoComplete="off" placeholder="Ej. Galaxy A54, iPhone 13…" />
                       {modelHits.length > 0 && (
                         <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
                           {modelHits.map(device => (
@@ -1202,10 +1204,12 @@ export default function ReceiveEquipmentPage() {
                     </label>
                     <div className="space-y-2">
                       <label className="block space-y-2 text-sm">{profile.serialLabel}
-                        <Input value={form.serialNumber} onChange={event => update({ serialNumber: form.serialLast4 ? event.target.value.slice(-4) : event.target.value })} maxLength={form.serialLast4 ? 4 : 100} placeholder={form.serialLast4 ? "Últimos 4" : profile.serialPlaceholder} />
+                        <Input id="intake-serial" name="serialNumber" value={form.serialNumber} onChange={event => update({ serialNumber: form.serialLast4 ? event.target.value.slice(-4) : event.target.value })} maxLength={form.serialLast4 ? 4 : 100} placeholder={form.serialLast4 ? "Últimos 4" : profile.serialPlaceholder} />
                       </label>
                       <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                         <input
+                          id="intake-serial-last4"
+                          name="serialLast4"
                           type="checkbox"
                           checked={form.serialLast4}
                           onChange={event => update({ serialLast4: event.target.checked, ...(event.target.checked ? { serialNumber: form.serialNumber.trim().slice(-4) } : {}) })}
@@ -1226,7 +1230,7 @@ export default function ReceiveEquipmentPage() {
                           <button type="button" role="radio" aria-checked={form.equipmentColorCustom} onClick={() => update({ equipmentColorCustom: true, equipmentColor: "" })} className={chipClass(form.equipmentColorCustom)}>Otro</button>
                         </div>
                         {form.equipmentColorCustom && (
-                          <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
+                          <Input id="intake-equipment-color" name="equipmentColor" value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus aria-label="Color del equipo (otro)" placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
                         )}
                       </div>
                     )}
@@ -1254,7 +1258,7 @@ export default function ReceiveEquipmentPage() {
                     {(form.accessType === "PIN" || form.accessType === "PASSWORD") && (
                       <div className="mt-3 max-w-sm space-y-2">
                         <label className="block space-y-2 text-sm">{form.accessType === "PIN" ? "PIN de desbloqueo" : "Contraseña del equipo"}
-                          <Input value={form.accessValue} onChange={event => update({ accessValue: event.target.value })} maxLength={100} autoComplete="off" placeholder={form.accessType === "PIN" ? "Ej. 2468" : "Escríbela tal como la dio el cliente"} />
+                          <Input id="intake-access-value" name="accessValue" value={form.accessValue} onChange={event => update({ accessValue: event.target.value })} maxLength={100} autoComplete="off" placeholder={form.accessType === "PIN" ? "Ej. 2468" : "Escríbela tal como la dio el cliente"} />
                         </label>
                         <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck size={13} />Este dato solo es visible para el personal del taller.</p>
                       </div>
@@ -1270,7 +1274,7 @@ export default function ReceiveEquipmentPage() {
                       ))}
                     </div>
                     {form.accessories.includes("Otro") && (
-                      <Input value={form.accessoryOther} onChange={event => update({ accessoryOther: event.target.value })} maxLength={120} placeholder="¿Qué otro accesorio? Ej. mochila, base de carga…" className="mt-2 max-w-sm" />
+                      <Input id="intake-accessory-other" name="accessoryOther" value={form.accessoryOther} onChange={event => update({ accessoryOther: event.target.value })} maxLength={120} placeholder="¿Qué otro accesorio? Ej. mochila, base de carga…" aria-label="Otro accesorio recibido" className="mt-2 max-w-sm" />
                     )}
                     <div className="border-t border-dashed pt-3">
                       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">No incluye / faltante</p>
@@ -1332,10 +1336,10 @@ export default function ReceiveEquipmentPage() {
                           )
                         })}
                       </div>
-                      <textarea value={form.intakeCondition} onChange={event => update({ intakeCondition: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Golpes, humedad, piezas faltantes…" aria-label="Observaciones del estado físico" />
+                      <textarea id="intake-condition" name="intakeCondition" value={form.intakeCondition} onChange={event => update({ intakeCondition: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Golpes, humedad, piezas faltantes…" aria-label="Observaciones del estado físico" />
                     </div>
                     <label className="block space-y-2 text-sm">Falla que reporta el cliente *
-                      <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
+                      <textarea id="intake-reported-issue" name="reportedIssue" value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
                     </label>
                   </div>
                   {signatureMode === "canvas" ? (
@@ -1356,6 +1360,8 @@ export default function ReceiveEquipmentPage() {
                     <div className="rounded-lg border p-4 text-sm">
                       <label className="block space-y-2">El cliente confirma con los últimos 4 dígitos de su teléfono *
                         <Input
+                          id="intake-pin-confirm"
+                          name="pinConfirm"
                           value={form.pinConfirm}
                           onChange={event => update({ pinConfirm: event.target.value.replace(/\D/g, "").slice(0, 4) })}
                           maxLength={4}
@@ -1375,16 +1381,16 @@ export default function ReceiveEquipmentPage() {
                 <div className="space-y-6">
                   <div className="grid gap-5 sm:grid-cols-2">
                     <label className="block space-y-2 text-sm">Fecha promesa de entrega
-                      <Input type="datetime-local" value={form.promisedAt} min={minDateTime} onChange={event => update({ promisedAt: event.target.value })} />
+                      <Input id="intake-promised-at" name="promisedAt" type="datetime-local" value={form.promisedAt} min={minDateTime} onChange={event => update({ promisedAt: event.target.value })} />
                     </label>
                     <label className="block space-y-2 text-sm">Fecha programada de reparación
-                      <Input type="datetime-local" value={form.scheduledAt} min={minDateTime} onChange={event => update({ scheduledAt: event.target.value })} />
+                      <Input id="intake-scheduled-at" name="scheduledAt" type="datetime-local" value={form.scheduledAt} min={minDateTime} onChange={event => update({ scheduledAt: event.target.value })} />
                       <span className="block text-xs text-muted-foreground">Cuándo trabajará el técnico en el equipo. Opcional.</span>
                     </label>
                     <label className="block space-y-2 text-sm sm:col-span-2">Locación física del equipo
                       <div className="relative max-w-sm">
                         <MapPin size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                        <Input list="workshop-locations" value={form.location} onChange={event => update({ location: event.target.value })} maxLength={80} placeholder="Ej. Anaquel A, Mesa 2…" className="pl-9" />
+                        <Input id="intake-location" name="location" list="workshop-locations" value={form.location} onChange={event => update({ location: event.target.value })} maxLength={80} placeholder="Ej. Anaquel A, Mesa 2…" className="pl-9" />
                       </div>
                       <datalist id="workshop-locations">{locations.map(location => <option key={location} value={location} />)}</datalist>
                     </label>
@@ -1404,7 +1410,7 @@ export default function ReceiveEquipmentPage() {
                         <label className="block space-y-2 text-sm">Monto del anticipo *
                           <div className="relative">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                            <Input type="number" inputMode="decimal" min="0" max={MAX_ADVANCE_AMOUNT} step="0.01" value={form.advanceAmount} onChange={event => update({ advanceAmount: event.target.value })} placeholder="0.00" className="pl-7" />
+                            <Input id="intake-advance-amount" name="advanceAmount" type="number" inputMode="decimal" min="0" max={MAX_ADVANCE_AMOUNT} step="0.01" value={form.advanceAmount} onChange={event => update({ advanceAmount: event.target.value })} placeholder="0.00" className="pl-7" />
                           </div>
                           <span className="block text-xs text-muted-foreground">Hasta {money(MAX_ADVANCE_AMOUNT * 100)}.</span>
                         </label>

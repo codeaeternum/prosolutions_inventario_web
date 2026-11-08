@@ -7,6 +7,7 @@ import { SessionProvider } from "@/components/session-provider"
 import { MobileNav } from "@/components/mobile-nav"
 import { CartProvider } from "@/components/cart-context"
 import { ToastProvider } from "@/components/toast-provider"
+import { ConnectivityBanner } from "@/components/connectivity-banner"
 import { PwaInstallBanner } from "@/components/pwa-install-banner"
 import { PwaUpdateBanner } from "@/components/pwa-update-banner"
 import { auth } from "@/lib/auth"
@@ -99,6 +100,7 @@ export default async function RootLayout({
                 </div>
                 <MobileNav isAdmin={canAccessAdmin} />
                 <PwaInstallBanner />
+                <ConnectivityBanner />
               </CartProvider>
             </CurrencyProvider>
           </ThemeProvider>

@@ -125,7 +125,7 @@ export async function getPendientes(session: {
     {
       key: "ordenes-listas",
       severity: "media",
-      title: `${ordenesListas} orden${ordenesListas === 1 ? "" : "es"} lista${ordenesListas === 1 ? "" : "s"} sin entregar`,
+      title: `${ordenesListas} ${ordenesListas === 1 ? "orden" : "órdenes"} lista${ordenesListas === 1 ? "" : "s"} sin entregar`,
       detail: "El equipo está reparado — avisa al cliente",
       href: "/admin/taller",
       module: "taller",
