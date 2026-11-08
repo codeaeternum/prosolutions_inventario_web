@@ -955,8 +955,8 @@ export function UsuariosPanel() {
               )}
               {newUser.role !== "CUSTOMER" && (
                 <div className="space-y-3 border-t pt-3">
-                  <div className="space-y-2">
-                    <Label>Módulos permitidos</Label>
+                  <div className="space-y-2" role="group" aria-labelledby="create-modules-label">
+                    <p id="create-modules-label" className="text-sm font-medium leading-none">Módulos permitidos</p>
                     <div className="grid grid-cols-2 gap-1.5">
                       {Object.entries(MODULE_LABELS).map(([key, label]) => (
                         <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -974,8 +974,8 @@ export function UsuariosPanel() {
                     <p className="text-xs text-muted-foreground">Sin selección = acceso a todos</p>
                   </div>
                   {branches.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Sucursales permitidas</Label>
+                    <div className="space-y-2" role="group" aria-labelledby="create-branches-label">
+                      <p id="create-branches-label" className="text-sm font-medium leading-none">Sucursales permitidas</p>
                       <div className="grid grid-cols-2 gap-1.5">
                         {branches.map((b) => (
                           <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -1558,9 +1558,10 @@ export function UsuariosPanel() {
 
               {/* Editar Límite */}
               <div className="space-y-2">
-                <Label>Límite de Crédito ($)</Label>
+                <Label htmlFor="credit-limit-input">Límite de Crédito ($)</Label>
                 <div className="flex gap-2 w-full">
                   <Input
+                    id="credit-limit-input"
                     type="number"
                     className="min-w-0 flex-1"
                     min="0"
@@ -1582,7 +1583,7 @@ export function UsuariosPanel() {
               {/* Abono Rápido */}
               {(creditUser.creditBalance ?? 0) > 0 && (
                 <div className="space-y-2 border-t pt-4">
-                  <Label>Registrar Abono Rápido</Label>
+                  <p className="text-sm font-medium leading-none">Registrar Abono Rápido</p>
                   <div className="space-y-2">
                     <Label htmlFor="abono-payment-method">Medio de abono</Label>
                     <Select
@@ -1605,6 +1606,7 @@ export function UsuariosPanel() {
                   {abonoPaymentMethod !== "EFECTIVO" && (
                     <Input
                       placeholder="Referencia (folio SPEI/autorización, mín. 4 caracteres)"
+                      aria-label="Referencia del abono"
                       value={abonoReference}
                       disabled={abonoSaving}
                       maxLength={200}
@@ -1632,6 +1634,7 @@ export function UsuariosPanel() {
                       min="0.01"
                       step="0.01"
                       placeholder="Monto"
+                      aria-label="Monto del abono"
                       value={abonoAmount}
                       disabled={abonoSaving}
                       onChange={(e) => setAbonoAmount(e.target.value)}
@@ -1648,6 +1651,7 @@ export function UsuariosPanel() {
                   </div>
                   <Input
                     placeholder="Notas (opcional)"
+                    aria-label="Notas del abono"
                     value={abonoNotes}
                     disabled={abonoSaving}
                     maxLength={500}
@@ -1747,8 +1751,8 @@ export function UsuariosPanel() {
               </div>
               )}
               <div className="space-y-3 border-t pt-3">
-                <div className="space-y-2">
-                  <Label>Módulos permitidos</Label>
+                <div className="space-y-2" role="group" aria-labelledby="edit-modules-label">
+                  <p id="edit-modules-label" className="text-sm font-medium leading-none">Módulos permitidos</p>
                   <div className="grid grid-cols-2 gap-1.5">
                     {Object.entries(MODULE_LABELS).map(([key, label]) => (
                       <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -1764,8 +1768,8 @@ export function UsuariosPanel() {
                   <p className="text-xs text-muted-foreground">Sin selección = acceso a todos</p>
                 </div>
                 {branches.length > 0 && (
-                  <div className="space-y-2">
-                    <Label>Sucursales permitidas</Label>
+                  <div className="space-y-2" role="group" aria-labelledby="edit-branches-label">
+                    <p id="edit-branches-label" className="text-sm font-medium leading-none">Sucursales permitidas</p>
                     <div className="grid grid-cols-2 gap-1.5">
                       {branches.map((b) => (
                         <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">

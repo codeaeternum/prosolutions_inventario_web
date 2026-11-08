@@ -45,6 +45,7 @@ export async function GET(req: Request) {
           { name: { contains: searchQuery, mode: "insensitive" as const } },
           { email: { contains: searchQuery, mode: "insensitive" as const } },
           { phone: { contains: searchQuery, mode: "insensitive" as const } },
+          { jobTitle: { contains: searchQuery, mode: "insensitive" as const } },
         ],
       }),
     }
