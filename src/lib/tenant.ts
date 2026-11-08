@@ -26,6 +26,7 @@ const TENANT_MODELS = new Set([
   "Encargo",
   "AuditEvent",
   "Notification",
+  "ClockEvent",
 ])
 
 type Args = Record<string, unknown> & { where?: Record<string, unknown>; data?: unknown }

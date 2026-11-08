@@ -90,6 +90,7 @@ model Business {
   verificationCodes   VerificationCode[]
   auditEvents         AuditEvent[]
   notifications       Notification[]
+  clockEvents         ClockEvent[]
   counter             BusinessCounter?
 
   @@index([isActive])
@@ -299,6 +300,7 @@ model User {
   verificationCodes     VerificationCode[]
   auditEvents           AuditEvent[]
   notificationReads     NotificationRead[]
+  clockEvents           ClockEvent[]
 
   // Verificación de contacto al registrarse (código por correo/Telegram).
   // No bloquea el acceso: es una señal de confianza sobre la cuenta.
@@ -1588,4 +1590,27 @@ model PlatformEvent {
 
   @@index([businessId, createdAt])
   @@index([createdAt])
+}
+
+// Checador real de asistencia: cada evento es una entrada ("IN") o salida
+// ("OUT") que el PROPIO usuario registra en POST /api/asistencia (v1: nadie
+// checa por otro). Cuando un empleado tiene ClockEvents en el rango, sus
+// jornadas de turnos/nómina se calculan con pares IN→OUT reales en vez de
+// reconstruirse desde la actividad (lib/turnos, /api/actividad/nomina).
+// branchId es snapshot escalar (sin FK): la sucursal puede desactivarse sin
+// tocar el historial; el evento siempre pertenece al negocio por businessId.
+model ClockEvent {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId   String?
+  type       String // "IN" | "OUT"
+  at         DateTime @default(now())
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, userId, at])
+  @@index([businessId, at])
 }

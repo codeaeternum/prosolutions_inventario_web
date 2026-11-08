@@ -4,6 +4,7 @@ import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
 import { businessDayKey, parseBusinessDateParam } from "@/lib/business-time"
+import { diasDesdeReloj, type ClockEventLike } from "@/lib/asistencia"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 // Un trimestre: el estimado recorre `from` al límite cuando el rango pedido
@@ -22,6 +23,13 @@ interface NominaEmployee {
   commissionPct: number | null
   daysActive: number
   minutesActive: number
+  /** "clock" = checador real (ClockEvent) · "activity" = reconstruido de
+   *  bitácora+operaciones. El reloj manda: con una sola checada en el
+   *  rango, los minutos del empleado salen SOLO de pares IN→OUT. */
+  minutesSource: "clock" | "activity"
+  /** Días con jornada abandonada (IN sin cierre confiable >16 h): sus
+   *  minutos reales son desconocidos — no se inventan. Solo con "clock". */
+  openEndedDays: number
   salesTotalCents: number
   salesCount: number
   estimatedCents: number
@@ -37,8 +45,11 @@ interface NominaEmployee {
  * nómina por empleado a partir de datos reales. Solo ADMIN.
  *
  * Fuentes:
- * - Tiempo activo → AuditEvent + BusinessOperation por día del negocio
- *   (misma reconstrucción que lib/turnos: primer→último movimiento del día).
+ * - Tiempo activo → ClockEvent cuando el empleado checó en el rango (pares
+ *   IN→OUT reales; jornada abierta cuenta hasta ahora y una abandonada
+ *   >16 h aporta 0 marcada en openEndedDays); sin checadas, AuditEvent +
+ *   BusinessOperation por día del negocio (misma reconstrucción que
+ *   lib/turnos: primer→último movimiento del día).
  * - Ventas → Sale.sellerId, solo COMPLETED, importe neto cobrado
  *   (total de catálogo − discountCents), igual que /api/actividad/desempeno.
  *
@@ -73,7 +84,7 @@ export async function GET(request: NextRequest) {
     const daysInPeriod = Math.round((toDayStart.getTime() - from.getTime()) / DAY_MS) + 1
     const range = { gte: from, lte: to }
 
-    const [users, sales, audit, ops] = await Promise.all([
+    const [users, sales, audit, ops, clock] = await Promise.all([
       prisma.user.findMany({
         where: { businessId, status: "APPROVED", role: { in: ["ADMIN", "EMPLOYEE"] } },
         select: { id: true, name: true, jobTitle: true, payType: true, payRateCents: true, commissionPct: true },
@@ -92,12 +103,27 @@ export async function GET(request: NextRequest) {
         select: { actorId: true, createdAt: true },
         orderBy: { createdAt: "asc" },
       }),
+      prisma.clockEvent.findMany({
+        where: { businessId, at: range },
+        select: { id: true, userId: true, type: true, at: true, branchId: true },
+        orderBy: { at: "asc" },
+      }),
     ])
+
+    // Empleados con checador en el rango: sus minutos son los reales
+    // (IN→OUT). El fallback por actividad aplica solo a quien NO checó.
+    const clockByUser = new Map<string, ClockEventLike[]>()
+    for (const e of clock) {
+      const list = clockByUser.get(e.userId)
+      if (list) list.push(e)
+      else clockByUser.set(e.userId, [e])
+    }
 
     // Minutos activos por empleado: por cada día del negocio con huella,
     // primer→último movimiento (un solo evento = día activo con 0 minutos).
     const dayBuckets = new Map<string, { first: Date; last: Date }>()
     const pushEvent = (actorId: string, at: Date) => {
+      if (clockByUser.has(actorId)) return // su jornada la manda el reloj
       const key = `${actorId}|${businessDayKey(at)}`
       const b = dayBuckets.get(key)
       if (!b) dayBuckets.set(key, { first: at, last: at })
@@ -109,13 +135,26 @@ export async function GET(request: NextRequest) {
     for (const e of audit) pushEvent(e.actorId, e.createdAt)
     for (const e of ops) pushEvent(e.actorId, e.createdAt)
 
-    const activity = new Map<string, { daysActive: number; minutesActive: number }>()
+    const activity = new Map<string, { daysActive: number; minutesActive: number; openEndedDays: number; source: "clock" | "activity" }>()
     for (const [key, b] of dayBuckets) {
       const actorId = key.split("|")[0]
-      const a = activity.get(actorId) ?? { daysActive: 0, minutesActive: 0 }
+      const a = activity.get(actorId) ?? { daysActive: 0, minutesActive: 0, openEndedDays: 0, source: "activity" as const }
       a.daysActive++
       a.minutesActive += Math.max(0, Math.round((b.last.getTime() - b.first.getTime()) / 60000))
       activity.set(actorId, a)
+    }
+    // Fuente reloj: cada jornada se atribuye al día-negocio de su IN; una
+    // jornada abandonada no aporta minutos (no se inventa el cierre) y una
+    // abierta cuenta hasta ahora.
+    const now = new Date()
+    for (const [userId, evs] of clockByUser) {
+      const a = { daysActive: 0, minutesActive: 0, openEndedDays: 0, source: "clock" as const }
+      for (const d of diasDesdeReloj(evs, now).values()) {
+        a.daysActive++
+        a.minutesActive += d.minutos
+        if (d.openEnded) a.openEndedDays++
+      }
+      activity.set(userId, a)
     }
 
     // Ventas en centavos por fila: Sale.total es Float en pesos y sumar
@@ -129,7 +168,7 @@ export async function GET(request: NextRequest) {
     }
 
     const employees: NominaEmployee[] = users.map(u => {
-      const { daysActive = 0, minutesActive = 0 } = activity.get(u.id) ?? {}
+      const { daysActive = 0, minutesActive = 0, openEndedDays = 0, source: minutesSource = "activity" as const } = activity.get(u.id) ?? {}
       const { salesTotalCents = 0, salesCount = 0 } = salesBy.get(u.id) ?? {}
       const rate = u.payRateCents ?? 0
       let estimatedCents = 0
@@ -163,6 +202,8 @@ export async function GET(request: NextRequest) {
         commissionPct: u.commissionPct,
         daysActive,
         minutesActive,
+        minutesSource,
+        openEndedDays,
         salesTotalCents,
         salesCount,
         estimatedCents,

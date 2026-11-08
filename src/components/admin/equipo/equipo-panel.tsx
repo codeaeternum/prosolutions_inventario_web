@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Clock, History, TrendingUp, Users, Wallet } from "lucide-react"
+import { Clock, History, LogIn, TrendingUp, Users, Wallet } from "lucide-react"
 
 const ActividadPanel = dynamic(
     () => import("@/components/admin/equipo/actividad-panel").then((m) => m.ActividadPanel),
@@ -11,6 +11,10 @@ const ActividadPanel = dynamic(
 )
 const UsuariosPanel = dynamic(
     () => import("@/components/admin/equipo/usuarios-panel").then((m) => m.UsuariosPanel),
+    { ssr: false }
+)
+const AsistenciaPanel = dynamic(
+    () => import("@/components/admin/equipo/asistencia-panel").then((m) => m.AsistenciaPanel),
     { ssr: false }
 )
 const TurnosPanel = dynamic(
@@ -26,12 +30,13 @@ const NominaPanel = dynamic(
     { ssr: false }
 )
 
-const TABS = ["actividad", "usuarios", "turnos", "desempeno", "nomina"] as const
+const TABS = ["actividad", "usuarios", "asistencia", "turnos", "desempeno", "nomina"] as const
 type Tab = (typeof TABS)[number]
 
 const DESCRIPTIONS: Record<Tab, string> = {
     actividad: "Bitácora de auditoría y acciones recientes de todo el personal",
     usuarios: "Cuentas de empleados, clientes, roles, sucursales y permisos por módulo",
+    asistencia: "Entradas y salidas que cada integrante marca con el reloj de asistencia",
     turnos: "Asistencia y sesiones operativas derivadas de la actividad real",
     desempeno: "Métricas de productividad, ventas y órdenes atendidas por integrante",
     nomina: "Sueldo estimado por integrante según su esquema de pago y actividad",
@@ -41,7 +46,7 @@ const DESCRIPTIONS: Record<Tab, string> = {
  * Hub "Equipo": junta en una pantalla el registro de actividad, la gestión
  * de usuarios/permisos y los turnos derivados de la actividad real (antes
  * /admin/actividad y /admin/usuarios, que hoy redirigen aquí).
- * ?tab=actividad|usuarios|turnos|desempeno; ?actor=<id>&anombre=<nombre>
+ * ?tab=actividad|usuarios|asistencia|turnos|desempeno|nomina; ?actor=<id>&anombre=<nombre>
  * pre-filtra el feed a una persona (enlace "Ver actividad" del tab Usuarios).
  */
 export function EquipoPanel() {
@@ -86,6 +91,10 @@ export function EquipoPanel() {
                             <Users className="h-4 w-4" />
                             Usuarios
                         </TabsTrigger>
+                        <TabsTrigger value="asistencia" className="flex items-center gap-2">
+                            <LogIn className="h-4 w-4" />
+                            Asistencia
+                        </TabsTrigger>
                         <TabsTrigger value="turnos" className="flex items-center gap-2">
                             <Clock className="h-4 w-4" />
                             Turnos
@@ -113,6 +122,10 @@ export function EquipoPanel() {
 
                 <TabsContent value="usuarios" className="mt-0">
                     <UsuariosPanel />
+                </TabsContent>
+
+                <TabsContent value="asistencia" className="mt-0">
+                    <AsistenciaPanel />
                 </TabsContent>
 
                 <TabsContent value="turnos" className="mt-0">

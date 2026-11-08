@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   saleFindMany: vi.fn(),
   auditFindMany: vi.fn(),
   opFindMany: vi.fn(),
+  clockFindMany: vi.fn(),
   auditRecord: vi.fn(),
 }))
 
@@ -33,6 +34,7 @@ vi.mock("@/lib/prisma", () => ({
     sale: { findMany: mocks.saleFindMany },
     auditEvent: { findMany: mocks.auditFindMany },
     businessOperation: { findMany: mocks.opFindMany },
+    clockEvent: { findMany: mocks.clockFindMany },
   },
 }))
 // La ruta de usuarios importa la bitácora completa; en el test basta una
@@ -79,6 +81,7 @@ beforeEach(() => {
   mocks.saleFindMany.mockResolvedValue([])
   mocks.auditFindMany.mockResolvedValue([])
   mocks.opFindMany.mockResolvedValue([])
+  mocks.clockFindMany.mockResolvedValue([])
   mocks.userFindUnique.mockResolvedValue(null)
   mocks.userUpdate.mockResolvedValue({})
 })

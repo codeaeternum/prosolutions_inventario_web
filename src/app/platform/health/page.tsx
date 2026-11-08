@@ -10,6 +10,7 @@ import {
   Activity,
   ArrowLeft,
   Building2,
+  DatabaseBackup,
   HeartPulse,
   ShieldAlert,
   ShoppingCart,
@@ -171,6 +172,36 @@ export default async function PlatformHealthPage() {
             <div className="text-2xl font-bold tabular-nums">{health.rateLimits.deniedLast24h}</div>
             <p className="text-xs text-muted-foreground">
               {rateLimitTop || "Sin rechazos · conteo de este proceso"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1.5">
+              <CardTitle className="text-sm font-medium">Último respaldo</CardTitle>
+              <CardDescription>Backup nocturno del host (BD + volúmenes)</CardDescription>
+            </div>
+            <span className={`rounded-lg p-2 shrink-0 ${health.backup.stale || !health.backup.ok ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-primary/10 text-primary"}`}>
+              <DatabaseBackup className="h-4 w-4" />
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold tabular-nums">
+              {!health.backup.configured
+                ? "Sin datos"
+                : health.backup.ageHours !== null
+                  ? `hace ${health.backup.ageHours} h`
+                  : "—"}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {!health.backup.configured
+                ? "El archivo de estado no existe o no se pudo leer"
+                : !health.backup.ok
+                  ? "El último respaldo terminó con errores"
+                  : health.backup.stale
+                    ? "Obsoleto — corre a diario, no debería pasar de 48 h"
+                    : "Al corriente"}
             </p>
           </CardContent>
         </Card>

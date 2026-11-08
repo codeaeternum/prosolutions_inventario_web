@@ -28,6 +28,7 @@ import { formatPrice, formatDate } from "@/lib/utils"
 import { PriceDisplay } from "@/components/price-display"
 import { OnboardingCard } from "@/components/admin/onboarding-card"
 import { BackupStatusBanner } from "@/components/admin/backup-status-banner"
+import { AsistenciaWidget } from "@/components/admin/asistencia-widget"
 import { getPendientes, type PendienteSeverity } from "@/lib/pendientes"
 
 async function getDashboardStats() {
@@ -256,6 +257,10 @@ export default async function AdminDashboard() {
           Resumen general y métricas de operación
         </p>
       </div>
+
+      {/* Checador del staff: el layout solo deja pasar ADMIN/EMPLOYEE, así
+          que aquí lo ve cualquier rol de personal (nunca clientes). */}
+      <AsistenciaWidget userId={session?.user?.id} />
 
       {stats.dbError && (
         <div

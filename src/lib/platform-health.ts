@@ -1,6 +1,7 @@
 import type { RepairStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { getRateLimitStats, type RateLimitStats } from "@/lib/rate-limit"
+import { readBackupStatus, type BackupStatusSummary } from "@/lib/backup-status"
 
 /**
  * Salud global de la plataforma (consola Reficio, solo superadmin).
@@ -53,6 +54,8 @@ export interface PlatformHealth {
   }
   /** 429 servidas por el rate-limiter en las últimas 24 h (memoria del proceso). */
   rateLimits: RateLimitStats
+  /** Frescura del respaldo nocturno del host (status JSON del script de backup). */
+  backup: BackupStatusSummary
   generatedAt: Date
 }
 
@@ -70,6 +73,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     ordersOpen,
     eventsTotal,
     eventsLast,
+    backupStatus,
   ] = await Promise.all([
     prisma.business.count(),
     prisma.business.count({ where: { isActive: true } }),
@@ -89,7 +93,17 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     }),
     prisma.platformEvent.count(),
     prisma.platformEvent.aggregate({ _max: { createdAt: true } }),
+    readBackupStatus(),
   ])
+
+  // `raw` trae rutas del host (backupRoot): no entra a la respuesta.
+  const backup: BackupStatusSummary = {
+    configured: backupStatus.configured,
+    ok: backupStatus.ok,
+    finishedAt: backupStatus.finishedAt,
+    ageHours: backupStatus.ageHours,
+    stale: backupStatus.stale,
+  }
 
   return {
     businesses: {
@@ -111,6 +125,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     repairs: { openCount: ordersOpen },
     platformEvents: { total: eventsTotal, lastAt: eventsLast._max.createdAt },
     rateLimits: getRateLimitStats(),
+    backup,
     generatedAt: new Date(),
   }
 }

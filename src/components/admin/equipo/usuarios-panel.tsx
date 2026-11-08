@@ -48,6 +48,7 @@ import { formatDate } from "@/lib/utils"
 import { csvCell } from "@/lib/csv"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -196,6 +197,10 @@ export function UsuariosPanel() {
 
   const [updating, setUpdating] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  // Motivo opcional capturado en el diálogo de suspensión (viaja al audit).
+  const [suspensionReason, setSuspensionReason] = useState("")
+  // Promover a ADMIN pide confirmación aparte: concede acceso total.
+  const [promoteAdminUser, setPromoteAdminUser] = useState<User | null>(null)
 
   /**
    * Escribe filtros en la URL (replace: no ensucia el historial). `null` o ""
@@ -378,7 +383,7 @@ export function UsuariosPanel() {
 
   const updateUser = async (
     id: string,
-    data: { status?: string; customerType?: string; role?: string; homeBranchId?: string },
+    data: { status?: string; customerType?: string; role?: string; homeBranchId?: string; suspensionReason?: string },
     opts?: { successToast?: string }
   ) => {
     setUpdating(id)
@@ -1303,7 +1308,11 @@ export function UsuariosPanel() {
                           <Select
                             value={user.role}
                             onValueChange={(value) =>
-                              updateUser(user.id, { role: value })
+                              // Subir a ADMIN abre confirmación; cualquier
+                              // otro cambio de rol se aplica directo.
+                              value === "ADMIN"
+                                ? setPromoteAdminUser(user)
+                                : updateUser(user.id, { role: value })
                             }
                           >
                             <SelectTrigger
@@ -1492,10 +1501,11 @@ export function UsuariosPanel() {
       </Tabs>
 
       {/* Confirmación de acciones de cuenta: la copia dice qué pasa al
-          confirmar (no un genérico "¿estás seguro?"). */}
+          confirmar (no un genérico "¿estás seguro?"). Al suspender se puede
+          anotar el motivo — queda en el detalle de la bitácora. */}
       <AlertDialog
         open={confirmAction !== null}
-        onOpenChange={(open) => { if (!open) setConfirmAction(null) }}
+        onOpenChange={(open) => { if (!open) { setConfirmAction(null); setSuspensionReason("") } }}
       >
         <AlertDialogContent>
           {confirmAction && (
@@ -1508,20 +1518,72 @@ export function UsuariosPanel() {
                   {confirmCopy[confirmAction.kind].desc}
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {confirmAction.kind === "suspender" && (
+                <div className="space-y-2 py-1">
+                  <Label htmlFor="suspension-reason">Motivo (opcional)</Label>
+                  <Textarea
+                    id="suspension-reason"
+                    value={suspensionReason}
+                    maxLength={200}
+                    placeholder="Ej: faltas injustificadas, fin de temporada…"
+                    onChange={(e) => setSuspensionReason(e.target.value)}
+                  />
+                </div>
+              )}
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => {
                     const action = confirmAction
+                    const reason = suspensionReason.trim()
                     setConfirmAction(null)
+                    setSuspensionReason("")
                     void updateUser(
                       action.user.id,
-                      { status: action.to },
+                      {
+                        status: action.to,
+                        ...(action.kind === "suspender" && reason ? { suspensionReason: reason } : {}),
+                      },
                       { successToast: confirmCopy[action.kind].toast }
                     )
                   }}
                 >
                   {confirmCopy[confirmAction.kind].cta}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmación de promoción a ADMIN: el rol da acceso total al
+          negocio, así que no se concede con un solo click en el select. */}
+      <AlertDialog
+        open={promoteAdminUser !== null}
+        onOpenChange={(open) => { if (!open) setPromoteAdminUser(null) }}
+      >
+        <AlertDialogContent>
+          {promoteAdminUser && (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  ¿Hacer administrador a {promoteAdminUser.name}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Tendrá acceso total a la configuración y datos del negocio:
+                  podrá gestionar usuarios, permisos y ajustes sensibles.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    const target = promoteAdminUser
+                    setPromoteAdminUser(null)
+                    void updateUser(target.id, { role: "ADMIN" })
+                  }}
+                >
+                  Sí, hacer administrador
                 </AlertDialogAction>
               </AlertDialogFooter>
             </>

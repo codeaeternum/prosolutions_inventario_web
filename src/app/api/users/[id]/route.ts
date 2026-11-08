@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
+import type { Prisma } from "@prisma/client"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
@@ -17,9 +18,12 @@ const accessSchema = z.object({
 
 // Estatus y tipo de cliente viajan por enum estricto: antes se aplicaban
 // crudos del body y un valor fuera de catálogo llegaba a Prisma como 500.
+// `suspensionReason` no es columna de User: solo acompaña a un cambio a
+// REJECTED y vive en el detalle del evento de bitácora.
 const accountSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
   customerType: z.enum(["NORMAL", "TECHNICIAN", "STORE"]).optional(),
+  suspensionReason: z.string().trim().max(200).optional(),
 })
 
 // Esquema de pago del staff (solo ADMIN lo escribe): un solo tipo en v1 —
@@ -90,6 +94,7 @@ export async function PATCH(
       role !== undefined ||
       status !== undefined ||
       customerType !== undefined ||
+      body.suspensionReason !== undefined ||
       quickPin !== undefined ||
       body.allowedModules !== undefined ||
       body.allowedBranchIds !== undefined ||
@@ -108,11 +113,13 @@ export async function PATCH(
 
     // Enum estricto para estatus y tipo de cliente (400 en vez de un 500
     // de Prisma cuando llegaba un valor inventado).
-    const accountParsed = accountSchema.safeParse({ status, customerType })
+    const accountParsed = accountSchema.safeParse({ status, customerType, suspensionReason: body.suspensionReason })
     if (!accountParsed.success) {
-      return NextResponse.json({ error: "Estatus o tipo de cliente inválido" }, { status: 400 })
+      return NextResponse.json({ error: "Estatus, tipo de cliente o motivo de suspensión inválidos" }, { status: 400 })
     }
     const { status: statusUpdate, customerType: customerTypeUpdate } = accountParsed.data
+    // "" (tras trim) equivale a no enviar motivo.
+    const suspensionReason = accountParsed.data.suspensionReason || undefined
 
     const payParsed = paySchema.safeParse({
       payType: body.payType,
@@ -248,14 +255,17 @@ export async function PATCH(
       sucursales: user.allowedBranchIds,
       esquemaPago: payTypeUpdate ?? existingUser.payType,
     }
-    const changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
+    let changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
     // Tarifa y % se auditan solo como "cambió el esquema de pago": la
     // bitácora no guarda importes de sueldo.
     const payChanged =
       (payTypeUpdate !== undefined && payTypeUpdate !== existingUser.payType) ||
       (payRateUpdate !== undefined && payRateUpdate !== existingUser.payRateCents) ||
       (commissionUpdate !== undefined && commissionUpdate !== existingUser.commissionPct)
-    if (changes || quickPinUpdate !== undefined || payChanged) {
+    // El motivo solo tiene sentido cuando el cambio deja la cuenta
+    // suspendida; con otro estatus se descarta aunque llegue en el body.
+    const motivoSuspension = statusUpdate === "REJECTED" ? suspensionReason : undefined
+    if (changes || quickPinUpdate !== undefined || payChanged || motivoSuspension) {
       const parts: string[] = []
       if (changes?.rol) parts.push(`Rol ${auditBefore.rol} → ${auditAfter.rol}`)
       if (changes?.estatus) parts.push(`Estatus ${auditBefore.estatus} → ${auditAfter.estatus}`)
@@ -266,6 +276,12 @@ export async function PATCH(
       if (changes?.modulos) parts.push(`Módulos: ${listText(auditBefore.modulos, "todos")} → ${listText(auditAfter.modulos, "todos")}`)
       if (changes?.sucursales) parts.push(`Sucursales: ${listText(auditBefore.sucursales, "todas")} → ${listText(auditAfter.sucursales, "todas")}`)
       if (quickPinUpdate !== undefined) parts.push(quickPinUpdate === null ? "PIN rápido eliminado" : "PIN rápido actualizado")
+      if (motivoSuspension) {
+        parts.push(`Motivo: "${motivoSuspension}"`)
+        // Va también al detalle machine-readable del evento (User no tiene
+        // columna para persistirlo).
+        ;(changes ??= {}).motivoSuspension = { before: null as unknown as Prisma.InputJsonValue, after: motivoSuspension }
+      }
       if (payChanged) {
         parts.push(
           changes?.esquemaPago

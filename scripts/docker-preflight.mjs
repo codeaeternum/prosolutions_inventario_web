@@ -74,6 +74,7 @@ export const REQUIRED_TABLES = [
   "NotificationRead",
   "PlatformEvent",
   "BusinessCounter",
+  "ClockEvent",
 ]
 
 const REQUIRED_COLUMNS = [
