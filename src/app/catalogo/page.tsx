@@ -79,13 +79,51 @@ type ProductWithDetails = Omit<Product, "wholesalePrice" | "minStock"> & {
 // useSearchParams exige un boundary de Suspense en build/prerender.
 export default function CatalogoPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    }>
+    <Suspense fallback={<CatalogoFallback />}>
       <CatalogoView />
     </Suspense>
+  )
+}
+
+// Skeleton a pantalla completa (misma forma que loading.tsx): se usa en el
+// fallback de Suspense y mientras la sesión resuelve — nunca un spinner suelto.
+function CatalogoFallback() {
+  return (
+    <div className="min-h-screen bg-background" role="status" aria-busy="true">
+      <span className="sr-only">Cargando catálogo…</span>
+      <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background">
+        <div className="container mx-auto max-w-7xl flex h-14 items-center justify-between px-4 gap-2 animate-pulse">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-muted" />
+            <div className="h-5 w-16 rounded bg-muted hidden sm:block" />
+          </div>
+          <div className="hidden md:block h-9 flex-1 max-w-md mx-4 rounded-md bg-muted" />
+          <div className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-md bg-muted" />
+            <div className="h-9 w-9 rounded-md bg-muted" />
+          </div>
+        </div>
+      </header>
+      <div className="container mx-auto max-w-7xl px-4 py-4 animate-pulse">
+        <div className="md:hidden flex gap-2 mb-4">
+          <div className="h-9 flex-1 rounded-md bg-muted" />
+          <div className="h-9 w-9 rounded-md bg-muted" />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="rounded-xl border bg-card overflow-hidden">
+              <div className="aspect-square bg-muted" />
+              <div className="p-3 space-y-2">
+                <div className="h-3 w-1/2 rounded bg-muted" />
+                <div className="h-4 w-full rounded bg-muted" />
+                <div className="h-3 w-2/3 rounded bg-muted" />
+                <div className="h-5 w-1/3 rounded bg-muted mt-2" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -320,11 +358,7 @@ function CatalogoView() {
   )
 
   if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
+    return <CatalogoFallback />
   }
 
   const handleAddToCartClick = (product: ProductWithDetails) => {
@@ -394,15 +428,17 @@ function CatalogoView() {
                 <Button
                   variant="outline"
                   size="icon"
+                  aria-label="Reducir cantidad"
                   onClick={() => setQuantity(Math.max(1, quantity - 1))}
                   disabled={quantity <= 1}
                 >
                   -
                 </Button>
-                <span className="w-12 text-center font-bold">{quantity}</span>
+                <span className="w-12 text-center font-bold" aria-live="polite">{quantity}</span>
                 <Button
                   variant="outline"
                   size="icon"
+                  aria-label="Aumentar cantidad"
                   onClick={() => setQuantity(Math.min(selectedProduct?.stock || 1, quantity + 1))}
                   disabled={quantity >= (selectedProduct?.stock || 1)}
                 >
@@ -723,8 +759,10 @@ function CatalogoView() {
           {/* Products grid */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm text-muted-foreground">
-                {total} producto{total !== 1 ? 's' : ''}
+              <p className="text-sm text-muted-foreground" aria-live="polite">
+                {loading && products.length > 0
+                  ? "Actualizando…"
+                  : `${total} producto${total !== 1 ? 's' : ''}`}
               </p>
             </div>
 
@@ -733,7 +771,7 @@ function CatalogoView() {
                 <p>{loadError}</p>
                 <Button variant="outline" onClick={() => setReload((value) => value + 1)}>Reintentar</Button>
               </div>
-            ) : loading ? (
+            ) : loading && products.length === 0 ? (
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" aria-busy="true" aria-label="Cargando productos">
                 {[...Array(6)].map((_, i) => (
                   <Card key={i} className="animate-pulse overflow-hidden">
@@ -758,7 +796,12 @@ function CatalogoView() {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              // Con datos previos se atenúa el grid en lugar de destellar al
+              // skeleton en cada filtro/página (keep-previous-data).
+              <div
+                className={`grid grid-cols-2 lg:grid-cols-3 gap-3 transition-opacity ${loading ? "opacity-50 pointer-events-none" : ""}`}
+                aria-busy={loading}
+              >
                 {products.map((product) => (
                   <Card key={product.id} className="overflow-hidden group hover:shadow-md transition-shadow relative">
                     {/* Card Content - Make clickable for details */}

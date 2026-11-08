@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExportButton } from "@/components/admin/export-button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CheckCircle, ClipboardList, QrCode, ReceiptText, RotateCcw, ScanBarcode, ShoppingCart } from "lucide-react"
+import { CheckCircle, ClipboardList, Keyboard, QrCode, ReceiptText, RotateCcw, ScanBarcode, ShoppingCart, Volume2, VolumeX } from "lucide-react"
 import { toast } from "sonner"
 import { formatPrice } from "@/lib/utils"
 import { CartPanel } from "@/components/pos/cart-panel"
@@ -23,11 +23,13 @@ import { ParkedSalesSheet } from "@/components/pos/parked-sales-sheet"
 import { QuotesSheet } from "@/components/pos/quotes-sheet"
 import { SalesReturnsSheet } from "@/components/pos/sales-returns-sheet"
 import { ProductCatalog } from "@/components/pos/product-catalog"
-import { ShortcutHints } from "@/components/pos/shortcut-hints"
+import { ShortcutHints, ShortcutsHelpDialog } from "@/components/pos/shortcut-hints"
 import { SuspendDialog } from "@/components/pos/suspend-dialog"
 import { usePosDocuments } from "@/components/pos/use-pos-documents"
+import { playPosTone, posSoundEnabled, setPosSoundEnabled } from "@/components/pos/pos-sound"
+import { POS_TICKET_STORAGE_KEY, parsePosTicket, serializePosTicket } from "@/components/pos/ticket-storage"
 import {
-    cartTotalOf, cartUnitsOf, exactCodeMatches,
+    cartTotalOf, cartUnitsOf, exactCodeMatches, parseQuantityCode,
     type CartItem, type CheckoutResult, type PosCustomer, type PosProduct,
 } from "@/components/pos/types"
 
@@ -50,10 +52,23 @@ export default function VentasPage() {
         typeof window !== "undefined" && new URLSearchParams(window.location.search).get("escanear") === "1")
     const [scanMode, setScanMode] = useState<"producto" | "qr">(() =>
         typeof window !== "undefined" && new URLSearchParams(window.location.search).get("escanear") === "1" ? "qr" : "producto")
-    const [cart, setCart] = useState<CartItem[]>([])
-    const [customer, setCustomer] = useState<PosCustomer | null>(null)
+    // Borrador del ticket en localStorage: un reload o un corte a medio cobro
+    // no pierde las líneas capturadas. No aplica al llegar con ?encargo= — el
+    // prefill del encargo es la intención explícita y no debe pisarse. El
+    // servidor revalida precios y existencias al cobrar (borrador, no verdad).
+    const [restoredTicket] = useState(() => {
+        if (typeof window === "undefined") return null
+        try {
+            if (new URLSearchParams(window.location.search).get("encargo")) return null
+            return parsePosTicket(localStorage.getItem(POS_TICKET_STORAGE_KEY), Date.now())
+        } catch {
+            return null
+        }
+    })
+    const [cart, setCart] = useState<CartItem[]>(() => restoredTicket?.cart ?? [])
+    const [customer, setCustomer] = useState<PosCustomer | null>(() => restoredTicket?.customer ?? null)
     // Nota a taller: precio de taller. Un cliente STORE/TECHNICIAN la fuerza.
-    const [workshopSale, setWorkshopSale] = useState(false)
+    const [workshopSale, setWorkshopSale] = useState(() => restoredTicket?.workshopSale ?? false)
     const [resumedDoc, setResumedDoc] = useState<{ id: string; number: number; kind?: string } | null>(null)
     const [lastTicket, setLastTicket] = useState<LastTicket | null>(null)
     const [processing, setProcessing] = useState(false)
@@ -61,6 +76,11 @@ export default function VentasPage() {
     const [docsRefreshKey, setDocsRefreshKey] = useState(0)
     const [showCheckout, setShowCheckout] = useState(false)
     const [showSuspend, setShowSuspend] = useState(false)
+    const [showShortcuts, setShowShortcuts] = useState(false)
+    // Flash en la línea recién agregada + beep: certeza de alta sin mirar.
+    const [flash, setFlash] = useState<{ productId: string; nonce: number } | null>(null)
+    const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [soundOn, setSoundOn] = useState(() => typeof window === "undefined" ? true : posSoundEnabled())
     const [showParked, setShowParked] = useState(false)
     // ?apartados=1 — los apartados mostrador de Pedidos (/admin/clientes?tab=pedidos) abren el cajón.
     // Estado inicial perezoso: abrir un drawer al montar es estado inicial, no efecto.
@@ -153,6 +173,24 @@ export default function VentasPage() {
         }
     }, [])
 
+    // Aviso único al recuperar el borrador (montaje): el cajero sabe de dónde
+    // salieron esas líneas — y "Vaciar ticket" las descarta si no eran.
+    useEffect(() => {
+        if (restoredTicket) toast.info("Se recuperó el ticket que quedó sin cobrar")
+    }, [restoredTicket])
+
+    // El flash no deja timers colgados al desmontar.
+    useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current) }, [])
+
+    // El borrador se reescribe con cada cambio del ticket y se borra al
+    // vaciarlo — un ticket cobrado/suspendido no resucita en el próximo load.
+    useEffect(() => {
+        try {
+            if (cart.length === 0) localStorage.removeItem(POS_TICKET_STORAGE_KEY)
+            else localStorage.setItem(POS_TICKET_STORAGE_KEY, serializePosTicket({ cart, customer, workshopSale }, activeBranchId))
+        } catch { /* storage lleno o modo privado: el ticket sigue en memoria */ }
+    }, [cart, customer, workshopSale, activeBranchId])
+
     useEffect(() => {
         // activeBranchId ya espera a la sesión y cae en una sucursal visible:
         // nunca se consulta la caja de una sucursal ajena (403 → "cerrada").
@@ -182,7 +220,7 @@ export default function VentasPage() {
     const workshopActive = workshopSale || workshopCustomer
     const cartTotal = cartTotalOf(cart, workshopActive)
     const cartUnits = cartUnitsOf(cart)
-    const clearTicket = useCallback(() => { setCart([]); setCustomer(null); setWorkshopSale(false); setResumedDoc(null) }, [])
+    const clearTicket = useCallback(() => { setCart([]); setCustomer(null); setWorkshopSale(false); setResumedDoc(null); setFlash(null) }, [])
 
     // Un documento suspendido se cobra con sus líneas snapshot: si el cajero
     // edita el ticket retomado, se desliga y cobra como venta nueva (la
@@ -206,20 +244,32 @@ export default function VentasPage() {
             : item))
     }
 
-    const addToCart = (product: PosProduct) => {
+    const addToCart = (product: PosProduct, quantity = 1) => {
         if (submitting.current) return
         const existing = cart.find(item => item.product.id === product.id)
-        if (product.stock < 1 || (existing?.quantity ?? 0) >= product.stock) {
-            toast.error("No hay más existencias disponibles de este producto")
+        const room = product.stock - (existing?.quantity ?? 0)
+        if (product.stock < 1 || room <= 0) {
+            if (soundOn) playPosTone("error")
+            toast.error(product.stock < 1
+                ? `«${product.name}» no tiene existencias en esta sucursal`
+                : `Ya está en el ticket lo que hay de «${product.name}» (${product.stock} en existencia)`)
             return
         }
+        const addQty = Math.min(quantity, room)
+        if (addQty < quantity) toast.info(`Solo había ${room} en existencia — se agregó${room === 1 ? "" : "ron"} ${addQty}`)
         detachIfResumed()
         setCart(prev => {
             const found = prev.find(item => item.product.id === product.id)
-            if (found) return prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + 1) } : item)
-            return [...prev, { product, quantity: 1 }]
+            if (found) return prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + addQty) } : item)
+            return [...prev, { product, quantity: addQty }]
         })
         setSearchQuery("")
+        setFlash(prev => ({ productId: product.id, nonce: (prev?.nonce ?? 0) + 1 }))
+        // El flash expira solo: si el ticket móvil se abre después, la línea
+        // ya no debe "destellar" una alta vieja.
+        if (flashTimer.current) clearTimeout(flashTimer.current)
+        flashTimer.current = setTimeout(() => setFlash(null), 700)
+        if (soundOn) playPosTone("add")
     }
 
     const updateQuantity = (productId: string, delta: number) => {
@@ -239,12 +289,26 @@ export default function VentasPage() {
         const clean = code.trim()
         if (!clean) return false
         try {
-            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(clean)}${activeBranchId ? `&branchId=${activeBranchId}` : ""}`)
-            if (!res.ok) throw new Error()
-            const data: { products?: PosProduct[] } = await res.json()
-            const matches = exactCodeMatches(data.products ?? [], clean)
+            const search = async (q: string) => {
+                const res = await fetch(`/api/search/pos?q=${encodeURIComponent(q)}${activeBranchId ? `&branchId=${activeBranchId}` : ""}`)
+                if (!res.ok) throw new Error()
+                const data: { products?: PosProduct[] } = await res.json()
+                return data.products ?? []
+            }
+            const matches = exactCodeMatches(await search(clean), clean)
             if (matches.length === 1) { addToCart(matches[0]); return true }
-            if (!opts?.quietMiss) toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "Sin coincidencia exacta. Busca y selecciona el producto manualmente.")
+            // "5*750123": cantidad + código en un escaneo. Se prueba DESPUÉS
+            // del match completo: un barcode que empiece "5X…" sigue entrando
+            // entero; solo el texto que NO es barcode se reinterpreta.
+            const qtyCode = parseQuantityCode(clean)
+            if (qtyCode) {
+                const qtyMatches = exactCodeMatches(await search(qtyCode.code), qtyCode.code)
+                if (qtyMatches.length === 1) { addToCart(qtyMatches[0], qtyCode.quantity); return true }
+            }
+            if (!opts?.quietMiss) {
+                if (soundOn) playPosTone("error")
+                toast.error(matches.length > 1 ? "El código coincide con más de un producto. Selecciónalo en la búsqueda." : "Sin coincidencia exacta. Busca y selecciona el producto manualmente.")
+            }
             return false
         } catch {
             if (!opts?.quietMiss) toast.error("Error al buscar producto")
@@ -301,8 +365,11 @@ export default function VentasPage() {
         const ticketUrl = result.ticketId ? `/admin/tickets/venta/${result.ticketId}${result.paidWithCard ? "?copias=2" : ""}` : undefined
         setLastTicket({ kind: result.kind, description: result.description, quantity: result.quantity, total: result.total, ticketUrl })
         clearTicket()
+        setEncargoCtx(null) // la venta saldó el encargo: la tarjeta ámbar ya no aplica
         setShowCheckout(false)
         setDocsRefreshKey(k => k + 1)
+        // La siguiente venta arranca escaneando: el foco vuelve al buscador.
+        setTimeout(() => (document.getElementById("pos-product-search") as HTMLInputElement | null)?.focus(), 0)
         const folio = result.number != null ? ` #${String(result.number).padStart(6, "0")}` : ""
         const detail = `${result.description} — ${result.quantity} ud(s) · ${formatPrice(result.total)}`
         if (result.kind === "LAYAWAY") {
@@ -324,21 +391,37 @@ export default function VentasPage() {
         }
     }, [autoTicket, clearTicket, encargoCtx])
 
-    // Atajos de mostrador: F2/Ctrl+Enter cobran, F4 abre tickets/devoluciones, Esc limpia. +/−/Supr van en cada línea del ticket.
-    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showSalesHistory || showScanner || showMobileCart
+    // Atajos de mostrador: F2/Ctrl+Enter cobran, / enfoca el buscador, F4 tickets,
+    // F9 suspende, ? muestra la ayuda, Esc limpia. +/−/↑/↓/Supr van en cada línea.
+    const anyOverlayOpen = showCheckout || showSuspend || showParked || showLayaways || showQuotes || showSalesHistory || showScanner || showMobileCart || showShortcuts
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             const t = e.target as HTMLElement | null
             const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
-            // Con cualquier overlay abierto F2/Ctrl+Enter no disparan otro
-            // cobro — antes apilaban el checkout encima del diálogo activo.
+            // Con cualquier overlay abierto los atajos del ticket no disparan —
+            // antes apilaban el checkout encima del diálogo activo.
             if (!anyOverlayOpen && (e.key === "F2" || ((e.ctrlKey || e.metaKey) && e.key === "Enter"))) {
                 if (e.key === "F2" || !typing) { e.preventDefault(); if (cart.length > 0 && !submitting.current) setShowCheckout(true) }
+                return
+            }
+            if (!anyOverlayOpen && !typing && e.key === "/") {
+                e.preventDefault()
+                document.getElementById("pos-product-search")?.focus()
+                return
+            }
+            if (!anyOverlayOpen && !typing && e.key === "?") {
+                e.preventDefault()
+                setShowShortcuts(true)
                 return
             }
             if (!anyOverlayOpen && e.key === "F4") {
                 e.preventDefault()
                 setShowSalesHistory(true)
+                return
+            }
+            if (!anyOverlayOpen && e.key === "F9") {
+                e.preventDefault()
+                if (cart.length > 0 && !submitting.current) setShowSuspend(true)
                 return
             }
             if (e.key === "Escape" && !anyOverlayOpen && searchQuery) setSearchQuery("")
@@ -350,7 +433,7 @@ export default function VentasPage() {
     const setBusy = (busy: boolean) => { submitting.current = busy; setProcessing(busy) }
     const panelProps = {
         cart, workshopActive, customer, onCustomerChange: setCustomer, resumedDoc,
-        onDetachResumed: detachIfResumed, processing, cajaOpen,
+        onDetachResumed: detachIfResumed, processing, cajaOpen, flash,
         onUpdateQuantity: updateQuantity, onRemove: removeFromCart, onClear: clearTicket,
         onCheckout: () => setShowCheckout(true), onSuspend: () => setShowSuspend(true),
         onOpenParked: () => setShowParked(true), onOpenLayaways: () => setShowLayaways(true),
@@ -389,6 +472,24 @@ export default function VentasPage() {
                     </Button>
                     <Button onClick={() => { setScanMode("producto"); setShowScanner(true) }} disabled={processing} variant="outline">
                         <ScanBarcode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Escanear</span>
+                    </Button>
+                    <Button
+                        variant="ghost" size="icon"
+                        onClick={() => setSoundOn(prev => { const next = !prev; setPosSoundEnabled(next); return next })}
+                        title={soundOn ? "Silenciar beeps del mostrador" : "Activar beeps del mostrador"}
+                        aria-label={soundOn ? "Silenciar beeps" : "Activar beeps"}
+                        aria-pressed={soundOn}
+                    >
+                        {soundOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+                    </Button>
+                    <Button
+                        variant="ghost" size="icon"
+                        className="hidden sm:inline-flex"
+                        onClick={() => setShowShortcuts(true)}
+                        title="Atajos de teclado (?)"
+                        aria-label="Atajos de teclado"
+                    >
+                        <Keyboard className="h-5 w-5" />
                     </Button>
                 </div>
             </div>
@@ -456,9 +557,10 @@ export default function VentasPage() {
                 customer={customer} onCustomerChange={setCustomer} branchId={activeBranchId} cajaOpen={cajaOpen}
                 resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket} onCompleted={handleCompleted} />
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />
-            <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <ParkedSalesSheet open={showParked} onOpenChange={setShowParked} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} hasTicket={cart.length > 0} />
             <LayawaysSheet open={showLayaways} onOpenChange={setShowLayaways} branchId={activeBranchId} refreshKey={docsRefreshKey} autoOpenTicket={autoTicket} />
-            <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} />
+            <QuotesSheet open={showQuotes} onOpenChange={setShowQuotes} branchId={activeBranchId} onResume={resumeDoc} refreshKey={docsRefreshKey} hasTicket={cart.length > 0} />
+            <ShortcutsHelpDialog open={showShortcuts} onOpenChange={setShowShortcuts} />
             <SalesReturnsSheet
                 open={showSalesHistory}
                 onOpenChange={setShowSalesHistory}

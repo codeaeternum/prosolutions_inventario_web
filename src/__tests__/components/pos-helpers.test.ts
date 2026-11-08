@@ -8,6 +8,7 @@ import {
     exactCodeMatches,
     paymentDraftsCents,
     paymentMethodsFor,
+    parseQuantityCode,
     toPaymentsPayload,
     type PaymentDraft,
     type PosDocumentDetail,
@@ -36,6 +37,40 @@ describe("exactCodeMatches", () => {
         expect(exactCodeMatches(list, "750")).toEqual([])
         expect(exactCodeMatches(list, "999")).toEqual([])
         expect(exactCodeMatches(list, "   ")).toEqual([])
+    })
+})
+
+// "5*750123" en el buscador/pistola: cantidad y código en un tecleo. Se
+// evalúa solo cuando el código completo NO matcheó — un barcode "5X…"
+// sigue entrando entero por exactCodeMatches.
+describe("parseQuantityCode", () => {
+    it("separa cantidad y código con *, x o ×", () => {
+        expect(parseQuantityCode("5*750123")).toEqual({ quantity: 5, code: "750123" })
+        expect(parseQuantityCode("5x750123")).toEqual({ quantity: 5, code: "750123" })
+        expect(parseQuantityCode("12×ABC-1")).toEqual({ quantity: 12, code: "ABC-1" })
+    })
+
+    it("tolera espacios alrededor del separador y del código", () => {
+        expect(parseQuantityCode("  3 * 750123 ")).toEqual({ quantity: 3, code: "750123" })
+    })
+
+    it("sin prefijo de cantidad devuelve null (el código va completo)", () => {
+        expect(parseQuantityCode("750123")).toBeNull()
+        expect(parseQuantityCode("filtro de aceite")).toBeNull()
+        expect(parseQuantityCode("")).toBeNull()
+        expect(parseQuantityCode("5*")).toBeNull()
+    })
+
+    it("un barcode tipo '5X123' sí parsea — el caller lo blinda probando el match completo primero", () => {
+        // Documenta el contrato: parseQuantityCode es ambiguo por diseño y
+        // addByExactCode lo consulta SOLO tras fallar el match exacto del
+        // código completo (un barcode real "5X123" nunca llega aquí).
+        expect(parseQuantityCode("5X123")).toEqual({ quantity: 5, code: "123" })
+    })
+
+    it("topa la cantidad: 0 sube a 1 y nunca pasa de 999", () => {
+        expect(parseQuantityCode("0*750123")?.quantity).toBe(1)
+        expect(parseQuantityCode("1234*750123")?.quantity).toBe(999)
     })
 })
 

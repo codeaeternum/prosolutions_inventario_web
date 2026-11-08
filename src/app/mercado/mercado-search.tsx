@@ -313,9 +313,24 @@ export function MercadoSearch({ children }: { children: ReactNode }) {
       {browsing ? (
         <section className="container mx-auto max-w-5xl px-4 pb-16 pt-8" aria-live="polite">
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              {category && !term ? "Cargando productos…" : "Buscando…"}
+            // Skeleton con la forma de las tarjetas: la búsqueda se siente
+            // instantánea en vez de saltar a un spinner.
+            <div role="status" aria-busy="true">
+              <span className="sr-only">
+                {category && !term ? "Cargando productos…" : "Buscando…"}
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 animate-pulse">
+                {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                  <div key={i} className="rounded-xl border bg-card overflow-hidden">
+                    <div className="aspect-square bg-muted" />
+                    <div className="p-3 space-y-2">
+                      <div className="h-3 w-1/2 rounded bg-muted" />
+                      <div className="h-4 w-full rounded bg-muted" />
+                      <div className="h-5 w-1/3 rounded bg-muted mt-2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : failed ? (
             <div className="rounded-xl border border-dashed p-10 text-center">

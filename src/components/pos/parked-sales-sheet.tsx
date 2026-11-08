@@ -28,15 +28,18 @@ interface ParkedSalesSheetProps {
     onResume: (docId: string) => Promise<boolean>
     /** Sube tras suspender/descartar para forzar recarga en la próxima apertura. */
     refreshKey: number
+    /** Hay líneas capturadas sin cobrar: recuperar pide confirmación — reemplaza el ticket. */
+    hasTicket?: boolean
 }
 
 /** Ventas suspendidas (documentos DRAFT/RETAIL) de la sucursal activa. */
-export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refreshKey }: ParkedSalesSheetProps) {
+export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refreshKey, hasTicket }: ParkedSalesSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
     // "Ahora" se fotografía al cargar: Date.now() en render viola react-hooks/purity.
     const [nowMs, setNowMs] = useState<number | null>(null)
     const [resumingId, setResumingId] = useState<string | null>(null)
+    const [resumeTarget, setResumeTarget] = useState<PosDocumentSummary | null>(null)
     const [discardTarget, setDiscardTarget] = useState<PosDocumentSummary | null>(null)
     const [discarding, setDiscarding] = useState(false)
     const discardKey = useRef(0)
@@ -78,6 +81,13 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
         } finally {
             setResumingId(null)
         }
+    }
+
+    // Recuperar PISA el ticket en curso: con líneas sin cobrar se confirma
+    // primero — antes reemplazaba en silencio un ticket a medio capturar.
+    const askResume = (doc: PosDocumentSummary) => {
+        if (hasTicket) setResumeTarget(doc)
+        else void resume(doc.id)
     }
 
     const discard = async () => {
@@ -147,7 +157,7 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
                                         <Button
                                             type="button" size="sm" className="flex-1"
                                             disabled={resumingId !== null}
-                                            onClick={() => void resume(doc.id)}
+                                            onClick={() => askResume(doc)}
                                         >
                                             {resumingId === doc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
                                             Recuperar
@@ -168,6 +178,31 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
                     )}
                 </SheetContent>
             </Sheet>
+
+            <AlertDialog open={resumeTarget !== null} onOpenChange={o => { if (!o && resumingId === null) setResumeTarget(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Reemplazar el ticket actual?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Recuperar la suspendida #{resumeTarget?.number} reemplazará las líneas capturadas en el ticket. Si lo necesitas, suspéndelo primero para no perderlo.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={resumingId !== null}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={resumingId !== null}
+                            onClick={() => {
+                                const doc = resumeTarget
+                                setResumeTarget(null)
+                                if (doc) void resume(doc.id)
+                            }}
+                        >
+                            {resumingId !== null ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Reemplazar ticket
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog open={discardTarget !== null} onOpenChange={o => { if (!o && !discarding) setDiscardTarget(null) }}>
                 <AlertDialogContent>

@@ -26,9 +26,11 @@ interface PageProps {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
   const target = await resolvePublicSlug(slug)
+  const title = target?.kind === "business" ? `Cotización — ${target.name}` : "Cotización"
   return {
-    title: target?.kind === "business" ? `Cotización — ${target.name}` : "Cotización",
+    title,
     description: "Consulta y autoriza la cotización de tu reparación.",
+    openGraph: { title },
     robots: { index: false, follow: false },
   }
 }

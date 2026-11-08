@@ -12,11 +12,14 @@ import { MercadoBusinesses } from "./mercado-businesses"
 // La API detrás tiene su propio s-maxage para el CDN.
 export const dynamic = "force-dynamic"
 
+const mercadoDescription =
+  "Encuentra talleres y refacciones: busca productos entre todos los negocios que publican su vitrina en Reficio."
+
 export const metadata: Metadata = {
   title: "Mercado",
-  description:
-    "Encuentra talleres y refacciones: busca productos entre todos los negocios que publican su vitrina en Reficio.",
+  description: mercadoDescription,
   alternates: { canonical: "/mercado" },
+  openGraph: { title: "Mercado — Reficio", description: mercadoDescription },
   robots: { index: true, follow: true },
 }
 

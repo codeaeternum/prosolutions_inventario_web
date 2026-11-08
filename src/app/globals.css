@@ -253,6 +253,22 @@ body {
   }
 }
 
+/* Flash al agregar una línea al ticket del POS: certeza de alta sin mirar
+   el toast. El span va con key={nonce} — remonta y re-anima en altas repetidas. */
+@keyframes pos-line-flash {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.pos-line-flash {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: hsl(var(--primary) / 0.22);
+  pointer-events: none;
+  animation: pos-line-flash 0.6s ease-out forwards;
+}
+
 /* Micro-interacciones en tarjetas clicables */
 a > [class*="card"]:hover,
 a > .hover\:shadow-md {

@@ -25,14 +25,19 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!target) {
     return { title: "Página no encontrada", robots: { index: false, follow: false } }
   }
+  const description =
+    target.kind === "business"
+      ? target.description ?? `Refacciones, accesorios y servicio de reparación en ${target.name}.`
+      : `${target.name} — taller aliado. Rastrea tu reparación en línea.`
   // Vitrina pública: indexable para ambos (el taller también quiere que sus
-  // clientes lo encuentren por nombre).
+  // clientes lo encuentren por nombre). El og:title/description llevan el
+  // nombre del negocio — sin ellos el preview de WhatsApp mostraría
+  // "Reficio | Software…" en vez de la marca que el cliente reconoce.
   return {
     title: target.name,
-    description:
-      target.kind === "business"
-        ? target.description ?? `Refacciones, accesorios y servicio de reparación en ${target.name}.`
-        : `${target.name} — taller aliado. Rastrea tu reparación en línea.`,
+    description,
+    alternates: { canonical: `/${target.slug}` },
+    openGraph: { title: target.name, description },
     robots: { index: true, follow: true },
   }
 }

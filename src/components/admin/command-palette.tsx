@@ -65,6 +65,9 @@ interface CommandItem {
   module?: ModuleKey
   // Solo ADMIN (p. ej. el hub de Equipo, que el sidebar también oculta).
   adminOnly?: boolean
+  // Secuencia de teclas estilo GitHub ("g d" = g y luego d) que dispara la
+  // misma acción sin abrir la paleta.
+  shortcut?: string
 }
 
 interface EntityResult {
@@ -83,6 +86,60 @@ function normalize(text: string) {
     .toLowerCase()
 }
 
+// Ventana para completar la secuencia "g" + letra (estilo GitHub).
+export const GO_SEQUENCE_MS = 800
+
+// Segunda tecla de un "g …" → comando cuyo shortcut coincide. La lista ya
+// viene filtrada por módulo/rol (visibleCommands), así que el gate del
+// sidebar se hereda solo: sin módulo taller no hay "g t".
+export function findGoCommand<T extends { shortcut?: string }>(
+  commands: readonly T[],
+  secondKey: string
+): T | null {
+  const want = `g ${secondKey.toLowerCase()}`
+  return commands.find(c => c.shortcut === want) ?? null
+}
+
+// ¿El evento de teclado nació en un campo editable? Entonces la letra le
+// pertenece al usuario y los atajos globales no deben interceptarla.
+// (`closest` cubre inputs dentro de regiones contenteditable y viceversa.)
+export function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) return false
+  return (
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT" ||
+    target.isContentEditable ||
+    target.closest("[contenteditable='true'], [contenteditable='']") !== null
+  )
+}
+
+// Un diálogo abierto (la propia paleta, un modal de Radix…) apaga los
+// atajos globales: las teclas le pertenecen a esa vista. Radix desmonta el
+// portal al cerrar, así que basta con que exista uno no "closed".
+function anyDialogOpen(): boolean {
+  if (typeof document === "undefined") return false
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')
+  ).some(el => el.dataset.state !== "closed")
+}
+
+// "g d" → [g][d] como teclas, igual que la ayuda de GitHub.
+function ShortcutKeys({ shortcut }: { shortcut: string }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1" aria-hidden>
+      {shortcut.split(" ").map(key => (
+        <kbd
+          key={key}
+          className="inline-flex h-5 min-w-5 items-center justify-center rounded border bg-muted px-1 font-mono text-[10px] font-medium text-muted-foreground"
+        >
+          {key}
+        </kbd>
+      ))}
+    </span>
+  )
+}
+
 const COMMANDS: CommandItem[] = [
   // ── Acciones rápidas ────────────────────────────────────────────────
   { id: "acc-vender", label: "Nueva venta", hint: "Abrir el mostrador (POS)", keywords: "vender cobrar ticket pos caja registradora", href: "/admin/ventas", icon: ShoppingCart, group: "Acciones rápidas", module: "ventas" },
@@ -93,41 +150,42 @@ const COMMANDS: CommandItem[] = [
   { id: "acc-etiquetas", label: "Imprimir etiquetas", hint: "Códigos de barras", keywords: "etiquetas barcode imprimir precios", href: "/admin/inventario?tab=stock&herramienta=etiquetas", icon: Tags, group: "Acciones rápidas", module: "inventario" },
 
   // ── Día a día ───────────────────────────────────────────────────────
-  { id: "nav-ventas", label: "Vender", hint: "Mostrador, cobrar y apartados", keywords: "pos ventas punto de venta", href: "/admin/ventas", icon: ShoppingCart, group: "Día a día", module: "ventas" },
-  { id: "nav-taller", label: "Órdenes de servicio", hint: "Taller · Tablero", keywords: "reparaciones ordenes trabajo ot", href: "/admin/taller", icon: Wrench, group: "Día a día", module: "taller" },
+  { id: "nav-ventas", label: "Vender", hint: "Mostrador, cobrar y apartados", keywords: "pos ventas punto de venta", href: "/admin/ventas", icon: ShoppingCart, group: "Día a día", module: "ventas", shortcut: "g v" },
+  { id: "nav-taller", label: "Órdenes de servicio", hint: "Taller · Tablero", keywords: "reparaciones ordenes trabajo ot", href: "/admin/taller", icon: Wrench, group: "Día a día", module: "taller", shortcut: "g t" },
   { id: "nav-taller-precios", label: "Precios de reparación", hint: "Taller · Catálogo de servicios", keywords: "catalogo servicios precios mano de obra", href: "/admin/taller?tab=precios", icon: Wrench, group: "Día a día", module: "taller" },
-  { id: "nav-stock", label: "Stock", hint: "Inventario · Productos", keywords: "productos existencias catalogo almacen", href: "/admin/inventario", icon: Boxes, group: "Día a día", module: "inventario" },
+  { id: "nav-stock", label: "Stock", hint: "Inventario · Productos", keywords: "productos existencias catalogo almacen", href: "/admin/inventario", icon: Boxes, group: "Día a día", module: "inventario", shortcut: "g i" },
   { id: "nav-entradas", label: "Entradas y compras", hint: "Inventario · Mercancía recibida", keywords: "compras lote recepcion proveedores", href: "/admin/inventario?tab=entradas", icon: Boxes, group: "Día a día", module: "inventario" },
   { id: "nav-proveedores", label: "Proveedores", hint: "Inventario · Entradas", keywords: "proveedor compras credito", href: "/admin/inventario?tab=entradas&sub=proveedores", icon: Boxes, group: "Día a día", module: "inventario" },
   { id: "nav-encargos", label: "Encargos", hint: "Inventario · Pedidos especiales", keywords: "encargo pedido especial sobre pedido", href: "/admin/inventario?tab=encargos", icon: Boxes, group: "Día a día", module: "inventario" },
   { id: "nav-historial", label: "Historial de movimientos", hint: "Inventario · Entradas y salidas", keywords: "movimientos kardex ajustes merma", href: "/admin/inventario?tab=historial", icon: Boxes, group: "Día a día", module: "inventario" },
-  { id: "nav-caja", label: "Caja · Turno actual", hint: "Corte, entradas y salidas", keywords: "corte dinero efectivo turno", href: "/admin/caja", icon: Wallet, group: "Día a día", module: "caja" },
+  { id: "nav-caja", label: "Caja · Turno actual", hint: "Corte, entradas y salidas", keywords: "corte dinero efectivo turno", href: "/admin/caja", icon: Wallet, group: "Día a día", module: "caja", shortcut: "g c" },
   { id: "nav-caja-mov", label: "Movimientos de caja", hint: "Caja · Historial", keywords: "gastos retiros depositos", href: "/admin/caja?tab=movimientos", icon: Wallet, group: "Día a día", module: "caja" },
   { id: "nav-caja-semana", label: "Semana de caja", hint: "Caja · Resumen", keywords: "semana resumen cortes", href: "/admin/caja?tab=semana", icon: Wallet, group: "Día a día", module: "caja" },
   { id: "nav-caja-sol", label: "Solicitudes de caja", hint: "Caja · Autorizaciones", keywords: "retiros autorizaciones solicitudes dinero", href: "/admin/caja?tab=solicitudes", icon: Wallet, group: "Día a día", module: "caja" },
   { id: "nav-caja-prov", label: "Pagos a proveedores", hint: "Caja · Proveedores", keywords: "pagar proveedor saldo", href: "/admin/caja?tab=proveedores", icon: Wallet, group: "Día a día", module: "caja" },
 
   // ── Clientes y mercado ──────────────────────────────────────────────
-  { id: "nav-clientes", label: "Clientes", hint: "Directorio y estado de cuenta", keywords: "directorio contactos", href: "/admin/clientes", icon: Users, group: "Clientes y mercado", module: "clientes" },
+  { id: "nav-clientes", label: "Clientes", hint: "Directorio y estado de cuenta", keywords: "directorio contactos", href: "/admin/clientes", icon: Users, group: "Clientes y mercado", module: "clientes", shortcut: "g u" },
   { id: "nav-cobranza", label: "Cobranza y fiado", hint: "Clientes · Crédito", keywords: "credito deuda abonos fiado saldo", href: "/admin/clientes?tab=cobranza", icon: Users, group: "Clientes y mercado", module: "clientes" },
   { id: "nav-pedidos", label: "Pedidos y reservas", hint: "Clientes · Apartados", keywords: "apartados reservas pedidos cliente", href: "/admin/clientes?tab=pedidos", icon: Users, group: "Clientes y mercado", module: "clientes" },
-  { id: "nav-mercado", label: "Mi publicación", hint: "Mercado · Vitrina aliada", keywords: "mercado publicar vitrina", href: "/admin/mercado", icon: Store, group: "Clientes y mercado", module: "mercado" },
+  { id: "nav-mercado", label: "Mi publicación", hint: "Mercado · Vitrina aliada", keywords: "mercado publicar vitrina", href: "/admin/mercado", icon: Store, group: "Clientes y mercado", module: "mercado", shortcut: "g m" },
   { id: "nav-mercado-cat", label: "Catálogo del mercado", hint: "Mercado · Comprar a aliados", keywords: "aliados refacciones comprar", href: "/admin/mercado?tab=catalogo", icon: Store, group: "Clientes y mercado", module: "mercado" },
   { id: "nav-mercado-sol", label: "Solicitudes del mercado", hint: "Mercado · Pedidos entre negocios", keywords: "solicitudes pedidos aliados", href: "/admin/mercado?tab=solicitudes", icon: Store, group: "Clientes y mercado", module: "mercado" },
   { id: "nav-mercado-compras", label: "Compras del mercado", hint: "Mercado · Lo que pedí", keywords: "compras aliados refacciones", href: "/admin/mercado?tab=compras", icon: Store, group: "Clientes y mercado", module: "mercado" },
   { id: "nav-mercado-cuentas", label: "Cuentas de convenio", hint: "Mercado · Convenio B2B", keywords: "convenio cuentas b2b aliados", href: "/admin/mercado?tab=cuentas", icon: Store, group: "Clientes y mercado", module: "mercado" },
 
   // ── Negocio ─────────────────────────────────────────────────────────
-  { id: "nav-reportes", label: "Reportes", hint: "Ventas, cortes y comparativos", keywords: "graficas estadisticas analitica", href: "/admin/reportes", icon: BarChart3, group: "Negocio", module: "reportes" },
+  { id: "nav-reportes", label: "Reportes", hint: "Ventas, cortes y comparativos", keywords: "graficas estadisticas analitica", href: "/admin/reportes", icon: BarChart3, group: "Negocio", module: "reportes", shortcut: "g r" },
+  { id: "nav-equipo", label: "Equipo", hint: "Actividad, usuarios y turnos", keywords: "empleados equipo hub staff", href: "/admin/equipo", icon: UsersRound, group: "Negocio", adminOnly: true, shortcut: "g e" },
   { id: "nav-usuarios", label: "Usuarios y permisos", hint: "Equipo · Cuentas", keywords: "empleados roles permisos modulos", href: "/admin/equipo?tab=usuarios", icon: UsersRound, group: "Negocio", module: "usuarios", adminOnly: true },
   { id: "nav-actividad", label: "Registro de actividad", hint: "Equipo · Bitácora", keywords: "actividad log auditoria historial", href: "/admin/equipo?tab=actividad", icon: UsersRound, group: "Negocio", adminOnly: true },
   { id: "nav-turnos", label: "Turnos del equipo", hint: "Equipo · Asistencia", keywords: "asistencia horarios sesiones", href: "/admin/equipo?tab=turnos", icon: UsersRound, group: "Negocio", adminOnly: true },
   { id: "nav-desempeno", label: "Desempeño", hint: "Equipo · Productividad", keywords: "metricas productividad empleados", href: "/admin/equipo?tab=desempeno", icon: UsersRound, group: "Negocio", adminOnly: true },
-  { id: "nav-config", label: "Configuración", hint: "Datos del negocio y taller", keywords: "ajustes negocio perfil", href: "/admin/configuracion", icon: Settings, group: "Negocio", module: "configuracion" },
+  { id: "nav-config", label: "Configuración", hint: "Datos del negocio y taller", keywords: "ajustes negocio perfil", href: "/admin/configuracion", icon: Settings, group: "Negocio", module: "configuracion", shortcut: "g s" },
   { id: "nav-sucursales", label: "Sucursales", hint: "Configuración · Sedes", keywords: "sucursal sede tienda", href: "/admin/configuracion?tab=sucursales", icon: Settings, group: "Negocio", module: "configuracion" },
 ]
 
-const HOME_COMMAND: CommandItem = { id: "nav-home", label: "Inicio", hint: "Panel principal", keywords: "dashboard resumen", href: "/admin", icon: LayoutDashboard, group: "Inicio" }
+const HOME_COMMAND: CommandItem = { id: "nav-home", label: "Inicio", hint: "Panel principal", keywords: "dashboard resumen", href: "/admin", icon: LayoutDashboard, group: "Inicio", shortcut: "g d" }
 const PARTNER_COMMAND: CommandItem = { id: "nav-aliado", label: "Portal aliado", hint: "Captar y dar seguimiento", keywords: "aliado taller captador", href: "/aliado", icon: Handshake, group: "Clientes y mercado" }
 const PLATFORM_COMMAND: CommandItem = { id: "nav-platform", label: "Consola de plataforma", hint: "Operador Reficio", keywords: "superadmin plataforma tenants", href: "/platform", icon: Shield, group: "Negocio" }
 
@@ -148,42 +206,18 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
   const [results, setResults] = useState<EntityResult[]>([])
   const [loading, setLoading] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  // true cuando la paleta se abrió con "?" → muestra el bloque de atajos.
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  // Secuencia "g …" armada (esperando la segunda tecla).
+  const [goPending, setGoPending] = useState(false)
+  const goPendingRef = useRef(false)
+  const goTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Atajo global ⌘K / Ctrl+K + evento para los botones "Buscar…".
-  useEffect(() => {
-    const openFromEvent = () => setOpen(true)
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault()
-        setOpen(prev => !prev)
-      }
-    }
-    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, openFromEvent)
-    document.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, openFromEvent)
-      document.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [])
-
-  // Estado limpio al cerrar: la siguiente apertura siempre arranca vacía.
-  // (Se resetea en el handler de cierre, no en un efecto de `open`.)
-  const resetPalette = useCallback(() => {
-    setQuery("")
-    setResults([])
-    setLoading(false)
-    setActiveIndex(0)
-  }, [])
-
-  const handleOpenChange = useCallback((next: boolean) => {
-    setOpen(next)
-    if (!next) resetPalette()
-  }, [resetPalette])
-
   // Mismo filtro por módulos que el sidebar (hasModule cubre ADMIN,
-  // lista vacía con restringidos de EMPLOYEE y alias legacy).
+  // lista vacía con restringidos de EMPLOYEE y alias legacy). Los atajos
+  // "g"+letra resuelven sobre esta lista → heredan el gate.
   const visibleCommands = useMemo(() => {
     if (user.role === "WORKSHOP") {
       const items = [PARTNER_COMMAND]
@@ -209,6 +243,110 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
       return hasModule({ role: user.role, allowedModules: user.allowedModules }, item.module)
     })
   }, [user.role, user.isSuperAdmin, user.allowedModules, hasPartner, businessKind])
+
+  // Estado limpio al cerrar: la siguiente apertura siempre arranca vacía.
+  // (Se resetea en el handler de cierre, no en un efecto de `open`.)
+  const resetPalette = useCallback(() => {
+    setQuery("")
+    setResults([])
+    setLoading(false)
+    setActiveIndex(0)
+    setShowShortcuts(false)
+  }, [])
+
+  const goTo = useCallback((href: string) => {
+    setOpen(false)
+    resetPalette()
+    router.push(href)
+  }, [router, resetPalette])
+
+  // Atajos globales:
+  // - ⌘K / Ctrl+K abre o cierra la paleta (único atajo con modificador).
+  // - "?" abre la paleta en modo ayuda (bloque de atajos visible).
+  // - "g" + letra (< GO_SEQUENCE_MS) navega como en GitHub, reutilizando
+  //   la misma lista de comandos ya filtrada por módulo/rol.
+  // Todo lo demás se ignora con modificadores, dentro de campos editables
+  // o mientras haya un diálogo abierto (incluida la propia paleta).
+  useEffect(() => {
+    const disarmGo = () => {
+      goPendingRef.current = false
+      setGoPending(false)
+      if (goTimerRef.current !== null) {
+        clearTimeout(goTimerRef.current)
+        goTimerRef.current = null
+      }
+    }
+    const armGo = () => {
+      if (goTimerRef.current !== null) clearTimeout(goTimerRef.current)
+      goPendingRef.current = true
+      setGoPending(true)
+      goTimerRef.current = setTimeout(disarmGo, GO_SEQUENCE_MS)
+    }
+    const openFromEvent = () => {
+      setShowShortcuts(false)
+      setOpen(true)
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setShowShortcuts(false)
+        setOpen(prev => !prev)
+        return
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return
+      if (isEditableShortcutTarget(e.target) || anyDialogOpen()) return
+
+      if (goPendingRef.current) {
+        disarmGo()
+        const item = findGoCommand(visibleCommands, e.key)
+        if (item) {
+          e.preventDefault()
+          goTo(item.href)
+        }
+        return
+      }
+      if (e.key === "g") {
+        armGo()
+        return
+      }
+      if (e.key === "?") {
+        e.preventDefault()
+        setShowShortcuts(true)
+        setOpen(true)
+      }
+    }
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, openFromEvent)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, openFromEvent)
+      document.removeEventListener("keydown", handleKeyDown)
+      if (goTimerRef.current !== null) clearTimeout(goTimerRef.current)
+      // Si la lista cambia a mitad de una secuencia, el indicador no queda
+      // armado para siempre.
+      goPendingRef.current = false
+      setGoPending(false)
+    }
+  }, [visibleCommands, goTo])
+
+  // Precalienta las primeras rutas visibles al abrir: la navegación desde
+  // la paleta (o con "g"+letra) se siente instantánea. Se deduplica por
+  // pathname porque varios comandos apuntan al mismo hub con ?tab=…
+  useEffect(() => {
+    if (!open) return
+    const seen = new Set<string>()
+    for (const cmd of visibleCommands) {
+      if (seen.size >= 10) break
+      const path = cmd.href.split("?")[0]
+      if (seen.has(path)) continue
+      seen.add(path)
+      router.prefetch(path)
+    }
+  }, [open, visibleCommands, router])
+
+  const handleOpenChange = useCallback((next: boolean) => {
+    setOpen(next)
+    if (!next) resetPalette()
+  }, [resetPalette])
 
   const q = normalize(query.trim())
 
@@ -291,12 +429,6 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
       ?.scrollIntoView({ block: "nearest" })
   }, [activeIndex])
 
-  const goTo = useCallback((href: string) => {
-    setOpen(false)
-    resetPalette()
-    router.push(href)
-  }, [router, resetPalette])
-
   const selectEntity = useCallback((result: EntityResult) => {
     if (result.type === "order") {
       goTo(`/admin/taller?orden=${encodeURIComponent(result.id)}`)
@@ -348,11 +480,12 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
   const entityBaseIndex = filteredCommands.length
 
   return (
+    <>
     <DialogPrimitive.Root open={open} onOpenChange={handleOpenChange}>
       <DialogPrimitive.Portal>
         <DialogOverlay className="z-[110] bg-black/60" />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-[10%] sm:top-[15%] z-[110] flex w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border bg-background shadow-2xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          className="fixed left-1/2 top-[10%] sm:top-[15%] z-[110] flex w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border bg-background shadow-2xl outline-none motion-safe:data-[state=open]:animate-in motion-safe:data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 motion-safe:data-[state=closed]:animate-out motion-safe:data-[state=closed]:fade-out-0 motion-safe:data-[state=closed]:zoom-out-95"
           onOpenAutoFocus={e => {
             // El foco debe caer en el input, no en el primer botón de la lista.
             e.preventDefault()
@@ -397,6 +530,34 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
               </p>
             )}
 
+            {/* Ayuda de atajos al abrir con "?": las mismas teclas que ya
+                funcionan fuera de la paleta, filtradas por módulo/rol. */}
+            {showShortcuts && !q && (
+              <div className="mb-1">
+                <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Atajos de teclado
+                </p>
+                {visibleCommands.filter(item => item.shortcut).map(item => (
+                  <button
+                    key={`shortcut-${item.id}`}
+                    type="button"
+                    onClick={() => goTo(item.href)}
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent/60"
+                  >
+                    <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                    <ShortcutKeys shortcut={item.shortcut!} />
+                  </button>
+                ))}
+                <p className="flex items-center gap-2 px-3 pb-1 pt-2 text-xs text-muted-foreground">
+                  <kbd className="rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>
+                  abre/cierra esta búsqueda ·
+                  <kbd className="rounded border bg-muted px-1 font-mono text-[10px]">?</kbd>
+                  esta ayuda
+                </p>
+              </div>
+            )}
+
             {groups.map(group => (
               <div key={group.name} className="mb-1">
                 <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -423,6 +584,7 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
                         <span className="block truncate text-xs text-muted-foreground">{item.hint}</span>
                       )}
                     </span>
+                    {item.shortcut && <ShortcutKeys shortcut={item.shortcut} />}
                   </button>
                 ))}
               </div>
@@ -489,10 +651,24 @@ export function AdminCommandPalette({ user, hasPartner = false, businessKind }: 
             <span className="flex items-center gap-1">
               <kbd className="rounded border bg-muted px-1 font-mono">↵</kbd> abrir
             </span>
+            <span className="hidden sm:inline">
+              <kbd className="rounded border bg-muted px-1 font-mono">?</kbd> atajos
+            </span>
             <span className="ml-auto hidden sm:inline">⌘K para abrir/cerrar</span>
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+
+    {/* "g" pulsada: se espera la segunda tecla de la secuencia. */}
+    {goPending && (
+      <div
+        role="status"
+        className="fixed bottom-4 right-4 z-[120] select-none rounded-md border bg-background px-2.5 py-1.5 font-mono text-xs text-muted-foreground shadow-md"
+      >
+        g…
+      </div>
+    )}
+    </>
   )
 }

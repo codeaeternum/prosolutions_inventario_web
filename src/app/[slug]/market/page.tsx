@@ -27,9 +27,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!target || target.kind !== "business") {
     return { title: "Mercado", robots: { index: false, follow: false } }
   }
+  const title = `Mercado de refacciones — ${target.name}`
+  const description = `Catálogo público de refacciones y accesorios de ${target.name}. Precios al público.`
   return {
-    title: `Mercado de refacciones — ${target.name}`,
-    description: `Catálogo público de refacciones y accesorios de ${target.name}. Precios al público.`,
+    title,
+    description,
+    alternates: { canonical: `/${target.slug}/market` },
+    openGraph: { title, description },
     robots: { index: true, follow: true },
   }
 }

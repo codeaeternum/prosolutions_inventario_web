@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { Suspense, useState, useEffect, useRef } from "react"
 import { useCart } from "@/components/cart-context"
 import { useCurrency } from "@/components/currency-provider"
 import { Button } from "@/components/ui/button"
@@ -20,7 +20,7 @@ import { Trash2, ShoppingCart, ArrowLeft, Upload, CheckCircle2, CreditCard, Cale
 import { toast } from "sonner"
 import Link from "next/link"
 import Image from "next/image"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ImageUpload } from "@/components/image-upload"
 import { ThemeToggle } from "@/components/theme-toggle"
 
@@ -28,10 +28,24 @@ import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-ope
 
 const DEFAULT_DEPOSIT_PERCENTAGE = 50
 
+// useSearchParams exige un boundary de Suspense en build/prerender.
 export default function CartPage() {
+    return (
+        <Suspense fallback={null}>
+            <CartView />
+        </Suspense>
+    )
+}
+
+function CartView() {
     const { items, removeItem, updateQuantity, clearCart, totalPrice } = useCart()
     const { formatPrice } = useCurrency()
     const router = useRouter()
+    const searchParams = useSearchParams()
+    // Vitrina de origen (?biz=<slug>): los links de regreso al catálogo y la
+    // configuración (depósito, tiempos) deben seguir en ESE negocio.
+    const biz = searchParams.get("biz")?.trim() || null
+    const catalogoHref = biz ? `/catalogo?biz=${encodeURIComponent(biz)}` : "/catalogo"
 
     const [reservationType, setReservationType] = useState<"TEMPORARY" | "DEPOSIT" | "CREDIT">("TEMPORARY")
     const [proofImages, setProofImages] = useState<string[]>([])
@@ -47,7 +61,6 @@ export default function CartPage() {
     useEffect(() => {
         // Vitrina de origen (?biz=<slug>, venido del catálogo): los porcentajes
         // de anticipo/reserva deben ser los de ESE negocio, no los del default.
-        const biz = new URLSearchParams(window.location.search).get("biz")?.trim()
         fetch(`/api/settings${biz ? `?biz=${encodeURIComponent(biz)}` : ""}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
@@ -58,7 +71,7 @@ export default function CartPage() {
             .catch(() => {
                 toast.error("No se pudo cargar la configuración. El porcentaje de depósito puede no ser correcto.")
             })
-    }, [])
+    }, [biz])
 
     useEffect(() => {
         fetch("/api/credit/balance")
@@ -122,7 +135,7 @@ export default function CartPage() {
                 <h1 className="text-2xl font-bold mb-2">Tu carrito está vacío</h1>
                 <p className="text-muted-foreground mb-8">Agrega productos del catálogo para reservar.</p>
                 <Button asChild>
-                    <Link href="/catalogo">
+                    <Link href={catalogoHref}>
                         <ArrowLeft className="mr-2 h-4 w-4" aria-hidden />
                         Ir al catálogo
                     </Link>
@@ -137,7 +150,7 @@ export default function CartPage() {
             <header className="sticky top-0 safe-area-sticky z-50 border-b bg-background/95 backdrop-blur px-4 h-14 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <Button variant="ghost" size="icon" asChild>
-                        <Link href="/catalogo" aria-label="Volver al catálogo">
+                        <Link href={catalogoHref} aria-label="Volver al catálogo">
                             <ArrowLeft className="h-5 w-5" />
                         </Link>
                     </Button>
@@ -187,7 +200,7 @@ export default function CartPage() {
                         </AlertDialogContent>
                     </AlertDialog>
                     <Button variant="ghost" size="sm" asChild className="text-primary">
-                        <Link href="/catalogo">
+                        <Link href={catalogoHref}>
                             Continuar comprando
                         </Link>
                     </Button>
@@ -214,7 +227,14 @@ export default function CartPage() {
                                         <h3 className="font-medium text-sm line-clamp-2" title={item.name || "Producto"}>
                                             {item.name || "Producto"}
                                         </h3>
-                                        <p className="text-primary font-bold">{formatPrice(item.price)}</p>
+                                        <p className="text-primary font-bold">
+                                            {formatPrice((Math.round(item.price * 100) * item.quantity) / 100)}
+                                            {item.quantity > 1 && (
+                                                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                                    {formatPrice(item.price)} c/u
+                                                </span>
+                                            )}
+                                        </p>
                                     </div>
                                     <div className="flex items-center justify-between mt-2">
                                         <div className="flex items-center gap-1 border rounded-md">
@@ -251,8 +271,25 @@ export default function CartPage() {
                     ))}
                 </div>
 
+                {/* Barra fija con el total: visible mientras se revisa la lista
+                    sin tener que bajar hasta la card de reserva. En móvil queda
+                    sobre el menú inferior (h-16 + safe-area). */}
+                <div className="sticky z-40 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-4">
+                    <div className="rounded-xl border bg-background/95 backdrop-blur px-4 py-3 shadow-lg flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="text-xs text-muted-foreground leading-none">Total estimado</p>
+                            <p className="text-lg font-bold text-primary truncate">
+                                {formatPrice(Number(totalPrice) || 0)}
+                            </p>
+                        </div>
+                        <Button asChild size="sm" className="shrink-0">
+                            <a href="#checkout">Confirmar reserva</a>
+                        </Button>
+                    </div>
+                </div>
+
                 {/* Reservation Type & Checkout */}
-                <Card className="border-primary/20 shadow-md">
+                <Card id="checkout" className="border-primary/20 shadow-md scroll-mt-20">
                     <CardContent className="p-4 space-y-4">
                         <h3 className="font-semibold">Tipo de Reserva</h3>
                         <div className={`grid gap-3 ${creditInfo ? "grid-cols-3" : "grid-cols-2"}`}>

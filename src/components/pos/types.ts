@@ -171,6 +171,21 @@ export function cartUnitsOf(cart: CartItem[]): number {
  * código + Enter): barcode o id del producto, sin fuzzy — una coincidencia
  * parcial nunca debe agregar al ticket sola.
  */
+/**
+ * Sintaxis rápida de mostrador "5*750123" (también "5x750123"): cantidad y
+ * código en un solo escaneo/tecleo. Se evalúa DESPUÉS del match exacto del
+ * código completo — un barcode que empiece "5X…" sigue entrando entero.
+ * Devuelve null cuando no hay prefijo de cantidad (el código se usa tal cual).
+ */
+export function parseQuantityCode(raw: string): { quantity: number; code: string } | null {
+    const match = /^(\d{1,4})\s*[*x×X]\s*(\S.*)$/.exec(raw.trim())
+    if (!match) return null
+    const code = match[2].trim()
+    if (!code) return null
+    const quantity = Math.max(1, Math.min(999, parseInt(match[1], 10) || 1))
+    return { quantity, code }
+}
+
 export function exactCodeMatches(products: PosProduct[], code: string): PosProduct[] {
     const clean = code.trim()
     if (!clean) return []

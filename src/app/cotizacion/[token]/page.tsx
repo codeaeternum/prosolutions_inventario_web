@@ -18,6 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Cotización",
     description: "Consulta y autoriza la cotización de tu reparación.",
+    openGraph: { title: "Cotización de reparación" },
     // Enlace privado por WhatsApp: nunca indexable.
     robots: { index: false, follow: false },
   }

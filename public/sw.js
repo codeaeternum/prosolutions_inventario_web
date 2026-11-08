@@ -1,5 +1,5 @@
 /* Only this generic offline page is cached. Prices, orders and private files always use the network. */
-const CACHE = "prosolutions-offline-v1";
+const CACHE = "prosolutions-offline-v2";
 const OFFLINE = "/offline.html";
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.add(OFFLINE)).then(() => self.skipWaiting()));

@@ -29,15 +29,18 @@ interface QuotesSheetProps {
     onResume: (docId: string) => Promise<boolean>
     /** Sube tras crear/descartar para forzar recarga en la próxima apertura. */
     refreshKey: number
+    /** Hay líneas capturadas sin cobrar: recuperar pide confirmación — reemplaza el ticket. */
+    hasTicket?: boolean
 }
 
 /** Cotizaciones de mostrador (DRAFT/QUOTE) con vigencia y conversión a venta. */
-export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey }: QuotesSheetProps) {
+export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey, hasTicket }: QuotesSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
     // "Ahora" se fotografía al cargar: Date.now() en render viola react-hooks/purity.
     const [nowMs, setNowMs] = useState<number | null>(null)
     const [resumingId, setResumingId] = useState<string | null>(null)
+    const [resumeTarget, setResumeTarget] = useState<PosDocumentSummary | null>(null)
     const [discardTarget, setDiscardTarget] = useState<PosDocumentSummary | null>(null)
     const [discarding, setDiscarding] = useState(false)
     const discardKey = useRef(0)
@@ -77,6 +80,13 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
         } finally {
             setResumingId(null)
         }
+    }
+
+    // Cobrar una cotización PISA el ticket en curso: con líneas sin cobrar
+    // se confirma primero — antes reemplazaba en silencio.
+    const askResume = (doc: PosDocumentSummary) => {
+        if (hasTicket) setResumeTarget(doc)
+        else void resume(doc.id)
     }
 
     const discard = async () => {
@@ -159,7 +169,7 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
                                                 type="button" size="sm" className="flex-1"
                                                 disabled={resumingId !== null || expired}
                                                 title={expired ? "La cotización venció — deséchala o vuelve a cotizar" : undefined}
-                                                onClick={() => void resume(doc.id)}
+                                                onClick={() => askResume(doc)}
                                             >
                                                 {resumingId === doc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
                                                 Cobrar
@@ -185,6 +195,31 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
                     )}
                 </SheetContent>
             </Sheet>
+
+            <AlertDialog open={resumeTarget !== null} onOpenChange={o => { if (!o && resumingId === null) setResumeTarget(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Reemplazar el ticket actual?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Cobrar la cotización #{resumeTarget?.number} reemplazará las líneas capturadas en el ticket. Si lo necesitas, suspéndelo primero para no perderlo.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={resumingId !== null}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={resumingId !== null}
+                            onClick={() => {
+                                const doc = resumeTarget
+                                setResumeTarget(null)
+                                if (doc) void resume(doc.id)
+                            }}
+                        >
+                            {resumingId !== null ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Reemplazar ticket
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog open={discardTarget !== null} onOpenChange={o => { if (!o && !discarding) setDiscardTarget(null) }}>
                 <AlertDialogContent>

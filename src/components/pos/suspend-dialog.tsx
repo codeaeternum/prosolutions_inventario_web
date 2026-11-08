@@ -73,6 +73,13 @@ function SuspendForm({ onOpenChange, onConfirm, busyRef }: {
                             disabled={busy}
                             value={note}
                             onChange={e => setNote(e.target.value)}
+                            onKeyDown={e => {
+                                // Enter solo salta línea; Ctrl/Cmd+Enter suspende.
+                                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                                    e.preventDefault()
+                                    if (!busy) void confirm()
+                                }
+                            }}
                         />
                     </div>
                 </div>

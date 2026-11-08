@@ -222,7 +222,7 @@ export function UsuariosPanel() {
         } else if (data.customerType) {
           toast.success(`Tipo de cliente actualizado a ${data.customerType === "STORE" ? "Tienda" : data.customerType === "TECHNICIAN" ? "Técnico" : "Particular"}`)
         } else if (data.role === "ADMIN") {
-          toast.success("Usuario promovido a Administrador 👑")
+          toast.success("Usuario promovido a Administrador")
         } else if (data.role === "WORKSHOP") {
           toast.success("Usuario marcado como Taller aliado")
         } else if (data.role === "CUSTOMER") {
@@ -586,7 +586,7 @@ export function UsuariosPanel() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">Correo electrónico</Label>
                 <Input
                   id="email"
                   type="email"

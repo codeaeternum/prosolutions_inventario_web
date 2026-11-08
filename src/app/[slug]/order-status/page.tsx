@@ -20,9 +20,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!target) {
     return { title: "Rastrea tu reparación", robots: { index: false, follow: false } }
   }
+  const title = `Rastrea tu reparación — ${target.name}`
+  const description = `Consulta el estado de tu equipo en ${target.name} con el folio de tu ticket — sin cuenta ni llamadas.`
   return {
-    title: `Rastrea tu reparación — ${target.name}`,
-    description: `Consulta el estado de tu equipo en ${target.name} con el folio de tu ticket — sin cuenta ni llamadas.`,
+    title,
+    description,
+    alternates: { canonical: `/${target.slug}/order-status` },
+    openGraph: { title, description },
     robots: { index: true, follow: true },
   }
 }

@@ -27,30 +27,49 @@ interface CartPanelProps {
     onOpenParked: () => void
     onOpenLayaways: () => void
     onOpenQuotes: () => void
+    /** Línea recién agregada: un flash la marca (el nonce re-dispara en altas repetidas). */
+    flash?: { productId: string; nonce: number } | null
     /** "plain" para renderizar dentro del Sheet móvil (sin Card propia). */
     variant?: "card" | "plain"
 }
 
-function CartLine({ item, workshopActive, processing, onUpdateQuantity, onRemove }: {
+function CartLine({ item, workshopActive, processing, flashNonce, touchSize, onUpdateQuantity, onRemove }: {
     item: CartItem
     workshopActive: boolean
     processing: boolean
+    /** >0 = acaba de agregarse; el key={nonce} re-anima en altas repetidas. */
+    flashNonce: number
+    /** Botones +/- de 44px: en el Sheet móvil el dedo manda, no el ratón. */
+    touchSize?: boolean
     onUpdateQuantity: (productId: string, delta: number) => void
     onRemove: (productId: string) => void
 }) {
     const price = unitPriceOf(item.product, workshopActive)
+    const iconSize = touchSize ? "icon-sm" : "icon-xs"
     return (
         <div
             tabIndex={0}
             role="group"
+            data-pos-line
             aria-label={`${item.product.name}, ${item.quantity} unidades. Más/menos ajusta, Supr quita.`}
-            className="flex items-center gap-2 rounded-lg border px-2.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary/60"
+            className="relative flex items-center gap-2 rounded-lg border px-2.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary/60"
             onKeyDown={e => {
                 if (e.key === "+") { e.preventDefault(); onUpdateQuantity(item.product.id, 1) }
                 else if (e.key === "-") { e.preventDefault(); onUpdateQuantity(item.product.id, -1) }
                 else if (e.key === "Delete") { e.preventDefault(); onRemove(item.product.id) }
+                else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    // Navegación de mostrador: el foco baja/sube de línea y
+                    // +/−/Supr operan sobre ella — todo el ticket sin ratón.
+                    e.preventDefault()
+                    const lines = Array.from(
+                        e.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[data-pos-line]") ?? []
+                    )
+                    const index = lines.indexOf(e.currentTarget)
+                    lines[index + (e.key === "ArrowDown" ? 1 : -1)]?.focus()
+                }
             }}
         >
+            {flashNonce > 0 && <span key={flashNonce} aria-hidden className="pos-line-flash" />}
             <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{item.product.name}</p>
                 <p className="text-[11px] text-muted-foreground">
@@ -59,7 +78,7 @@ function CartLine({ item, workshopActive, processing, onUpdateQuantity, onRemove
             </div>
             <div className="flex items-center gap-1">
                 <Button
-                    variant="outline" size="icon-xs"
+                    variant="outline" size={iconSize}
                     onClick={() => onUpdateQuantity(item.product.id, -1)}
                     disabled={processing || item.quantity <= 1}
                     aria-label={`Reducir cantidad de ${item.product.name}`}
@@ -68,7 +87,7 @@ function CartLine({ item, workshopActive, processing, onUpdateQuantity, onRemove
                 </Button>
                 <span className="w-7 text-center text-sm font-bold tabular-nums">{item.quantity}</span>
                 <Button
-                    variant="outline" size="icon-xs"
+                    variant="outline" size={iconSize}
                     onClick={() => onUpdateQuantity(item.product.id, 1)}
                     disabled={processing || item.quantity >= item.product.stock}
                     aria-label={`Aumentar cantidad de ${item.product.name}`}
@@ -95,7 +114,7 @@ export function CartPanel(props: CartPanelProps) {
     const {
         cart, workshopActive, customer, onCustomerChange, resumedDoc, onDetachResumed,
         processing, cajaOpen, onUpdateQuantity, onRemove, onClear,
-        onCheckout, onSuspend, onOpenParked, onOpenLayaways, onOpenQuotes, variant = "card",
+        onCheckout, onSuspend, onOpenParked, onOpenLayaways, onOpenQuotes, flash, variant = "card",
     } = props
 
     const total = cartTotalOf(cart, workshopActive)
@@ -144,6 +163,8 @@ export function CartPanel(props: CartPanelProps) {
                             item={item}
                             workshopActive={workshopActive}
                             processing={processing}
+                            flashNonce={flash?.productId === item.product.id ? flash.nonce : 0}
+                            touchSize={variant === "plain"}
                             onUpdateQuantity={onUpdateQuantity}
                             onRemove={onRemove}
                         />

@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -92,6 +92,10 @@ interface SaleResponse {
     error?: string
 }
 
+// Billetes MXN de uso diario: un toque llena "efectivo recibido" en vez de
+// teclear el monto — el chip "Exacto" cubre el pago justo (mayoría de casos).
+const QUICK_CASH_PRESETS = [20, 50, 100, 200, 500, 1000] as const
+
 // Motivos frecuentes de descuento: el chip prellena el campo (sigue editable)
 // y deja razones consistentes para analizarlas después en reportes/actividad.
 const DISCOUNT_REASON_PRESETS = [
@@ -163,6 +167,8 @@ function CheckoutForm({
     const [discountReason, setDiscountReason] = useState("")
     const [processing, setProcessing] = useState(false)
     const submitting = useRef(false)
+    const cashInputRef = useRef<HTMLInputElement>(null)
+    const transferInputRef = useRef<HTMLInputElement>(null)
     const pendingOperation = useRef<ClientOperationKey | null>(null)
     // Llave del paso "suspender" cuando una venta nueva con descuento primero
     // fotografía sus líneas como documento y luego lo cobra (mismo endpoint
@@ -190,6 +196,20 @@ function CheckoutForm({
 
     const isSale = docType === "VENTA" || docType === "WORKSHOP"
     const depositCents = amountToCents(deposit.amount)
+
+    // El flujo del mostrador es teclado: al abrir el cobro (o al cambiar de
+    // método) el foco cae en el dato que falta — efectivo recibido o
+    // referencia — para teclear y confirmar con Enter sin tocar el ratón.
+    // Radix toma el foco al abrir el diálogo, por eso el foco va diferido.
+    useEffect(() => {
+        if (!isSale || splitMode) return
+        const target = paymentMethod === "EFECTIVO" ? cashInputRef.current
+            : paymentMethod === "TRANSFERENCIA" ? transferInputRef.current
+            : null
+        if (!target) return
+        const id = setTimeout(() => { target.focus({ preventScroll: true }); target.select() }, 60)
+        return () => clearTimeout(id)
+    }, [paymentMethod, isSale, splitMode])
 
     // Lo que realmente se cobra: catálogo menos el descuento capturado. El
     // servidor valida contra su propio snapshot — aquí solo se refleja.
@@ -460,7 +480,19 @@ function CheckoutForm({
     const docTypes: DocType[] = workshopCustomer ? ["WORKSHOP"] : workshopAllowed ? ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE"]
 
     return (
-            <DialogContent>
+            <DialogContent
+                onKeyDown={e => {
+                    // Enter confirma el cobro — el mostrador se opera con
+                    // teclado/pistola. Se excluye lo que ya usa Enter (botones,
+                    // select Radix y el buscador de cliente, marcado con
+                    // data-pos-no-enter) para no cobrar al navegar el diálogo.
+                    if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+                    const target = e.target as HTMLElement
+                    if (target.closest("button, textarea, a, [role='combobox'], [role='listbox'], [role='option'], [data-pos-no-enter]")) return
+                    e.preventDefault()
+                    if (!confirmDisabled) void submit()
+                }}
+            >
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         Finalizar
@@ -614,6 +646,7 @@ function CheckoutForm({
                                     <Label htmlFor="pos-transfer-ref">Referencia de la transferencia *</Label>
                                     <Input
                                         id="pos-transfer-ref"
+                                        ref={transferInputRef}
                                         placeholder="Folio SPEI / clave de rastreo"
                                         maxLength={200}
                                         disabled={processing}
@@ -627,6 +660,7 @@ function CheckoutForm({
                                     <Label htmlFor="pos-cash-given">Efectivo recibido</Label>
                                     <Input
                                         id="pos-cash-given"
+                                        ref={cashInputRef}
                                         type="number"
                                         min="0"
                                         placeholder="Ej: 500"
@@ -634,6 +668,32 @@ function CheckoutForm({
                                         value={cashGiven}
                                         onChange={e => setCashGiven(e.target.value)}
                                     />
+                                    <div className="flex flex-wrap gap-1.5">
+                                        <button
+                                            type="button"
+                                            disabled={processing}
+                                            onClick={() => setCashGiven(payable.toFixed(2))}
+                                            className="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-background text-muted-foreground hover:bg-muted"
+                                        >
+                                            Exacto
+                                        </button>
+                                        {QUICK_CASH_PRESETS.map(bill => (
+                                            <button
+                                                key={bill}
+                                                type="button"
+                                                disabled={processing}
+                                                onClick={() => setCashGiven(String(bill))}
+                                                className={cn(
+                                                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                                                    cashGivenCents === bill * 100
+                                                        ? "bg-primary text-primary-foreground border-primary"
+                                                        : "bg-background text-muted-foreground hover:bg-muted"
+                                                )}
+                                            >
+                                                ${bill}
+                                            </button>
+                                        ))}
+                                    </div>
                                     {cashGiven && cashGivenCents >= payableCents && (
                                         <p className="text-green-600 font-medium text-sm">
                                             Cambio: {formatPrice((cashGivenCents - payableCents) / 100)}
@@ -791,6 +851,7 @@ function CheckoutForm({
                     <Button onClick={() => { void submit() }} disabled={confirmDisabled}>
                         {processing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                         {docType === "LAYAWAY" ? "Crear apartado" : docType === "QUOTE" ? "Crear cotización" : "Confirmar venta"}
+                        <span className="text-xs opacity-70">(Enter)</span>
                     </Button>
                 </DialogFooter>
             </DialogContent>

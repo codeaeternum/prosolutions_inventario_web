@@ -226,8 +226,19 @@ export function TrackOrder({ brandName }: { brandName?: string }) {
       )}
 
       {result.kind === "error" && (
-        <div className="mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-center" role="alert">
+        <div className="mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-center space-y-3" role="alert">
           <p className="text-sm font-medium">{result.message}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (tokenLink) void runTokenQuery(tokenLink)
+              else if (folio.trim() && /^\d{4}$/.test(phone)) void runQuery(folio, phone)
+              else setResult({ kind: "idle" })
+            }}
+          >
+            Reintentar
+          </Button>
         </div>
       )}
 

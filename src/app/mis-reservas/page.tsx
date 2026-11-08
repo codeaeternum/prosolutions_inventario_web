@@ -174,9 +174,34 @@ export default function MisReservasPage() {
   }
 
   if (status === "loading") {
+    // Misma forma que loading.tsx: skeleton, nunca un spinner suelto.
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="min-h-screen bg-background" role="status" aria-busy="true">
+        <span className="sr-only">Cargando…</span>
+        <div className="container mx-auto max-w-2xl px-4 py-6 animate-pulse">
+          <div className="flex gap-2 mb-6">
+            <div className="h-9 w-24 rounded-md bg-muted" />
+            <div className="h-9 w-24 rounded-md bg-muted" />
+          </div>
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="rounded-xl border bg-card p-3 flex gap-3">
+                <div className="h-[70px] w-[70px] rounded-lg bg-muted shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="h-4 w-1/2 rounded bg-muted" />
+                    <div className="h-5 w-16 rounded-full bg-muted" />
+                  </div>
+                  <div className="h-3 w-2/3 rounded bg-muted" />
+                  <div className="flex items-center gap-2 pt-1">
+                    <div className="h-5 w-14 rounded-full bg-muted" />
+                    <div className="h-4 w-16 rounded bg-muted" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     )
   }
@@ -213,7 +238,29 @@ export default function MisReservasPage() {
             <Button variant="outline" onClick={() => setReload((value) => value + 1)}>Reintentar</Button>
           </div>
         ) : isLoading ? (
-          <div role="status" className="py-12 text-center"><Loader2 className="h-7 w-7 animate-spin mx-auto mb-3" />Cargando reservas...</div>
+          // Skeleton con la forma de las cards de reserva: sin salto visual
+          // al entrar o al cambiar de pestaña/recargar.
+          <div role="status" aria-busy="true" className="space-y-3">
+            <span className="sr-only">Cargando reservas…</span>
+            {[0, 1, 2].map((i) => (
+              <Card key={i} className="overflow-hidden animate-pulse">
+                <CardContent className="p-3 flex gap-3">
+                  <div className="h-[70px] w-[70px] rounded-lg bg-muted shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="h-4 w-1/2 rounded bg-muted" />
+                      <div className="h-5 w-16 rounded-full bg-muted" />
+                    </div>
+                    <div className="h-3 w-2/3 rounded bg-muted" />
+                    <div className="flex items-center gap-2 pt-1">
+                      <div className="h-5 w-14 rounded-full bg-muted" />
+                      <div className="h-4 w-16 rounded bg-muted" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         ) : reservations.length === 0 ? (
           <Card>
             <CardContent className="text-center py-12">

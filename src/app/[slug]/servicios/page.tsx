@@ -27,9 +27,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!target || target.kind !== "business") {
     return { title: "Servicios", robots: { index: false, follow: false } }
   }
+  const title = `Servicios — ${target.name}`
+  const description = `Servicios de reparación de ${target.name}: cotiza por WhatsApp y rastrea tu equipo en línea.`
   return {
-    title: `Servicios — ${target.name}`,
-    description: `Servicios de reparación de ${target.name}: cotiza por WhatsApp y rastrea tu equipo en línea.`,
+    title,
+    description,
+    alternates: { canonical: `/${target.slug}/servicios` },
+    openGraph: { title, description },
     robots: { index: true, follow: true },
   }
 }

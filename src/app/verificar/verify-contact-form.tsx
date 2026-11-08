@@ -112,7 +112,7 @@ export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, accoun
         return
       }
       if (data.alreadyVerified) {
-        setNotice("Ese canal ya está verificado. ✅")
+        setNotice("Ese canal ya está verificado.")
         return
       }
       if (channel === "EMAIL") {
