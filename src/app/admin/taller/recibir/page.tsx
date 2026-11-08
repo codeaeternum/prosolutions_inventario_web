@@ -55,8 +55,8 @@ const FUNCTIONAL_CONDITIONS: { value: FunctionalCondition; label: string; icon: 
 const AESTHETIC_OPTIONS: { value: Aesthetics; label: string }[] = [
   { value: "BUENO", label: "Bueno" }, { value: "REGULAR", label: "Regular" }, { value: "MALO", label: "Malo" },
 ]
-// Chips rápidos de estado físico para marcar observaciones frecuentes en 1 toque
-// durante la Recepción Exprés (se agregan/quitan en intakeCondition).
+// Chips rápidos de estado físico para marcar observaciones frecuentes en 1
+// toque durante la recepción (se agregan/quitan en intakeCondition).
 const QUICK_PHYSICAL_CONDITIONS = [
   "Rayones leves",
   "Pantalla estrellada",
@@ -150,10 +150,17 @@ function CustomerSuggestions({ hits, onPick }: { hits: CustomerHit[]; onPick: (h
   )
 }
 
-function SummaryGroup({ title, icon: Icon, items }: { title: string; icon: LucideIcon; items: [string, ReactNode][] }) {
+function SummaryGroup({ title, icon: Icon, items, onEdit }: { title: string; icon: LucideIcon; items: [string, ReactNode][]; onEdit?: () => void }) {
   return (
     <div className="rounded-lg border p-4">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Icon size={15} className="text-primary" />{title}</h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold"><Icon size={15} className="text-primary" />{title}</h3>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="text-xs font-medium text-primary transition hover:underline">
+            Editar
+          </button>
+        )}
+      </div>
       <dl className="space-y-2 text-sm">
         {items.map(([label, value]) => (
           <div key={label}>
@@ -167,7 +174,6 @@ function SummaryGroup({ title, icon: Icon, items }: { title: string; icon: Lucid
 }
 
 export default function ReceiveEquipmentPage() {
-  const [intakeMode, setIntakeMode] = useState<"express" | "full">("express")
   const [step, setStep] = useState(0)
   const [form, setForm] = useState(emptyForm)
   const [stepError, setStepError] = useState("")
@@ -684,9 +690,8 @@ export default function ReceiveEquipmentPage() {
   // entra en el orden de tabulación). El smooth-scroll no estorba: el foco
   // mueve el viewport al título de todas formas.
   useEffect(() => {
-    if (intakeMode !== "full") return
     stepTitleRef.current?.focus()
-  }, [step, intakeMode])
+  }, [step])
 
   const goNext = () => {
     const error = validateStep(step)
@@ -697,6 +702,9 @@ export default function ReceiveEquipmentPage() {
     scrollToTop()
   }
   const goBack = () => { setStepError(""); closeDropdowns(); setStep(current => current - 1); scrollToTop() }
+  // Salto libre hacia atrás (stepper clicable o "Editar" del resumen): los
+  // datos ya capturados se conservan; la validación corre al re-avanzar.
+  const goToStep = (index: number) => { setStepError(""); closeDropdowns(); setStep(index); scrollToTop() }
 
   // Los componentes marcados ("Componentes que incluye") viajan dentro del mismo
   // campo `accessories` de la orden; se deduplica por si un nombre coincide con
@@ -774,12 +782,16 @@ export default function ReceiveEquipmentPage() {
     }
   }
 
+  // Re-valida todos los pasos antes de crear: si algo quedó inconsistente,
+  // salta directo al paso que falla en vez de solo mostrar el error.
   async function submit() {
     for (const s of [0, 1, 2, 3]) {
       const error = validateStep(s)
       if (error) {
+        if (s !== step) setStep(s)
         setStepError(error)
         toast.error(error)
+        scrollToTop()
         return
       }
     }
@@ -929,489 +941,7 @@ export default function ReceiveEquipmentPage() {
         </section>
       ) : (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex rounded-xl border bg-muted/40 p-1" role="tablist" aria-label="Modo de recepción">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={intakeMode === "express"}
-                onClick={() => { setIntakeMode("express"); setStepError(""); closeDropdowns() }}
-                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  intakeMode === "express" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Zap size={15} className={intakeMode === "express" ? "text-primary" : ""} />
-                Recepción Exprés (1 paso)
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={intakeMode === "full"}
-                onClick={() => { setIntakeMode("full"); setStepError(""); closeDropdowns() }}
-                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  intakeMode === "full" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Wrench size={15} className={intakeMode === "full" ? "text-primary" : ""} />
-                Recepción Completa (5 pasos)
-              </button>
-            </div>
-          </div>
-
-          {intakeMode === "express" ? (
-            <section className="rounded-xl border bg-card p-5 sm:p-6">
-              <fieldset disabled={saving} className="space-y-6 disabled:opacity-80">
-                {/* 1) Cliente */}
-                <div className="space-y-4">
-                  <h2 className="flex items-center gap-2 text-base font-semibold">
-                    <UserRound size={16} className="text-primary" />
-                    1. Cliente y sucursal
-                  </h2>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label ref={nameBoxRef} className="relative block space-y-2 text-sm">Nombre del cliente *
-                      <Input
-                        value={form.customerName}
-                        onChange={event => { update({ customerName: event.target.value }); trackLookup("customerName", event.target.value) }}
-                        onBlur={event => { const titled = titleCaseName(event.target.value); if (titled !== event.target.value) update({ customerName: titled }) }}
-                        maxLength={100}
-                        autoComplete="off"
-                        placeholder="Nombre y apellido"
-                      />
-                      {lookupField === "customerName" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
-                    </label>
-                    <PhoneInput
-                      containerRef={phoneBoxRef}
-                      label="Teléfono de contacto"
-                      required
-                      value={form.customerPhone}
-                      dialCode={form.customerPhoneDial}
-                      onDialCode={setPhoneDial("customerPhone")}
-                      onChange={phone => { update({ customerPhone: phone }); trackLookup("customerPhone", phone) }}
-                    >
-                      {lookupField === "customerPhone" && <CustomerSuggestions hits={suggestions} onPick={pickCustomer} />}
-                    </PhoneInput>
-                    {(searching || matchedCustomer || showNewCustomerNote || lookupFailed) && (
-                      <div className="sm:col-span-2" aria-live="polite">
-                        {searching && <p className="text-xs text-muted-foreground">Buscando clientes…</p>}
-                        {!searching && matchedCustomer && <p className="text-xs font-medium text-primary">Cliente existente — datos autocompletados.</p>}
-                        {!searching && lookupFailed && <p className="text-xs text-muted-foreground">No se pudo buscar clientes. Puedes continuar; la orden se vinculará por teléfono.</p>}
-                        {!searching && !lookupFailed && showNewCustomerNote && <p className="text-xs text-muted-foreground">Cliente nuevo — se vinculará por teléfono.</p>}
-                      </div>
-                    )}
-                    <label className="block space-y-2 text-sm">Sucursal de recepción *
-                      <select className={inputClass} value={form.intakeBranchId} onChange={event => update({ intakeBranchId: event.target.value })}>
-                        <option value="" disabled>Selecciona la sucursal de recepción</option>
-                        {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-                      </select>
-                    </label>
-                    <label className="block space-y-2 text-sm">Responsable técnico (opcional)
-                      <select className={inputClass} value={form.assignedToId} onChange={event => update({ assignedToId: event.target.value })}>
-                        <option value="">Asignar después</option>
-                        {staff.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}
-                      </select>
-                    </label>
-                    {metaLoaded && branches.length === 0 && (
-                      <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:col-span-2">
-                        No hay sucursales del taller registradas. Crea una desde la pantalla de órdenes antes de recibir equipos.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2) Equipo */}
-                <div className="space-y-4 border-t pt-5">
-                  <h2 className="flex items-center gap-2 text-base font-semibold">
-                    <Smartphone size={16} className="text-primary" />
-                    2. Equipo
-                  </h2>
-                  <div className="space-y-2">
-                    <p className="text-sm">Tipo de equipo *</p>
-                    <div className="flex flex-wrap gap-2">
-                      {equipmentTypes.map(value => {
-                        const Icon = EQUIPMENT_ICONS[value] ?? Package
-                        return (
-                          <button
-                            key={value}
-                            type="button"
-                            aria-pressed={form.equipmentType === value}
-                            onClick={() => {
-                              if (value === form.equipmentType) return
-                              const next = deviceProfileFor(value)
-                              const resetAccess = { pattern: [] as number[], accessValue: "" }
-                              const keptComponents = form.components.filter(item => next.componentChecklist?.includes(item))
-                              update(
-                                next.accessTypes.includes(form.accessType)
-                                  ? { equipmentType: value, components: keptComponents, ...resetAccess }
-                                  : { equipmentType: value, accessType: "NONE", components: keptComponents, ...resetAccess },
-                              )
-                              setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: pickedModel?.id ?? null, equipmentType: value }) }))
-                            }}
-                            className={chipClass(form.equipmentType === value)}
-                          >
-                            <Icon size={15} />
-                            {value}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {form.equipmentType === "Otro" && (
-                      <Input
-                        value={form.equipmentTypeOther}
-                        onChange={event => update({ equipmentTypeOther: event.target.value })}
-                        maxLength={100}
-                        placeholder="¿Qué equipo es? Ej. smartwatch, bocina, drone…"
-                        autoFocus
-                        className="mt-2 max-w-sm"
-                      />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm">Marcas frecuentes</p>
-                    <div className="flex flex-wrap gap-2">
-                      {quickBrands.map(brand => {
-                        const selected = form.brand.trim().toLowerCase() === brand.name.toLowerCase()
-                        return (
-                          <button key={brand.name} type="button" aria-pressed={selected} title={brand.name} onClick={() => toggleQuickBrand(brand.name)} className={chipClass(selected)}>
-                            <span aria-hidden className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none ${brand.badge}`}>{brand.monogram}</span>
-                            {brand.name}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label ref={brandBoxRef} className="relative block space-y-2 text-sm">Marca
-                      <Input value={form.brand} onChange={event => { update({ brand: event.target.value }); setBrandTerm(event.target.value) }} maxLength={60} autoComplete="off" placeholder="Samsung, Apple, Xiaomi…" />
-                      {brandOptions.length > 0 && (
-                        <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
-                          {brandOptions.map(option => (
-                            <li key={option}>
-                              <button type="button" onClick={() => pickBrand(option)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">{option}</button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </label>
-                    <label ref={modelBoxRef} className="relative block space-y-2 text-sm">Modelo
-                      <Input
-                        value={form.model}
-                        onChange={event => {
-                          update({ model: event.target.value })
-                          setModelTerm(event.target.value)
-                          setPickedModel(null)
-                          setForm(previous => ({ ...previous, ...servicesPatch(previous.services, { deviceModelId: null, equipmentType: previous.equipmentType || null }) }))
-                        }}
-                        maxLength={120}
-                        autoComplete="off"
-                        placeholder="Ej. Galaxy A54, iPhone 13…"
-                      />
-                      {modelHits.length > 0 && (
-                        <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
-                          {modelHits.map(device => (
-                            <li key={device.id}>
-                              <button type="button" onClick={() => pickDeviceModel(device)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
-                                <span className="block font-medium">{device.model}{device.code ? ` · ${device.code}` : ""}</span>
-                                <span className="block text-xs text-muted-foreground">{device.brand}{device.type ? ` · ${device.type}` : ""}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </label>
-                    {profile.colorRelevant && (
-                      <div className="space-y-2 sm:col-span-2">
-                        <p className="text-sm">Color (opcional)</p>
-                        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Color del equipo">
-                          {EQUIPMENT_COLORS.map(({ label, hex }) => (
-                            <button
-                              key={label}
-                              type="button"
-                              role="radio"
-                              aria-checked={!form.equipmentColorCustom && form.equipmentColor === label}
-                              onClick={() => update({ equipmentColor: !form.equipmentColorCustom && form.equipmentColor === label ? "" : label, equipmentColorCustom: false })}
-                              className={chipClass(!form.equipmentColorCustom && form.equipmentColor === label)}
-                            >
-                              <span aria-hidden className="h-3 w-3 rounded-full border border-black/25" style={{ backgroundColor: hex }} />
-                              {label}
-                            </button>
-                          ))}
-                          <button type="button" role="radio" aria-checked={form.equipmentColorCustom} onClick={() => update({ equipmentColorCustom: true, equipmentColor: "" })} className={chipClass(form.equipmentColorCustom)}>Otro</button>
-                        </div>
-                        {form.equipmentColorCustom && (
-                          <Input value={form.equipmentColor} onChange={event => update({ equipmentColor: event.target.value })} maxLength={60} autoFocus placeholder="Describe el color: azul marino, verde menta…" className="mt-2 max-w-sm" />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 3) Servicio / Falla reportada y Desbloqueo */}
-                <div className="space-y-4 border-t pt-5">
-                  <h2 className="flex items-center gap-2 text-base font-semibold">
-                    <Wrench size={16} className="text-primary" />
-                    3. Servicio, falla reportada y desbloqueo
-                  </h2>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <p className="text-sm">Servicios del catálogo (opcional)</p>
-                      {form.services.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {form.services.map(service => (
-                            <p key={service.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
-                              <Wrench size={14} aria-hidden />
-                              <span className="truncate">{service.name}</span>
-                              <span className="text-xs font-normal text-primary/80">
-                                {(() => { const price = effectivePrice(service); return price !== null ? money(price) : "Precio según dispositivo" })()}
-                              </span>
-                              <button type="button" aria-label={`Quitar ${service.name}`} onClick={() => removeService(service.id)} className="rounded-full p-0.5 transition hover:bg-primary/15">
-                                <X size={13} />
-                              </button>
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                      {form.services.length < MAX_SERVICES ? (
-                        <div className="relative" ref={serviceBoxRef}>
-                          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                          <Input
-                            value={serviceQuery}
-                            onChange={event => setServiceQuery(event.target.value)}
-                            maxLength={80}
-                            autoComplete="off"
-                            placeholder={form.services.length ? "Agregar otro servicio…" : "Buscar: cambio de pantalla, batería…"}
-                            className="pl-9"
-                          />
-                          {visibleServiceResults.length > 0 && (
-                            <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-lg border bg-popover shadow-md">
-                              {visibleServiceResults.map(service => (
-                                <li key={service.id}>
-                                  <button type="button" onClick={() => pickService(service)} className="w-full px-3 py-2 text-left text-sm transition hover:bg-accent">
-                                    <span className="flex items-center justify-between gap-3">
-                                      <span className="flex min-w-0 items-center gap-1.5">
-                                        <span className="truncate font-medium">{service.name}</span>
-                                        {serviceMatchesEquipment(service) && (
-                                          <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">para {equipmentLabel}</span>
-                                        )}
-                                      </span>
-                                      <span className="shrink-0 text-xs text-muted-foreground">
-                                        {(() => { const price = effectivePrice(service); return price !== null ? money(price) : "Precio según dispositivo" })()}
-                                      </span>
-                                    </span>
-                                    {service.description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{service.description}</span>}
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">Máximo {MAX_SERVICES} servicios del catálogo por orden.</p>
-                      )}
-                    </div>
-                    <label className="block space-y-2 text-sm">Otro servicio (opcional)
-                      <Input value={form.otherService} onChange={event => update({ otherService: event.target.value })} maxLength={120} placeholder="Servicio fuera de catálogo" />
-                    </label>
-                    <label className="block space-y-2 text-sm sm:col-span-2">Falla que reporta el cliente *
-                      <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={2} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
-                    </label>
-                  </div>
-                  <div className="space-y-3 rounded-lg border bg-muted/20 p-3.5">
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        Checklist rápido de diagnóstico y estado físico (1 toque · opcional)
-                      </p>
-                      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Condiciones funcionales del equipo">
-                        {FUNCTIONAL_CONDITIONS.map(({ value, label, icon: Icon }) => (
-                          <button
-                            key={value}
-                            type="button"
-                            aria-pressed={form.functionalConditions.includes(value)}
-                            onClick={() => toggleCondition(value)}
-                            className={chipClass(form.functionalConditions.includes(value))}
-                          >
-                            <Icon size={14} />
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {conditionHints.map(hint => (
-                        <p key={hint} className="text-xs text-muted-foreground">{hint}</p>
-                      ))}
-                    </div>
-                    <div className="space-y-2 border-t border-dashed pt-2.5">
-                      <p className="text-xs text-muted-foreground">Observaciones físicas rápidas</p>
-                      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Chips rápidos de estado físico">
-                        {QUICK_PHYSICAL_CONDITIONS.map(note => {
-                          const active = hasPhysicalNote(note)
-                          return (
-                            <button
-                              key={note}
-                              type="button"
-                              aria-pressed={active}
-                              onClick={() => togglePhysicalNote(note)}
-                              className={chipClass(active)}
-                            >
-                              {note}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      <Input
-                        value={form.intakeCondition}
-                        onChange={event => update({ intakeCondition: event.target.value })}
-                        maxLength={500}
-                        placeholder="Estado físico al recibir (se llena al tocar los chips o escribe aquí)…"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm">Contraseña / PIN de desbloqueo (opcional)</p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Tipo de bloqueo">
-                      {allowedAccessOptions.map(({ value, label, icon: Icon }) => (
-                        <button
-                          key={value}
-                          type="button"
-                          role="radio"
-                          aria-checked={form.accessType === value}
-                          onClick={() => { if (value !== form.accessType) update({ accessType: value, pattern: [], accessValue: "" }) }}
-                          className={`flex flex-col items-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm transition ${
-                            form.accessType === value ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                          }`}
-                        >
-                          <Icon size={16} />
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    {form.accessType === "PATTERN" && (
-                      <div className="mt-3 rounded-lg border bg-muted/30 p-4">
-                        <PatternPad value={form.pattern} onChange={pattern => update({ pattern })} />
-                      </div>
-                    )}
-                    {(form.accessType === "PIN" || form.accessType === "PASSWORD") && (
-                      <div className="mt-3 max-w-sm space-y-1.5">
-                        <label className="block space-y-1.5 text-sm">
-                          {form.accessType === "PIN" ? "PIN de desbloqueo" : "Contraseña del equipo"}
-                          <Input
-                            value={form.accessValue}
-                            onChange={event => update({ accessValue: event.target.value })}
-                            maxLength={100}
-                            autoComplete="off"
-                            placeholder={form.accessType === "PIN" ? "Ej. 2468" : "Escríbela tal como la dio el cliente"}
-                          />
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 4) Cotización inicial / Anticipo / Fecha promesa */}
-                <div className="space-y-4 border-t pt-5">
-                  <h2 className="flex items-center gap-2 text-base font-semibold">
-                    <CircleDollarSign size={16} className="text-primary" />
-                    4. Cotización inicial, anticipo y entrega (opcional)
-                  </h2>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block space-y-2 text-sm">Cotización inicial / Presupuesto (MXN)
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                        <Input type="number" inputMode="decimal" min="0" step="0.01" value={form.budgetAmount} onChange={event => update({ budgetAmount: event.target.value })} placeholder="Según diagnóstico" className="pl-7" />
-                      </div>
-                    </label>
-                    <label className="block space-y-2 text-sm">Fecha promesa de entrega
-                      <Input type="datetime-local" value={form.promisedAt} min={minDateTime} onChange={event => update({ promisedAt: event.target.value })} />
-                    </label>
-                  </div>
-                  <div className="rounded-lg border p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="flex items-center gap-2 text-sm font-medium">
-                          <CircleDollarSign size={15} className="text-primary" />
-                          Anticipo del cliente
-                        </p>
-                        <p className="text-xs text-muted-foreground">Activa si el cliente deja dinero a cuenta en mostrador.</p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={form.advanceEnabled}
-                        aria-label="El cliente deja anticipo"
-                        onClick={() => update({ advanceEnabled: !form.advanceEnabled })}
-                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.advanceEnabled ? "bg-primary" : "bg-muted"}`}
-                      >
-                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-all ${form.advanceEnabled ? "left-[1.375rem]" : "left-0.5"}`} />
-                      </button>
-                    </div>
-                    {form.advanceEnabled && (
-                      <div className="mt-4 grid gap-4 border-t pt-4 sm:grid-cols-2">
-                        <label className="block space-y-2 text-sm">Monto del anticipo *
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                            <Input type="number" inputMode="decimal" min="0" max={MAX_ADVANCE_AMOUNT} step="0.01" value={form.advanceAmount} onChange={event => update({ advanceAmount: event.target.value })} placeholder="0.00" className="pl-7" />
-                          </div>
-                        </label>
-                        <div className="space-y-2">
-                          <p className="text-sm">Método de cobro *</p>
-                          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Método de cobro del anticipo">
-                            {ADVANCE_METHODS.map(({ value, label, icon: Icon }) => (
-                              <button key={value} type="button" role="radio" aria-checked={form.advanceMethod === value} onClick={() => update({ advanceMethod: value })} className={chipClass(form.advanceMethod === value)}>
-                                <Icon size={15} />
-                                {label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  {/* Confirmación del cliente en exprés: misma regla que el
-                      paso 2 de la recepción completa — canvas firma aquí, en
-                      "ticket" se asienta que firmará en el impreso, en "pin"
-                      valida la terminación telefónica. */}
-                  {signatureMode === "canvas" && (
-                    <div className="rounded-lg border p-4">
-                      <SignaturePad label="Firma del cliente al entregar el equipo" onChange={handleSignature} />
-                    </div>
-                  )}
-                  {signatureMode === "ticket" && (
-                    <div className="rounded-lg border border-dashed p-4 text-sm">
-                      <p className="font-medium">El cliente firmará en el ticket impreso</p>
-                      <p className="mt-1 text-xs text-muted-foreground">El comprobante del cliente sale con línea de firma y leyenda de aceptación. Configurado en Configuración → Recepción.</p>
-                    </div>
-                  )}
-                  {signatureMode === "pin" && (
-                    <div className="rounded-lg border p-4 text-sm">
-                      <label className="block space-y-2">El cliente confirma con los últimos 4 dígitos de su teléfono *
-                        <Input
-                          value={form.pinConfirm}
-                          onChange={event => update({ pinConfirm: event.target.value.replace(/\D/g, "").slice(0, 4) })}
-                          maxLength={4}
-                          inputMode="numeric"
-                          autoComplete="off"
-                          placeholder="••••"
-                          className="max-w-32 text-center tracking-widest"
-                        />
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                {stepError && <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{stepError}</p>}
-
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
-                  <Button type="button" variant="outline" onClick={() => { setIntakeMode("full"); setStepError(""); closeDropdowns() }}>
-                    Pasar a recepción completa (5 pasos)
-                  </Button>
-                  <Button type="button" onClick={() => void submit()} disabled={saving}>
-                    <Zap className="mr-2 h-4 w-4" />
-                    {saving ? "Creando…" : "Crear orden ahora"}
-                  </Button>
-                </div>
-              </fieldset>
-            </section>
-          ) : (
-            <>
-          <IntakeStepper steps={STEPS} current={step} />
+          <IntakeStepper steps={STEPS} current={step} onSelect={goToStep} />
           <section className="rounded-xl border bg-card p-5 sm:p-6">
             <fieldset disabled={saving} className="disabled:opacity-80">
               <h2 ref={stepTitleRef} tabIndex={-1} className="mb-5 font-semibold">{STEPS[step]}</h2>
@@ -1755,9 +1285,20 @@ export default function ReceiveEquipmentPage() {
                         ))}
                       </div>
                     </div>
-                    <label className="block space-y-2 text-sm">Otras observaciones del estado físico
-                      <textarea value={form.intakeCondition} onChange={event => update({ intakeCondition: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Golpes, humedad, piezas faltantes…" />
-                    </label>
+                    <div className="space-y-2">
+                      <p className="text-sm">Otras observaciones del estado físico</p>
+                      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Observaciones frecuentes del estado físico">
+                        {QUICK_PHYSICAL_CONDITIONS.map(note => {
+                          const active = hasPhysicalNote(note)
+                          return (
+                            <button key={note} type="button" aria-pressed={active} onClick={() => togglePhysicalNote(note)} className={chipClass(active)}>
+                              {note}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <textarea value={form.intakeCondition} onChange={event => update({ intakeCondition: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Golpes, humedad, piezas faltantes…" aria-label="Observaciones del estado físico" />
+                    </div>
                     <label className="block space-y-2 text-sm">Falla que reporta el cliente *
                       <textarea value={form.reportedIssue} onChange={event => update({ reportedIssue: event.target.value })} maxLength={500} rows={3} className={inputClass} placeholder="Describe lo que ocurre y desde cuándo." />
                     </label>
@@ -1867,7 +1408,7 @@ export default function ReceiveEquipmentPage() {
                         ["Taller aliado", [form.originBusinessName.trim(), form.originContact.trim()].filter(Boolean).join(" · ")] as [string, ReactNode],
                         ["Precio convenio", partnerLabel || "Sin convenio capturado"] as [string, ReactNode],
                       ] : []),
-                    ]} />
+                    ]} onEdit={() => goToStep(0)} />
                     <SummaryGroup title="Equipo" icon={Package} items={[
                       ["Tipo", equipmentLabel],
                       ["Marca", form.brand.trim()],
@@ -1875,20 +1416,20 @@ export default function ReceiveEquipmentPage() {
                       ["Color", form.equipmentColor.trim()],
                       [profile.serialLabel, serialSummary],
                       ["Servicio", serviceSummary],
-                    ]} />
+                    ]} onEdit={() => goToStep(1)} />
                     <SummaryGroup title="Acceso" icon={accessOption?.icon ?? LockOpen} items={[
                       ["Bloqueo del equipo", accessLabel],
                       ...(form.accessType !== "NONE" ? [[accessValueLabel, accessValueSummary] as [string, ReactNode]] : []),
                       ["Accesorios recibidos", receivedAccessoryText],
                       ...(componentText ? [["Componentes que incluye", componentText] as [string, ReactNode]] : []),
                       ...(missingAccessoryText ? [["No incluye", missingAccessoryText] as [string, ReactNode]] : []),
-                    ]} />
+                    ]} onEdit={() => goToStep(2)} />
                     <SummaryGroup title="Estado" icon={ShieldCheck} items={[
                       ["Falla reportada", reportedIssueText],
                       ["Condiciones", conditionChips],
                       ["Estética", aestheticsLabel],
                       ["Otras observaciones", form.intakeCondition.trim()],
-                    ]} />
+                    ]} onEdit={() => goToStep(2)} />
                     <SummaryGroup title="Entrega y cobro" icon={CalendarClock} items={[
                       ["Fecha promesa", promisedLabel],
                       ["Reparación programada", scheduledLabel],
@@ -1901,7 +1442,7 @@ export default function ReceiveEquipmentPage() {
                       // el resumen asienta cómo acredita el cliente la entrega.
                       ...(signatureMode === "ticket" ? [["Confirmación del cliente", "Firmará en el ticket impreso"] as [string, ReactNode]] : []),
                       ...(signatureMode === "pin" ? [["Confirmación del cliente", `Terminación telefónica ••••${form.pinConfirm}`] as [string, ReactNode]] : []),
-                    ]} />
+                    ]} onEdit={() => goToStep(3)} />
                   </div>
                 </div>
               )}
@@ -1914,12 +1455,10 @@ export default function ReceiveEquipmentPage() {
                   : <span />}
                 {step < STEPS.length - 1
                   ? <Button type="button" onClick={goNext}>Siguiente<ArrowRight className="ml-2 h-4 w-4" /></Button>
-                  : <Button type="button" onClick={() => void createOrder()} disabled={saving}>{saving ? "Creando…" : "Crear orden"}</Button>}
+                  : <Button type="button" onClick={() => void submit()} disabled={saving}>{saving ? "Creando…" : "Crear orden"}</Button>}
               </div>
             </fieldset>
           </section>
-            </>
-          )}
         </>
       )}
     </div>
