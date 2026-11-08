@@ -27,8 +27,10 @@ export function WorkPlan(props: {
     props.form.scheduledAt !== toLocalInput(props.scheduledAt) ||
     props.form.promisedAt !== toLocalInput(props.promisedAt ?? null) ||
     props.form.location !== (props.location ?? "")
-  return <section className="space-y-4 rounded-xl border bg-card p-5">
-    <h2 className="font-semibold">Plan de trabajo</h2>
+  // Sección breve (3 campos): no se envuelve en colapsable, queda siempre
+  // abierta — el acordeón solo aportaría un clic extra.
+  return <section className="space-y-3 rounded-xl border bg-card p-4">
+    <h2 className="text-sm font-semibold">Plan de trabajo</h2>
     {props.editable
       ? <form onSubmit={props.onSubmit} className="space-y-3">
         <fieldset disabled={props.disabled} className="grid gap-3 sm:grid-cols-3">

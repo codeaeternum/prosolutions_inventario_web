@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { compressImageFile } from "@/lib/image-compress"
 import { operationUUID } from "@/lib/client-operation-key"
 import { evidenceUploadSummary } from "@/lib/workshop-form"
+import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
 
 export type EvidencePhoto = {
     id: string
@@ -33,6 +34,8 @@ export function EvidenceSection(props: {
     // Avisa al padre que hay captura sin guardar (etiqueta o subida en curso)
     // para el diálogo de descarte de la ficha.
     onDirtyChange?: (dirty: boolean) => void
+    /** Estado inicial del colapso (default: abierta solo si ya hay fotos). */
+    defaultOpen?: boolean
 }) {
     const [busy, setBusy] = useState(false)
     const [label, setLabel] = useState("")
@@ -164,11 +167,13 @@ export function EvidenceSection(props: {
     }
 
     return (
-        <section className="space-y-4 rounded-xl border bg-card p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-semibold flex items-center gap-2"><Camera size={16} />Evidencias</h2>
-                <span className="text-sm text-muted-foreground">{photos.length} foto{photos.length === 1 ? "" : "s"}</span>
-            </div>
+        <CollapsibleSection
+            title={<span className="flex items-center gap-2"><Camera size={16} />Evidencias</span>}
+            // Sin fotos arranca colapsada: no hay nada que ver todavía; la
+            // subida sigue a un clic de distancia.
+            defaultOpen={props.defaultOpen ?? photos.length > 0}
+            badge={<span>{photos.length} foto{photos.length === 1 ? "" : "s"}</span>}
+        >
 
             {photos.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sin evidencias todavía.</p>
@@ -311,6 +316,6 @@ export function EvidenceSection(props: {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
-        </section>
+        </CollapsibleSection>
     )
 }

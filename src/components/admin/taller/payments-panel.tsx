@@ -13,6 +13,7 @@ import {
   type PaymentLike,
 } from "@/lib/workshop-money"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
+import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
 
 export type WorkshopPayment = {
   id: string; amount: number; method: string; purpose: string | null
@@ -66,6 +67,8 @@ export function PaymentsPanel(props: {
   settleForm: SettleForm; onSettleChange: (form: SettleForm) => void; onSettleSubmit: (event: React.FormEvent<HTMLFormElement>) => void
   feeDraft: string; onFeeChange: (value: string) => void; onFeeSubmit: (event: React.FormEvent<HTMLFormElement>) => void
   refundForm: RefundForm; onRefundChange: (form: RefundForm) => void; onRefundSubmit: (event: React.FormEvent<HTMLFormElement>) => void
+  /** Estado inicial del colapso de la sección (default abierta). */
+  defaultOpen?: boolean
 }) {
   const payments = props.payments ?? []
   const parts = props.parts ?? []
@@ -80,8 +83,15 @@ export function PaymentsPanel(props: {
   const balance = Math.max(0, total - paid)
   const overpaid = Math.max(0, paid - total)
   const uncosted = !withoutRepair && props.approvedQuoteCents === null && props.quoteCents === null && partsCents === 0
-  return <section className="space-y-4 rounded-xl border bg-card p-5">
-    <div className="flex justify-between"><h2 className="font-semibold">Presupuesto y pagos</h2><span className="text-sm text-muted-foreground">{payments.length} {payments.length === 1 ? "cobro" : "cobros"}</span></div>
+  return <CollapsibleSection
+    title="Presupuesto y pagos"
+    defaultOpen={props.defaultOpen ?? true}
+    badge={<>
+      <span>{payments.length} {payments.length === 1 ? "cobro" : "cobros"}</span>
+      {balance > 0 && <span className="rounded-full bg-rose-500/10 px-2 py-0.5 font-medium text-rose-700 dark:text-rose-300">Saldo {money(balance)}</span>}
+      {overpaid > 0 && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300">A devolver {money(overpaid)}</span>}
+    </>}
+  >
     <dl className={`grid gap-3 text-sm ${overpaid > 0 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
       <div><dt className="text-xs text-muted-foreground">{withoutRepair ? "Cargo diagnóstico" : "Total"}</dt><dd className="text-lg font-semibold">{uncosted ? "Sin cotizar" : money(total)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Abonado</dt><dd className="text-lg font-semibold">{money(paid)}</dd></div>
@@ -165,5 +175,5 @@ export function PaymentsPanel(props: {
         </div>
       </form>
       : <Button type="button" className="w-full" disabled={props.disabled} onClick={() => props.onSettleOpenChange(true)}><PackageCheck className="mr-2 h-4 w-4" />Entregar y cobrar{balance > 0 ? ` · ${money(balance)}` : ""}</Button>)}
-  </section>
+  </CollapsibleSection>
 }

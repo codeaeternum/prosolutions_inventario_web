@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Wrench, Plus, ArrowLeft, MapPin, Search, ClipboardList, Clock3, CalendarClock, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle, Link2 } from "lucide-react"
+import { Wrench, Plus, ArrowLeft, Search, ClipboardList, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle, Link2 } from "lucide-react"
 import { hasWhatsAppPhone, openWhatsApp, waLink } from "@/lib/whatsapp"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useSession } from "next-auth/react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { repairDeliverableStages, repairFolio, repairLabels, repairNextStages, type RepairStage } from "@/lib/workshop-labels"
@@ -22,7 +23,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
-import { semaforo, SemaforoBadge } from "@/components/admin/taller/semaforo"
+import { semaforo } from "@/components/admin/taller/semaforo"
+import { BoardOrderCard, OrderListRow, closedColumnStyle, date, folioOf, money, stageStyles } from "@/components/admin/taller/order-card"
+import { BOARD_PHASES, phaseOrders, phaseStageCounts, phaseTotal, type BoardPhase } from "@/lib/taller-board"
 import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
 import { localDateTimeToIso, textOrUndefined } from "@/lib/workshop-form"
 import { toast } from "sonner"
@@ -84,16 +87,23 @@ type Order = {
 }
 
 // El API ya manda el folio formateado con los dígitos configurados del
-// negocio (order_folio_digits); repairFolio queda como respaldo de 6 dígitos.
-const folioOf = (order: { folio?: string; number: number }) => order.folio ?? repairFolio(order.number)
+// negocio (order_folio_digits); folioOf/money/date viven en order-card.tsx.
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
-const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
-const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
 const day = (value: string) => new Date(value).toLocaleDateString("es-MX", { dateStyle: "medium" })
 
 const activeBoardStages: RepairStage[] = ["RECEIVED", "DIAGNOSIS", "WAITING_APPROVAL", "WAITING_PARTS", "EXTERNAL_LAB", "IN_REPAIR", "QUALITY_CHECK", "READY"]
 const closedColumnStages: RepairStage[] = ["DELIVERED", "NOT_REPAIRED", "NOT_AUTHORIZED", "CANCELLED", "WARRANTY"]
 const boardStages: RepairStage[] = [...activeBoardStages, ...closedColumnStages]
+// Color de cabecera por fase del tablero agrupado (5 columnas en vez de 9 —
+// mata el scroll horizontal en pantallas comunes). Las tarjetas llevan su
+// badge de etapa, así que el detalle no se pierde.
+const phaseStyles: Record<BoardPhase["id"], { dot: string; badge: string }> = {
+  entrada: { dot: "bg-sky-500", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+  espera: { dot: "bg-amber-500", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+  reparacion: { dot: "bg-blue-600", badge: "bg-blue-600/10 text-blue-700 dark:text-blue-300" },
+  listas: { dot: "bg-emerald-500", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+  cerradas: closedColumnStyle,
+}
 const terminalStages: readonly RepairStage[] = ["DELIVERED", "CANCELLED"]
 // Etapas cerradas como ORIGEN: salir de ellas reabre la orden, así que no va
 // por avance rápido (un clic sin detalle) sino por el flujo completo del form.
@@ -101,39 +111,11 @@ const closedOriginStages: readonly RepairStage[] = ["DELIVERED", "NOT_REPAIRED",
 // Además de las cerradas, los cierres sin reparación ya no admiten refacciones
 // (el dominio rechaza PART_* ahí): la sección se muestra solo lectura.
 const partsClosedStages: readonly RepairStage[] = [...terminalStages, "NOT_AUTHORIZED", "NOT_REPAIRED"]
-const closedColumnStyle = { dot: "bg-zinc-400", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" }
 const viewTabs = [{ value: "board", label: "Tablero" }, { value: "mine", label: "Mías" }, { value: "partner", label: "Aliados" }, { value: "today", label: "Entregar hoy" }, { value: "overdue", label: "Atrasadas" }, { value: "debt", label: "Con adeudo" }] as const
 type BoardView = typeof viewTabs[number]["value"]
-const stageStyles: Record<RepairStage, { dot: string; badge: string }> = {
-  RECEIVED: { dot: "bg-sky-500", badge: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
-  DIAGNOSIS: { dot: "bg-violet-500", badge: "bg-violet-500/10 text-violet-700 dark:text-violet-300" },
-  WAITING_APPROVAL: { dot: "bg-amber-500", badge: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-  WAITING_PARTS: { dot: "bg-orange-500", badge: "bg-orange-500/10 text-orange-700 dark:text-orange-300" },
-  IN_REPAIR: { dot: "bg-blue-600", badge: "bg-blue-600/10 text-blue-700 dark:text-blue-300" },
-  QUALITY_CHECK: { dot: "bg-teal-500", badge: "bg-teal-500/10 text-teal-700 dark:text-teal-300" },
-  READY: { dot: "bg-emerald-500", badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  DELIVERED: { dot: "bg-zinc-400", badge: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" },
-  CANCELLED: { dot: "bg-rose-400", badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
-  NOT_REPAIRED: { dot: "bg-red-500", badge: "bg-red-500/10 text-red-700 dark:text-red-300" },
-  NOT_AUTHORIZED: { dot: "bg-pink-500", badge: "bg-pink-500/10 text-pink-700 dark:text-pink-300" },
-  EXTERNAL_LAB: { dot: "bg-indigo-500", badge: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" },
-  WARRANTY: { dot: "bg-cyan-500", badge: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" },
-}
 const accessLabels: Record<string, string> = { NONE: "Sin bloqueo", PATTERN: "Patrón", PIN: "PIN", PASSWORD: "Contraseña" }
 const aestheticsLabels: Record<string, string> = { BUENO: "Bueno", REGULAR: "Regular", MALO: "Malo" }
 const conditionLabels: Record<string, string> = { ENCENDIDO: "Encendido", APAGADO: "Apagado", MOJADO: "Mojado", MANIPULADO: "Manipulado", ROTO: "Roto", INCOMPLETO: "Incompleto" }
-const isOverdue = (order: Order) => order.promisedAt !== null && new Date(order.promisedAt).getTime() < Date.now() && !terminalStages.includes(order.status)
-const isScheduledToday = (order: Order) => {
-  if (!order.scheduledAt) return false
-  const scheduled = new Date(order.scheduledAt); const now = new Date()
-  return scheduled.getFullYear() === now.getFullYear() && scheduled.getMonth() === now.getMonth() && scheduled.getDate() === now.getDate()
-}
-
-function PromisedAt({ order }: { order: Order }) {
-  if (!order.promisedAt) return null
-  const overdue = isOverdue(order)
-  return <span className={`flex items-center gap-1 ${overdue ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}><CalendarClock size={12} />{date(order.promisedAt)}{overdue ? " · Atrasada" : ""}</span>
-}
 
 function PatternDots({ value }: { value: string }) {
   const steps = value.split("-").map(Number)
@@ -195,35 +177,16 @@ function whatsappNotifyUrl(order: Order, businessName: string): string {
   return waLink(order.customerPhone, body)
 }
 
-function BoardColumn({ title, style, orders, total, dimmed, showStage, slaHours, onOpen, onAvisar }: { title: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; slaHours: SlaHours; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
-  return <section aria-label={title} className={`flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3 ${dimmed ? "opacity-70" : ""}`}>
-    <header className="mb-3 flex items-center gap-2 px-1">
+function BoardColumn({ title, subtitle, style, orders, total, dimmed, showStage, showBranch, slaHours, onOpen, onAvisar }: { title: string; subtitle?: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; showBranch?: boolean; slaHours: SlaHours; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
+  return <section aria-label={title} className={`flex w-64 shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2.5 ${dimmed ? "opacity-70" : ""}`}>
+    <header className="mb-2 flex items-center gap-2 px-1" title={subtitle}>
       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
       <h2 className="truncate text-sm font-semibold">{title}</h2>
       <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${style.badge}`}>{total}</span>
     </header>
-    <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
+    <div className="max-h-[calc(100dvh-19rem)] space-y-1.5 overflow-y-auto pr-1">
       {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
-        : orders.map(order => <div key={order.id} className="relative"><button onClick={() => onOpen(order.id)} className="w-full space-y-1.5 rounded-lg border bg-card p-3 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
-          <p className="flex items-center justify-between gap-2"><strong className="text-xs text-muted-foreground">{folioOf(order)}</strong>{showStage && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${stageStyles[order.status].badge}`}>{repairLabels[order.status]}</span>}</p>
-          <p className="font-medium leading-snug">{[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}</p>
-          <p className="text-xs text-muted-foreground">{order.customerName}</p>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><MapPin size={12} />{order.currentBranch.name}</span>
-            <span className="flex items-center gap-1"><Wrench size={12} />{order.assignedTo?.name ?? "Sin asignar"}</span>
-            <PromisedAt order={order} />
-            <SemaforoBadge order={order} slaHours={slaHours} />
-          </div>
-          {(orderBalanceCents(order) > 0 || isScheduledToday(order) || order.location) && <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {orderBalanceCents(order) > 0 && <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-300">Adeudo {money(orderBalanceCents(order))}</span>}
-            {isScheduledToday(order) && <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">Hoy</span>}
-            {order.location && <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"><MapPin size={11} />{order.location}</span>}
-          </div>}
-        </button>
-        {/* "Avisar" en un toque: la tarjeta entera es <button>, así que el chip
-            va como overlay hermano (botón dentro de botón no es HTML válido). */}
-        {(order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) && <button type="button" title={`Avisar a ${order.customerName} por WhatsApp`} aria-label={`Avisar a ${order.customerName} por WhatsApp`} onClick={event => { event.stopPropagation(); onAvisar(order) }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"><MessageCircle size={14} /></button>}
-      </div>)}
+        : orders.map(order => <BoardOrderCard key={order.id} order={order} slaHours={slaHours} showStage={showStage} showBranch={showBranch} onOpen={onOpen} onAvisar={onAvisar} />)}
       {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
     </div>
   </section>
@@ -255,6 +218,13 @@ export default function WorkshopPage() {
     if (typeof window === "undefined") return "board"
     const raw = new URLSearchParams(window.location.search).get("view")
     return viewTabs.some(tabItem => tabItem.value === raw) ? (raw as BoardView) : "board"
+  })
+  // Columnas del tablero: "fase" (5 agrupadas por etapa del flujo, default)
+  // o "etapa" (las 9 sueltas). Persiste en localStorage y viaja en ?cols=.
+  const [columnMode, setColumnMode] = useState<"fase" | "etapa">(() => {
+    if (typeof window === "undefined") return "fase"
+    const raw = new URLSearchParams(window.location.search).get("cols") ?? localStorage.getItem("reficio:taller:cols")
+    return raw === "etapa" ? "etapa" : "fase"
   })
   const [search, setSearch] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("q")?.slice(0, 100) ?? "")
   const [page, setPage] = useState(() => {
@@ -456,8 +426,15 @@ export default function WorkshopPage() {
     else url.searchParams.delete("page")
     if (search.trim()) url.searchParams.set("q", search.trim())
     else url.searchParams.delete("q")
+    if (columnMode === "etapa") url.searchParams.set("cols", "etapa")
+    else url.searchParams.delete("cols")
     window.history.replaceState(null, "", url)
-  }, [view, stage, branch, page, search])
+  }, [view, stage, branch, page, search, columnMode])
+
+  // Preferencia local del modo de columnas (sobrevive al cambio de ruta).
+  useEffect(() => {
+    try { localStorage.setItem("reficio:taller:cols", columnMode) } catch { /* sin storage */ }
+  }, [columnMode])
 
   const load = useCallback(async () => {
     const version = ++requestVersion.current
@@ -846,7 +823,9 @@ export default function WorkshopPage() {
     : 0
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-20">
+    // El tablero usa el ancho real del shell (5 fases de 256px ≈ 1,330px);
+    // el detalle conserva 6xl para que las secciones sigan legibles.
+    <div className={`mx-auto space-y-5 pb-20 ${selected ? "max-w-6xl" : "max-w-[88rem]"}`}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-primary">
@@ -855,13 +834,13 @@ export default function WorkshopPage() {
           <h1 className="mt-1 text-3xl font-bold">
             {selected ? folioOf(selected) : tab === "precios" ? "Catálogo de servicios" : "Órdenes de servicio"}
           </h1>
-          <p className="mt-2 text-muted-foreground">
-            {selected
-              ? `${selected.customerName} · ${selected.equipmentType}`
-              : tab === "precios"
-                ? "Precios sugeridos por servicio, modelos de equipo y listas del taller."
-                : "De la recepción a la entrega, con un historial por equipo."}
-          </p>
+          {(selected || tab === "precios") && (
+            <p className="mt-2 text-muted-foreground">
+              {selected
+                ? `${selected.customerName} · ${selected.equipmentType}`
+                : "Precios sugeridos por servicio, modelos de equipo y listas del taller."}
+            </p>
+          )}
         </div>
         {selected || opening ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -874,24 +853,36 @@ export default function WorkshopPage() {
                     Avisar
                   </Button>
                 )}
-                <Button variant="outline" asChild>
-                  <Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
-                    <Printer className="mr-2 h-4 w-4" />
-                    Ticket cliente
-                  </Link>
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer">
-                    <Wrench className="mr-2 h-4 w-4" />
-                    Hoja de taller
-                  </Link>
-                </Button>
-                <Button variant="outline" asChild>
-                  <Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
-                    <FileText className="mr-2 h-4 w-4" />
-                    Cotización
-                  </Link>
-                </Button>
+                {/* Los 3 tickets se agrupan en un menú — el detalle tiene
+                    demasiados botones en fila. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline">
+                      <Printer className="mr-2 h-4 w-4" />
+                      Imprimir
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild>
+                      <Link href={`/admin/tickets/reparacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                        <Printer />
+                        Ticket cliente
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href={`/admin/tickets/taller/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                        <Wrench />
+                        Hoja de taller
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href={`/admin/tickets/cotizacion/${selected.id}`} target="_blank" rel="noopener noreferrer">
+                        <FileText />
+                        Cotización
+                      </Link>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {isAdmin && partnerConfigured && !selected.delegatedOrderId && !partsClosedStages.includes(selected.status) && (
                   <Button variant="outline" disabled={saving} onClick={() => setDelegateOpen(true)}>
                     <Send className="mr-2 h-4 w-4" />
@@ -958,94 +949,104 @@ export default function WorkshopPage() {
             <CatalogoPanel />
           ) : (
             <>
-              {/* Son filtros de la misma lista, no paneles tab: botones con
-                  aria-pressed (como los demás chips) en lugar de tablist — el
-                  rol tab exigiría arrow-key nav y un tabpanel por vista. */}
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Vistas del taller">
-                {viewTabs.map(vista => (
-                  <button
-                    key={vista.value}
-                    type="button"
-                    aria-pressed={view === vista.value}
-                    onClick={() => {
-                      setView(vista.value)
-                      setPage(1)
-                    }}
-                    className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                      view === vista.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
-                    }`}
-                  >
-                    {vista.label}
-                  </button>
-                ))}
-              </div>
-              <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-3">
-                <label className="text-sm">
-                  Buscar folio, cliente, teléfono, modelo o serie
-                  <div className="relative mt-2">
-                    <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      value={search}
-                      className="pl-9"
-                      placeholder="OT-000001, teléfono o modelo…"
-                      onChange={e => {
-                        setSearch(e.target.value)
+              {/* Una sola barra de herramientas: vistas + búsqueda + filtros +
+                  agrupación. Antes ocupaba ~150px de alto en dos bloques. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Vistas del taller">
+                  {viewTabs.map(vista => (
+                    <button
+                      key={vista.value}
+                      type="button"
+                      aria-pressed={view === vista.value}
+                      onClick={() => {
+                        setView(vista.value)
                         setPage(1)
                       }}
-                    />
+                      className={`rounded-full px-3 py-1 text-[13px] font-medium transition ${
+                        view === vista.value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                      }`}
+                    >
+                      {vista.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative min-w-44 flex-1 sm:max-w-64">
+                  <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    className="h-8 pl-8 text-sm"
+                    placeholder="Folio, cliente, teléfono, modelo…"
+                    aria-label="Buscar folio, cliente, teléfono, modelo o serie"
+                    onChange={e => {
+                      setSearch(e.target.value)
+                      setPage(1)
+                    }}
+                  />
+                </div>
+                <select
+                  aria-label="Ubicación actual"
+                  className="h-8 w-auto max-w-40 rounded-lg border bg-background px-2 text-sm"
+                  value={branch}
+                  onChange={e => {
+                    setBranch(e.target.value)
+                    setPage(1)
+                  }}
+                >
+                  <option value="">Todas las sucursales</option>
+                  {branches.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Etapa"
+                  className="h-8 w-auto max-w-44 rounded-lg border bg-background px-2 text-sm"
+                  value={stage}
+                  onChange={e => {
+                    setStage(e.target.value)
+                    setPage(1)
+                  }}
+                >
+                  <option value="">Todas las etapas</option>
+                  {Object.entries(repairLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                {kanbanMode && (
+                  <div className="flex rounded-lg border p-0.5" role="group" aria-label="Agrupación de columnas">
+                    {(["fase", "etapa"] as const).map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={columnMode === mode}
+                        onClick={() => setColumnMode(mode)}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                          columnMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        {mode === "fase" ? "Por fase" : "Por etapa"}
+                      </button>
+                    ))}
                   </div>
-                </label>
-                <label className="text-sm">
-                  Ubicación actual
-                  <select
-                    className={`${inputClass} mt-2`}
-                    value={branch}
-                    onChange={e => {
-                      setBranch(e.target.value)
-                      setPage(1)
-                    }}
-                  >
-                    <option value="">Todas las sucursales</option>
-                    {branches.map(b => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-sm">
-                  Etapa
-                  <select
-                    className={`${inputClass} mt-2`}
-                    value={stage}
-                    onChange={e => {
-                      setStage(e.target.value)
-                      setPage(1)
-                    }}
-                  >
-                    <option value="">Todas las etapas</option>
-                    {Object.entries(repairLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                )}
               </div>
               {loading ? (
                 // Esqueleto kanban: el texto "Cargando…" dejaba hueco y el
                 // tablero saltaba al llegar las órdenes (CLS en cada filtro).
                 <div role="status" aria-label="Cargando órdenes" className="flex items-start gap-3 overflow-x-auto pb-2">
-                  {[3, 2, 2].map((cards, col) => (
-                    <section key={col} aria-hidden className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40 p-3">
-                      <header className="mb-3 flex items-center gap-2 px-1">
+                  {[4, 3, 3, 2, 2].map((cards, col) => (
+                    <section key={col} aria-hidden className="flex w-64 shrink-0 flex-col rounded-xl bg-muted/40 p-2.5">
+                      <header className="mb-2 flex items-center gap-2 px-1">
                         <Skeleton className="h-2.5 w-2.5 rounded-full" />
                         <Skeleton className="h-4 w-24" />
                         <Skeleton className="ml-auto h-5 w-8 rounded-full" />
                       </header>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {Array.from({ length: cards }).map((_, card) => (
-                          <div key={card} className="space-y-2 rounded-lg border bg-card p-3">
+                          <div key={card} className="space-y-1.5 rounded-lg border bg-card p-2.5">
                             <Skeleton className="h-3 w-16" />
                             <Skeleton className="h-4 w-full" />
                             <Skeleton className="h-3 w-28" />
@@ -1067,37 +1068,73 @@ export default function WorkshopPage() {
                         {boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}
                       </p>
                     )}
-                    <div className="flex items-start gap-3 overflow-x-auto pb-2">
-                      {activeBoardStages.map(value => (
-                        <BoardColumn
-                          key={value}
-                          title={repairLabels[value]}
-                          style={stageStyles[value]}
-                          orders={board?.orders[value] ?? []}
-                          total={board?.totals[value] ?? 0}
-                          slaHours={slaHours}
-                          onOpen={id => void openOrder(id)}
-                          onAvisar={avisarCliente}
-                        />
-                      ))}
-                      <BoardColumn
-                        title="Cerradas"
-                        style={closedColumnStyle}
-                        dimmed
-                        showStage
-                        slaHours={slaHours}
-                        onOpen={id => void openOrder(id)}
-                        onAvisar={avisarCliente}
-                        orders={
-                          board
-                            ? closedColumnStages
-                                .flatMap(value => board.orders[value] ?? [])
-                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                                .slice(0, 20)
-                            : []
-                        }
-                        total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0}
-                      />
+                    {/* snap-x: en pantallas angostas las columnas se hojean de
+                        a una; en desktop (fase) las 5 caben sin scroll. */}
+                    <div className="flex snap-x snap-mandatory items-start gap-3 overflow-x-auto pb-2">
+                      {columnMode === "fase" ? (
+                        BOARD_PHASES.map(phase => (
+                          <BoardColumn
+                            key={phase.id}
+                            title={phase.label}
+                            subtitle={phaseStageCounts(phase, board?.totals).map(({ stage: stageKey, count }) => `${count} ${repairLabels[stageKey].toLowerCase()}`).join(" · ")}
+                            style={phaseStyles[phase.id]}
+                            dimmed={phase.id === "cerradas"}
+                            showStage={phase.stages.length > 1}
+                            showBranch={!branch && branches.length > 1}
+                            orders={
+                              (phase.id === "cerradas"
+                                // Las cerradas se ven mejor recientes primero;
+                                // el resto de fases: etapa del flujo, luego antigüedad.
+                                ? (board
+                                    ? closedColumnStages
+                                        .flatMap(value => board.orders[value] ?? [])
+                                        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                    : [])
+                                : phaseOrders(phase, board?.orders)
+                              ).slice(0, 20)
+                            }
+                            total={phaseTotal(phase, board?.totals)}
+                            slaHours={slaHours}
+                            onOpen={id => void openOrder(id)}
+                            onAvisar={avisarCliente}
+                          />
+                        ))
+                      ) : (
+                        <>
+                          {activeBoardStages.map(value => (
+                            <BoardColumn
+                              key={value}
+                              title={repairLabels[value]}
+                              style={stageStyles[value]}
+                              orders={board?.orders[value] ?? []}
+                              total={board?.totals[value] ?? 0}
+                              showBranch={!branch && branches.length > 1}
+                              slaHours={slaHours}
+                              onOpen={id => void openOrder(id)}
+                              onAvisar={avisarCliente}
+                            />
+                          ))}
+                          <BoardColumn
+                            title="Cerradas"
+                            style={closedColumnStyle}
+                            dimmed
+                            showStage
+                            showBranch={!branch && branches.length > 1}
+                            slaHours={slaHours}
+                            onOpen={id => void openOrder(id)}
+                            onAvisar={avisarCliente}
+                            orders={
+                              board
+                                ? closedColumnStages
+                                    .flatMap(value => board.orders[value] ?? [])
+                                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                    .slice(0, 20)
+                                : []
+                            }
+                            total={board ? closedColumnStages.reduce((sum, value) => sum + (board.totals[value] ?? 0), 0) : 0}
+                          />
+                        </>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {total} órdenes
@@ -1110,67 +1147,19 @@ export default function WorkshopPage() {
               ) : orders.length === 0 ? (
                 emptyList
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
+                // Vista lista: una fila densa por orden — antes eran tarjetas
+                // de ~180px en 2 columnas (mucho scroll vertical).
+                <div className="space-y-1.5">
                   {orders.map(order => (
-                    <div key={order.id} className="relative">
-                      <button
-                        onClick={() => void openOrder(order.id)}
-                        className={`h-full w-full space-y-3 rounded-xl border bg-card p-5 text-left transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary${
-                          (order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) ? " pr-12" : ""
-                        }`}
-                      >
-                        <div className="flex justify-between gap-3">
-                          <strong>{folioOf(order)}</strong>
-                          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">
-                            {repairLabels[order.status]}
-                          </span>
-                        </div>
-                        <div>
-                          <h2 className="font-semibold">
-                            {[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}
-                          </h2>
-                          <p className="text-sm text-muted-foreground">{order.customerName}</p>
-                        </div>
-                        <p className="line-clamp-2 text-sm">{order.reportedIssue}</p>
-                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <MapPin size={14} />
-                            {order.currentBranch.name}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Wrench size={14} />
-                            {order.assignedTo?.name ?? "Sin asignar"}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock3 size={14} />
-                            {date(order.createdAt)}
-                          </span>
-                          <PromisedAt order={order} />
-                          <SemaforoBadge order={order} slaHours={slaHours} />
-                          {(order.originBusiness || order.originBusinessName) && (
-                            <span className="flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 font-medium text-indigo-700 dark:text-indigo-300">
-                              <Store size={11} />
-                              {order.originBusiness?.name ?? order.originBusinessName}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      {/* "Avisar" en un toque: overlay hermano porque la tarjeta ya es <button>. */}
-                      {(order.status === "READY" || order.status === "WAITING_APPROVAL") && hasWhatsAppPhone(order.customerPhone) && (
-                        <button
-                          type="button"
-                          title={`Avisar a ${order.customerName} por WhatsApp`}
-                          aria-label={`Avisar a ${order.customerName} por WhatsApp`}
-                          onClick={event => {
-                            event.stopPropagation()
-                            avisarCliente(order)
-                          }}
-                          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"
-                        >
-                          <MessageCircle size={15} />
-                        </button>
-                      )}
-                    </div>
+                    <OrderListRow
+                      key={order.id}
+                      order={order}
+                      slaHours={slaHours}
+                      showStage
+                      showBranch={!branch && branches.length > 1}
+                      onOpen={id => void openOrder(id)}
+                      onAvisar={avisarCliente}
+                    />
                   ))}
                 </div>
               )}
@@ -1271,12 +1260,12 @@ export default function WorkshopPage() {
                   </Link>
                 </p>
               )}
-              <dl className="grid gap-3 text-sm">
-                <div>
+              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                <div className="sm:col-span-2">
                   <dt className="text-muted-foreground">Servicio</dt>
                   <dd>{selected.serviceName || "Sin registrar"}</dd>
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <dt className="text-muted-foreground">Falla reportada</dt>
                   <dd>{selected.reportedIssue}</dd>
                 </div>

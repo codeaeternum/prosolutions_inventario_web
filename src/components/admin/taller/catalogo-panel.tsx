@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   BookOpen,
   CheckCircle2,
+  ChevronDown,
   DollarSign,
   Gamepad2,
   Laptop,
@@ -102,6 +103,10 @@ export function CatalogoPanel() {
   const [modelSearch, setModelSearch] = useState("")
   const [modelForm, setModelForm] = useState<DeviceModelForm>(emptyModelForm)
   const [toDeleteModel, setToDeleteModel] = useState<DeviceModelRow | null>(null)
+  // Secciones <details> de alta: arrancan plegadas, se fuerzan abiertas al
+  // editar o cuando el listado está vacío (primer uso); se abren a mano también.
+  const [serviceFormOpen, setServiceFormOpen] = useState(false)
+  const [modelFormOpen, setModelFormOpen] = useState(false)
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
   const requestVersion = useRef(0)
@@ -221,6 +226,7 @@ export function CatalogoPanel() {
 
   function startEdit(service: Service) {
     setEditing(service)
+    setServiceFormOpen(true)
     setForm({ name: service.name, price: service.priceCents === null ? "" : (service.priceCents / 100).toFixed(2), equipmentType: service.equipmentType ?? "", description: service.description ?? "" })
     setPriceRows((service.prices ?? []).map(row => ({
       key: `pr-${++priceKeyCounter.current}`,
@@ -358,15 +364,15 @@ export function CatalogoPanel() {
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
         {statCards.map(card => (
-          <div key={card.label} className="flex items-center gap-3 rounded-xl border bg-card p-4">
-            <span className={cn("rounded-lg p-2", card.tone)}>
-              <card.icon className="h-5 w-5" />
+          <div key={card.label} className="flex items-center gap-2.5 rounded-xl border bg-card px-3 py-2.5">
+            <span className={cn("rounded-lg p-1.5", card.tone)}>
+              <card.icon className="h-4 w-4" />
             </span>
             <div>
-              <p className="text-2xl font-bold tabular-nums">{card.value}</p>
+              <p className="text-xl font-bold leading-tight tabular-nums">{card.value}</p>
               <p className="text-xs text-muted-foreground">{card.label}</p>
             </div>
           </div>
@@ -380,162 +386,172 @@ export function CatalogoPanel() {
           <TabsTrigger value="configuracion">Tipos de equipo y locaciones</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="servicios" className="space-y-6 pt-4">
-          {isAdmin && <section className="rounded-xl border bg-card p-5 sm:p-6">
-            <h2 className="mb-4 font-semibold">{editing ? `Editar: ${editing.name}` : "Nuevo servicio"}</h2>
-            <form onSubmit={submitService} className="grid gap-4 sm:grid-cols-2">
-              <label className="block space-y-2 text-sm">Nombre *
-                <Input value={form.name} onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))} maxLength={120} placeholder="Ej. Cambio de pantalla" autoComplete="off" required />
-              </label>
-              <label className="block space-y-2 text-sm">Precio base (MXN) — opcional
-                <Input type="number" min="0" step="0.01" inputMode="decimal" value={form.price} onChange={event => setForm(previous => ({ ...previous, price: event.target.value }))} placeholder="Variable / según dispositivo" />
-              </label>
-              <label className="block space-y-2 text-sm">Tipo de equipo
-                <Input list="service-equipment-types" value={form.equipmentType} onChange={event => setForm(previous => ({ ...previous, equipmentType: event.target.value }))} maxLength={80} placeholder="Ej. Celular (opcional)" autoComplete="off" />
-                <datalist id="service-equipment-types">{equipmentTypes.map(type => <option key={type} value={type} />)}</datalist>
-              </label>
-              <label className="block space-y-2 text-sm">Descripción
-                <Input value={form.description} onChange={event => setForm(previous => ({ ...previous, description: event.target.value }))} maxLength={300} placeholder="Detalle breve del servicio (opcional)" autoComplete="off" />
-              </label>
-              <div className="space-y-3 rounded-lg border border-dashed p-4 sm:col-span-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium">Precios por dispositivo</p>
-                    <p className="text-xs text-muted-foreground">Ganan sobre el precio base cuando el equipo recibido coincide con el modelo exacto o el tipo de equipo.</p>
+        <TabsContent value="servicios" className="space-y-4 pt-3">
+          {isAdmin && (
+            // Mismo patrón <details>/<summary> que CollapsibleSection, con el
+            // estado levantado para poder abrirlo al pulsar "Editar" en la tabla.
+            // Abierto a la fuerza al editar y mientras el catálogo está vacío
+            // (el alta es el siguiente paso en el primer uso).
+            <details
+              className="group rounded-xl border bg-card"
+              open={serviceFormOpen || editing !== null || (!loading && services.length === 0)}
+              onToggle={event => setServiceFormOpen(event.currentTarget.open)}
+            >
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold outline-none select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                <span className="flex-1">{editing ? `Editar: ${editing.name}` : "Nuevo servicio"}</span>
+                <span className="hidden shrink-0 text-xs font-normal text-muted-foreground sm:inline">Precio base y precios por dispositivo</span>
+              </summary>
+              <form onSubmit={submitService} className="grid gap-3 p-4 pt-0 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="block space-y-1 text-sm">Nombre *
+                  <Input value={form.name} onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))} maxLength={120} placeholder="Ej. Cambio de pantalla" autoComplete="off" required />
+                </label>
+                <label className="block space-y-1 text-sm">Precio base (MXN) — opcional
+                  <Input type="number" min="0" step="0.01" inputMode="decimal" value={form.price} onChange={event => setForm(previous => ({ ...previous, price: event.target.value }))} placeholder="Variable / según dispositivo" />
+                </label>
+                <label className="block space-y-1 text-sm">Tipo de equipo
+                  <Input list="service-equipment-types" value={form.equipmentType} onChange={event => setForm(previous => ({ ...previous, equipmentType: event.target.value }))} maxLength={80} placeholder="Ej. Celular (opcional)" autoComplete="off" />
+                  <datalist id="service-equipment-types">{equipmentTypes.map(type => <option key={type} value={type} />)}</datalist>
+                </label>
+                <label className="block space-y-1 text-sm">Descripción
+                  <Input value={form.description} onChange={event => setForm(previous => ({ ...previous, description: event.target.value }))} maxLength={300} placeholder="Detalle breve del servicio (opcional)" autoComplete="off" />
+                </label>
+                <div className="space-y-2 rounded-lg border border-dashed p-3 sm:col-span-2 lg:col-span-4">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <p className="text-sm font-medium">
+                      Precios por dispositivo
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">Ganan sobre el precio base al coincidir el modelo exacto o el tipo de equipo.</span>
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={addPriceRow} disabled={saving}>
+                      <Plus className="mr-1 h-3.5 w-3.5" />Agregar precio
+                    </Button>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={addPriceRow} disabled={saving}>
-                    <Plus className="mr-1 h-3.5 w-3.5" />Agregar precio
-                  </Button>
-                </div>
-                {priceRows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">Sin precios específicos: siempre se usa el precio base (o se cotiza al recibir si está vacío).</p>
-                ) : (
-                  <div className="space-y-2">
-                    {priceRows.map(row => (
-                      <div key={row.key} className="grid items-start gap-2 sm:grid-cols-[9.5rem_minmax(0,1fr)_7.5rem_2.25rem]">
-                        <select
-                          value={row.scope}
-                          onChange={event => updatePriceRow(row.key, { scope: event.target.value as PriceRow["scope"] })}
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          disabled={saving}
-                        >
-                          <option value="model">Modelo exacto</option>
-                          <option value="type">Tipo de equipo</option>
-                        </select>
-                        {row.scope === "model" ? (
-                          <div className="relative">
+                  {priceRows.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Sin precios específicos: siempre se usa el precio base (o se cotiza al recibir si está vacío).</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {priceRows.map(row => (
+                        <div key={row.key} className="grid items-start gap-2 sm:grid-cols-[9.5rem_minmax(0,1fr)_7.5rem_2.25rem]">
+                          <select
+                            value={row.scope}
+                            onChange={event => updatePriceRow(row.key, { scope: event.target.value as PriceRow["scope"] })}
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            disabled={saving}
+                          >
+                            <option value="model">Modelo exacto</option>
+                            <option value="type">Tipo de equipo</option>
+                          </select>
+                          {row.scope === "model" ? (
+                            <div className="relative">
+                              <Input
+                                value={row.deviceLabel}
+                                onChange={event => { updatePriceRow(row.key, { deviceLabel: event.target.value, deviceModelId: "" }); setPickerRowKey(row.key); setPickerQuery(event.target.value) }}
+                                onFocus={() => { setPickerRowKey(row.key); setPickerQuery(row.deviceLabel) }}
+                                onBlur={() => setTimeout(() => setPickerRowKey(current => (current === row.key ? null : current)), 150)}
+                                maxLength={140}
+                                placeholder="Buscar marca o modelo…"
+                                autoComplete="off"
+                                disabled={saving}
+                                className={row.deviceModelId ? "pr-8" : undefined}
+                              />
+                              {row.deviceModelId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-success" />}
+                              {pickerRowKey === row.key && pickerOptions.length > 0 && (
+                                <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+                                  {pickerOptions.map(option => (
+                                    <li key={option.id}>
+                                      <button
+                                        type="button"
+                                        className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+                                        onMouseDown={event => {
+                                          event.preventDefault()
+                                          updatePriceRow(row.key, { deviceModelId: option.id, deviceLabel: `${option.brand} ${option.model}` })
+                                          setPickerRowKey(null)
+                                        }}
+                                      >
+                                        <span>{option.brand} {option.model}</span>
+                                        {option.code && <span className="shrink-0 font-mono text-xs text-muted-foreground">{option.code}</span>}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ) : (
                             <Input
-                              value={row.deviceLabel}
-                              onChange={event => { updatePriceRow(row.key, { deviceLabel: event.target.value, deviceModelId: "" }); setPickerRowKey(row.key); setPickerQuery(event.target.value) }}
-                              onFocus={() => { setPickerRowKey(row.key); setPickerQuery(row.deviceLabel) }}
-                              onBlur={() => setTimeout(() => setPickerRowKey(current => (current === row.key ? null : current)), 150)}
-                              maxLength={140}
-                              placeholder="Buscar marca o modelo…"
+                              list="service-equipment-types"
+                              value={row.equipmentType}
+                              onChange={event => updatePriceRow(row.key, { equipmentType: event.target.value })}
+                              maxLength={80}
+                              placeholder="Ej. Celular"
                               autoComplete="off"
                               disabled={saving}
-                              className={row.deviceModelId ? "pr-8" : undefined}
                             />
-                            {row.deviceModelId && <CheckCircle2 className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-success" />}
-                            {pickerRowKey === row.key && pickerOptions.length > 0 && (
-                              <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
-                                {pickerOptions.map(option => (
-                                  <li key={option.id}>
-                                    <button
-                                      type="button"
-                                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
-                                      onMouseDown={event => {
-                                        event.preventDefault()
-                                        updatePriceRow(row.key, { deviceModelId: option.id, deviceLabel: `${option.brand} ${option.model}` })
-                                        setPickerRowKey(null)
-                                      }}
-                                    >
-                                      <span>{option.brand} {option.model}</span>
-                                      {option.code && <span className="shrink-0 font-mono text-xs text-muted-foreground">{option.code}</span>}
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ) : (
-                          <Input
-                            list="service-equipment-types"
-                            value={row.equipmentType}
-                            onChange={event => updatePriceRow(row.key, { equipmentType: event.target.value })}
-                            maxLength={80}
-                            placeholder="Ej. Celular"
-                            autoComplete="off"
-                            disabled={saving}
-                          />
-                        )}
-                        <Input type="number" min="0" step="0.01" inputMode="decimal" value={row.price} onChange={event => updatePriceRow(row.key, { price: event.target.value })} placeholder="0.00" disabled={saving} />
-                        <Button type="button" variant="ghost" size="sm" className="h-9 w-9 px-0" onClick={() => removePriceRow(row.key)} disabled={saving} aria-label="Quitar precio">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2 sm:col-span-2">
-                <Button type="submit" disabled={saving}>
-                  {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {editing ? "Guardar cambios" : "Crear servicio"}
-                </Button>
-                {editing && <Button type="button" variant="outline" onClick={cancelEdit} disabled={saving}>Cancelar</Button>}
-              </div>
-            </form>
-          </section>}
+                          )}
+                          <Input type="number" min="0" step="0.01" inputMode="decimal" value={row.price} onChange={event => updatePriceRow(row.key, { price: event.target.value })} placeholder="0.00" disabled={saving} />
+                          <Button type="button" variant="ghost" size="sm" className="h-9 w-9 px-0" onClick={() => removePriceRow(row.key)} disabled={saving} aria-label="Quitar precio">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
+                  <Button type="submit" disabled={saving}>
+                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {editing ? "Guardar cambios" : "Crear servicio"}
+                  </Button>
+                  {editing && <Button type="button" variant="outline" onClick={cancelEdit} disabled={saving}>Cancelar</Button>}
+                </div>
+              </form>
+            </details>
+          )}
 
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative min-w-56 flex-1 sm:max-w-xs">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={search} onChange={event => setSearch(event.target.value)} maxLength={100} placeholder="Buscar por nombre o descripción…" className="pl-9" />
-              </div>
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} className="h-4 w-4 rounded border" />
-                Mostrar inactivos
-              </label>
-              {isAdmin && (
-                <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => void seedSuggested()} disabled={saving}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                  Cargar servicios sugeridos
-                </Button>
-              )}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-56 flex-1 sm:max-w-xs">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={event => setSearch(event.target.value)} maxLength={100} placeholder="Buscar por nombre o descripción…" className="pl-9" />
             </div>
-            <div className="flex flex-wrap gap-2">
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <input type="checkbox" checked={showInactive} onChange={event => setShowInactive(event.target.checked)} className="h-4 w-4 rounded border" />
+              Mostrar inactivos
+            </label>
+            <button
+              type="button"
+              onClick={() => setTypeFilter("")}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium transition",
+                typeFilter === "" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+              )}
+            >
+              Todos
+            </button>
+            {typeOptions.map(type => (
               <button
+                key={type}
                 type="button"
-                onClick={() => setTypeFilter("")}
+                onClick={() => setTypeFilter(type)}
                 className={cn(
-                  "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
-                  typeFilter === "" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                  "rounded-full px-3 py-1 text-xs font-medium transition",
+                  typeFilter === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
                 )}
               >
-                Todos
+                {type}
               </button>
-              {typeOptions.map(type => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setTypeFilter(type)}
-                  className={cn(
-                    "rounded-full px-3.5 py-1.5 text-sm font-medium transition",
-                    typeFilter === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"
-                  )}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
+            ))}
+            {isAdmin && (
+              <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => void seedSuggested()} disabled={saving}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                Cargar servicios sugeridos
+              </Button>
+            )}
           </div>
 
           <section className="rounded-xl border bg-card">
             {loading ? (
-              <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
             ) : filteredServices.length === 0 ? (
-              <div className="p-12 text-center">
+              <div className="p-8 text-center">
                 <BookOpen className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
                 <h2 className="text-lg font-semibold">{services.length === 0 ? "Aún no hay servicios" : "Sin resultados"}</h2>
                 <p className="mt-2 text-sm text-muted-foreground">{services.length === 0 ? (isAdmin ? "Crea el primero con el formulario de arriba o carga el catálogo sugerido." : "Un administrador aún no registra servicios.") : "Prueba con otro nombre o ajusta los filtros."}</p>
@@ -547,7 +563,7 @@ export function CatalogoPanel() {
                 )}
               </div>
             ) : (
-              <Table>
+              <Table className="[&_td]:px-3 [&_td]:py-2 [&_th]:h-9 [&_th]:px-3">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Servicio</TableHead>
@@ -564,8 +580,8 @@ export function CatalogoPanel() {
                     return (
                       <TableRow key={service.id} className={service.isActive ? "" : "opacity-60"}>
                         <TableCell>
-                          <div className="flex items-center gap-3">
-                            <span className="shrink-0 rounded-lg bg-primary/10 p-2 text-primary">
+                          <div className="flex items-center gap-2.5">
+                            <span className="shrink-0 rounded-lg bg-primary/10 p-1.5 text-primary">
                               <ServiceIcon className="h-4 w-4" />
                             </span>
                             <div className="min-w-0">
@@ -590,11 +606,11 @@ export function CatalogoPanel() {
                         </TableCell>
                         <TableCell><Badge variant={service.isActive ? "success" : "secondary"}>{service.isActive ? "Activo" : "Inactivo"}</Badge></TableCell>
                         {isAdmin && <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button type="button" size="sm" variant="outline" onClick={() => startEdit(service)} disabled={saving}>
+                          <div className="flex justify-end gap-1.5">
+                            <Button type="button" size="xs" variant="outline" onClick={() => startEdit(service)} disabled={saving}>
                               <Pencil className="mr-1 h-3.5 w-3.5" />Editar
                             </Button>
-                            <Button type="button" size="sm" variant={service.isActive ? "outline" : "default"} onClick={() => { if (service.isActive) setToDeactivate(service); else void toggleService(service) }} disabled={saving}>
+                            <Button type="button" size="xs" variant={service.isActive ? "outline" : "default"} onClick={() => { if (service.isActive) setToDeactivate(service); else void toggleService(service) }} disabled={saving}>
                               <Power className="mr-1 h-3.5 w-3.5" />{service.isActive ? "Desactivar" : "Activar"}
                             </Button>
                           </div>
@@ -608,42 +624,53 @@ export function CatalogoPanel() {
           </section>
         </TabsContent>
 
-        <TabsContent value="modelos" className="space-y-6 pt-4">
-          <p className="rounded-lg border border-dashed bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
-            {isSuperAdmin
-              ? "Catálogo global de la plataforma: los modelos que agregues o importes alimentan el autocompletado de recepción de todas las empresas."
-              : "Los modelos que agregues son privados de tu negocio y se suman al catálogo global de la plataforma en el autocompletado de recepción. Los modelos marcados como Global solo los administra Reficio."}
-          </p>
-          <section className="rounded-xl border bg-card p-5 sm:p-6">
-            <h2 className="mb-1 font-semibold">Nuevo modelo de equipo</h2>
-            <p className="mb-4 text-xs text-muted-foreground">
+        <TabsContent value="modelos" className="space-y-4 pt-3">
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+            {/* Igual que el alta de servicios: abierto a la fuerza mientras el catálogo está vacío. */}
+            <details
+              className="group rounded-xl border bg-card"
+              open={modelFormOpen || (!modelsLoading && deviceModels.length === 0)}
+              onToggle={event => setModelFormOpen(event.currentTarget.open)}
+            >
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold outline-none select-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                <span className="flex-1">Nuevo modelo de equipo</span>
+                <span className="hidden shrink-0 text-xs font-normal text-muted-foreground sm:inline">{isSuperAdmin ? "Catálogo global" : "Privado del negocio"}</span>
+              </summary>
+              <form onSubmit={submitModel} className="grid gap-3 p-4 pt-0 sm:grid-cols-2">
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  {isSuperAdmin
+                    ? "Se guarda en el catálogo global. Si marca + modelo ya existen, se actualiza su código y tipo."
+                    : "Se guarda como modelo privado de tu negocio. Si marca + modelo ya existen en tu catálogo, se actualiza su código y tipo."}
+                </p>
+                <label className="block space-y-1 text-sm">Marca *
+                  <Input value={modelForm.brand} onChange={event => setModelForm(previous => ({ ...previous, brand: event.target.value }))} maxLength={60} placeholder="Ej. Samsung" autoComplete="off" required />
+                </label>
+                <label className="block space-y-1 text-sm">Modelo *
+                  <Input value={modelForm.model} onChange={event => setModelForm(previous => ({ ...previous, model: event.target.value }))} maxLength={120} placeholder="Ej. Galaxy A21" autoComplete="off" required />
+                </label>
+                <label className="block space-y-1 text-sm">Código
+                  <Input value={modelForm.code} onChange={event => setModelForm(previous => ({ ...previous, code: event.target.value }))} maxLength={60} placeholder="Ej. SM-A245M (opcional)" autoComplete="off" />
+                </label>
+                <label className="block space-y-1 text-sm">Tipo
+                  <Input list="device-model-types" value={modelForm.type} onChange={event => setModelForm(previous => ({ ...previous, type: event.target.value }))} maxLength={40} placeholder="SMARTPHONE" autoComplete="off" />
+                  <datalist id="device-model-types">{DEVICE_MODEL_TYPES.map(type => <option key={type} value={type} />)}</datalist>
+                </label>
+                <div className="flex flex-wrap gap-2 sm:col-span-2">
+                  <Button type="submit" disabled={saving}>
+                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar modelo
+                  </Button>
+                </div>
+              </form>
+            </details>
+            <p className="rounded-xl border border-dashed bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
               {isSuperAdmin
-                ? "Se guarda en el catálogo global. Si marca + modelo ya existen, se actualiza su código y tipo."
-                : "Se guarda como modelo privado de tu negocio. Si marca + modelo ya existen en tu catálogo, se actualiza su código y tipo."}
+                ? "Catálogo global de la plataforma: los modelos que agregues o importes alimentan el autocompletado de recepción de todas las empresas."
+                : "Los modelos que agregues son privados de tu negocio y se suman al catálogo global de la plataforma en el autocompletado de recepción. Los modelos marcados como Global solo los administra Reficio."}
             </p>
-            <form onSubmit={submitModel} className="grid gap-4 sm:grid-cols-2">
-              <label className="block space-y-2 text-sm">Marca *
-                <Input value={modelForm.brand} onChange={event => setModelForm(previous => ({ ...previous, brand: event.target.value }))} maxLength={60} placeholder="Ej. Samsung" autoComplete="off" required />
-              </label>
-              <label className="block space-y-2 text-sm">Modelo *
-                <Input value={modelForm.model} onChange={event => setModelForm(previous => ({ ...previous, model: event.target.value }))} maxLength={120} placeholder="Ej. Galaxy A21" autoComplete="off" required />
-              </label>
-              <label className="block space-y-2 text-sm">Código
-                <Input value={modelForm.code} onChange={event => setModelForm(previous => ({ ...previous, code: event.target.value }))} maxLength={60} placeholder="Ej. SM-A245M (opcional)" autoComplete="off" />
-              </label>
-              <label className="block space-y-2 text-sm">Tipo
-                <Input list="device-model-types" value={modelForm.type} onChange={event => setModelForm(previous => ({ ...previous, type: event.target.value }))} maxLength={40} placeholder="SMARTPHONE" autoComplete="off" />
-                <datalist id="device-model-types">{DEVICE_MODEL_TYPES.map(type => <option key={type} value={type} />)}</datalist>
-              </label>
-              <div className="flex flex-wrap gap-2 sm:col-span-2">
-                <Button type="submit" disabled={saving}>
-                  {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Guardar modelo
-                </Button>
-              </div>
-            </form>
-          </section>
+          </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-56 flex-1 sm:max-w-xs">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={modelSearch} onChange={event => setModelSearch(event.target.value)} maxLength={100} placeholder="Buscar por marca, modelo o código…" className="pl-9" />
@@ -656,15 +683,15 @@ export function CatalogoPanel() {
 
           <section className="rounded-xl border bg-card">
             {modelsLoading ? (
-              <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
             ) : deviceModels.length === 0 ? (
-              <div className="p-12 text-center">
+              <div className="p-8 text-center">
                 <Smartphone className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
                 <h2 className="text-lg font-semibold">{modelSearch ? "Sin resultados" : "Aún no hay modelos"}</h2>
                 <p className="mt-2 text-sm text-muted-foreground">{modelSearch ? "Prueba con otra marca o código." : "Registra el primero con el formulario de arriba."}</p>
               </div>
             ) : (
-              <Table>
+              <Table className="[&_td]:px-3 [&_td]:py-2 [&_th]:h-9 [&_th]:px-3">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Marca</TableHead>
@@ -692,7 +719,7 @@ export function CatalogoPanel() {
                         </TableCell>
                         <TableCell className="text-right">
                           {canDelete && (
-                            <Button type="button" size="sm" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
+                            <Button type="button" size="xs" variant="outline" onClick={() => setToDeleteModel(item)} disabled={saving}>
                               <Trash2 className="mr-1 h-3.5 w-3.5" />Eliminar
                             </Button>
                           )}
@@ -703,14 +730,16 @@ export function CatalogoPanel() {
                 </TableBody>
               </Table>
             )}
-            <p className="border-t px-4 py-2 text-xs text-muted-foreground">Se muestran hasta 15 resultados; usa la búsqueda para encontrar un modelo específico.</p>
+            <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">Se muestran hasta 15 resultados; usa la búsqueda para encontrar un modelo específico.</p>
           </section>
         </TabsContent>
 
-        <TabsContent value="configuracion" className="pt-4">
-          <section className="rounded-xl border bg-card p-5 sm:p-6">
-            <h2 className="font-semibold">Tipos de equipo y locaciones</h2>
-            <p className="mb-5 mt-0.5 text-xs text-muted-foreground">Estas listas alimentan el formulario de servicios y la recepción de equipos.</p>
+        <TabsContent value="configuracion" className="pt-3">
+          <section className="rounded-xl border bg-card p-4">
+            <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <h2 className="font-semibold">Tipos de equipo y locaciones</h2>
+              <p className="text-xs text-muted-foreground">Estas listas alimentan el formulario de servicios y la recepción de equipos.</p>
+            </div>
             <WorkshopConfigEditor readOnly={!isAdmin} onConfigChange={config => setEquipmentTypes(config.equipmentTypes)} />
           </section>
         </TabsContent>

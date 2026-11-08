@@ -199,7 +199,7 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
         <Upload className="mr-2 h-4 w-4" />Importar CSV
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="space-y-4">
+        <DialogContent className="space-y-3">
           <DialogHeader>
             <DialogTitle>Importar modelos de equipo</DialogTitle>
             <DialogDescription>
@@ -224,7 +224,7 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
             accept=".csv,text/csv"
             onChange={event => { void handleFile(event) }}
             disabled={busy}
-            className="block w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary-foreground hover:file:bg-primary/90"
+            className="block w-full cursor-pointer text-sm text-muted-foreground file:mr-4 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground hover:file:bg-primary/90"
           />
 
           {missingColumns.length > 0 && (
@@ -242,7 +242,7 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
                 {rows.length > PREVIEW_ROWS ? ` (se muestran ${PREVIEW_ROWS})` : ""}
               </p>
               <div className="max-h-56 overflow-y-auto rounded-md border">
-                <Table>
+                <Table className="[&_td]:px-2 [&_td]:py-1.5 [&_th]:h-8 [&_th]:px-2">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">#</TableHead>
@@ -283,7 +283,7 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
             </div>
           )}
 
-          <div className="flex flex-col gap-2 border-t pt-4">
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             <Button type="button" onClick={() => { void importRows() }} disabled={busy || rows.length === 0 || missingColumns.length > 0}>
               {importing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Importar {rows.length > 0 ? `${rows.length} ` : ""}modelos
@@ -294,7 +294,7 @@ export function DeviceModelsImportDialog({ onImported }: { onImported?: () => vo
                 : <Database className="mr-2 h-4 w-4" />}
               Cargar base de datos incluida
             </Button>
-            <p className="text-xs text-muted-foreground">
+            <p className="w-full text-xs text-muted-foreground">
               La base incluida agrega o actualiza ~8,500 modelos del catálogo precargado del servidor.
             </p>
           </div>

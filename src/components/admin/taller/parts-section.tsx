@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { partFormIsDirty } from "@/lib/workshop-form"
+import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
 
 export type WorkshopPartStatus = "REQUESTED" | "APPROVED" | "REJECTED"
 
@@ -65,6 +66,8 @@ export function PartsSection(props: {
     currentBranchId: string
     /** true cuando la orden está cerrada: oculta el formulario y las acciones. */
     readOnly?: boolean
+    /** Estado inicial del colapso de la sección (default abierta). */
+    defaultOpen?: boolean
     busy?: boolean
     onAction: (payload: PartActionPayload) => Promise<void>
     // Avisa al padre que hay captura sin guardar (descripción, cantidades,
@@ -96,6 +99,8 @@ export function PartsSection(props: {
         return () => onDirtyChange?.(false)
     }, [draftDirty, onDirtyChange])
     const approved = parts.filter(part => (part.status ?? "APPROVED") === "APPROVED")
+    const requestedCount = parts.filter(part => (part.status ?? "APPROVED") === "REQUESTED").length
+    const rejectedCount = parts.filter(part => (part.status ?? "APPROVED") === "REJECTED").length
     const totals = approved.reduce(
         (acc, part) => ({ cost: acc.cost + part.unitCostCents * part.qty, price: acc.price + part.unitPriceCents * part.qty }),
         { cost: 0, price: 0 },
@@ -224,11 +229,18 @@ export function PartsSection(props: {
     }
 
     return (
-        <section className="space-y-4 rounded-xl border bg-card p-5">
-            <div className="flex justify-between">
-                <h2 className="font-semibold">Refacciones</h2>
-                <span className="text-sm text-muted-foreground">{parts.length} registradas</span>
-            </div>
+        <CollapsibleSection
+            title="Refacciones"
+            defaultOpen={props.defaultOpen ?? true}
+            badge={<>
+                <span>{parts.length} registrada{parts.length === 1 ? "" : "s"}</span>
+                {parts.length > 0 && (
+                    <span>
+                        {requestedCount} solicitada{requestedCount === 1 ? "" : "s"} · {approved.length} autorizada{approved.length === 1 ? "" : "s"}{rejectedCount > 0 ? ` · ${rejectedCount} rechazada${rejectedCount === 1 ? "" : "s"}` : ""}
+                    </span>
+                )}
+            </>}
+        >
 
             {parts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sin refacciones registradas.</p>
@@ -406,6 +418,6 @@ export function PartsSection(props: {
                 </fieldset>
                 <Button size="sm" disabled={props.busy || !form.description.trim()}>{props.busy ? "Guardando…" : "Agregar refacción"}</Button>
             </form>}
-        </section>
+        </CollapsibleSection>
     )
 }
