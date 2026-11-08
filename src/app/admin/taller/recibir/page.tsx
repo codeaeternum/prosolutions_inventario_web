@@ -926,7 +926,7 @@ export default function ReceiveEquipmentPage() {
             <Link href="/admin/taller"><ArrowLeft className="h-4 w-4" /></Link>
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">Recibir equipo <span className="ml-1 text-sm font-normal text-muted-foreground"><BusinessName fallback="ProSolutions" /> · Taller</span></h1>
+            <h1 className="text-2xl font-bold">Recibir equipo <span className="ml-1 hidden text-sm font-normal text-muted-foreground sm:inline"><BusinessName fallback="ProSolutions" /> · Taller</span></h1>
             <p className="text-sm text-muted-foreground">Registra la recepción en cinco pasos: cliente, equipo, acceso, entrega y confirmación.</p>
           </div>
         </div>
@@ -961,7 +961,10 @@ export default function ReceiveEquipmentPage() {
           <IntakeStepper steps={STEPS} current={step} onSelect={goToStep} />
           <section className="rounded-xl border bg-card p-5 pb-0 sm:p-6 sm:pb-0">
             <fieldset disabled={saving} className="disabled:opacity-80">
-              <h2 ref={stepTitleRef} tabIndex={-1} className="mb-4 font-semibold">{STEPS[step]}</h2>
+              {/* tabIndex=-1: solo recibe foco programático al cambiar de paso
+                  (anuncio para lector de pantalla) — nunca por teclado, así
+                  que el anillo de foco se omite a propósito. */}
+              <h2 ref={stepTitleRef} tabIndex={-1} className="mb-4 font-semibold focus:outline-none">{STEPS[step]}</h2>
 
               {step === 0 && (
                 <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
