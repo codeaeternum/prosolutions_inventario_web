@@ -9,6 +9,16 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -61,9 +71,19 @@ export function PlatformHeaderActions({ canAccessAdmin }: PlatformHeaderActionsP
 
 interface SupportAccessButtonProps {
   userId: string
+  /** Nombre del usuario impersonado — para el confirm y el aria-label. */
+  userName: string
+  /** Negocio al que se entra — contexto del modo soporte. */
+  businessName: string
 }
 
-export function SupportAccessButton({ userId }: SupportAccessButtonProps) {
+/**
+ * Acceso de soporte: cambia la sesión del operador a la del usuario del
+ * negocio (claim `impersonator` en el JWT). El panel del tenant muestra un
+ * banner ambar "Actuando como…" con "Volver a mi cuenta" para salir.
+ */
+export function SupportAccessButton({ userId, userName, businessName }: SupportAccessButtonProps) {
+  const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleSupportLogin = async () => {
@@ -77,35 +97,63 @@ export function SupportAccessButton({ userId }: SupportAccessButtonProps) {
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok) {
-        toast.success("Entrando en modo soporte...")
+        toast.success(`Entrando al panel de ${businessName} como ${userName}...`)
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination
         window.location.assign("/admin")
       } else {
         toast.error(data.error || "No se pudo iniciar sesión de soporte")
         setLoading(false)
+        setOpen(false)
       }
     } catch {
       toast.error("No se pudo iniciar sesión de soporte")
       setLoading(false)
+      setOpen(false)
     }
   }
 
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      className="gap-1.5"
-      disabled={loading}
-      onClick={handleSupportLogin}
-    >
-      {loading ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <LogIn className="h-3.5 w-3.5" />
-      )}
-      Entrar al panel
-    </Button>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="gap-1.5"
+        disabled={loading}
+        aria-label={`Entrar al panel de ${businessName} como ${userName} (modo soporte)`}
+        onClick={() => setOpen(true)}
+      >
+        {loading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        ) : (
+          <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+        Entrar al panel
+      </Button>
+      <AlertDialog open={open} onOpenChange={(next) => { if (!loading) setOpen(next) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Entrar como {userName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Verás el panel de <strong>{businessName}</strong> exactamente como lo ve
+              esta cuenta, con un banner amarillo de modo soporte en la parte
+              superior. Todo lo que hagas queda registrado a nombre de tu cuenta
+              de operador. Para salir, usa «Volver a mi cuenta» en ese banner.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); void handleSupportLogin() }}
+              disabled={loading}
+            >
+              {loading && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              Entrar en modo soporte
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -123,6 +171,7 @@ export function SuperAdminToggleButton({
   isSelf,
 }: SuperAdminToggleButtonProps) {
   const router = useRouter()
+  const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
   if (isSelf) {
@@ -150,35 +199,70 @@ export function SuperAdminToggleButton({
             ? `Permiso de plataforma otorgado a ${userName}`
             : `Permiso de plataforma revocado a ${userName}`
         )
+        setOpen(false)
         router.refresh()
       } else {
         toast.error(data.error || "No se pudo actualizar el permiso de superadmin")
+        setOpen(false)
       }
     } catch {
       toast.error("No se pudo actualizar el permiso de superadmin")
+      setOpen(false)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className="gap-1.5"
-      disabled={loading}
-      onClick={handleToggle}
-    >
-      {loading ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : isSuperAdmin ? (
-        <ShieldOff className="h-3.5 w-3.5" />
-      ) : (
-        <Shield className="h-3.5 w-3.5" />
-      )}
-      {isSuperAdmin ? "Quitar plataforma" : "Hacer superadmin"}
-    </Button>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="gap-1.5"
+        disabled={loading}
+        aria-label={isSuperAdmin
+          ? `Quitar acceso de superadmin a ${userName}`
+          : `Dar acceso de superadmin a ${userName}`}
+        onClick={() => setOpen(true)}
+      >
+        {loading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        ) : isSuperAdmin ? (
+          <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+        ) : (
+          <Shield className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+        {isSuperAdmin ? "Quitar plataforma" : "Hacer superadmin"}
+      </Button>
+      <AlertDialog open={open} onOpenChange={(next) => { if (!loading) setOpen(next) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {isSuperAdmin
+                ? `¿Quitar acceso de plataforma a ${userName}?`
+                : `¿Hacer superadmin a ${userName}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {isSuperAdmin
+                ? "Dejará de poder entrar a esta consola y de administrar negocios ajenos. Su cuenta de negocio sigue igual."
+                : "Un superadmin ve y administra TODOS los negocios de la instancia: puede suspenderlos, crear usuarios y entrar en modo soporte a cualquier panel. Otorga este acceso solo a operadores de confianza."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant={isSuperAdmin ? "destructive" : "default"}
+              onClick={(e) => { e.preventDefault(); void handleToggle() }}
+              disabled={loading}
+            >
+              {loading && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              {isSuperAdmin ? "Quitar acceso" : "Otorgar acceso"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -189,9 +273,11 @@ interface EditPlatformUserDialogProps {
     email: string | null
     status: string
   }
+  /** El operador editándose a sí mismo: el servidor rechaza cambiar su estado. */
+  isSelf?: boolean
 }
 
-export function EditPlatformUserDialog({ user }: EditPlatformUserDialogProps) {
+export function EditPlatformUserDialog({ user, isSelf = false }: EditPlatformUserDialogProps) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -301,8 +387,8 @@ export function EditPlatformUserDialog({ user }: EditPlatformUserDialogProps) {
             </div>
             <div className="space-y-2">
               <Label htmlFor={`platform-user-status-${user.id}`}>Estado</Label>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger id={`platform-user-status-${user.id}`} disabled={loading}>
+              <Select value={status} onValueChange={(v) => { if (!isSelf) setStatus(v) }}>
+                <SelectTrigger id={`platform-user-status-${user.id}`} disabled={loading || isSelf}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -311,6 +397,11 @@ export function EditPlatformUserDialog({ user }: EditPlatformUserDialogProps) {
                   <SelectItem value="REJECTED">Rechazado</SelectItem>
                 </SelectContent>
               </Select>
+              {isSelf && (
+                <p className="text-xs text-muted-foreground">
+                  No puedes cambiar el estado de tu propia cuenta de operador.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor={`platform-user-password-${user.id}`}>

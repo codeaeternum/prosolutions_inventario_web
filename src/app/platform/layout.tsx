@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth"
 import { PlatformHeaderActions } from "@/components/platform/platform-header-actions"
@@ -26,13 +27,22 @@ export default async function PlatformLayout({
       <header className="sticky top-0 z-40 border-b bg-card">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 lg:px-8">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Shield className="h-5 w-5" />
-            </div>
+            <Link
+              href="/platform"
+              aria-label="Ir al inicio de la consola de plataforma"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <Shield className="h-5 w-5" aria-hidden="true" />
+            </Link>
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-lg leading-tight truncate">Reficio Platform</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">
-                Consola de operador — {session.user.name}
+              <Link
+                href="/platform"
+                className="font-bold text-lg leading-tight truncate hover:underline underline-offset-4"
+              >
+                Reficio Platform
+              </Link>
+              <span className="text-[10px] text-muted-foreground leading-tight truncate">
+                Consola de operador — {session.user.name ?? session.user.email ?? "operador"}
                 {/* Build desplegado (ARG GIT_SHA del Dockerfile vía deploy-n5). */}
                 {process.env.APP_BUILD_SHA && process.env.APP_BUILD_SHA !== "unknown" && (
                   <span className="ml-1 font-mono" title={`Commit ${process.env.APP_BUILD_SHA}`}>

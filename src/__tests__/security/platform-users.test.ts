@@ -51,6 +51,7 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
       id: "u-target",
       name: "Administrador ProSolutions",
       email: "admin@prosolutions.com",
+      role: "ADMIN",
       isSuperAdmin: false,
       business: { id: "biz-default", name: "ProSolutions", slug: "prosolutions" },
     })
@@ -101,8 +102,30 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
         kind: "SUPERADMIN_GRANTED",
         actorId: "op-1",
         actorEmail: "admin@reficio.app",
+        detail: {
+          targetUserId: "u-target",
+          targetUserName: "Administrador ProSolutions",
+          targetUserEmail: "admin@prosolutions.com",
+        },
       },
     })
+  })
+
+  it("rechaza otorgar isSuperAdmin a una cuenta que no es ADMIN ni EMPLOYEE (400)", async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: "u-customer",
+      name: "Cliente Mostrador",
+      email: "cliente@correo.mx",
+      role: "CUSTOMER",
+      isSuperAdmin: false,
+      business: { id: "biz-default", name: "ProSolutions", slug: "prosolutions" },
+    })
+    const res = await PATCH(patchReq({ isSuperAdmin: true }), {
+      params: Promise.resolve({ id: "u-customer" }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toContain("administrador o empleado")
+    expect(mocks.userUpdate).not.toHaveBeenCalled()
   })
 
   it("permite restablecer la contraseña y editar datos de un usuario registrando USER_CREDENTIALS_UPDATED", async () => {

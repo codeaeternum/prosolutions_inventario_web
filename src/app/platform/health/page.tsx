@@ -70,10 +70,10 @@ export default async function PlatformHealthPage() {
       </Button>
 
       <div>
-        <h2 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <HeartPulse className="h-7 w-7 text-primary" />
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <HeartPulse className="h-7 w-7 text-primary" aria-hidden="true" />
           Salud global
-        </h2>
+        </h1>
         <p className="text-muted-foreground">
           Métricas agregadas de toda la plataforma — sin datos de negocios individuales.
         </p>

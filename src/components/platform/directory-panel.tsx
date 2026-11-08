@@ -19,7 +19,7 @@ import { formatDay } from "@/lib/utils"
 /**
  * Sección "Directorio" de la consola /platform: telemetría de /mercado en
  * los últimos 30 días (DirectoryEvent, global sin tenant). Mismo patrón
- * que BusinessesPanel: fetch a /api/platform/directory-stats, estados de
+ * que OverviewPanel: fetch a /api/platform/directory-stats, estados de
  * carga/error y tablas con el estilo shadcn del resto de la consola.
  */
 
@@ -56,8 +56,13 @@ export function DirectoryPanel() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-40">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div
+                className="flex items-center justify-center h-40"
+                role="status"
+                aria-label="Cargando métricas del directorio"
+            >
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden="true" />
+                <span className="sr-only">Cargando métricas…</span>
             </div>
         )
     }
@@ -66,7 +71,11 @@ export function DirectoryPanel() {
         return (
             <div role="alert" className="rounded-lg border p-6 space-y-3">
                 <p>{error ?? "Sin datos del directorio"}</p>
-                <Button variant="outline" onClick={() => { setLoading(true); void fetchStats() }}>
+                <Button
+                    variant="outline"
+                    aria-label="Reintentar carga de métricas del directorio"
+                    onClick={() => { setLoading(true); void fetchStats() }}
+                >
                     Reintentar
                 </Button>
             </div>

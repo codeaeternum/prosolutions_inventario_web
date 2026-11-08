@@ -234,7 +234,8 @@ function PlatformBusinessesSection() {
         role="status"
         aria-label="Cargando negocios registrados"
       >
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden="true" />
+        <span className="sr-only">Cargando negocios…</span>
       </div>
     )
   }
@@ -278,7 +279,13 @@ function PlatformBusinessesSection() {
               Salud global
             </Link>
           </Button>
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+          <Dialog
+            open={createOpen}
+            onOpenChange={(next) => {
+              // No cerrar a media creación: el submit quedaría huérfano.
+              if (!creating) setCreateOpen(next)
+            }}
+          >
             <DialogTrigger asChild>
               <Button size="sm">
                 <Plus className="mr-1.5 h-4 w-4" />
@@ -366,6 +373,7 @@ function PlatformBusinessesSection() {
                       id="new-business-email"
                       name="email"
                       type="email"
+                      autoComplete="email"
                       placeholder="juan@taller.com"
                       required
                       value={newBusiness.email}
@@ -395,6 +403,7 @@ function PlatformBusinessesSection() {
                     id="new-business-password"
                     name="password"
                     type="password"
+                    autoComplete="new-password"
                     placeholder="Mínimo 8 caracteres"
                     required
                     minLength={8}
@@ -511,6 +520,11 @@ function PlatformBusinessesSection() {
           icon={Building2}
           title="No hay empresas"
           description="Todavía no se registra ninguna empresa en esta instancia."
+          action={{
+            label: "Registrar el primer negocio",
+            icon: Plus,
+            onClick: () => setCreateOpen(true),
+          }}
         />
       ) : !error && filteredBusinesses.length === 0 ? (
         <div className="rounded-lg border bg-card p-8 text-center space-y-3">
@@ -682,6 +696,8 @@ function PlatformBusinessesSection() {
 export default function PlatformPage() {
   return (
     <div className="space-y-12">
+      {/* h1 único de la página: las secciones usan h2. */}
+      <h1 className="sr-only">Consola de plataforma</h1>
       <OverviewPanel />
       <PlatformBusinessesSection />
       <DirectoryPanel />

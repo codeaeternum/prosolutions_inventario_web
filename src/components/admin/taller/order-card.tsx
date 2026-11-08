@@ -1,5 +1,6 @@
 "use client"
 
+import type { DragEvent } from "react"
 import { CalendarClock, ChevronRight, MapPin, MessageCircle, Store } from "lucide-react"
 import { hasWhatsAppPhone } from "@/lib/whatsapp"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
@@ -19,6 +20,9 @@ export type BoardCardOrder = {
   number: number
   folio?: string
   status: RepairStage
+  // Concurrencia optimista del PATCH de etapa — el drag & drop del tablero
+  // lo embarca en el payload del arrastre (expectedVersion).
+  version: number
   equipmentType: string
   brand: string | null
   model: string | null
@@ -104,6 +108,12 @@ export type OrderCardProps = {
   showStage?: boolean
   /** Muestra la sucursal actual (vista multi-sucursal). */
   showBranch?: boolean
+  /** Activa el arrastre HTML5 de la tarjeta (tablero por fases). */
+  draggable?: boolean
+  /** La tarjeta es la que está en arrastre (se atenúa en su columna origen). */
+  dragging?: boolean
+  onDragStart?(event: DragEvent<HTMLElement>): void
+  onDragEnd?(): void
   onOpen(id: string): void
   onAvisar(order: BoardCardOrder): void
 }
@@ -147,10 +157,15 @@ function TodayChip({ order }: { order: BoardCardOrder }) {
 /** Tarjeta compacta del kanban: folio + semáforo, equipo, cliente·técnico y
  *  una fila de chips solo cuando hay promesa, adeudo, entrega de hoy o
  *  ubicación. La tarjeta entera es el botón que abre el detalle. */
-export function BoardOrderCard({ order, slaHours, showStage = false, showBranch = false, onOpen, onAvisar }: OrderCardProps) {
+export function BoardOrderCard({ order, slaHours, showStage = false, showBranch = false, draggable = false, dragging = false, onDragStart, onDragEnd, onOpen, onAvisar }: OrderCardProps) {
   const avisar = puedeAvisar(order)
   const hasChips = Boolean(order.promisedAt) || orderBalanceCents(order) > 0 || isScheduledToday(order) || Boolean(order.location)
-  return <div className="relative">
+  return <div
+    className={`relative ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragging ? "opacity-40" : ""}`}
+    draggable={draggable}
+    onDragStart={onDragStart}
+    onDragEnd={onDragEnd}
+  >
     <button
       onClick={() => onOpen(order.id)}
       className="w-full space-y-1 rounded-lg border bg-card p-2.5 text-left text-sm transition hover:border-primary focus-visible:outline-2 focus-visible:outline-primary"

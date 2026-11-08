@@ -90,8 +90,13 @@ export function OverviewPanel() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-40">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div
+                className="flex items-center justify-center h-40"
+                role="status"
+                aria-label="Cargando resumen de plataforma"
+            >
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden="true" />
+                <span className="sr-only">Cargando resumen…</span>
             </div>
         )
     }
@@ -100,7 +105,11 @@ export function OverviewPanel() {
         return (
             <div role="alert" className="rounded-lg border p-6 space-y-3">
                 <p>{error ?? "Sin datos del resumen"}</p>
-                <Button variant="outline" onClick={() => { setLoading(true); void fetchOverview() }}>
+                <Button
+                    variant="outline"
+                    aria-label="Reintentar carga del resumen de plataforma"
+                    onClick={() => { setLoading(true); void fetchOverview() }}
+                >
                     Reintentar
                 </Button>
             </div>

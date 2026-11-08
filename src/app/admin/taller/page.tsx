@@ -25,6 +25,10 @@ import { ExportButton } from "@/components/admin/export-button"
 import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { semaforo } from "@/components/admin/taller/semaforo"
 import { BoardOrderCard, OrderListRow, closedColumnStyle, date, folioOf, money, stageStyles } from "@/components/admin/taller/order-card"
+import { ClosedRail } from "@/components/admin/taller/closed-rail"
+import { DropColumn } from "@/components/admin/taller/drop-column"
+import { PhaseNav } from "@/components/admin/taller/phase-nav"
+import { useBoardDrag, type BoardDrag, type BoardDropResult } from "@/components/admin/taller/use-board-drag"
 import { BOARD_PHASES, phaseOrders, phaseStageCounts, phaseTotal, type BoardPhase } from "@/lib/taller-board"
 import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
 import { localDateTimeToIso, textOrUndefined } from "@/lib/workshop-form"
@@ -177,7 +181,22 @@ function whatsappNotifyUrl(order: Order, businessName: string): string {
   return waLink(order.customerPhone, body)
 }
 
-function BoardColumn({ title, subtitle, style, orders, total, dimmed, showStage, showBranch, slaHours, onOpen, onAvisar }: { title: string; subtitle?: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; showBranch?: boolean; slaHours: SlaHours; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
+type ColumnCardsProps = { orders: Order[]; total: number; showStage?: boolean; showBranch?: boolean; slaHours: SlaHours; drag?: BoardDrag; onOpen: (id: string) => void; onAvisar: (order: Order) => void }
+
+/** Interior de una columna del tablero (tarjetas + vacío + "hay N más"):
+ *  lo comparten BoardColumn y el ClosedRail de la fase "cerradas". */
+function ColumnCards({ orders, total, showStage, showBranch, slaHours, drag, onOpen, onAvisar }: ColumnCardsProps) {
+  return <>
+    {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
+      : orders.map(order => <BoardOrderCard key={order.id} order={order} slaHours={slaHours} showStage={showStage} showBranch={showBranch}
+        draggable={Boolean(drag)} dragging={drag?.draggingOrderId === order.id}
+        onDragStart={drag?.onCardDragStart(order)} onDragEnd={drag?.onCardDragEnd}
+        onOpen={onOpen} onAvisar={onAvisar} />)}
+    {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
+  </>
+}
+
+function BoardColumn({ title, subtitle, style, orders, total, dimmed, showStage, showBranch, slaHours, drag, onOpen, onAvisar }: { title: string; subtitle?: string; style: { dot: string; badge: string }; orders: Order[]; total: number; dimmed?: boolean; showStage?: boolean; showBranch?: boolean; slaHours: SlaHours; drag?: BoardDrag; onOpen: (id: string) => void; onAvisar: (order: Order) => void }) {
   return <section aria-label={title} className={`flex w-64 shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2.5 ${dimmed ? "opacity-70" : ""}`}>
     <header className="mb-2 flex items-center gap-2 px-1" title={subtitle}>
       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
@@ -185,9 +204,7 @@ function BoardColumn({ title, subtitle, style, orders, total, dimmed, showStage,
       <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${style.badge}`}>{total}</span>
     </header>
     <div className="max-h-[calc(100dvh-19rem)] space-y-1.5 overflow-y-auto pr-1">
-      {orders.length === 0 ? <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">Sin órdenes</p>
-        : orders.map(order => <BoardOrderCard key={order.id} order={order} slaHours={slaHours} showStage={showStage} showBranch={showBranch} onOpen={onOpen} onAvisar={onAvisar} />)}
-      {total > orders.length && <p className="px-1 pt-2 text-xs text-muted-foreground">Hay {total - orders.length} más. Usa el filtro de etapa para verlas.</p>}
+      <ColumnCards orders={orders} total={total} showStage={showStage} showBranch={showBranch} slaHours={slaHours} drag={drag} onOpen={onOpen} onAvisar={onAvisar} />
     </div>
   </section>
 }
@@ -588,6 +605,22 @@ export default function WorkshopPage() {
     if (!response.ok) throw new Error(data.error || "No se confirmó el cambio")
     operationKey.current = null
     return data
+  }
+  const boardDrag = useBoardDrag()
+  // Drop de una tarjeta sobre una fase: la etapa destino canónica la eligió
+  // dropTargetForPhase y el servidor valida la transición (expectedVersion
+  // viaja en el payload del arrastre). El WhatsApp de "lista" sale igual que
+  // en el avance rápido del detalle.
+  async function handleBoardDrop(result: BoardDropResult) {
+    try {
+      const data = await post(`/api/workshop/${result.orderId}`, { action: "STATUS", status: result.targetStage, expectedVersion: result.expectedVersion })
+      if (data?.notifyWhatsApp) toast.success("Orden lista", { action: { label: "Avisar por WhatsApp", onClick: () => window.open(data.notifyWhatsApp, "_blank", "noopener") }, duration: 10000 })
+      else toast.success(`Orden movida a ${repairLabels[result.targetStage]}`)
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "No se pudo mover la orden")
+      await load()
+    }
   }
   async function submit(event: React.FormEvent<HTMLFormElement>, kind: "branch" | "update") {
     event.preventDefault()
@@ -1068,37 +1101,78 @@ export default function WorkshopPage() {
                         {boardOverdueCount} {boardOverdueCount === 1 ? "atrasada" : "atrasadas"}
                       </p>
                     )}
+                    {/* Chips de salto entre fases: solo cuando las columnas
+                        no caben enteras (móvil/tablet y laptops angostas). */}
+                    {columnMode === "fase" && (
+                      <div className="min-[1400px]:hidden">
+                        <PhaseNav
+                          phases={BOARD_PHASES.map(phase => ({ id: phase.id, label: phase.label, count: phaseTotal(phase, board?.totals), color: phaseStyles[phase.id] }))}
+                          onSelect={id => document.getElementById(`fase-${id}`)?.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" })}
+                        />
+                      </div>
+                    )}
                     {/* snap-x: en pantallas angostas las columnas se hojean de
                         a una; en desktop (fase) las 5 caben sin scroll. */}
                     <div className="flex snap-x snap-mandatory items-start gap-3 overflow-x-auto pb-2">
                       {columnMode === "fase" ? (
-                        BOARD_PHASES.map(phase => (
-                          <BoardColumn
-                            key={phase.id}
-                            title={phase.label}
-                            subtitle={phaseStageCounts(phase, board?.totals).map(({ stage: stageKey, count }) => `${count} ${repairLabels[stageKey].toLowerCase()}`).join(" · ")}
-                            style={phaseStyles[phase.id]}
-                            dimmed={phase.id === "cerradas"}
-                            showStage={phase.stages.length > 1}
-                            showBranch={!branch && branches.length > 1}
-                            orders={
-                              (phase.id === "cerradas"
-                                // Las cerradas se ven mejor recientes primero;
-                                // el resto de fases: etapa del flujo, luego antigüedad.
-                                ? (board
-                                    ? closedColumnStages
-                                        .flatMap(value => board.orders[value] ?? [])
-                                        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                                    : [])
-                                : phaseOrders(phase, board?.orders)
-                              ).slice(0, 20)
-                            }
-                            total={phaseTotal(phase, board?.totals)}
-                            slaHours={slaHours}
-                            onOpen={id => void openOrder(id)}
-                            onAvisar={avisarCliente}
-                          />
-                        ))
+                        BOARD_PHASES.map(phase => {
+                          const phaseTotalCount = phaseTotal(phase, board?.totals)
+                          const phaseList = (
+                            (phase.id === "cerradas"
+                              // Las cerradas se ven mejor recientes primero;
+                              // el resto de fases: etapa del flujo, luego antigüedad.
+                              ? (board
+                                  ? closedColumnStages
+                                      .flatMap(value => board.orders[value] ?? [])
+                                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                  : [])
+                              : phaseOrders(phase, board?.orders)
+                            ).slice(0, 20)
+                          )
+                          // "Cerradas" es archivo, no trabajo activo: va en un
+                          // carril colapsable que deja ~200px más a las activas.
+                          const column = phase.id === "cerradas" ? (
+                            <ClosedRail key={phase.id} count={phaseTotalCount} storageKey="reficio:taller:rail-cerradas">
+                              <ColumnCards
+                                orders={phaseList}
+                                total={phaseTotalCount}
+                                showStage
+                                showBranch={!branch && branches.length > 1}
+                                slaHours={slaHours}
+                                drag={boardDrag}
+                                onOpen={id => void openOrder(id)}
+                                onAvisar={avisarCliente}
+                              />
+                            </ClosedRail>
+                          ) : (
+                            <BoardColumn
+                              key={phase.id}
+                              title={phase.label}
+                              subtitle={phaseStageCounts(phase, board?.totals).map(({ stage: stageKey, count }) => `${count} ${repairLabels[stageKey].toLowerCase()}`).join(" · ")}
+                              style={phaseStyles[phase.id]}
+                              showStage={phase.stages.length > 1}
+                              showBranch={!branch && branches.length > 1}
+                              orders={phaseList}
+                              total={phaseTotalCount}
+                              slaHours={slaHours}
+                              drag={boardDrag}
+                              onOpen={id => void openOrder(id)}
+                              onAvisar={avisarCliente}
+                            />
+                          )
+                          return (
+                            <DropColumn
+                              key={phase.id}
+                              id={`fase-${phase.id}`}
+                              phaseId={phase.id}
+                              hook={boardDrag}
+                              onDropResult={result => void handleBoardDrop(result)}
+                              className="shrink-0 snap-start rounded-xl"
+                            >
+                              {column}
+                            </DropColumn>
+                          )
+                        })
                       ) : (
                         <>
                           {activeBoardStages.map(value => (

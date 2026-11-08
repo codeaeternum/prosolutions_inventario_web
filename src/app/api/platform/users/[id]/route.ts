@@ -77,6 +77,16 @@ export async function PATCH(req: Request, { params }: Params) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
     }
 
+    // El permiso de operador solo tiene sentido en cuentas de staff: la UI
+    // ni siquiera lo ofrece en otras filas, pero el endpoint debe validarlo
+    // igual — un CUSTOMER con isSuperAdmin entraría a la consola completa.
+    if (parsed.data.isSuperAdmin !== undefined && !["ADMIN", "EMPLOYEE"].includes(target.role)) {
+      return NextResponse.json(
+        { error: "El permiso de operador solo aplica a cuentas de administrador o empleado." },
+        { status: 400 }
+      )
+    }
+
     const passwordHash = parsed.data.newPassword
       ? await bcrypt.hash(parsed.data.newPassword, 12)
       : undefined
@@ -112,6 +122,9 @@ export async function PATCH(req: Request, { params }: Params) {
           businessName: target.business.name,
           actorId: auth.session.user.id,
           actorEmail: auth.session.user.email ?? null,
+          // A quién se le aplicó el cambio: sin esto un reset de contraseña
+          // o un grant de superadmin no identifican a la cuenta afectada.
+          detail: { targetUserId: target.id, targetUserName: target.name, targetUserEmail: target.email },
         },
       }),
     ])

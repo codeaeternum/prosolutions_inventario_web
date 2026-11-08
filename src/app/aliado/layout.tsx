@@ -30,23 +30,24 @@ export default function AliadoLayout({ children }: { children: React.ReactNode }
             {/* El Mercado B2B aplica para WORKSHOP/EMPLOYEE/ADMIN; el link se
                 muestra siempre (si el rol no puede entrar, /admin redirige). */}
             <Button variant="outline" size="sm" asChild>
-              <Link href="/admin/mercado">
-                <ShoppingCart className="h-4 w-4 sm:mr-2" />
+              {/* En teléfono queda solo-icono: aria-label lo nombra. */}
+              <Link href="/admin/mercado" aria-label="Comprar refacciones en el mercado">
+                <ShoppingCart className="h-4 w-4 sm:mr-2" aria-hidden />
                 <span className="hidden sm:inline">Comprar refacciones</span>
               </Link>
             </Button>
             <span className="hidden max-w-40 truncate text-sm text-muted-foreground md:block">
               {session?.user?.name}
             </span>
-            <Button variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: "/login" })}>
-              <LogOut className="h-4 w-4 sm:mr-2" />
+            <Button variant="ghost" size="sm" onClick={() => signOut({ callbackUrl: "/login" })} aria-label="Cerrar sesión">
+              <LogOut className="h-4 w-4 sm:mr-2" aria-hidden />
               <span className="hidden sm:inline">Cerrar sesión</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main id="main-content" className="mx-auto w-full max-w-5xl px-4 py-6">
+      <main id="main-content" role="main" className="mx-auto w-full max-w-5xl px-4 py-6">
         {children}
       </main>
     </div>

@@ -111,3 +111,79 @@ export function phaseStageCounts(
     .map(stage => ({ stage, count: totals?.[stage] ?? 0 }))
     .filter(entry => entry.count > 0)
 }
+
+// ---------------------------------------------------------------------------
+// Drag & drop entre fases.
+//
+// El drop no apunta a una etapa suelta sino a la fase completa: cada fase
+// tiene una etapa destino canónica (PHASE_TARGET_STAGE) y el servidor sigue
+// validando la transición concreta (repairNextStages + expectedVersion), así
+// que el board solo decide si el movimiento "tiene sentido" para ofrecer el
+// drop — no si es legal.
+
+/** Id de fase del tablero (atajo de `BoardPhase["id"]`). */
+export type BoardPhaseId = BoardPhase["id"]
+
+/** Etapa destino canónica al soltar una orden sobre cada fase del tablero. */
+export const PHASE_TARGET_STAGE: Record<BoardPhaseId, RepairStage> = {
+  entrada: "RECEIVED",
+  espera: "WAITING_APPROVAL",
+  reparacion: "IN_REPAIR",
+  listas: "READY",
+  cerradas: "DELIVERED",
+}
+
+// Orden de avance del pipeline para isForwardMove. Replica ALL_BOARD_STAGES
+// (activas en orden de flujo, cerradas al final); el orden interno de las
+// cerradas no importa porque el drop bloquea casi todos sus movimientos.
+const FORWARD_STAGE_ORDER: readonly RepairStage[] = [
+  "RECEIVED",
+  "DIAGNOSIS",
+  "WAITING_APPROVAL",
+  "WAITING_PARTS",
+  "EXTERNAL_LAB",
+  "IN_REPAIR",
+  "QUALITY_CHECK",
+  "READY",
+  "DELIVERED",
+  "NOT_REPAIRED",
+  "NOT_AUTHORIZED",
+  "CANCELLED",
+  "WARRANTY",
+]
+
+/**
+ * ¿`to` está después que `from` en el pipeline? Compara posiciones en
+ * FORWARD_STAGE_ORDER; etapas null/desconocidas o iguales cuentan como "no
+ * avanza". Lo usa la UI para distinguir drops de avance de retrocesos.
+ */
+export function isForwardMove(
+  from: RepairStage | null | undefined,
+  to: RepairStage | null | undefined,
+): boolean {
+  if (!from || !to || from === to) return false
+  const fromIndex = FORWARD_STAGE_ORDER.indexOf(from)
+  return fromIndex >= 0 && FORWARD_STAGE_ORDER.indexOf(to) > fromIndex
+}
+
+/**
+ * Etapa destino al soltar en `phaseId` una orden que está en `orderStatus`;
+ * null cuando el drop no tiene sentido y la columna no debe ofrecerse:
+ * - soltar en la misma fase de la orden no mueve nada;
+ * - salir de "cerradas" reabre la orden → va por el flujo de detalle;
+ * - entrar a "cerradas" solo desde READY (entrega directa); los demás
+ *   cierres llevan detalle obligatorio (motivo, cobro, etc.).
+ * El resto de movimientos —incluso los que van "hacia atrás"— devuelven la
+ * etapa canónica de la fase: la validez fina la decide el servidor.
+ * Tolerante a null/undefined en ambos argumentos.
+ */
+export function dropTargetForPhase(
+  orderStatus: RepairStage | null | undefined,
+  phaseId: BoardPhaseId | null | undefined,
+): RepairStage | null {
+  if (!orderStatus || !phaseId) return null
+  const sourcePhase = phaseOfStage(orderStatus)
+  if (!sourcePhase || sourcePhase.id === phaseId || sourcePhase.id === "cerradas") return null
+  if (phaseId === "cerradas") return orderStatus === "READY" ? "DELIVERED" : null
+  return PHASE_TARGET_STAGE[phaseId] ?? null
+}

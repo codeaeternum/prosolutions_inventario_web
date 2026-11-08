@@ -15,13 +15,16 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import { formatDate, formatDay } from "@/lib/utils"
-import { waLink } from "@/lib/whatsapp"
+import { formatDate, formatDay, titleCaseName } from "@/lib/utils"
+import { hasWhatsAppPhone, waLink } from "@/lib/whatsapp"
 
 type PartnerOrder = {
+  id: string
   number: number
   folio: string
   status: string
@@ -61,12 +64,38 @@ function getOrderStatusGroup(status: string): Exclude<StatusFilter, "all"> {
 const STATUS_FILTER_OPTIONS: ReadonlyArray<{ id: StatusFilter; label: string }> = [
   { id: "all", label: "Todos" },
   { id: "active", label: "En proceso" },
-  { id: "attention", label: "Por autorizar / Listo para entregar" },
-  { id: "closed", label: "Entregados / Cerrados" },
+  // Etiquetas cortas: en teléfono (donde el portal se abre desde WhatsApp)
+  // los chips no deben ocupar dos líneas.
+  { id: "attention", label: "Por autorizar / Listos" },
+  { id: "closed", label: "Cerrados" },
 ]
 
 function phoneLast4(phone: string): string {
   return phone.replace(/\D/g, "").slice(-4)
+}
+
+// Promesa vencida se marca en ámbar ("· Atrasada"), mismo tratamiento que
+// PromisedAt del tablero /admin/taller: una orden cerrada ya no compite
+// contra su fecha prometida.
+function isPromiseOverdue(order: PartnerOrder): boolean {
+  return order.promisedAt !== null && !CLOSED_STATUSES.has(order.status) && new Date(order.promisedAt).getTime() < Date.now()
+}
+
+// Respaldo para contextos sin Clipboard API (HTTP por LAN/Tailscale no es
+// "secure context", mismo caso que documenta lib/client-operation-key):
+// textarea temporal + execCommand — antes se anunciaba "¡Copiado!" sin
+// copiar nada.
+function copyTextFallback(text: string) {
+  const area = document.createElement("textarea")
+  area.value = text
+  area.setAttribute("readonly", "")
+  area.style.position = "fixed"
+  area.style.opacity = "0"
+  document.body.appendChild(area)
+  area.select()
+  const copied = document.execCommand("copy")
+  document.body.removeChild(area)
+  if (!copied) throw new Error("execCommand copy failed")
 }
 
 // El link nuevo lleva el trackingToken (?t=<uuid>) y ya no expone el
@@ -191,6 +220,8 @@ export default function AliadoPage() {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url)
+      } else {
+        copyTextFallback(url)
       }
       setCopiedLink(true)
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
@@ -264,7 +295,7 @@ export default function AliadoPage() {
       setCopiedLink(false)
       setForm(emptyForm)
       operationKey.current = null
-      load()
+      void load()
     } catch {
       toast.error("Sin conexión. Reintenta el envío.")
     } finally {
@@ -302,6 +333,30 @@ export default function AliadoPage() {
     return false
   })
 
+  // CTA del estado vacío: lleva al formulario de captura. Si el usuario lo
+  // había plegado, se abre con un clic real sobre el <summary> — así pasa por
+  // el onToggle de CollapsibleSection y su estado interno queda sincronizado.
+  function goToCapture() {
+    const section = document.getElementById("captar-equipo")
+    const details = section?.querySelector<HTMLDetailsElement>("details")
+    if (details && !details.open) details.querySelector("summary")?.click()
+    section?.scrollIntoView({ behavior: "smooth", block: "start" })
+    // preventScroll: el scrollIntoView de la sección ya la posiciona.
+    document.getElementById("customerName")?.focus({ preventScroll: true })
+  }
+
+  function clearFilters() {
+    setSearchQuery("")
+    setStatusFilter("all")
+  }
+
+  const lastCapturedPath = lastCaptured
+    ? buildTrackingPath(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)
+    : ""
+  const lastCapturedUrl = lastCaptured
+    ? buildTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)
+    : ""
+
   if (unlinked) {
     return (
       <Card className="mx-auto max-w-lg">
@@ -314,12 +369,22 @@ export default function AliadoPage() {
             Este portal envía los equipos que capturas al taller que repara por ti.
           </CardDescription>
         </CardHeader>
-        <CardContent className="text-center text-sm text-muted-foreground">
+        <CardContent className="space-y-4 text-center text-sm text-muted-foreground">
           <p>
             Para empezar, un administrador de tu negocio debe elegir el taller
             asociado en la configuración del negocio. En cuanto quede listo,
             aquí podrás capturar equipos y darles seguimiento.
           </p>
+          {loadError && (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">
+              {loadError}
+            </p>
+          )}
+          {/* Tras configurar el vínculo no hace falta recargar la página. */}
+          <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Ya quedó configurado — verificar de nuevo
+          </Button>
         </CardContent>
       </Card>
     )
@@ -328,7 +393,9 @@ export default function AliadoPage() {
   return (
     <div className="space-y-6">
       {lastCaptured && (
-        <Card className="border-primary/30 bg-primary/5">
+        // aria-live: la tarjeta aparece tras el envío y el lector de pantalla
+        // la anuncia como confirmación persistente (el toast desaparece).
+        <Card className="border-primary/30 bg-primary/5" aria-live="polite">
           <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-primary">
@@ -359,12 +426,12 @@ export default function AliadoPage() {
             <div className="rounded-md border border-primary/20 bg-background/80 px-3 py-2 text-xs">
               <span className="font-medium text-muted-foreground">Seguimiento público: </span>
               <a
-                href={buildTrackingPath(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)}
+                href={lastCapturedPath}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="break-all font-mono text-primary underline-offset-4 hover:underline"
               >
-                {buildTrackingUrl(lastCaptured.folio, lastCaptured.customerPhone, lastCaptured.trackingToken)}
+                {lastCapturedUrl}
               </a>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -409,34 +476,47 @@ export default function AliadoPage() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <PackagePlus className="h-5 w-5" />
-            Captar equipo
-          </CardTitle>
-          <CardDescription>
+      {/* Captura plegable (mismo <details>/<summary> que la ficha del
+          taller): quien solo viene a consultar envíos puede plegar el form
+          y deja de hacer scroll por ~600px de campos en el teléfono. */}
+      <div id="captar-equipo" className="scroll-mt-20">
+        <CollapsibleSection
+          title={
+            <span className="flex items-center gap-2">
+              <PackagePlus className="h-4 w-4" />
+              Captar equipo
+            </span>
+          }
+        >
+          <p className="text-sm text-muted-foreground">
             Registra el equipo que el cliente deja en tu mostrador. El taller asociado lo recibe, lo repara y te avisa el avance.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </p>
           <form onSubmit={submit} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="customerName">Nombre del cliente *</Label>
-                <Input id="customerName" value={form.customerName} onChange={e => update({ customerName: e.target.value })} maxLength={500} autoComplete="off" />
+                <Input
+                  id="customerName" name="customerName" required
+                  value={form.customerName}
+                  onChange={e => update({ customerName: e.target.value })}
+                  // Misma normalización que /admin/taller/recibir: "MARIA
+                  // MARTINBEZ" queda "Maria Martinbez" al salir del campo.
+                  onBlur={e => { const titled = titleCaseName(e.target.value); if (titled !== e.target.value) update({ customerName: titled }) }}
+                  maxLength={500} autoComplete="off"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="customerPhone">Teléfono *</Label>
-                <Input id="customerPhone" value={form.customerPhone} onChange={e => update({ customerPhone: e.target.value })} maxLength={30} inputMode="tel" autoComplete="off" placeholder="81 2345 6789" />
+                <Input id="customerPhone" name="customerPhone" required value={form.customerPhone} onChange={e => update({ customerPhone: e.target.value })} maxLength={30} inputMode="tel" autoComplete="off" placeholder="81 2345 6789" />
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label>Tipo de equipo *</Label>
+                {/* El trigger es un <button> (elemento etiquetable): htmlFor lo asocia igual que a un input. */}
+                <Label htmlFor="equipmentType">Tipo de equipo *</Label>
                 <Select value={form.equipmentType} onValueChange={value => update({ equipmentType: value })}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger>
+                  <SelectTrigger id="equipmentType" name="equipmentType"><SelectValue placeholder="Selecciona" /></SelectTrigger>
                   <SelectContent>
                     {EQUIPMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
                   </SelectContent>
@@ -444,42 +524,42 @@ export default function AliadoPage() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="brand">Marca</Label>
-                <Input id="brand" value={form.brand} onChange={e => update({ brand: e.target.value })} maxLength={500} autoComplete="off" placeholder="Apple, Samsung…" />
+                <Input id="brand" name="brand" value={form.brand} onChange={e => update({ brand: e.target.value })} maxLength={500} autoComplete="off" placeholder="Apple, Samsung…" />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="model">Modelo</Label>
-                <Input id="model" value={form.model} onChange={e => update({ model: e.target.value })} maxLength={500} autoComplete="off" placeholder="iPhone 13, A54…" />
+                <Input id="model" name="model" value={form.model} onChange={e => update({ model: e.target.value })} maxLength={500} autoComplete="off" placeholder="iPhone 13, A54…" />
               </div>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="reportedIssue">Falla reportada *</Label>
-              <Textarea id="reportedIssue" value={form.reportedIssue} onChange={e => update({ reportedIssue: e.target.value })} maxLength={500} placeholder="Lo que el cliente describe: no enciende, pantalla rota…" />
+              <Textarea id="reportedIssue" name="reportedIssue" required value={form.reportedIssue} onChange={e => update({ reportedIssue: e.target.value })} maxLength={500} placeholder="Lo que el cliente describe: no enciende, pantalla rota…" />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="partnerPrice">Precio convenio (MXN, opcional)</Label>
-                <Input id="partnerPrice" value={form.partnerPrice} onChange={e => update({ partnerPrice: e.target.value })} inputMode="decimal" autoComplete="off" placeholder="0.00" />
+                <Input id="partnerPrice" name="partnerPrice" value={form.partnerPrice} onChange={e => update({ partnerPrice: e.target.value })} inputMode="decimal" autoComplete="off" placeholder="0.00" />
                 <p className="text-xs text-muted-foreground">Lo que el taller te cobra a ti por la reparación, según convenio.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="originContact">Contacto u origen (opcional)</Label>
-                <Input id="originContact" value={form.originContact} onChange={e => update({ originContact: e.target.value })} maxLength={120} autoComplete="off" placeholder="Sucursal, mostrador, referencia…" />
+                <Input id="originContact" name="originContact" value={form.originContact} onChange={e => update({ originContact: e.target.value })} maxLength={120} autoComplete="off" placeholder="Sucursal, mostrador, referencia…" />
               </div>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="notes">Notas internas (opcional)</Label>
-              <Textarea id="notes" value={form.notes} onChange={e => update({ notes: e.target.value })} maxLength={500} placeholder="Solo las ven tu negocio y el taller; el cliente nunca las ve." />
+              <Textarea id="notes" name="notes" value={form.notes} onChange={e => update({ notes: e.target.value })} maxLength={500} placeholder="Solo las ven tu negocio y el taller; el cliente nunca las ve." />
             </div>
 
             <Button type="submit" disabled={saving} className="w-full sm:w-auto">
               {saving ? "Registrando…" : "Registrar equipo"}
             </Button>
           </form>
-        </CardContent>
-      </Card>
+        </CollapsibleSection>
+      </div>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -490,8 +570,9 @@ export default function AliadoPage() {
             </CardTitle>
             <CardDescription>Equipos que tu negocio ha enviado al taller.</CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 sm:mr-2 ${loading ? "animate-spin" : ""}`} />
+          {/* En teléfono el botón queda solo-icono: el aria-label lo nombra. */}
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} aria-label="Actualizar envíos">
+            <RefreshCw className={`h-4 w-4 sm:mr-2 ${loading ? "animate-spin" : ""}`} aria-hidden />
             <span className="hidden sm:inline">Actualizar</span>
           </Button>
         </CardHeader>
@@ -501,10 +582,12 @@ export default function AliadoPage() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
+                id="aliado-search" name="search"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Buscar por folio, cliente, teléfono, marca/modelo o falla…"
                 aria-label="Buscar envíos"
+                autoComplete="off"
                 className="pl-9"
               />
             </div>
@@ -540,61 +623,94 @@ export default function AliadoPage() {
           </div>
 
           {loadError && (
-            <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            // Mismo patrón de error con reintento que /admin/taller.
+            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {loadError}
-            </p>
+              <Button type="button" variant="outline" size="sm" className="ml-3" onClick={() => void load()} disabled={loading}>
+                Reintentar
+              </Button>
+            </div>
+          )}
+          {!loadError && loading && orders.length === 0 && (
+            // Carga inicial: antes quedaba un hueco en blanco bajo los filtros.
+            <div role="status" aria-label="Cargando envíos" className="space-y-1.5">
+              <span className="sr-only">Cargando envíos…</span>
+              {[0, 1, 2].map(i => (
+                <div key={i} className="space-y-1.5 rounded-lg border bg-card p-3" aria-hidden>
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ))}
+            </div>
           )}
           {!loadError && !loading && orders.length === 0 && (
-            <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-              Aún no has capturado equipos
-            </p>
+            <div className="rounded-lg border border-dashed px-3 py-8 text-center">
+              <ClipboardList className="mx-auto mb-2 h-8 w-8 text-muted-foreground" aria-hidden />
+              <p className="text-sm text-muted-foreground">Aún no has capturado equipos</p>
+              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={goToCapture}>
+                <PackagePlus className="mr-1.5 h-4 w-4" />
+                Registrar el primer equipo
+              </Button>
+            </div>
           )}
           {!loadError && !loading && orders.length > 0 && filteredOrders.length === 0 && (
-            <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-              No se encontraron envíos con los filtros actuales
-            </p>
+            <div className="rounded-lg border border-dashed px-3 py-8 text-center">
+              <p className="text-sm text-muted-foreground">No se encontraron envíos con los filtros actuales</p>
+              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={clearFilters}>
+                Limpiar filtros
+              </Button>
+            </div>
           )}
+          {/* Fila compacta (estándar del tablero del taller): folio+etapa,
+              equipo, cliente y falla en 4 líneas cortas; fechas y acciones
+              en el pie. */}
           {filteredOrders.map(order => (
-            <article key={order.folio} className="space-y-1.5 rounded-lg border bg-card p-4 text-sm">
+            <article key={order.id} className="space-y-1 rounded-lg border bg-card p-3 text-sm">
               <p className="flex items-center justify-between gap-2">
-                <strong className="text-xs text-muted-foreground">{order.folio}</strong>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass[order.status] ?? fallbackBadgeClass}`}>
+                <strong className="text-xs font-medium text-muted-foreground">{order.folio}</strong>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass[order.status] ?? fallbackBadgeClass}`}>
                   {order.statusLabel}
                 </span>
               </p>
-              <p className="font-medium leading-snug">
+              <p className="truncate font-medium leading-snug">
                 {[order.equipmentType, order.brand, order.model].filter(Boolean).join(" · ")}
               </p>
-              <p className="text-xs text-muted-foreground">{order.customerName} · {order.customerPhone}</p>
-              <p className="line-clamp-2 text-muted-foreground">{order.reportedIssue}</p>
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <p className="truncate text-xs text-muted-foreground">{order.customerName} · {order.customerPhone}</p>
+              <p className="line-clamp-2 text-xs text-muted-foreground">{order.reportedIssue}</p>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pt-1">
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                   <span>Capturado {formatDate(order.createdAt)}</span>
                   {order.promisedAt && (
-                    <span className="flex items-center gap-1">
-                      <CalendarClock size={12} />
+                    <span className={`flex items-center gap-1 ${isPromiseOverdue(order) ? "font-medium text-amber-600 dark:text-amber-400" : ""}`}>
+                      <CalendarClock size={12} aria-hidden />
                       Promesa {formatDay(order.promisedAt)}
+                      {isPromiseOverdue(order) && " · Atrasada"}
                     </span>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button asChild variant="outline" size="sm" className="h-7 px-2.5 text-xs">
-                    <a
-                      href={buildOrderWhatsAppHref(order)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <MessageCircle className="mr-1 h-3.5 w-3.5" />
-                      Compartir rastreo por WhatsApp
-                    </a>
-                  </Button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {hasWhatsAppPhone(order.customerPhone) && (
+                    <Button asChild variant="outline" size="sm" className="h-7 px-2.5 text-xs">
+                      <a
+                        href={buildOrderWhatsAppHref(order)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Compartir rastreo de ${order.folio} por WhatsApp`}
+                      >
+                        <MessageCircle className="mr-1 h-3.5 w-3.5" aria-hidden />
+                        WhatsApp
+                      </a>
+                    </Button>
+                  )}
                   <Button asChild variant="ghost" size="sm" className="h-7 px-2.5 text-xs">
                     <a
                       href={buildTrackingPath(order.folio, order.customerPhone, order.trackingToken)}
                       target="_blank"
                       rel="noopener noreferrer"
+                      aria-label={`Abrir rastreo público de ${order.folio}`}
                     >
-                      <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                      <ExternalLink className="mr-1 h-3.5 w-3.5" aria-hidden />
                       Ver rastreo
                     </a>
                   </Button>
@@ -602,6 +718,11 @@ export default function AliadoPage() {
               </div>
             </article>
           ))}
+          {/* El API devuelve máximo 100; el aviso evita que la lista parezca
+              completa cuando hay historial más viejo. */}
+          {!loadError && !loading && orders.length >= 100 && (
+            <p className="text-xs text-muted-foreground">Mostrando los 100 envíos más recientes.</p>
+          )}
         </CardContent>
       </Card>
     </div>

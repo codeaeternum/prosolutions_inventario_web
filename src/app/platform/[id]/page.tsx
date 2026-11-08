@@ -133,7 +133,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
             )}
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-2xl font-bold tracking-tight truncate">{business.name}</h2>
+                <h1 className="text-2xl font-bold tracking-tight truncate">{business.name}</h1>
                 <Badge variant={business.isActive ? "success" : "destructive"}>
                   {business.isActive ? "Activa" : "Suspendida"}
                 </Badge>
@@ -144,7 +144,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                   <Link
                     href={`/${business.slug}`}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-primary hover:underline font-mono"
                   >
                     /{business.slug}
@@ -308,7 +308,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                   <TableHead>Rol</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Registro</TableHead>
-                  <TableHead className="text-right">Soporte</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -341,7 +341,14 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                       <div className="inline-flex items-center justify-end gap-2">
                         {u.status === "APPROVED" && (u.role === "ADMIN" || u.role === "EMPLOYEE") && (
                           <>
-                            <SupportAccessButton userId={u.id} />
+                            {/* Auto-impersonación no aporta: solo otros usuarios. */}
+                            {u.id !== currentUserId && (
+                              <SupportAccessButton
+                                userId={u.id}
+                                userName={u.name}
+                                businessName={business.name}
+                              />
+                            )}
                             <SuperAdminToggleButton
                               userId={u.id}
                               userName={u.name}
@@ -352,6 +359,7 @@ export default async function PlatformBusinessPage({ params }: PageProps) {
                         )}
                         <EditPlatformUserDialog
                           user={{ id: u.id, name: u.name, email: u.email, status: u.status }}
+                          isSelf={u.id === currentUserId}
                         />
                       </div>
                     </TableCell>
