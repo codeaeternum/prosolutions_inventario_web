@@ -45,7 +45,9 @@ interface NavGroup {
 
 const navigationGroups: NavGroup[] = [
   {
-    name: "Inicio",
+    // Sin etiqueta: el tablero queda fijado arriba como entrada principal y
+    // no desperdicia espacio repitiendo "Inicio" sobre el propio ítem.
+    name: "",
     items: [
       { name: "Inicio", href: "/admin", icon: LayoutDashboard },
     ]
@@ -275,11 +277,13 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
         </div>
         <nav className="flex-1 overflow-y-auto p-4 pb-24">
           <ul role="list" className="space-y-6">
-            {filteredNavigation.map((group) => (
-              <li key={group.name}>
-                <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2 px-2">
-                  {group.name}
-                </div>
+            {filteredNavigation.map((group, groupIndex) => (
+              <li key={group.name || groupIndex}>
+                {group.name !== "" && (
+                  <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2 px-2">
+                    {group.name}
+                  </div>
+                )}
                 <ul role="list" className="-mx-2 space-y-1">
                   {group.items.map((item) => {
                     const isActive = isNavItemActive(pathname, item.href)
@@ -367,15 +371,17 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
             )}
           </div>
           <nav className="mt-4 flex flex-1 flex-col">
-            <ul role="list" className="flex flex-1 flex-col gap-y-7 pt-4">
+            <ul role="list" className="flex flex-1 flex-col gap-y-7">
               {filteredNavigation.map((group, groupIndex) => (
-                <li key={group.name}>
+                <li key={group.name || groupIndex}>
                   {collapsed ? (
                     groupIndex > 0 && <div className="border-t border-border mb-3 -mx-1" aria-hidden="true" />
                   ) : (
-                    <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2">
-                      {group.name}
-                    </div>
+                    group.name !== "" && (
+                      <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2">
+                        {group.name}
+                      </div>
+                    )
                   )}
                   <ul role="list" className={cn("space-y-1", collapsed ? "" : "-mx-2")}>
                     {group.items.map((item) => {
