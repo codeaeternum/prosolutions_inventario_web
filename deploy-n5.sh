@@ -111,7 +111,8 @@ if (\$LASTEXITCODE -ne 0) { exit 1 }
 # falla si no existen. 'docker volume create' es idempotente (no-op si ya
 # estan), asi que se aseguran antes de cada up sin tocar datos existentes.
 Write-Host '>>> Asegurando volumenes externos (no-op si ya existen)...'
-docker volume create prosolutions_postgres_data prosolutions_uploads prosolutions_payment_proofs prosolutions_repair_evidence
+# 'docker volume create' acepta UN solo volumen por llamada.
+foreach (\$vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create \$vol | Out-Null }
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host '>>> Asegurando DB y aplicando migraciones ANTES de promover la app...'

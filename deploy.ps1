@@ -26,7 +26,8 @@ if (-not $Remote) {
     # 2) DB primero; luego migraciones ANTES de promover app/bot.
     # Los volumenes son external: 'docker volume create' es idempotente
     # (no-op si ya existen) y evita que el up falle en un host limpio.
-    docker volume create prosolutions_postgres_data prosolutions_uploads prosolutions_payment_proofs prosolutions_repair_evidence
+    # 'docker volume create' acepta UN solo volumen por llamada.
+    foreach ($vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create $vol | Out-Null }
     if ($LASTEXITCODE -ne 0) { exit 1 }
     docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
     if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -106,7 +107,7 @@ git clean -fd
 `$env:GIT_SHA = (git rev-parse --short HEAD)
 docker compose -f docker-compose.yml --profile migrate build --no-cache
 if (`$LASTEXITCODE -ne 0) { exit 1 }
-docker volume create prosolutions_postgres_data prosolutions_uploads prosolutions_payment_proofs prosolutions_repair_evidence
+foreach (`$vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create `$vol | Out-Null }
 if (`$LASTEXITCODE -ne 0) { exit 1 }
 docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
 if (`$LASTEXITCODE -ne 0) { exit 1 }

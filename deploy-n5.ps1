@@ -44,8 +44,11 @@ Write-Host "[2/4] Asegurando DB y aplicando migraciones..." -ForegroundColor Yel
 # Los volumenes son external (docker-compose*.yml): un 'up' en host limpio
 # falla si no existen. 'docker volume create' es idempotente (no-op si ya
 # estan), asi que se aseguran antes de cada up sin tocar datos existentes.
-docker volume create prosolutions_postgres_data prosolutions_uploads prosolutions_payment_proofs prosolutions_repair_evidence
-if ($LASTEXITCODE -ne 0) { Write-Host "Error al crear volumenes." -ForegroundColor Red; exit 1 }
+# Nota: 'docker volume create' acepta UN solo volumen por llamada.
+foreach ($vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) {
+    docker volume create $vol | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Host "Error al crear volumen $vol." -ForegroundColor Red; exit 1 }
+}
 docker compose -f $composePath -p $stackName --env-file $envFile up -d db
 if ($LASTEXITCODE -ne 0) { Write-Host "Error al levantar db." -ForegroundColor Red; exit 1 }
 docker compose -f $composePath -p $stackName --env-file $envFile --profile migrate run --rm migrate
