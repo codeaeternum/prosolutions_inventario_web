@@ -100,7 +100,7 @@ export default function VentasPage() {
     const [showMobileCart, setShowMobileCart] = useState(false)
     // ?encargo=<id> — "Cobrar" desde Pedidos o Encargos: prellena cliente + pieza y
     // aplica el precio cotizado y el anticipo del encargo al liquidar la venta.
-    const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number; productId: string | null } | null>(null)
+    const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number; productId: string | null; quantity: number } | null>(null)
     // Pieza del encargo pendiente de prellenar: espera a que la sucursal
     // activa esté resuelta para pedir el stock POR SUCURSAL — sin branchId
     // /api/search/pos devuelve el total de catálogo y el badge del ticket
@@ -166,7 +166,7 @@ export default function VentasPage() {
                     return
                 }
                 const priceQuoted = e.priceQuoted ?? null
-                setEncargoCtx({ id: e.id, description: e.description, priceQuoted, deposit: e.deposit ?? 0, productId: e.productId ?? null })
+                setEncargoCtx({ id: e.id, description: e.description, priceQuoted, deposit: e.deposit ?? 0, productId: e.productId ?? null, quantity: Math.max(1, e.quantity ?? 1) })
                 if (e.customerId) {
                     fetch(`/api/users/pos?id=${e.customerId}`).then(r => r.ok ? r.json() : null)
                         .then(dd => { const u = dd?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
@@ -221,11 +221,16 @@ export default function VentasPage() {
             .then(dd => {
                 const p = (dd?.products ?? []).find((x: PosProduct) => x.id === productId)
                 if (p) {
-                    const productWithQuote: PosProduct = priceQuoted != null && priceQuoted > 0
+                    // priceQuoted es el TOTAL del encargo (las `quantity`
+                    // piezas juntas): el unitario mostrado se prorratea para
+                    // que el total del ticket coincida con lo cotizado — el
+                    // servidor cobra el total exacto (encargoQuotedLineCents).
+                    const unitQuoted = priceQuoted != null && priceQuoted > 0 ? priceQuoted / quantity : null
+                    const productWithQuote: PosProduct = unitQuoted != null
                         ? {
                             ...p,
-                            retailPrice: priceQuoted,
-                            wholesalePrice: priceQuoted,
+                            retailPrice: unitQuoted,
+                            wholesalePrice: unitQuoted,
                             catalogRetailPrice: p.retailPrice,
                             catalogWholesalePrice: p.wholesalePrice,
                         }
@@ -287,11 +292,14 @@ export default function VentasPage() {
         setCart(prev => {
             const found = prev.find(item => item.product.id === product.id)
             const applyEncargoQuote = !found && prev.length === 0 && encargoCtx && !encargoCtx.productId && encargoCtx.priceQuoted != null && encargoCtx.priceQuoted > 0
-            const effectiveProduct: PosProduct = applyEncargoQuote
+            // Mismo prorrateo que el prefill: priceQuoted es el TOTAL del
+            // encargo — el unitario mostrado es total ÷ piezas del encargo.
+            const freeTextUnitQuoted = applyEncargoQuote ? encargoCtx!.priceQuoted! / encargoCtx!.quantity : null
+            const effectiveProduct: PosProduct = freeTextUnitQuoted != null
                 ? {
                     ...product,
-                    retailPrice: encargoCtx.priceQuoted!,
-                    wholesalePrice: encargoCtx.priceQuoted!,
+                    retailPrice: freeTextUnitQuoted,
+                    wholesalePrice: freeTextUnitQuoted,
                     catalogRetailPrice: product.retailPrice,
                     catalogWholesalePrice: product.wholesalePrice,
                 }

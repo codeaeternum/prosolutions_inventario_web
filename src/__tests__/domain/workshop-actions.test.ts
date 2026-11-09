@@ -53,6 +53,10 @@ beforeEach(() => {
   // — el mock devuelve el ledger de pagos de la orden.
   tx.payment.findMany.mockResolvedValue([])
   tx.cashMovement.groupBy.mockResolvedValue([])
+  // openRegister (cobros CASH): sucursal válida y lock de fila que siempre
+  // confirma — los tests de pago controlan la lista de cajas por findMany.
+  tx.branch.findFirst.mockResolvedValue({ id: "b1", name: "Sucursal 1", isActive: true, businessId: "biz" })
+  tx.cashRegister.updateMany.mockResolvedValue({ count: 1 })
   // Sin warranty_days configurado: el dominio cae al default de 30 días.
   tx.systemSettings.findUnique.mockResolvedValue(null)
 })
@@ -352,7 +356,7 @@ describe("permisos y caja", () => {
     tx.repairOrder.findUnique.mockResolvedValue(order({ status: "IN_REPAIR" }))
     tx.cashRegister.findMany.mockResolvedValue([])
     await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "PAYMENT", paymentCents: 10000, paymentMethod: "CASH" })))
-      .rejects.toMatchObject({ status: 409, code: "REGISTER_REQUIRED", message: "Abre la caja antes de cobrar en efectivo." })
+      .rejects.toMatchObject({ status: 409, code: "REGISTER_REQUIRED", message: "Abre la caja de Sucursal 1 antes de registrar efectivo." })
     expect(tx.payment.create).not.toHaveBeenCalled()
   })
 

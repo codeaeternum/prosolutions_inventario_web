@@ -23,7 +23,15 @@ export async function changeCredit(db: PrismaClient, actorId: string, businessId
   }
   // En mostrador el staff cobra abonos; cargar deuda o mover límites sí es de admin.
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: `CREDIT_${kind}`, permission: kind === "PAYMENT" ? "staff" : "admin", payload: input }, async tx => {
-    const user = await actor(tx, input.userId, "customer", businessId)
+    // El abono lo cobra el mostrador AUNQUE el cliente esté suspendido o sin
+    // aprobar: bloquear su pago también bloquearía la cobranza — lo contrario
+    // del objetivo del freno. PAYMENT solo exige que la cuenta sea un cliente
+    // DEL negocio (el 403 genérico no revela si existe en otro tenant); el
+    // CARGO de deuda sí exige APPROVED: actor() y addDebt lo validan.
+    const user = kind === "PAYMENT"
+      ? await tx.user.findFirst({ where: { id: input.userId, businessId, role: { in: ["CUSTOMER", "WORKSHOP"] } } })
+      : await actor(tx, input.userId, "customer", businessId)
+    if (!user) throw new BusinessError("La cuenta no está autorizada para operar.", 403, "ACCOUNT_NOT_APPROVED")
     if (kind === "DEBT") {
       await addDebt(tx, user.id, value, { type: "MANUAL", notes: input.notes ?? "Cargo manual" }, businessId)
       return { creditBalance: amount(cents(user.creditBalance, true) + value) }

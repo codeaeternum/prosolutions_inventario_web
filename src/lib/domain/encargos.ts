@@ -260,15 +260,19 @@ export async function encargoHeldCents(
   encargo: { id: string; deposit: number },
 ): Promise<{ heldCents: number; depositMethod: (typeof ENCARGO_MONEY_METHODS)[number] | null }> {
   if (encargo.deposit <= 0) return { heldCents: 0, depositMethod: null }
-  const [advances, priorRefunds] = await Promise.all([
-    tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "ADVANCE" }, select: { method: true, amount: true } }),
+  const [advanceRows, priorRefunds] = await Promise.all([
+    tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "ADVANCE" }, select: { method: true, amount: true, status: true } }),
     tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "REFUND" }, select: { amount: true } }),
   ])
-  // Los REFUND se guardan con amount negativo: el retenido = anticipos +
-  // devoluciones (ya vienen en negativo). Sin ledger, cae al deposit.
+  // Solo los anticipos CONFIRMED retienen dinero: un ADVANCE VOIDED (venta
+  // anulada por el camino viejo) ya no representa efectivo del cliente —
+  // contarlo inflaría lo retenido. Los REFUND se guardan con amount negativo:
+  // el retenido = anticipos + devoluciones (ya vienen en negativo). Sin ledger
+  // (ni una sola fila ADVANCE), cae al deposit — encargos históricos.
   // Cada fila se convierte a centavos ANTES de sumar: sumar Float pesos y
   // redondear al final deja escapar el epsilon acumulado.
-  const rawHeld = advances.length
+  const advances = advanceRows.filter(p => p.status === "CONFIRMED")
+  const rawHeld = advanceRows.length
     ? advances.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) + priorRefunds.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
     : Math.round(encargo.deposit * 100)
   const heldCents = Math.max(0, rawHeld)
@@ -520,6 +524,70 @@ export async function settleEncargoInSaleTx(
     action: "DELIVERED",
     saleId: input.saleId,
   })
+}
+
+/**
+ * Reversa de settleEncargoInSaleTx cuando la venta que entregó el encargo se
+ * anula (voidSale): los anticipos ADVANCE vuelven al encargo (saleId = null —
+ * el dinero queda retenido por el encargo, NO se reembolsa al cliente) y el
+ * encargo regresa a READY, cobrable de nuevo o cancelable por su flujo propio.
+ *
+ * DELIVERED → READY no existe como transición de negocio: una entrega
+ * consumada no se "des-entrega" desde el panel. Esto es la desactivación del
+ * vínculo dentro de la misma anulación atómica — sin ella el encargo quedaba
+ * terminal para siempre y el anticipo huérfano seguía contando como retenido.
+ */
+export async function releaseEncargoFromVoidedSaleTx(
+  tx: Transaction,
+  input: { encargoId: string; saleId: string; actorId: string; businessId: string; saleNumber: number },
+) {
+  await tx.payment.updateMany({
+    where: { saleId: input.saleId, encargoId: input.encargoId, purpose: "ADVANCE", status: "CONFIRMED" },
+    data: { saleId: null },
+  })
+  const reverted = await tx.encargo.updateMany({
+    where: { id: input.encargoId, businessId: input.businessId, status: "DELIVERED" },
+    data: { status: "READY", resolvedById: null },
+  })
+  if (reverted.count !== 1) throw new BusinessError("El encargo cambió durante la operación; reintenta.", 409)
+  await recordAudit(tx, {
+    businessId: input.businessId,
+    actorId: input.actorId,
+    action: "ENCARGO_STATUS",
+    entity: "encargo",
+    entityId: input.encargoId,
+    summary: `Encargo devuelto a lista: la venta V-${input.saleNumber} que lo entregó fue anulada.`,
+    changes: { status: { before: "DELIVERED", after: "READY" } },
+  })
+}
+
+/**
+ * Precio prometido del encargo aplicado a un renglón de venta.
+ *
+ * `priceQuoted` es el TOTAL del encargo — las `quantity` piezas juntas por
+ * ese monto (el anticipo del cliente se pacta contra ese total: al crear el
+ * encargo, deposit ≤ priceQuoted). Tratarlo como precio unitario cobraría de
+ * más: quantity 3 cotizado en $3,000 facturaba $9,000.
+ *
+ * Devuelve los centavos del renglón cuando corresponde al encargo — mismo
+ * producto, o encargo de texto libre en una venta de un solo renglón — y
+ * null cuando no aplica. El renglón debe llevar EXACTAMENTE las piezas del
+ * encargo: un encargo se liquida entero (READY → DELIVERED en la misma tx)
+ * o no se liquida — entregar una fracción con todo el anticipo aplicado
+ * sería dinero sin pieza y dejaría el resto del encargo sin cobrar.
+ */
+export function encargoQuotedLineCents(
+  encargo: { productId: string | null; quantity: number; priceQuoted: number | null },
+  line: { productId: string; quantity: number },
+  lineCount: number,
+): number | null {
+  if (encargo.priceQuoted == null || encargo.priceQuoted <= 0) return null
+  const applies = encargo.productId === line.productId || (!encargo.productId && lineCount === 1)
+  if (!applies) return null
+  if (line.quantity !== encargo.quantity) {
+    throw new BusinessError(`El encargo es por ${encargo.quantity} pieza(s); su renglón en la venta debe llevar exactamente esa cantidad.`, 409)
+  }
+  return cents(encargo.priceQuoted, true)
 }
 
 /**

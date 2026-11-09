@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { getSession, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
+import { transaction } from "@/lib/domain/operations"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { JORNADA_MAX_MS } from "@/lib/asistencia"
 
@@ -92,47 +93,59 @@ export async function POST(request: NextRequest) {
 
     // A partir del PIN válido: mismas reglas que POST /api/asistencia pero
     // con userId del target (el actor del evento es quien checó, no quien
-    // sostiene la tableta).
-    const last = await prisma.clockEvent.findFirst({
-      where: { businessId, userId: target.id },
-      orderBy: { at: "desc" },
-    })
-    const now = new Date()
-    const jornadaAbierta = last?.type === "IN" && now.getTime() - last.at.getTime() <= JORNADA_MAX_MS
-    const type = body.type ?? (jornadaAbierta ? "OUT" : "IN")
+    // sostiene la tableta). Leer `last` y crear el evento van en una
+    // transacción SERIALIZABLE con reintento: la tableta y el teléfono de
+    // la misma persona — o un doble-tap con lag — pueden checar a la vez;
+    // sin tx ambos leen el mismo `last` e insertan, dejando un IN fantasma
+    // que abandona la jornada real o un OUT duplicado. El commit perdedor
+    // aborta, reintenta y relee: dedup o 409, jamás duplicado.
+    const result = await transaction(prisma, async tx => {
+      const last = await tx.clockEvent.findFirst({
+        where: { businessId, userId: target.id },
+        orderBy: { at: "desc" },
+      })
+      const now = new Date()
+      const jornadaAbierta = last?.type === "IN" && now.getTime() - last.at.getTime() <= JORNADA_MAX_MS
+      const type = body.type ?? (jornadaAbierta ? "OUT" : "IN")
 
-    if (last && last.type === type && now.getTime() - last.at.getTime() < DEDUP_MS) {
+      if (last && last.type === type && now.getTime() - last.at.getTime() < DEDUP_MS) {
+        return { kind: "dedup" as const, event: last }
+      }
+      if (type === "OUT" && !jornadaAbierta) return { kind: "sin-jornada" as const }
+      if (type === "IN" && jornadaAbierta) return { kind: "jornada-abierta" as const, since: last!.at }
+
+      const event = await tx.clockEvent.create({
+        data: {
+          businessId,
+          userId: target.id,
+          branchId: target.homeBranchId ?? null,
+          type,
+          note: body.note ?? null,
+        },
+      })
+      return { kind: "creado" as const, event }
+    })
+
+    if (result.kind === "dedup") {
       return NextResponse.json(
-        { event: last, userName: target.name, openShift: last.type === "IN" ? { since: last.at } : null, deduplicated: true },
+        { event: result.event, userName: target.name, openShift: result.event.type === "IN" ? { since: result.event.at } : null, deduplicated: true },
         { headers: NO_STORE }
       )
     }
-
-    if (type === "OUT" && !jornadaAbierta) {
+    if (result.kind === "sin-jornada") {
       return NextResponse.json(
         { error: "No hay una jornada abierta: primero registra tu entrada (IN)." },
         { status: 409 }
       )
     }
-    if (type === "IN" && jornadaAbierta) {
+    if (result.kind === "jornada-abierta") {
       return NextResponse.json(
-        { error: "Ya tienes una jornada abierta: registra tu salida (OUT) antes de volver a entrar.", since: last!.at },
+        { error: "Ya tienes una jornada abierta: registra tu salida (OUT) antes de volver a entrar.", since: result.since },
         { status: 409 }
       )
     }
-
-    const event = await prisma.clockEvent.create({
-      data: {
-        businessId,
-        userId: target.id,
-        branchId: target.homeBranchId ?? null,
-        type,
-        note: body.note ?? null,
-      },
-    })
-
     return NextResponse.json(
-      { event, userName: target.name, openShift: event.type === "IN" ? { since: event.at } : null, deduplicated: false },
+      { event: result.event, userName: target.name, openShift: result.event.type === "IN" ? { since: result.event.at } : null, deduplicated: false },
       { status: 201, headers: NO_STORE }
     )
   } catch (error) {

@@ -293,7 +293,7 @@ describe("transición de encargo", () => {
   it("permite READY → DELIVERED directo si el anticipo ya cubrió el 100% del precio cotizado", async () => {
     tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY", priceQuoted: 500, deposit: 500 })
     tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
-      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 500 }] : [])
+      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 500, status: "CONFIRMED" }] : [])
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     await transitionEncargo(db, "emp-1", BIZ, "e1", { idempotencyKey: key(), action: "DELIVERED" })
     expect(tx.encargo.updateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -417,7 +417,7 @@ describe("pago al proveedor al pedir", () => {
 describe("reembolso del anticipo al cancelar", () => {
   const withDeposit = { id: "e1", businessId: BIZ, status: "READY", description: "Pantalla", deposit: 500, branchId: "b1", branch, customer: null, marketplaceRequestId: null }
   const paidLedger = (method = "CASH") => (args: { where: { purpose?: string } }) =>
-    Promise.resolve(args.where.purpose === "ADVANCE" ? [{ method, amount: 500 }] : [])
+    Promise.resolve(args.where.purpose === "ADVANCE" ? [{ method, amount: 500, status: "CONFIRMED" }] : [])
 
   it("cancelar con anticipo en efectivo: Payment REFUND negativo + CashMovement OUT", async () => {
     tx.encargo.findFirst.mockResolvedValue(withDeposit)
@@ -482,7 +482,7 @@ describe("reembolso del anticipo al cancelar", () => {
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     // Ledger: anticipo de 500 y una devolución previa (-500): retenido 0.
     tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
-      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 500 }] : [{ amount: -500 }])
+      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 500, status: "CONFIRMED" }] : [{ amount: -500 }])
     const result = await transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED" })
     expect(result.refundPaymentId).toBeNull()
     expect(tx.payment.create).not.toHaveBeenCalled()
@@ -610,7 +610,7 @@ describe("cobro de encargo en POS (sell / checkoutDocument)", () => {
     tx.encargo.findFirst.mockResolvedValue(readyEncargo)
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
-      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 300 }] : [])
+      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 300, status: "CONFIRMED" }] : [])
   })
 
   it("sell con encargoId usa priceQuoted, descuenta el anticipo del cobro, liga el Payment ADVANCE y cierra a DELIVERED en la misma tx", async () => {

@@ -20,7 +20,10 @@ if (-not (Test-Path $envFile)) {
 
 # 1) Build de imágenes (incluida la de migraciones, perfil migrate).
 # --env-file es obligatorio: el compose valida variables con :? incluso para build.
-Write-Host "[1/4] Construyendo imagenes Docker..." -ForegroundColor Yellow
+# GIT_SHA queda horneado en la imagen como APP_BUILD_SHA (visible en la
+# consola /platform); sin esta variable la imagen sale con build "unknown".
+$env:GIT_SHA = (git rev-parse --short HEAD)
+Write-Host "[1/4] Construyendo imagenes Docker (build $($env:GIT_SHA))..." -ForegroundColor Yellow
 docker compose -f docker-compose.yml --env-file $envFile --profile migrate build --no-cache
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Error en build. Revisa el codigo y vuelve a ejecutar." -ForegroundColor Red

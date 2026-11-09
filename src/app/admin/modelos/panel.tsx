@@ -17,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Plus, Loader2, Pencil, Trash2, Layers } from "lucide-react"
+import { Plus, Loader2, Trash2, Layers } from "lucide-react"
 import { EmptyState } from "@/components/admin/empty-state"
 
 interface Brand {
@@ -224,12 +224,10 @@ export function ModelsPanel({ embedded = false }: { embedded?: boolean }) {
                     {model.name}
                   </CardTitle>
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="icon">
-                      <Pencil className="h-4 w-4" />
-                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label={`Eliminar ${model.name}`}
                       onClick={() => {
                         setDeleteTargetId(model.id)
                         setDeleteDialogOpen(true)

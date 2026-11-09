@@ -32,6 +32,9 @@ jobs:
       - name: Run unit tests
         run: npx vitest run --project unit
 
+      - name: Telegram bot bundle check
+        run: npm run bot:build
+
       - name: Production build check
         env:
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"

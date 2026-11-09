@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, amount, BusinessError, cents, itemsSchema, mergeItems, operation, operationKeySchema, releaseStock, resolveBranch, takeStock } from "./operations"
 import { channelOfPaymentMethod, checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
-import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
+import { encargoQuotedLineCents, prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { nextSaleNumber } from "./tenant-sequence"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
@@ -86,6 +86,19 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
   // necesita vigencia y el anticipo solo existe en el apartado.
   if (input.kind === "LAYAWAY" && !input.customerId) throw new BusinessError("Un apartado necesita el cliente que lo aparta.")
   if (input.kind === "QUOTE" && !input.expiresAt) throw new BusinessError("La cotización necesita su fecha de vigencia.")
+  // El encargo ya tiene su anticipo: ligarlo a un documento con anticipo
+  // propio (apartado) o a una promesa de precio que quizá nunca se cobre
+  // (cotización) deja el depósito huérfano — el documento jamás consume el
+  // encargo y este seguiría vendible en POS con su anticipo otra vez.
+  // Solo los documentos de venta (RETAIL/WORKSHOP) llevan encargo, porque su
+  // checkout lo liquida con settleEncargoInSaleTx en la misma transacción.
+  if (input.encargoId && input.kind !== "RETAIL" && input.kind !== "WORKSHOP") {
+    throw new BusinessError(
+      input.kind === "LAYAWAY"
+        ? "Un encargo con anticipo no puede ligarse a un apartado; véndelo directo."
+        : "Un encargo con anticipo no puede ligarse a una cotización; véndelo directo.",
+    )
+  }
   if (input.payments?.length && input.kind !== "LAYAWAY") throw new BusinessError("Solo el apartado registra anticipo; suspensión y cotización cobran al confirmarse.")
   const payments = input.payments ?? []
   if (payments.some(p => p.method === "CREDITO")) throw new BusinessError("El anticipo de un apartado no puede ser a crédito.")
@@ -110,10 +123,13 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
       throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
     }
     const wholesale = input.kind === "WORKSHOP" || qualifiedCustomer
-    const encargo = input.encargoId
-      ? await tx.encargo.findFirst({ where: { id: input.encargoId, businessId } })
+    // El encargo ligado a un documento de venta debe ser liquidable en el
+    // checkout: existe, está READY y pertenece a la misma sucursal — misma
+    // validación que sell() (prepareEncargoForSaleTx). Aquí solo fotografía
+    // su precio prometido; el consumo ocurre en checkoutDocument.
+    const encargoInfo = input.encargoId
+      ? await prepareEncargoForSaleTx(tx, { encargoId: input.encargoId, businessId, branchId: branch.id })
       : null
-    const quotedPrice = encargo?.priceQuoted
     const lines = []
     let totalCents = 0
     for (const item of items) {
@@ -123,19 +139,26 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
         ? (await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id, businessId })).product
         : await tx.product.findFirst({ where: { id: item.productId, businessId } })
       if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
-      const useQuoted = quotedPrice != null && quotedPrice > 0 && (
-        encargo?.productId === item.productId ||
-        (!encargo?.productId && items.length === 1)
-      )
-      const unitCents = useQuoted
-        ? cents(quotedPrice, true)
+      // Precio prometido del encargo: priceQuoted es el TOTAL del encargo
+      // (todas sus piezas), no el precio unitario — ver encargoQuotedLineCents.
+      const quotedLineCents = encargoInfo
+        ? encargoQuotedLineCents(encargoInfo.encargo, { productId: item.productId, quantity: item.quantity }, items.length)
+        : null
+      const unitCents = quotedLineCents != null
+        ? Math.round(quotedLineCents / item.quantity)
         : cents(wholesale ? product.wholesalePrice : product.retailPrice)
-      const lineCents = unitCents * item.quantity
+      const lineCents = quotedLineCents ?? unitCents * item.quantity
       cents(amount(lineCents))
       lines.push({ item, product, unitCents, lineCents })
       totalCents += lineCents
     }
     const total = amount(totalCents)
+    // El anticipo retenido del encargo se descuenta en el checkout — nunca
+    // puede superar lo que el documento cobraría (misma regla que sell()).
+    const depositCents = encargoInfo?.depositCents ?? 0
+    if (depositCents > totalCents) {
+      throw new BusinessError("El anticipo del encargo supera el total del documento.", 409)
+    }
 
     // Un anticipo único sin monto se interpreta como el total y siempre se
     // rechaza: si lo liquida completo es una venta, no un apartado.
@@ -164,7 +187,7 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
           unitPrice: amount(line.unitCents), totalPrice: amount(line.lineCents),
         } }))
       }
-      return { sale, items: saleItems, payments: [], movements: [], quantity, total, kind: sale.kind, paid: 0, balance: total }
+      return { sale, items: saleItems, payments: [], movements: [], quantity, total, kind: sale.kind, paid: 0, balance: total, ...(encargoInfo ? { encargoId: encargoInfo.encargo.id, depositCents } : {}) }
     }
 
     const committed = await commitSale(tx, {
@@ -244,6 +267,13 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       settled = settleSalePayments(payments, payableCents)
     }
     const saleItems = await tx.saleItem.findMany({ where: { saleId: sale.id } })
+    // El documento que entrega el encargo debe llevar todas sus piezas en el
+    // renglón cotizado — misma regla que sell() y parkDocument.
+    if (encargoInfo) {
+      for (const item of saleItems) {
+        encargoQuotedLineCents(encargoInfo.encargo, { productId: item.productId, quantity: item.quantity }, saleItems.length)
+      }
+    }
     // El precio prometido es el snapshot del renglón; aquí solo se compromete
     // el stock que el DRAFT nunca apartó.
     for (const item of saleItems) {

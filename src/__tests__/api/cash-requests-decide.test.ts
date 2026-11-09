@@ -16,8 +16,10 @@ const mocks = vi.hoisted(() => ({
   cashRequestFindUniqueOrThrow: vi.fn(),
   cashRequestUpdateMany: vi.fn(),
   cashRequestUpdate: vi.fn(),
-  cashRegisterFindFirst: vi.fn(),
+  cashRegisterFindMany: vi.fn(),
   cashRegisterFindUniqueOrThrow: vi.fn(),
+  cashRegisterUpdateMany: vi.fn(),
+  branchFindFirst: vi.fn(),
   cashMovementGroupBy: vi.fn(),
   cashMovementCreate: vi.fn(),
 }))
@@ -42,8 +44,14 @@ const tx = {
     update: mocks.cashRequestUpdate,
   },
   cashRegister: {
-    findFirst: mocks.cashRegisterFindFirst,
+    // openRegister: findMany para el conteo de cajas abiertas y updateMany
+    // para el lock de fila — ya no se usa findFirst.
+    findMany: mocks.cashRegisterFindMany,
     findUniqueOrThrow: mocks.cashRegisterFindUniqueOrThrow,
+    updateMany: mocks.cashRegisterUpdateMany,
+  },
+  branch: {
+    findFirst: mocks.branchFindFirst,
   },
   cashMovement: {
     groupBy: mocks.cashMovementGroupBy,
@@ -78,6 +86,12 @@ beforeEach(() => {
   mocks.cashRequestFindUnique.mockResolvedValue(null)
   mocks.cashRequestUpdateMany.mockResolvedValue({ count: 1 })
   mocks.cashRequestFindUniqueOrThrow.mockResolvedValue({ id: "cr-1", status: "REJECTED" })
+  // Sucursal válida del negocio; sin caja abierta por defecto — los tests
+  // de APPROVE la habilitan por findMany.
+  mocks.branchFindFirst.mockImplementation(({ where }: { where: { id?: string } }) =>
+    Promise.resolve({ id: where.id ?? "branch-1", name: "Sucursal 1", isActive: true, businessId: "biz-1" }))
+  mocks.cashRegisterFindMany.mockResolvedValue([])
+  mocks.cashRegisterUpdateMany.mockResolvedValue({ count: 1 })
 })
 
 describe("permisos", () => {
@@ -164,7 +178,6 @@ describe("decisión", () => {
       concept: "Compra de cinta",
       status: "PENDING",
     })
-    mocks.cashRegisterFindFirst.mockResolvedValue(null)
     const res = await post({ decision: "APPROVE" })
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("Abre la caja")
@@ -181,7 +194,7 @@ describe("decisión", () => {
       concept: "Insumos",
       status: "PENDING",
     })
-    mocks.cashRegisterFindFirst.mockResolvedValue({ id: "reg-1" })
+    mocks.cashRegisterFindMany.mockResolvedValue([{ id: "reg-1" }])
     mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 100 })
     mocks.cashMovementGroupBy.mockResolvedValue([])
     const res = await post({ decision: "APPROVE" })
@@ -200,7 +213,7 @@ describe("decisión", () => {
       concept: "Insumos de limpieza",
       status: "PENDING",
     })
-    mocks.cashRegisterFindFirst.mockResolvedValue({ id: "reg-1" })
+    mocks.cashRegisterFindMany.mockResolvedValue([{ id: "reg-1" }])
     mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 500 })
     mocks.cashMovementGroupBy.mockResolvedValue([])
     mocks.cashMovementCreate.mockResolvedValue({ id: "mov-1" })

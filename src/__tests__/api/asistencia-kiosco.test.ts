@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
+  transaction: vi.fn(),
   clockFindFirst: vi.fn(),
   clockCreate: vi.fn(),
   userFindFirst: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
       create: mocks.clockCreate,
     },
     user: { findFirst: mocks.userFindFirst },
+    $transaction: mocks.transaction,
   },
 }))
 vi.mock("bcryptjs", () => ({ default: { compare: mocks.bcryptCompare } }))
@@ -39,6 +41,7 @@ vi.mock("@/lib/rate-limit", () => ({
 }))
 
 import { POST } from "@/app/api/asistencia/kiosco/route"
+import { prisma } from "@/lib/prisma"
 
 const session = (id: string, role: string, extra: Record<string, unknown> = {}) => ({
   user: { id, name: "Operador", role, status: "APPROVED", businessId: "biz-1", ...extra },
@@ -79,6 +82,9 @@ const clockEvent = (over: Record<string, unknown>) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(operador)
+  // El tx es el prisma mockeado: el check+create del dominio corre sobre
+  // los mismos mocks del prisma global.
+  mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work(prisma))
   mocks.checkAndRecord.mockReturnValue(true)
   mocks.userFindFirst.mockResolvedValue(ana)
   mocks.bcryptCompare.mockResolvedValue(true)
@@ -246,5 +252,80 @@ describe("POST /api/asistencia/kiosco — checada", () => {
     const raw = JSON.stringify(await res.json())
     expect(raw).not.toContain("quickPin")
     expect(raw).not.toContain("hash-pin-ana")
+  })
+})
+
+describe("POST /api/asistencia/kiosco — atomicidad del check+create", () => {
+  it("la lectura del último evento y el insert corren dentro de $transaction Serializable", async () => {
+    const order: string[] = []
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      order.push("tx:begin")
+      const r = await work(prisma)
+      order.push("tx:commit")
+      return r
+    })
+    mocks.clockFindFirst.mockImplementation(async () => { order.push("read:last"); return null })
+    mocks.clockCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      order.push("create")
+      return clockEvent({ ...data, at: new Date(), createdAt: new Date() })
+    })
+    const res = await post({ userId: "u-ana", pin: "1234", type: "IN" })
+    expect(res.status).toBe(201)
+    expect(order).toEqual(["tx:begin", "read:last", "create", "tx:commit"])
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ isolationLevel: "Serializable" })
+    )
+  })
+
+  it("doble checada simultánea (kiosco + app): el perdedor reintenta y deduplica", async () => {
+    // El IN ganador commiteó entre el intento 1 y el reintento del perdedor.
+    const winner = clockEvent({ id: "ck-win", type: "IN", at: new Date() })
+    let attempt = 0
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      attempt += 1
+      if (attempt === 1) {
+        // Perdedor: leyó snapshot vacío, insertó y el COMMIT abortó — su
+        // insert se rollbackea con la tx.
+        await work(prisma)
+        throw Object.assign(new Error("could not serialize access"), { code: "P2034" })
+      }
+      return work(prisma)
+    })
+    mocks.clockFindFirst
+      .mockResolvedValueOnce(null) // intento 1: aún no está el IN ganador
+      .mockResolvedValue(winner)   // reintento: estado ya commiteado
+
+    const res = await post({ userId: "u-ana", pin: "1234", type: "IN" })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.event.id).toBe("ck-win")
+    expect(body.userName).toBe("Ana")
+    expect(body.deduplicated).toBe(true)
+    expect(mocks.transaction).toHaveBeenCalledTimes(2)
+    // El único INSERT fue el del intento abortado; el reintento deduplicó.
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it("si al reintentar la jornada del ganador no es deduplicable → 409", async () => {
+    // El ganador commiteó su IN hace 3 h (>60 s de dedup): el perdedor
+    // relee la jornada abierta y recibe 409 — no un segundo IN fantasma.
+    const winner = clockEvent({ id: "ck-win", type: "IN", at: new Date(Date.now() - 3 * 3600e3) })
+    let attempt = 0
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      attempt += 1
+      if (attempt === 1) {
+        await work(prisma)
+        throw Object.assign(new Error("could not serialize access"), { code: "P2034" })
+      }
+      return work(prisma)
+    })
+    mocks.clockFindFirst.mockResolvedValueOnce(null).mockResolvedValue(winner)
+
+    const res = await post({ userId: "u-ana", pin: "1234", type: "IN" })
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toContain("jornada abierta")
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(1)
   })
 })

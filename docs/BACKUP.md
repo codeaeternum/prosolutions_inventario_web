@@ -21,7 +21,7 @@ Qué respalda cada noche:
 3. `prosolutions_payment_proofs` (comprobantes de pago) → `payment-proofs\payment-proofs-...tar.gz`
 4. `prosolutions_repair_evidence` (evidencias de reparación) → `repair-evidence\repair-evidence-...tar.gz`
 
-Además, tras el `pg_dump` el propio script valida la integridad del archivo con `pg_restore --list` en un contenedor `postgres:16-alpine` efímero (montando la carpeta `db` en `:ro`): exige TOC completo y guarda `tocEntries` en el status — un dump truncado nunca se marca como `ok`.
+Además, tras el `pg_dump` el propio script valida la integridad del archivo con `pg_restore --list` **dentro de `prosolutions-db`** (`docker cp` del `.pgdump` a `/tmp` del contenedor, `docker exec pg_restore --list`, `rm`): mismo binario que el servidor y cero dependencia de un pull de imagen a las 03:30. Exige TOC completo (≥10 entradas) y guarda `db.verified` + `db.tocEntries` en el status. Si la **verificación** falla, el `.pgdump` se **conserva** — queda `db.ok:true` pero `db.verified:false` + `db.verifyError` (un dump sin verificar es advertencia, no fallo fatal); solo se descarta un dump que falló al generarse.
 
 Los volúmenes se montan **solo-lectura** (`-v volumen:/data:ro`); el backup nunca escribe en ellos. El dump se genera dentro del contenedor y se vuelca byte a byte a disco (no usa `>` de PowerShell, que corrompería el binario en Windows PowerShell 5.1).
 
@@ -67,7 +67,7 @@ D:\Backups\prosolutions\
 {
   "startedAt": "2026-01-15T03:30:00",
   "ok": true,
-  "db":       { "file": "D:\\Backups\\prosolutions\\db\\20260115-0330.pgdump", "bytes": 8388608, "ok": true, "error": null },
+  "db":       { "file": "D:\\Backups\\prosolutions\\db\\20260115-0330.pgdump", "bytes": 8388608, "ok": true, "verified": true, "tocEntries": 1234, "verifyError": null, "error": null },
   "uploads":  { "...": "..." },
   "proofs":   { "...": "..." },
   "evidence": { "...": "..." },
@@ -130,7 +130,16 @@ Verificación de verdad (una vez al menos): restaurar el dump en un Postgres des
 
 ## Simulacro automático de restauración (semanal)
 
-Un backup que no restaura no es un backup: la tarea `ProSolutions-RestoreDrill` corre `scripts\verify-backup-restore.ps1` **domingos 04:15** y prueba la cadena completa sin tocar `prosolutions-db`:
+Un backup que no restaura no es un backup: la tarea `ProSolutions-RestoreDrill` corre `scripts\verify-backup-restore.ps1` **domingos 04:15** y prueba la cadena completa sin tocar `prosolutions-db`.
+
+La tarea se registra (una sola vez, PowerShell elevado, idempotente) con:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register-restore-drill-task.ps1
+# Opciones: -At "04:15"   -DayOfWeek Sunday   -UseSystem   -BackupRoot "E:\Backups\prosolutions"
+```
+
+Toda la salida del simulacro queda en `D:\Backups\prosolutions\restore-drill-task.log`. Qué hace el script:
 
 1. Toma el `.pgdump` más reciente de `D:\Backups\prosolutions\db` (o `-DumpFile` explícito).
 2. Valida el TOC con `pg_restore --list` en contenedor efímero.
@@ -154,7 +163,15 @@ Sale con código 1 si cualquier paso falla — misma convención que el backup d
 
 El JSON está pensado para que Kuma (o la app) lo exponga como chequeo. Dos opciones:
 
-**Opción A — monitor Push (recomendada, sin exponer nada).** Crear en Kuma un monitor tipo *Push* y añadir al final del flujo un pequeño chequeo de frescura, p. ej. una segunda tarea diaria a las 08:00 o estas líneas en un wrapper:
+**Opción A — monitor Push (recomendada, sin exponer nada).** Crear en Kuma un monitor tipo *Push* y usar el parámetro `-KumaPushUrl` del propio backup — al terminar hace `GET <url>?status=up|down&msg=backup&ping=` según el resultado de la corrida:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\backup-n5.ps1 -KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"
+# Para la tarea programada: registrar con -ArgumentList extra o editar la acción
+# en taskschd.msc para añadir: -KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"
+```
+
+Alternativa equivalente: añadir al final del flujo un pequeño chequeo de frescura, p. ej. una segunda tarea diaria a las 08:00 o estas líneas en un wrapper:
 
 ```powershell
 $j = Get-Content D:\Backups\prosolutions\last-backup-status.json | ConvertFrom-Json

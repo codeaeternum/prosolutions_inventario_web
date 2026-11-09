@@ -25,6 +25,7 @@ export const ALERTED_ACTIONS: ReadonlySet<string> = new Set([
   "CUSTOMER_UPDATE", // límite de crédito del cliente
   "SETTINGS_UPDATE",
   "SUPPLIER_DELETE",
+  "AUTH_SWITCH_DENIED", // staff intentó entrar con PIN a una cuenta admin
 ])
 
 export type AuditAlertEntry = {

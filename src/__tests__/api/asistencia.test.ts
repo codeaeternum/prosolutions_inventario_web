@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
+  transaction: vi.fn(),
   clockFindFirst: vi.fn(),
   clockFindMany: vi.fn(),
   clockCreate: vi.fn(),
@@ -40,12 +41,14 @@ vi.mock("@/lib/prisma", () => ({
     sale: { findMany: mocks.saleFindMany },
     auditEvent: { findMany: mocks.auditFindMany },
     businessOperation: { findMany: mocks.opFindMany },
+    $transaction: mocks.transaction,
   },
 }))
 
 import { POST, GET } from "@/app/api/asistencia/route"
 import { GET as NominaGET } from "@/app/api/actividad/nomina/route"
 import { deriveJornadas, JORNADA_ALERTA_MIN, JORNADA_ALERTA_MS } from "@/lib/asistencia"
+import { prisma } from "@/lib/prisma"
 
 const session = (id: string, role: string, extra: Record<string, unknown> = {}) => ({
   user: { id, name: "X", role, status: "APPROVED", businessId: "biz-1", ...extra },
@@ -78,6 +81,9 @@ const clockEvent = (over: Record<string, unknown>) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(empleado)
+  // El tx de la transacción es el propio prisma mockeado: los modelos del
+  // work() resuelven a los mismos mocks que las lecturas fuera de tx.
+  mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work(prisma))
   mocks.clockFindFirst.mockResolvedValue(null)
   mocks.clockFindMany.mockResolvedValue([])
   mocks.userFindUnique.mockResolvedValue({ homeBranchId: "b1" })
@@ -188,6 +194,111 @@ describe("POST /api/asistencia — reglas de jornada", () => {
     mocks.clockFindFirst.mockResolvedValue(clockEvent({ type: "IN", at: new Date(Date.now() - 90e3) }))
     const res = await post({ type: "IN" })
     expect(res.status).toBe(409)
+  })
+})
+
+describe("POST /api/asistencia — rol staff", () => {
+  it("un CUSTOMER no puede crear ClockEvents (403, sin tocar la BD)", async () => {
+    mocks.auth.mockResolvedValue(session("cli-1", "CUSTOMER"))
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(403)
+    expect(mocks.clockFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("WORKSHOP tampoco es staff del checador", async () => {
+    mocks.auth.mockResolvedValue(session("w-1", "WORKSHOP"))
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(403)
+    expect(mocks.clockFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("ADMIN sí registra su propia checada", async () => {
+    mocks.auth.mockResolvedValue(admin)
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(201)
+  })
+})
+
+describe("POST /api/asistencia — atomicidad del check+create", () => {
+  it("la lectura del último evento y el insert corren dentro de $transaction Serializable", async () => {
+    const order: string[] = []
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      order.push("tx:begin")
+      const r = await work(prisma)
+      order.push("tx:commit")
+      return r
+    })
+    mocks.clockFindFirst.mockImplementation(async () => { order.push("read:last"); return null })
+    mocks.clockCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      order.push("create")
+      return clockEvent({ ...data, at: new Date(), createdAt: new Date() })
+    })
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(201)
+    expect(order).toEqual(["tx:begin", "read:last", "create", "tx:commit"])
+    expect(mocks.transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ isolationLevel: "Serializable" })
+    )
+  })
+
+  it("carrera de dos IN: el perdedor aborta, reintenta, relee y deduplica", async () => {
+    // El ganador commiteó su IN entre el intento 1 y el reintento del perdedor.
+    const winner = clockEvent({ id: "ck-win", type: "IN", at: new Date() })
+    let attempt = 0
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      attempt += 1
+      if (attempt === 1) {
+        // Intento perdedor: leyó snapshot vacío, insertó y el COMMIT abortó
+        // por serialización — su insert se rollbackea con la tx.
+        await work(prisma)
+        throw Object.assign(new Error("could not serialize access"), { code: "P2034" })
+      }
+      return work(prisma)
+    })
+    mocks.clockFindFirst
+      .mockResolvedValueOnce(null) // snapshot del intento 1
+      .mockResolvedValue(winner)   // reintento: estado ya commiteado
+
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.event.id).toBe("ck-win")
+    expect(body.deduplicated).toBe(true)
+    expect(mocks.transaction).toHaveBeenCalledTimes(2)
+    // Solo el intento abortado llegó a insertar; el reintento deduplicó — no
+    // hay un segundo INSERT que duplique la checada.
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it("si al reintentar la jornada del ganador ya no es deduplicable → 409", async () => {
+    const winner = clockEvent({ id: "ck-win", type: "IN", at: new Date(Date.now() - 3 * 3600e3) })
+    let attempt = 0
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => {
+      attempt += 1
+      if (attempt === 1) {
+        await work(prisma)
+        throw Object.assign(new Error("could not serialize access"), { code: "P2034" })
+      }
+      return work(prisma)
+    })
+    mocks.clockFindFirst.mockResolvedValueOnce(null).mockResolvedValue(winner)
+
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toContain("jornada abierta")
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it("conflicto de serialización persistente → 409 CONCURRENT_OPERATION", async () => {
+    mocks.transaction.mockRejectedValue(
+      Object.assign(new Error("could not serialize access"), { code: "P2034" })
+    )
+    const res = await post({ type: "IN" })
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.code).toBe("CONCURRENT_OPERATION")
   })
 })
 

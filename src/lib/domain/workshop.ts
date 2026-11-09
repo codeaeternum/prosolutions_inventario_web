@@ -105,14 +105,13 @@ async function registerPayment(tx: Prisma.TransactionClient, args: {
   // Payment de Sale con purpose RESERVATION (domain/reservations).
   reference?: string
 }) {
-  // Cobrar en efectivo exige caja abierta (misma regla que el reembolso): sin
+  // Cobrar en efectivo exige caja abierta en la sucursal del cobro (misma
+  // regla que el reembolso) y con el lock de fila de openRegister — sin
   // asiento de caja el cobro quedaría fuera del corte del turno. Tarjeta y
   // transferencia no pasan por caja y pueden cobrarse sin ella.
   let register: { id: string } | null = null
   if (args.method === "CASH") {
-    const registers = await tx.cashRegister.findMany({ where: { status: "OPEN", branchId: args.branchId, businessId: args.businessId }, take: 2 })
-    if (registers.length !== 1) throw new BusinessError(registers.length ? "Hay más de una caja abierta en la sucursal; requiere revisión." : "Abre la caja antes de cobrar en efectivo.", 409, "REGISTER_REQUIRED")
-    register = registers[0]
+    register = await openRegister(tx, args.branchId, args.businessId)
   }
   const payment = await tx.payment.create({ data: { businessId: args.businessId, repairOrderId: args.orderId, purpose: args.purpose, method: args.method, amount: args.amountCents / 100, reference: args.reference ?? null, createdById: args.actorId, notes: args.note ?? null } })
   if (register) {

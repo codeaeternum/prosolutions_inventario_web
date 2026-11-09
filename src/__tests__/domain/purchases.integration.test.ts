@@ -11,7 +11,7 @@ if (enabled) {
   const target = new URL(url)
   if (target.hostname !== "127.0.0.1" || target.port !== "55433" || target.pathname !== "/hardening" || target.username !== "audit") throw new Error("Tests require the dedicated localhost:55433/hardening fixture database")
 }
-const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
+const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url }).on("error", (err) => console.error("[pg-pool] idle client error:", err))) })
 const prefix = `test-${randomUUID()}`
 let admin: string, category: string, branchA: string, branchB: string, biz: string
 const key = () => `${prefix}:${randomUUID()}`
@@ -106,7 +106,7 @@ describe.skipIf(!enabled)("purchase draft editing", () => {
  * anterior desconecta `db` en su afterAll (un Pool de pg cerrado no reusa).
  */
 describe.skipIf(!enabled)("purchase partial receiving", () => {
-  const db2 = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
+  const db2 = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url }).on("error", (err) => console.error("[pg-pool] idle client error:", err))) })
   let biz2 = "", admin2 = "", cat2 = "", branch2 = ""
 
   beforeAll(async () => {

@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Plus, Loader2, Pencil, Trash2, Tags } from "lucide-react"
+import { Plus, Loader2, Trash2, Tags } from "lucide-react"
 import { EmptyState } from "@/components/admin/empty-state"
 
 interface Category {
@@ -168,12 +168,10 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
                 {category.name}
               </CardTitle>
               <div className="flex gap-1">
-                <Button variant="ghost" size="icon">
-                  <Pencil className="h-4 w-4" />
-                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={`Eliminar ${category.name}`}
                   onClick={() => {
                     setDeleteTargetId(category.id)
                     setDeleteDialogOpen(true)

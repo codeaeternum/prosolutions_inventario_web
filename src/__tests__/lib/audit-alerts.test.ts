@@ -46,6 +46,7 @@ beforeEach(async () => {
 describe("ALERTED_ACTIONS", () => {
   it("expone exactamente las acciones sensibles", () => {
     expect([...mod.ALERTED_ACTIONS].sort()).toEqual([
+      "AUTH_SWITCH_DENIED",
       "CUSTOMER_UPDATE",
       "PRODUCT_DELETE",
       "PRODUCT_IMPORT",
@@ -78,6 +79,7 @@ describe("filtro de acciones y actor", () => {
       "CUSTOMER_UPDATE",
       "SETTINGS_UPDATE",
       "SUPPLIER_DELETE",
+      "AUTH_SWITCH_DENIED",
     ]
     for (const [i, action] of actions.entries()) {
       await alertSensitiveAudit(entry({ action, changes: undefined }))

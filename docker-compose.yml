@@ -10,6 +10,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: prosolutions-app
     restart: unless-stopped
+    mem_limit: 1g
     logging:
       driver: "json-file"
       options:
@@ -63,6 +64,7 @@ services:
       dockerfile: Dockerfile.bot
     container_name: prosolutions-bot
     restart: unless-stopped
+    mem_limit: 512m
     logging:
       driver: "json-file"
       options:
@@ -72,6 +74,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
     volumes:
       - uploads:/app/public/uploads
@@ -79,6 +82,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # El bot toca /tmp/bot-alive cada minuto (cron interno); si el archivo
+      # envejece >3 min el proceso es un zombie aunque docker ps diga Up.
+      test: ["CMD-SHELL", "find /tmp/bot-alive -mmin -3 | grep ."]
+      interval: 60s
+      timeout: 5s
+      retries: 2
+      start_period: 90s
     networks: [prosolutions-network]
     extra_hosts: ["host.docker.internal:host-gateway"]
 
@@ -86,6 +97,7 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     container_name: prosolutions-db
     restart: unless-stopped
+    mem_limit: 2g
     logging:
       driver: "json-file"
       options:
@@ -132,6 +144,8 @@ volumes:
     external: true
     name: prosolutions_uploads
   payment_proofs:
+    external: true
     name: prosolutions_payment_proofs
   repair_evidence:
+    external: true
     name: prosolutions_repair_evidence

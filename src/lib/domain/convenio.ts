@@ -1,6 +1,6 @@
 import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema, type Transaction } from "./operations"
+import { actor, BusinessError, openRegister, operation, operationKeySchema, type Transaction } from "./operations"
 import { formatFolio, parseFolioDigits } from "../workshop-labels"
 
 /**
@@ -259,6 +259,9 @@ const settleSchema = z.object({
   // CashMovement IN en la caja abierta (aliado que paga en efectivo). Quien
   // liquida por transferencia no manda el flag.
   recordCashIn: z.boolean().optional(),
+  // Sucursal explícita de la caja que recibe el ingreso; sin ella se resuelve
+  // por la de la orden (o la base de quien liquida en el lote).
+  branchId: z.string().min(1).optional(),
   idempotencyKey: operationKeySchema,
 })
 
@@ -266,12 +269,9 @@ const settleBatchSchema = z.object({
   orderIds: z.array(z.string().min(1)).min(1).max(50),
   settled: z.boolean(),
   recordCashIn: z.boolean().optional(),
+  branchId: z.string().min(1).optional(),
   idempotencyKey: operationKeySchema,
 })
-
-/** Caja abierta del negocio para el ingreso en efectivo del convenio. */
-const openConvenioRegister = (tx: Transaction, businessId: string) =>
-  tx.cashRegister.findFirst({ where: { businessId, closedAt: null } })
 
 /** El ingreso en caja solo existe del lado COBRAR (el aliado me paga a mí);
  *  del lado pagar el dinero sale hacia el taller — un IN lo falsearía. */
@@ -333,8 +333,12 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
     let cashRegister: { id: string } | null = null
     if (input.settled && input.recordCashIn && (settledAmountCents ?? 0) > 0) {
       assertCashInApplies(side)
-      cashRegister = await openConvenioRegister(tx, businessId)
-      if (!cashRegister) throw new BusinessError("Abre la caja para registrar el ingreso en efectivo.", 409, "REGISTER_REQUIRED")
+      // La caja de LA sucursal del convenio: la indicada, la de la orden o la
+      // base de quien liquida — nunca "la que esté abierta en el negocio",
+      // que podía ser la de otra sucursal. openRegister además bloquea la
+      // fila como el resto de escrituras de caja.
+      const me = await actor(tx, actorId, "admin", businessId)
+      cashRegister = await openRegister(tx, input.branchId ?? order.currentBranchId ?? me.homeBranchId, businessId)
     }
     const settledAt = input.settled ? new Date() : null
     await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, version: { increment: 1 } } })
@@ -393,8 +397,10 @@ export async function settleConvenioBatch(db: PrismaClient, actorId: string, bus
     // puede asentar, el lote entero espera (todo o nada en la tx).
     let cashRegister: { id: string } | null = null
     if (input.settled && input.recordCashIn && totalCents > 0) {
-      cashRegister = await openConvenioRegister(tx, businessId)
-      if (!cashRegister) throw new BusinessError("Abre la caja para registrar el ingreso en efectivo.", 409, "REGISTER_REQUIRED")
+      // El lote puede juntar órdenes de varias sucursales: el ingreso cae en
+      // la caja indicada o en la base de quien liquida, con lock de fila.
+      const me = await actor(tx, actorId, "admin", businessId)
+      cashRegister = await openRegister(tx, input.branchId ?? me.homeBranchId, businessId)
     }
     const settledAt = input.settled ? new Date() : null
     const settled: { orderId: string; amountCents: number | null }[] = []

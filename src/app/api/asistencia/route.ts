@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getSession, requireAuth } from "@/lib/api-auth"
+import { getSession, requireAuth, requireAdminOrEmployee } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
+import { transaction } from "@/lib/domain/operations"
 import { businessDayKey, parseBusinessDateParam } from "@/lib/business-time"
 import { deriveJornadas, JORNADA_MAX_MS, type ClockEventLike } from "@/lib/asistencia"
 
@@ -23,8 +24,10 @@ const clockSchema = z.object({
 const NO_STORE = { "Cache-Control": "private, no-store" } as const
 
 /**
- * POST /api/asistencia — el usuario autenticado (APPROVED) registra SU
- * propia checada. En v1 nadie marca por otro: el actor es siempre la sesión.
+ * POST /api/asistencia — el usuario autenticado (staff APPROVED: ADMIN o
+ * EMPLOYEE) registra SU propia checada. En v1 nadie marca por otro: el actor
+ * es siempre la sesión. Un CUSTOMER no puede crear ClockEvents que
+ * contaminen la vista del admin.
  *
  * Reglas:
  * - OUT exige una jornada abierta (IN previo a ≤16 h, sin OUT posterior);
@@ -37,58 +40,71 @@ const NO_STORE = { "Cache-Control": "private, no-store" } as const
  */
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAuth()
+    const auth = await requireAdminOrEmployee()
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)
     const userId = session.user.id
     const body = clockSchema.parse(await request.json())
 
-    const last = await prisma.clockEvent.findFirst({
-      where: { businessId, userId },
-      orderBy: { at: "desc" },
-    })
-    const now = new Date()
+    // Leer la última marca y crear la siguiente son una sola decisión: si el
+    // check va fuera de la transacción, dos requests concurrentes (kiosco +
+    // teléfono, doble-tap con lag) leen el mismo `last` y ambas insertan —
+    // un IN fantasma abandona la jornada real (0 min a nómina) o queda un
+    // OUT doble. SERIALIZABLE aborta el commit perdedor y el reintento de
+    // transaction() relee el estado ya commiteado: dedup o 409, jamás duplicado.
+    const result = await transaction(prisma, async tx => {
+      const last = await tx.clockEvent.findFirst({
+        where: { businessId, userId },
+        orderBy: { at: "desc" },
+      })
+      const now = new Date()
 
-    if (last && last.type === body.type && now.getTime() - last.at.getTime() < DEDUP_MS) {
+      if (last && last.type === body.type && now.getTime() - last.at.getTime() < DEDUP_MS) {
+        return { kind: "dedup" as const, event: last }
+      }
+
+      // Jornada abierta = IN a ≤16 h sin OUT posterior (la ventana máxima del
+      // checador; más allá la jornada quedó abandonada y ya no es "abierta").
+      const jornadaAbierta = last?.type === "IN" && now.getTime() - last.at.getTime() <= JORNADA_MAX_MS
+      if (body.type === "OUT" && !jornadaAbierta) return { kind: "sin-jornada" as const }
+      if (body.type === "IN" && jornadaAbierta) return { kind: "jornada-abierta" as const, since: last!.at }
+
+      // La sesión JWT no carga sucursal activa (auth.config.ts); si algún día
+      // viaja en session.user se respeta — hoy el respaldo es la sucursal
+      // base del usuario (homeBranchId), misma lectura que usan ventas/caja.
+      const sessionBranchId = (session.user as { branchId?: string | null }).branchId ?? null
+      const me = sessionBranchId
+        ? null
+        : await tx.user.findUnique({ where: { id: userId }, select: { homeBranchId: true } })
+      const branchId = sessionBranchId ?? me?.homeBranchId ?? null
+
+      const event = await tx.clockEvent.create({
+        data: { businessId, userId, branchId, type: body.type, note: body.note ?? null },
+      })
+      return { kind: "creado" as const, event }
+    })
+
+    if (result.kind === "dedup") {
       return NextResponse.json(
-        { event: last, openShift: last.type === "IN" ? { since: last.at } : null, deduplicated: true },
+        { event: result.event, openShift: result.event.type === "IN" ? { since: result.event.at } : null, deduplicated: true },
         { headers: NO_STORE }
       )
     }
-
-    // Jornada abierta = IN a ≤16 h sin OUT posterior (la ventana máxima del
-    // checador; más allá la jornada quedó abandonada y ya no es "abierta").
-    const jornadaAbierta = last?.type === "IN" && now.getTime() - last.at.getTime() <= JORNADA_MAX_MS
-
-    if (body.type === "OUT" && !jornadaAbierta) {
+    if (result.kind === "sin-jornada") {
       return NextResponse.json(
         { error: "No hay una jornada abierta: primero registra tu entrada (IN)." },
         { status: 409 }
       )
     }
-    if (body.type === "IN" && jornadaAbierta) {
+    if (result.kind === "jornada-abierta") {
       return NextResponse.json(
-        { error: "Ya tienes una jornada abierta: registra tu salida (OUT) antes de volver a entrar.", since: last!.at },
+        { error: "Ya tienes una jornada abierta: registra tu salida (OUT) antes de volver a entrar.", since: result.since },
         { status: 409 }
       )
     }
-
-    // La sesión JWT no carga sucursal activa (auth.config.ts); si algún día
-    // viaja en session.user se respeta — hoy el respaldo es la sucursal
-    // base del usuario (homeBranchId), misma lectura que usan ventas/caja.
-    const sessionBranchId = (session.user as { branchId?: string | null }).branchId ?? null
-    const me = sessionBranchId
-      ? null
-      : await prisma.user.findUnique({ where: { id: userId }, select: { homeBranchId: true } })
-    const branchId = sessionBranchId ?? me?.homeBranchId ?? null
-
-    const event = await prisma.clockEvent.create({
-      data: { businessId, userId, branchId, type: body.type, note: body.note ?? null },
-    })
-
     return NextResponse.json(
-      { event, openShift: event.type === "IN" ? { since: event.at } : null, deduplicated: false },
+      { event: result.event, openShift: result.event.type === "IN" ? { since: result.event.at } : null, deduplicated: false },
       { status: 201, headers: NO_STORE }
     )
   } catch (error) {

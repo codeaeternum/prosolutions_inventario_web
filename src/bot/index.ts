@@ -3,6 +3,7 @@ import { purgePendingSignups } from "../lib/pending-signup-purge"
 import { purgeOldEvents } from "../lib/event-retention"
 import { reconcileDelegations } from "../lib/domain/delegation-reconcile"
 import 'dotenv/config'
+import * as fs from 'node:fs'
 import { Telegraf } from 'telegraf'
 import * as cron from 'node-cron'
 import { getPrisma } from './lib/prisma'
@@ -221,6 +222,23 @@ const longShiftTask = registerLongShiftAlerts(ctx)
 // media ejecución (o sus timers) no mantenga el proceso vivo tras SIGTERM.
 const scheduledTasks: cron.ScheduledTask[] = [alertsTask, dailySummaryTask, longShiftTask]
 
+// Heartbeat cada minuto: el healthcheck del contenedor
+// (`find <BOT_HEARTBEAT_FILE> -mmin -3 | grep .`) distingue "Up" real de un
+// zombie (proceso vivo pero event loop/polling muertos, p. ej. con la BD
+// caída). Se escribe la fecha actual; si el archivo envejece >3 min, Docker
+// marca el contenedor unhealthy. En el shutdown ordenado se borra para que
+// un bot detenido nunca pase por sano.
+const HEARTBEAT_FILE = process.env.BOT_HEARTBEAT_FILE || '/tmp/bot-alive'
+function touchHeartbeat() {
+    try {
+        fs.writeFileSync(HEARTBEAT_FILE, new Date().toISOString())
+    } catch (e) {
+        console.error('Error escribiendo heartbeat:', e)
+    }
+}
+touchHeartbeat()
+scheduledTasks.push(cron.schedule('* * * * *', touchHeartbeat))
+
 // Cancel expired reservations and prune abandoned sessions every 30 min
 scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {
     pruneStaleSessions(sessions)
@@ -332,6 +350,8 @@ function shutdown(signal: string) {
     console.log(`🛑 ${signal} recibido: deteniendo bot…`)
     setTimeout(() => process.exit(0), 4_000).unref()
     try { bot.stop(signal) } catch (e) { console.error('Error deteniendo el bot:', e) }
+    // Un bot parado no debe seguir pasando el healthcheck.
+    try { fs.rmSync(HEARTBEAT_FILE, { force: true }) } catch { /* best-effort */ }
     for (const task of scheduledTasks) {
         try { task.stop() } catch { /* task ya detenido */ }
     }

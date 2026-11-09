@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { actor, BusinessError, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "./operations"
+import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "./operations"
 
 // Decisión sobre una solicitud de gasto: solo ADMIN y nunca sobre la propia.
 // APPROVE asienta el CashMovement OUT en la caja abierta de la sucursal.
@@ -32,10 +32,10 @@ async function decide(tx: Transaction, actorId: string, businessId: string, id: 
     if (rejected.count !== 1) throw new BusinessError("La solicitud ya fue decidida.", 409)
     return { request: await tx.cashRequest.findUniqueOrThrow({ where: { id }, include: requestInclude }) }
   }
-  // APPROVE: requiere caja abierta en la sucursal de la solicitud y efectivo
-  // suficiente — aprobar de más dejaría la caja en negativo (dinero ficticio).
-  const register = await tx.cashRegister.findFirst({ where: { status: "OPEN", branchId: request.branchId, businessId }, orderBy: { openedAt: "desc" } })
-  if (!register) throw new BusinessError("Abre la caja de la sucursal primero.", 409)
+  // APPROVE: requiere caja abierta en la sucursal de la solicitud — con el
+  // lock de fila de openRegister, igual que el resto de escrituras de caja —
+  // y efectivo suficiente: aprobar de más dejaría la caja en negativo.
+  const register = await openRegister(tx, request.branchId, businessId)
   const availableCents = await registerCashCents(tx, register.id)
   if (request.amountCents > availableCents) throw new BusinessError(`La caja solo tiene $${(availableCents / 100).toFixed(2)}; no alcanza para autorizar este gasto.`, 409, "INSUFFICIENT_CASH")
   const approved = await tx.cashRequest.updateMany({

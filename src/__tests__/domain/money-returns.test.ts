@@ -34,6 +34,10 @@ const users: Record<string, Record<string, unknown>> = {
   "cust-1": { id: "cust-1", name: "Cliente", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "NORMAL", creditBalance: 500 },
   "cust-tech": { id: "cust-tech", name: "Técnico", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "TECHNICIAN", creditBalance: 0 },
   "cust-normal": { id: "cust-normal", name: "Particular", role: "CUSTOMER", status: "APPROVED", businessId: BIZ, customerType: "NORMAL", creditBalance: 0 },
+  // Suspendido = sin APPROVED (el enum solo tiene PENDING/APPROVED/REJECTED):
+  // no puede operar, pero sí debe poder PAGAR su deuda en mostrador.
+  "cust-susp": { id: "cust-susp", name: "Suspendido", role: "CUSTOMER", status: "REJECTED", businessId: BIZ, customerType: "NORMAL", creditBalance: 500 },
+  "cust-ajeno": { id: "cust-ajeno", name: "Cliente de otro negocio", role: "CUSTOMER", status: "APPROVED", businessId: "biz-otro", creditBalance: 500 },
 }
 const userById = (id: string) => users[id] ?? null
 
@@ -66,7 +70,7 @@ const saleFixture = (over: SaleFixture) => ({
 })
 
 /** Réplica mínima del tx que usan sell/moveInventory/returnSaleItems/changeCredit. */
-function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMovement?: Record<string, unknown> | null; creditBalance?: number } = {}) {
+function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMovement?: Record<string, unknown> | null; reservation?: Record<string, unknown> | null; creditBalance?: number } = {}) {
   const created = { inventory: [] as Record<string, unknown>[], payments: [] as Record<string, unknown>[], cash: [] as Record<string, unknown>[], credit: [] as Record<string, unknown>[] }
   const tx = {
     user: {
@@ -74,9 +78,16 @@ function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMove
         const user = userById(where.id)
         return user && opts.creditBalance !== undefined && user.role === "CUSTOMER" ? { ...user, creditBalance: opts.creditBalance } : user
       }),
+      // El findFirst de changeCredit PAYMENT: mismo tenant + rol de cliente —
+      // a propósito NO filtra por status (un suspendido sí puede pagar).
+      findFirst: vi.fn(async ({ where }: { where: { id: string; businessId?: string; role?: { in: string[] } } }) => {
+        const user = userById(where.id)
+        return user && user.businessId === where.businessId && (where.role?.in ?? []).includes(user.role as string) ? user : null
+      }),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
+    reservation: { findUnique: vi.fn(async () => opts.reservation ?? null) },
     branch: { findFirst: vi.fn(async () => BRANCH) },
     product: {
       findFirst: vi.fn(async () => PRODUCT),
@@ -356,5 +367,117 @@ describe("abono a crédito — referencia obligatoria en no-efectivo", () => {
     })
     expect(result.creditBalance).toBe(450)
     expect(created.cash[0]).toMatchObject({ type: "IN", amount: 50, referenceType: "CREDIT_PAYMENT" })
+  })
+})
+
+describe("cliente suspendido — puede pagar su deuda, no endeudarse", () => {
+  it("PAYMENT a un cliente suspendido (sin APPROVED) sí se cobra en mostrador", async () => {
+    const { db, created } = fakeDb()
+    const result = await changeCredit(db, "emp-1", BIZ, "PAYMENT", {
+      userId: "cust-susp", amount: 50, paymentMethod: "EFECTIVO", idempotencyKey: key(),
+    })
+    expect(result.creditBalance).toBe(450)
+    expect(created.cash[0]).toMatchObject({ type: "IN", amount: 50, referenceType: "CREDIT_PAYMENT" })
+  })
+
+  it("DEBT a un cliente suspendido sigue respondiendo 403", async () => {
+    const { db, tx } = fakeDb()
+    await expect(changeCredit(db, "admin-1", BIZ, "DEBT", {
+      userId: "cust-susp", amount: 50, idempotencyKey: key(),
+    })).rejects.toMatchObject({ status: 403 })
+    expect(tx.creditMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("PAYMENT a una cuenta de otro tenant sigue respondiendo 403", async () => {
+    const { db, created } = fakeDb()
+    await expect(changeCredit(db, "emp-1", BIZ, "PAYMENT", {
+      userId: "cust-ajeno", amount: 50, paymentMethod: "EFECTIVO", idempotencyKey: key(),
+    })).rejects.toMatchObject({ status: 403 })
+    expect(created.cash).toHaveLength(0)
+  })
+})
+
+describe("devolución legada sin venta — dueño o administrador", () => {
+  // Salida histórica sin saleId (movimiento viejo): su userId es quien la
+  // registró. Sin saleId el RETURN no delega en returnSaleItemsTx.
+  const legacyOut = (userId: string | null) => ({
+    id: "mv-out", businessId: BIZ, type: "OUT", paymentMethod: "EFECTIVO",
+    saleId: null, productId: "prod-1", quantity: 2, businessVersion: 1,
+    branchId: "branch-1", userId, unitPrice: 50, totalPrice: 100,
+  })
+  const legacyReturn = (relatedId: string) => ({
+    idempotencyKey: key(),
+    items: [{ productId: "prod-1", type: "RETURN", quantity: 1, reason: "Devolución", relatedId }],
+  })
+
+  it("EMPLOYEE devuelve un movimiento registrado por él mismo", async () => {
+    const { db, created } = fakeDb({ sourceMovement: legacyOut("emp-1") })
+    await moveInventory(db, "emp-1", BIZ, legacyReturn("mv-out"))
+    expect(created.inventory[0]).toMatchObject({ type: "RETURN", quantity: 1 })
+    // Reembolso en efectivo: sale de la caja como OUT.
+    expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 50 })
+  })
+
+  it("EMPLOYEE no devuelve el movimiento de otra persona (403)", async () => {
+    const { db, created } = fakeDb({ sourceMovement: legacyOut("admin-1") })
+    await expect(moveInventory(db, "emp-1", BIZ, legacyReturn("mv-out"))).rejects.toMatchObject({ status: 403 })
+    expect(created.inventory).toHaveLength(0)
+    expect(created.cash).toHaveLength(0)
+  })
+
+  it("un movimiento sin creador atribuible también exige ADMIN", async () => {
+    const { db } = fakeDb({ sourceMovement: legacyOut(null) })
+    await expect(moveInventory(db, "emp-1", BIZ, legacyReturn("mv-out"))).rejects.toMatchObject({ status: 403 })
+  })
+
+  it("ADMIN sí devuelve el movimiento de un empleado", async () => {
+    const { db, created } = fakeDb({ sourceMovement: legacyOut("emp-1") })
+    await moveInventory(db, "admin-1", BIZ, legacyReturn("mv-out"))
+    expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 50 })
+  })
+
+  it("devolver una reserva a nombre de un cliente exige ADMIN", async () => {
+    const { db } = fakeDb({
+      reservation: {
+        id: "r1", businessId: BIZ, status: "COMPLETED", type: "TEMPORARY",
+        userId: "cust-1", productId: "prod-1", quantity: 2, businessVersion: 1,
+        branchId: "branch-1", totalPrice: 100, paymentMethod: "EFECTIVO",
+        depositPaid: false, depositAmount: null,
+      },
+    })
+    await expect(moveInventory(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type: "RETURN", quantity: 1, reason: "Devolución", reservationId: "r1" }],
+    })).rejects.toMatchObject({ status: 403 })
+  })
+})
+
+describe("mermas y salidas de inventario — solo admin", () => {
+  it.each(["DAMAGED", "LOST", "OUT", "ADJUSTMENT_OUT"] as const)("EMPLOYEE no registra %s sin aprobación", async type => {
+    const { db, created } = fakeDb()
+    await expect(moveInventory(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type, quantity: 1, reason: "Merma de prueba" }],
+    })).rejects.toMatchObject({ status: 403 })
+    expect(created.inventory).toHaveLength(0)
+  })
+
+  it("ADMIN sí registra una merma DAMAGED", async () => {
+    const { db, created } = fakeDb()
+    await moveInventory(db, "admin-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type: "DAMAGED", quantity: 1, reason: "Pantalla rota" }],
+    })
+    // El enum de BD no tiene DAMAGED: se persiste como OUT con su razón.
+    expect(created.inventory[0]).toMatchObject({ type: "OUT", reason: "Pantalla rota" })
+  })
+
+  it("EMPLOYEE sigue registrando entradas IN como siempre", async () => {
+    const { db, created } = fakeDb()
+    await moveInventory(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type: "IN", quantity: 2, reason: "Recepción de mercancía" }],
+    })
+    expect(created.inventory[0]).toMatchObject({ type: "IN", quantity: 2 })
   })
 })

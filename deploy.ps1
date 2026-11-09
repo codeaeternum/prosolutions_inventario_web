@@ -18,6 +18,8 @@ if (-not $Remote) {
     if (-not (Test-Path ".env")) { Write-Host "Falta .env en la carpeta del proyecto." -ForegroundColor Red; exit 1 }
 
     # 1) Build de todas las imagenes, incluida la de migraciones (perfil migrate).
+    # GIT_SHA queda horneado en la imagen como APP_BUILD_SHA (consola /platform).
+    $env:GIT_SHA = (git rev-parse --short HEAD)
     docker compose -f docker-compose.yml --profile migrate build --no-cache
     if ($LASTEXITCODE -ne 0) { exit 1 }
 
@@ -97,6 +99,7 @@ if (-not (Test-Path '.env')) { Write-Host 'Falta .env en el N5 en ' `$path; exit
 git fetch --all
 git reset --hard origin/main
 git clean -fd
+`$env:GIT_SHA = (git rev-parse --short HEAD)
 docker compose -f docker-compose.yml --profile migrate build --no-cache
 if (`$LASTEXITCODE -ne 0) { exit 1 }
 docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db

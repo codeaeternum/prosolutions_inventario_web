@@ -14,8 +14,18 @@ const schema = z.object({ idempotencyKey: operationKeySchema, branchId: z.string
 export async function moveInventory(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = schema.parse(raw)
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "INVENTORY", permission: "staff", payload: input }, async tx => {
+    // operation() ya exigió staff; el rol decide los gates finos de abajo.
+    const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
+    // Mermas y salidas manuales descuentan mercancía sin segunda firma: solo
+    // ADMIN — mismo criterio que el OUT de efectivo en caja (cash.ts). Los
+    // ADJUSTMENT de los conteos no pasan por aquí: counts.ts escribe el suyo
+    // con su propio flujo de aprobación.
+    const adminOnlyTypes: readonly string[] = ["DAMAGED", "LOST", "OUT", "ADJUSTMENT_OUT"]
     const movements = []
     for (const row of input.items) {
+      if (adminOnlyTypes.includes(row.type) && me?.role !== "ADMIN") {
+        throw new BusinessError("Las mermas y salidas de inventario requieren un administrador.", 403)
+      }
       const product = await tx.product.findFirst({ where: { id: row.productId, businessId } })
       if (!product) throw new BusinessError("Producto no encontrado.", 404)
       const branchId = row.branchId ?? input.branchId
@@ -76,6 +86,15 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
         // a refundable allocation between the bank deposit and the remaining payment.
         if ("status" in source && (source.type === "DEPOSIT" || source.depositPaid || (source.depositAmount ?? 0) > 0)) {
           throw new BusinessError("La reserva incluye un anticipo. Administración debe conciliar los medios de pago y el reembolso antes de devolverla. No se modificó stock, deuda ni caja.", 409, "MIXED_PAYMENT_REFUND_REVIEW")
+        }
+        // Devolver reembolsa dinero (efectivo del cajón incluido): un
+        // EMPLOYEE solo devuelve operaciones que él mismo registró — el
+        // `userId` del origen es quien registró la salida o el cliente dueño
+        // de la reserva. Las ajenas, o sin creador atribuible, exigen ADMIN:
+        // mismo gate que sellerId en returnSaleItemsTx (devolver la
+        // operación de un compañero y embolsar el reembolso es robo interno).
+        if (me?.role !== "ADMIN" && source.userId !== actorId) {
+          throw new BusinessError("Devolver la operación de otra persona requiere un administrador.", 403)
         }
         returnBranchId = source.branchId ?? undefined
         const returned = await tx.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", ...(row.relatedId ? { relatedId: row.relatedId } : { reservationId: row.reservationId }) }, _sum: { quantity: true } })

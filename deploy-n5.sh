@@ -37,6 +37,15 @@ fi
 # --- PASO 1: Subir a GitHub ---
 echo -e "${BLUE}>>> [MAC] Verificando estado de Git y subiendo cambios a GitHub...${NC}"
 
+# Abortar si hay archivos untracked no ignorados: podrían ser archivos nuevos
+# que el deploy necesita pero que jamás llegarían al N5 vía git.
+UNTRACKED=$(git status --porcelain | grep '^??' || true)
+if [ -n "$UNTRACKED" ]; then
+    echo -e "${RED}Hay archivos sin trackear (no ignorados); agrégalos a git o a .gitignore antes de desplegar:${NC}"
+    echo "$UNTRACKED"
+    exit 1
+fi
+
 # Evitar commitear archivos no deseados con git add . ciego: solo actualiza archivos ya trackeados
 if git diff --quiet && git diff --staged --quiet; then
     echo -e "${YELLOW}No hay cambios pendientes en archivos trackeados${NC}"
@@ -85,8 +94,11 @@ cd prosolutions_inventario_web
 
 Write-Host '>>> Actualizando desde GitHub (${CURRENT_BRANCH})...'
 git fetch --all
+if (\$LASTEXITCODE -ne 0) { Write-Host 'git fetch fallo'; exit 1 }
 git checkout ${CURRENT_BRANCH}
+if (\$LASTEXITCODE -ne 0) { Write-Host 'git checkout fallo'; exit 1 }
 git pull --ff-only origin ${CURRENT_BRANCH}
+if (\$LASTEXITCODE -ne 0) { Write-Host 'git pull fallo'; exit 1 }
 
 if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5.'; exit 1 }
 
@@ -107,9 +119,26 @@ Write-Host '>>> Promoviendo app y bot...'
 docker compose -f docker-compose.yml --env-file .env.docker up -d --force-recreate app bot
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
-Write-Host '>>> Esperando readiness (health 503 hasta esquema listo)...'
-Start-Sleep -Seconds 15
-docker inspect prosolutions-app --format '{{.State.Health.Status}}'
+Write-Host '>>> Esperando a que prosolutions-app reporte healthy (hasta 150s)...'
+\$deadline = (Get-Date).AddSeconds(150)
+\$health = ''
+do {
+    Start-Sleep -Seconds 5
+    \$health = docker inspect prosolutions-app --format '{{.State.Health.Status}}' 2>\$null
+    if (\$health -eq 'healthy') { break }
+} while ((Get-Date) -lt \$deadline)
+if (\$health -ne 'healthy') {
+    Write-Host ('prosolutions-app no llego a healthy (estado: ' + \$health + ').')
+    docker logs prosolutions-app --tail 40
+    exit 1
+}
+
+\$botStatus = docker inspect prosolutions-bot --format '{{.State.Status}}' 2>\$null
+if (\$botStatus -ne 'running') {
+    Write-Host ('prosolutions-bot no esta running (estado: ' + \$botStatus + ').')
+    docker logs prosolutions-bot --tail 40
+    exit 1
+}
 
 Write-Host '>>> Estado de contenedores:'
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'

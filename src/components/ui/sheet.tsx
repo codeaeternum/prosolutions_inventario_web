@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 interface SheetContextValue {
     open: boolean
     setOpen: (open: boolean) => void
+    titleId: string
 }
 
 const SheetContext = React.createContext<SheetContextValue | null>(null)
@@ -27,6 +28,7 @@ interface SheetProps {
 
 function Sheet({ open: controlledOpen, onOpenChange, children }: SheetProps) {
     const [internalOpen, setInternalOpen] = React.useState(false)
+    const titleId = React.useId()
 
     const open = controlledOpen !== undefined ? controlledOpen : internalOpen
 
@@ -38,7 +40,7 @@ function Sheet({ open: controlledOpen, onOpenChange, children }: SheetProps) {
     }, [controlledOpen, onOpenChange])
 
     return (
-        <SheetContext.Provider value={{ open, setOpen }}>
+        <SheetContext.Provider value={{ open, setOpen, titleId }}>
             {children}
         </SheetContext.Provider>
     )
@@ -71,21 +73,54 @@ interface SheetContentProps extends React.HTMLAttributes<HTMLDivElement> {
     side?: "top" | "bottom" | "left" | "right"
 }
 
+const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
     ({ className, children, side = "right", ...props }, ref) => {
-        const { open, setOpen } = useSheetContext()
+        const { open, setOpen, titleId } = useSheetContext()
+        const contentRef = React.useRef<HTMLDivElement | null>(null)
 
         React.useEffect(() => {
-            const handleEscape = (e: KeyboardEvent) => {
-                if (e.key === "Escape") setOpen(false)
-            }
-            if (open) {
-                document.addEventListener("keydown", handleEscape)
-                document.body.style.overflow = "hidden"
-                return () => {
-                    document.removeEventListener("keydown", handleEscape)
-                    document.body.style.overflow = ""
+            if (!open) return
+
+            const previousFocus = document.activeElement as HTMLElement | null
+            const handleKeyDown = (e: KeyboardEvent) => {
+                if (e.key === "Escape") {
+                    setOpen(false)
+                    return
                 }
+                if (e.key !== "Tab" || !contentRef.current) return
+                const focusables = Array.from(
+                    contentRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+                ).filter((el) => el.offsetParent !== null)
+                if (focusables.length === 0) {
+                    e.preventDefault()
+                    contentRef.current.focus()
+                    return
+                }
+                const first = focusables[0]
+                const last = focusables[focusables.length - 1]
+                const active = document.activeElement
+                if (e.shiftKey && (active === first || !contentRef.current.contains(active))) {
+                    e.preventDefault()
+                    last.focus()
+                } else if (!e.shiftKey && (active === last || !contentRef.current.contains(active))) {
+                    e.preventDefault()
+                    first.focus()
+                }
+            }
+
+            document.addEventListener("keydown", handleKeyDown)
+            document.body.style.overflow = "hidden"
+            const node = contentRef.current
+            const focusTarget =
+                node?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? node
+            focusTarget?.focus()
+            return () => {
+                document.removeEventListener("keydown", handleKeyDown)
+                document.body.style.overflow = ""
+                previousFocus?.focus?.()
             }
         }, [open, setOpen])
 
@@ -108,7 +143,15 @@ const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
 
                 {/* Content: scroll interno en móvil cuando el contenido es largo */}
                 <div
-                    ref={ref}
+                    ref={(node) => {
+                        contentRef.current = node
+                        if (typeof ref === "function") ref(node)
+                        else if (ref) ref.current = node
+                    }}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby={titleId}
+                    tabIndex={-1}
                     className={cn(
                         "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 animate-in overflow-y-auto max-h-[90dvh]",
                         sideClasses[side],
@@ -143,9 +186,17 @@ const SheetFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 SheetFooter.displayName = "SheetFooter"
 
 const SheetTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
-    ({ className, ...props }, ref) => (
-        <h2 ref={ref} className={cn("text-lg font-semibold text-foreground", className)} {...props} />
-    )
+    ({ className, id, ...props }, ref) => {
+        const { titleId } = useSheetContext()
+        return (
+            <h2
+                ref={ref}
+                id={id ?? titleId}
+                className={cn("text-lg font-semibold text-foreground", className)}
+                {...props}
+            />
+        )
+    }
 )
 SheetTitle.displayName = "SheetTitle"
 

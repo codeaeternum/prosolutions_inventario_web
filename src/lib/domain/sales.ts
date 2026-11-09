@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
-import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
+import { encargoQuotedLineCents, prepareEncargoForSaleTx, releaseEncargoFromVoidedSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { nextSaleNumber } from "./tenant-sequence"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
@@ -214,23 +214,23 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
     }
     const lines = []
     let totalCents = 0
-    const quotedPrice = encargoInfo?.encargo.priceQuoted
     for (const item of items) {
       const { product } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id, businessId })
-      // Si el encargo tiene priceQuoted, ese precio unitario prometido prevalece
-      // sobre el precio de catálogo para la pieza encargada.
-      const useQuoted = quotedPrice != null && quotedPrice > 0 && (
-        encargoInfo?.encargo.productId === item.productId ||
-        (!encargoInfo?.encargo.productId && items.length === 1)
-      )
-      const unitCents = useQuoted
-        ? cents(quotedPrice, true)
+      // Precio prometido del encargo: priceQuoted es el TOTAL del encargo
+      // (todas sus piezas), no el precio unitario — ver encargoQuotedLineCents.
+      // El unitario resultante es solo desglose visual; el total del renglón
+      // conserva el centavo exacto del total cotizado.
+      const quotedLineCents = encargoInfo
+        ? encargoQuotedLineCents(encargoInfo.encargo, { productId: item.productId, quantity: item.quantity }, items.length)
+        : null
+      const unitCents = quotedLineCents != null
+        ? Math.round(quotedLineCents / item.quantity)
         : cents(
             tier === "wholesale" ? product.wholesalePrice
               : tier === "retail" ? product.retailPrice
                 : (customer?.customerType === "STORE" ? product.wholesalePrice : product.retailPrice)
           )
-      const lineCents = unitCents * item.quantity
+      const lineCents = quotedLineCents ?? unitCents * item.quantity
       cents(amount(lineCents))
       lines.push({ item, product, unitCents, lineCents })
       totalCents += lineCents
@@ -499,14 +499,27 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
         reason: `Anulación V-${sale.number}: ${input.reason}`, businessVersion: 1, branchId: sale.branchId, saleId: sale.id,
       } })
     }
+    // Anticipos de encargo entregados por esta venta (settleEncargoInSaleTx
+    // los ligó con saleId): NO son cobro del día — regresan a su encargo, que
+    // vuelve a READY con el anticipo retenido. Reembolsarlos aquí pagaría el
+    // anticipo dos veces: hoy en caja y de nuevo al cobrar o cancelar el
+    // encargo. La desliga va ANTES de los reembolsos para que el tope neto de
+    // refund() ya no cuente ese dinero como cobrado por la venta.
+    const encargoIds = [...new Set(sale.payments.flatMap(p =>
+      p.encargoId != null && p.purpose === "ADVANCE" && p.status === "CONFIRMED" ? [p.encargoId] : [],
+    ))]
+    for (const encargoId of encargoIds) {
+      await releaseEncargoFromVoidedSaleTx(tx, { encargoId, saleId: sale.id, actorId, businessId, saleNumber: sale.number })
+    }
     // Reembolsa por cada medio solo su NETO pendiente (cobrado − ya devuelto);
     // pedir el bruto truena cuando la venta tuvo una devolución parcial previa.
-    const paidMethods = [...new Set(sale.payments.filter(p => p.status === "CONFIRMED" && p.amount > 0).map(p => p.method))]
+    // Los anticipos de encargo quedan fuera: ya regresaron a su encargo arriba.
+    const paidMethods = [...new Set(sale.payments.filter(p => p.status === "CONFIRMED" && p.amount > 0 && p.encargoId == null).map(p => p.method))]
     for (const method of paidMethods) {
       const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === method)!
-      const netCents = sale.payments.filter(p => p.method === method).reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+      const netCents = sale.payments.filter(p => p.method === method && p.encargoId == null).reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
       if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Anulación V-${sale.number}: ${input.reason}` })
-      await tx.payment.updateMany({ where: { saleId: sale.id, method, status: "CONFIRMED" }, data: { status: "VOIDED" } })
+      await tx.payment.updateMany({ where: { saleId: sale.id, method, status: "CONFIRMED", encargoId: null }, data: { status: "VOIDED" } })
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { status: "VOIDED" } })
     if (changed.count !== 1) throw new BusinessError("La venta cambió durante la operación; reintenta.", 409)

@@ -33,7 +33,11 @@ param(
     [string]$DbContainer = "prosolutions-db",
     # Imagen ligera usada para tar de volúmenes (se descarga sola la 1ª vez)
     [string]$TarImage = "alpine",
-    [int]$RetentionDays = 14
+    [int]$RetentionDays = 14,
+    # Opcional: URL "push" de un monitor Push de Uptime Kuma (p. ej.
+    # http://localhost:3001/api/push/<TOKEN>). Si se pasa, al final se hace
+    # GET <url>?status=up|down&msg=backup&ping= segun el resultado.
+    [string]$KumaPushUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,7 +102,7 @@ $status = [ordered]@{
     host       = $env:COMPUTERNAME
     backupRoot = $BackupRoot
     ok         = $false
-    db         = @{ file = $null; bytes = 0; ok = $false; error = $null }
+    db         = @{ file = $null; bytes = 0; ok = $false; verified = $false; tocEntries = 0; verifyError = $null; error = $null }
     uploads    = @{ file = $null; bytes = 0; ok = $false; error = $null }
     proofs     = @{ file = $null; bytes = 0; ok = $false; error = $null }
     evidence   = @{ file = $null; bytes = 0; ok = $false; error = $null }
@@ -151,20 +155,56 @@ try {
         Invoke-DockerStdoutToFile -DockerArgs $dumpArgs -OutFile $dbFile
         $bytes = (Get-Item -LiteralPath $dbFile).Length
         if ($bytes -lt 100) { throw "dump sospechosamente pequeno ($bytes bytes); se descarta" }
-        # Verificar cabecera y TOC del archivo custom-format con pg_restore --list
-        $dbDirDocker = ((Join-Path $BackupRoot "db") -replace "\\", "/")
-        $dbLeaf = Split-Path -Leaf $dbFile
-        $tocLines = & docker run --rm -v "${dbDirDocker}:/backup:ro" postgres:16-alpine pg_restore --list "/backup/$dbLeaf" 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "pg_restore --list fallo (exit $LASTEXITCODE): $tocLines" }
-        $tocCount = ($tocLines | Where-Object { $_ -and -not $_.StartsWith(";") }).Count
-        if ($tocCount -lt 10) { throw "TOC del dump incompleto ($tocCount entradas)" }
-        $status.db = @{ file = $dbFile; bytes = $bytes; tocEntries = $tocCount; ok = $true; error = $null }
-        Write-Log ("DB OK ({0:N1} MB, {1} entradas TOC verificadas)" -f ($bytes / 1MB), $tocCount)
+        $status.db = @{ file = $dbFile; bytes = $bytes; ok = $true; verified = $false; tocEntries = 0; verifyError = $null; error = $null }
+        Write-Log ("DB dump OK ({0:N1} MB); verificando TOC..." -f ($bytes / 1MB))
     } catch {
         $script:hadFailure = $true
         $status.db.error = "$_"
         if (Test-Path -LiteralPath $dbFile) { Remove-Item -LiteralPath $dbFile -Force -ErrorAction SilentlyContinue }
         Write-Log "DB FALLO: $_"
+    }
+
+    # ---------- 1b) Verificar cabecera y TOC del dump con pg_restore --list ----------
+    # Corre DENTRO de prosolutions-db: docker copia el .pgdump a /tmp del
+    # contenedor, pg_restore --list valida el TOC y se borra. Cero dependencia
+    # de pull de imagen a las 03:30 (el postgres:16-alpine ya esta presente
+    # porque es la imagen de la propia BD) y mismo binario pg_restore que el
+    # servidor.
+    # Un fallo de VERIFICACION no es un fallo de dump: el .pgdump se conserva,
+    # se marca db.verified=false + db.verifyError y la corrida sigue (warning).
+    # OJO: con EAP=Stop, `docker ... 2>&1` convierte cualquier linea de stderr
+    # (warnings de pg_restore, progreso) en error terminante -> EAP=Continue
+    # temporal y se decide por $LASTEXITCODE (mismo patron que
+    # scripts\verify-backup-restore.ps1).
+    if ($status.db.ok) {
+        $tmpVerify = "/tmp/backup-verify-$timestamp.pgdump"
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & docker cp "$dbFile" "${DbContainer}:${tmpVerify}" 2>&1 | Out-Null
+            $cpExit = $LASTEXITCODE
+            $tocLines = $null
+            $tocExit = 0
+            if ($cpExit -eq 0) {
+                $tocLines = & docker exec $DbContainer pg_restore --list $tmpVerify 2>&1
+                $tocExit = $LASTEXITCODE
+                & docker exec $DbContainer rm -f $tmpVerify 2>&1 | Out-Null
+            }
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+        try {
+            if ($cpExit -ne 0) { throw "docker cp del dump a ${DbContainer} fallo (exit $cpExit)" }
+            if ($tocExit -ne 0) { throw "pg_restore --list fallo (exit ${tocExit}): $tocLines" }
+            $tocCount = ($tocLines | Where-Object { $_ -and -not $_.StartsWith(";") }).Count
+            if ($tocCount -lt 10) { throw "TOC del dump incompleto ($tocCount entradas)" }
+            $status.db.verified = $true
+            $status.db.tocEntries = $tocCount
+            Write-Log "DB verificada ($tocCount entradas TOC)"
+        } catch {
+            $status.db.verifyError = "$_"
+            Write-Log "DB verificacion FALLO (dump conservado): $_"
+        }
     }
 
     # ---------- 2) tar.gz de cada volumen (montaje solo-lectura) ----------
@@ -281,6 +321,20 @@ try {
         } catch {
             Write-Log "Copia del estado al volumen FALLO (no afecta el backup): $_"
         }
+    }
+}
+
+# ---------- Push opcional a Uptime Kuma ----------
+# Monitor tipo "Push" en Kuma: se le pega a <url>?status=up|down&msg=backup.
+# Best-effort: un fallo aqui no cambia el exit code del backup.
+if ($KumaPushUrl) {
+    try {
+        $kumaStatus = "up"
+        if ($script:hadFailure) { $kumaStatus = "down" }
+        Invoke-RestMethod -Uri ("{0}?status={1}&msg=backup&ping=" -f $KumaPushUrl, $kumaStatus) -TimeoutSec 15 | Out-Null
+        Write-Log "Push a Uptime Kuma: $kumaStatus"
+    } catch {
+        Write-Log "Push a Uptime Kuma FALLO (no afecta el backup): $_"
     }
 }
 

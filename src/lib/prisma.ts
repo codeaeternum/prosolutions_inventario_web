@@ -29,6 +29,11 @@ function createPrismaClient() {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   })
+  // Un error en un cliente idle (restart de la BD, RST de red) emite 'error'
+  // en el pool; sin listener, EventEmitter lo escala a uncaughtException y el
+  // proceso cae en crash-loop. Solo se registra: la siguiente adquisición de
+  // conexión reintenta sola.
+  pool.on("error", (err) => console.error("[pg-pool] idle client error:", err))
   const adapter = new PrismaPg(pool)
   return new PrismaClient({ adapter })
 }

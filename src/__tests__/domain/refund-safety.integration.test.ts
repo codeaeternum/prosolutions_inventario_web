@@ -13,7 +13,7 @@ if (enabled) {
   const target = new URL(url)
   if (target.hostname !== "127.0.0.1" || target.port !== "55433" || target.pathname !== "/hardening" || target.username !== "audit") throw new Error("Dedicated localhost:55433/hardening fixture required")
 }
-const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url })) })
+const db = new PrismaClient({ adapter: new PrismaPg(new Pool({ connectionString: url }).on("error", (err) => console.error("[pg-pool] idle client error:", err))) })
 const prefix = `refund-test-${randomUUID()}`
 let admin: string, customer: string, category: string, branchA: string, biz: string
 

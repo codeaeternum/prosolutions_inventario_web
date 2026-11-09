@@ -18,7 +18,10 @@ export function getPrisma(): PrismaClient | null {
       if (isDev) console.warn("⚠️ DATABASE_URL no definida, bot sin DB")
       return null
     }
-    const pool = new Pool({ connectionString })
+    const pool = new Pool({ connectionString, connectionTimeoutMillis: 10_000 })
+    // Sin listener, un error en un cliente idle (restart de BD, RST de red)
+    // escala a uncaughtException y el bot entra en crash-loop.
+    pool.on("error", (err) => console.error("[pg-pool] idle client error:", err))
     const adapter = new PrismaPg(pool)
     prismaInstance = new PrismaClient({ adapter })
     if (isDev) console.log("✅ Prisma Client loaded (via Adapter)")

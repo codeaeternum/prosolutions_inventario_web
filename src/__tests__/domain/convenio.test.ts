@@ -78,8 +78,11 @@ const tx = {
   repairEvent: { create: vi.fn() },
   repairPart: { findMany: vi.fn(), updateMany: vi.fn() },
   payment: { findMany: vi.fn() },
-  cashRegister: { findFirst: vi.fn() },
+  // openRegister: findMany para el conteo por sucursal y updateMany para el
+  // lock de fila — el ingreso ya no cae en "cualquier caja del negocio".
+  cashRegister: { findMany: vi.fn(), updateMany: vi.fn() },
   cashMovement: { create: vi.fn() },
+  branch: { findFirst: vi.fn() },
   systemSettings: { findMany: vi.fn(), findUnique: vi.fn() },
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
@@ -110,7 +113,11 @@ beforeEach(() => {
   tx.repairPart.updateMany.mockResolvedValue({ count: 0 })
   tx.payment.findMany.mockResolvedValue([])
   // Sin caja abierta por defecto: los tests de recordCashIn la habilitan.
-  tx.cashRegister.findFirst.mockResolvedValue(null)
+  tx.cashRegister.findMany.mockResolvedValue([])
+  tx.cashRegister.updateMany.mockResolvedValue({ count: 1 })
+  // resolveBranch devuelve la sucursal pedida por id (o la default "b1").
+  tx.branch.findFirst.mockImplementation(({ where }: { where: { id?: string } }) =>
+    Promise.resolve({ id: where?.id ?? "b1", name: "Sucursal", isActive: true, businessId: BIZ }))
   tx.cashMovement.create.mockResolvedValue({})
   tx.systemSettings.findMany.mockResolvedValue([])
   tx.systemSettings.findUnique.mockResolvedValue(null)
@@ -168,7 +175,7 @@ describe("settleConvenio", () => {
 
   it("recordCashIn registra UN CashMovement IN en la caja abierta del negocio", async () => {
     tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000 }))
-    tx.cashRegister.findFirst.mockResolvedValue({ id: "reg-1" })
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-1" }])
     await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true, recordCashIn: true })
     expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -179,10 +186,27 @@ describe("settleConvenio", () => {
     }))
   })
 
+  it("recordCashIn asienta el IN en la caja de LA SUCURSAL de la orden, con lock", async () => {
+    // La orden vive en b-order: el ingreso busca caja ahí, no en cualquier
+    // caja abierta del negocio. Además openRegister bloquea la fila.
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000, currentBranchId: "b-order" }))
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-order" }])
+    await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true, recordCashIn: true })
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: "OPEN", branchId: "b-order", businessId: BIZ }),
+    }))
+    expect(tx.cashRegister.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "reg-order", status: "OPEN" }),
+    }))
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ registerId: "reg-order" }),
+    }))
+  })
+
   it("recordCashIn sin caja abierta falla ANTES de tocar la orden", async () => {
     tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", partnerPriceCents: 25000 }))
     await expect(settleConvenio(db, admin.id, BIZ, { ...payload, settled: true, recordCashIn: true }))
-      .rejects.toMatchObject({ status: 409, message: "Abre la caja para registrar el ingreso en efectivo." })
+      .rejects.toMatchObject({ status: 409, code: "REGISTER_REQUIRED" })
     expect(tx.repairOrder.update).not.toHaveBeenCalled()
     expect(tx.repairEvent.create).not.toHaveBeenCalled()
     expect(tx.cashMovement.create).not.toHaveBeenCalled()
@@ -544,7 +568,7 @@ describe("settleConvenioBatch", () => {
       cobrar("o1", { number: 21, partnerPriceCents: 20000 }),
       cobrar("o2", { number: 22, partnerPriceCents: 30000 }),
     ])
-    tx.cashRegister.findFirst.mockResolvedValue({ id: "reg-1" })
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-1" }])
     const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ recordCashIn: true }))
     expect(result.totalCents).toBe(50000)
     expect(tx.cashMovement.create).toHaveBeenCalledTimes(1)
@@ -557,13 +581,31 @@ describe("settleConvenioBatch", () => {
     }))
   })
 
+  it("el lote asienta el IN en la caja de la sucursal base de quien liquida", async () => {
+    // Un lote puede mezclar órdenes de varias sucursales: el ingreso cae en
+    // la caja de la homeBranchId del admin que cobra (o la branchId enviada).
+    batchOrders([
+      cobrar("o1", { number: 21, partnerPriceCents: 20000, currentBranchId: "b-a" }),
+      cobrar("o2", { number: 22, partnerPriceCents: 30000, currentBranchId: "b-b" }),
+    ])
+    tx.user.findUnique.mockResolvedValue({ ...admin, homeBranchId: "b-home" })
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-home" }])
+    await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ recordCashIn: true }))
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: "OPEN", branchId: "b-home", businessId: BIZ }),
+    }))
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ registerId: "reg-home" }),
+    }))
+  })
+
   it("recordCashIn sin caja abierta falla antes de marcar ninguna orden", async () => {
     batchOrders([
       cobrar("o1", { partnerPriceCents: 20000 }),
       cobrar("o2", { partnerPriceCents: 30000 }),
     ])
     await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload({ recordCashIn: true })))
-      .rejects.toMatchObject({ status: 409, message: "Abre la caja para registrar el ingreso en efectivo." })
+      .rejects.toMatchObject({ status: 409, code: "REGISTER_REQUIRED" })
     expect(tx.repairOrder.update).not.toHaveBeenCalled()
     expect(tx.repairEvent.create).not.toHaveBeenCalled()
     expect(tx.cashMovement.create).not.toHaveBeenCalled()

@@ -132,6 +132,31 @@ export async function POST(req: NextRequest) {
 
   // Reglas: ADMIN o Superadmin entran sin PIN; staff necesita el PIN del destino.
   if (!body?.restore && caller.role !== "ADMIN" && !caller.isSuperAdmin && target.id !== caller.id) {
+    // El PIN nunca sube de privilegio: un quickPin de 4-6 dígitos se agota
+    // por fuerza bruta dentro del rate limit, así que entrar a una cuenta
+    // ADMIN (o de plataforma) exige el login con contraseña o que el propio
+    // ADMIN inicie el cambio. El intento queda en bitácora — la molienda
+    // de PIN contra cuentas admin deja de ser invisible. NUNCA se registra
+    // el PIN, solo quién intentó contra qué cuenta.
+    if (target.role === "ADMIN" || target.isSuperAdmin === true) {
+      await recordAudit(prisma, {
+        businessId: target.businessId,
+        actorId: caller.id,
+        action: "AUTH_SWITCH_DENIED",
+        entity: "user",
+        entityId: target.id,
+        entityName: target.name,
+        summary: `"${caller.name}" intentó entrar con PIN a la cuenta de administrador "${target.name}"`,
+        changes: {
+          cuenta: { before: caller.id, after: target.id },
+          motivo: { before: null, after: "ESCALACION_POR_PIN_BLOQUEADA" },
+        },
+      })
+      return NextResponse.json(
+        { error: "Cambiar a una cuenta de administrador requiere su contraseña, no el PIN." },
+        { status: 403 }
+      )
+    }
     const pin = typeof body?.pin === "string" ? body.pin : ""
     if (!target.quickPin || !/^\d{4,6}$/.test(pin) || !(await bcrypt.compare(pin, target.quickPin))) {
       return NextResponse.json({ error: "PIN incorrecto" }, { status: 403 })
