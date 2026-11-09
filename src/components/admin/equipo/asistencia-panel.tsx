@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
+import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, MonitorCheck, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 import { businessDayKey } from "@/lib/business-time"
 import { JORNADA_ALERTA_MIN, JORNADA_MAX_MS } from "@/lib/asistencia"
@@ -418,6 +418,14 @@ export function AsistenciaPanel() {
               <SelectItem value="7d">Últimos 7 días</SelectItem>
             </SelectContent>
           </Select>
+          {/* El kiosco es la pantalla del checador para la tableta del
+              mostrador: se abre desde aquí, no vive en el sidebar. */}
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/admin/asistencia-kiosco">
+              <MonitorCheck className="h-4 w-4 mr-1" />
+              Abrir kiosco
+            </Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>

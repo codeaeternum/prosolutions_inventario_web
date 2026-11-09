@@ -20,6 +20,7 @@ import { registerReports } from './commands/reports'
 import { registerCatalog } from './commands/catalog'
 import { registerProducts } from './commands/products'
 import { registerAlerts } from './commands/alerts'
+import { registerDailySummary } from './commands/daily-summary'
 import { registerOrden } from './commands/orden'
 import type { SessionStores, BotContext } from './lib/types'
 
@@ -210,12 +211,13 @@ registerReports(ctx)
 const { processReservation } = registerCatalog(ctx)
 registerProducts(ctx, processReservation)
 const alertsTask = registerAlerts(ctx)
+const dailySummaryTask = registerDailySummary(ctx)
 
 // ======= CRON JOBS =======
 
 // Handles de los crons: el shutdown ordenado los detiene para que un job a
 // media ejecución (o sus timers) no mantenga el proceso vivo tras SIGTERM.
-const scheduledTasks: cron.ScheduledTask[] = [alertsTask]
+const scheduledTasks: cron.ScheduledTask[] = [alertsTask, dailySummaryTask]
 
 // Cancel expired reservations and prune abandoned sessions every 30 min
 scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {

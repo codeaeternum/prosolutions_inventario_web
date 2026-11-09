@@ -16,6 +16,8 @@ export interface BackupArtifact {
   ok: boolean
   bytes: number
   error: string | null
+  // Entradas del TOC del dump verificadas con pg_restore --list (solo db).
+  tocEntries?: number | null
 }
 
 export interface BackupStatusResponse {
@@ -51,6 +53,7 @@ export function parseBackupStatus(json: unknown): BackupStatusResponse | null {
           ok: a.ok === true,
           bytes: typeof a.bytes === "number" ? a.bytes : 0,
           error: typeof a.error === "string" ? a.error : null,
+          tocEntries: typeof a.tocEntries === "number" && Number.isFinite(a.tocEntries) ? a.tocEntries : null,
         }
       }
     }
@@ -77,7 +80,7 @@ export function formatBackupAge(ageHours: number | null): string {
 }
 
 export type BackupBannerView =
-  | { kind: "fresh"; ageLabel: string; lastRun: string | null }
+  | { kind: "fresh"; ageLabel: string; lastRun: string | null; tocEntries: number | null }
   | { kind: "stale"; configured: boolean; ageLabel: string; lastRun: string | null; lastFailed: boolean }
   | { kind: "failed"; lastRun: string | null; failedLabels: string[] }
 
@@ -100,7 +103,7 @@ export function backupBannerView(status: BackupStatusResponse): BackupBannerView
       .map((key) => BACKUP_ARTIFACT_LABELS[key])
     return { kind: "failed", lastRun, failedLabels }
   }
-  return { kind: "fresh", ageLabel, lastRun }
+  return { kind: "fresh", ageLabel, lastRun, tocEntries: status.artifacts?.db?.tocEntries ?? null }
 }
 
 const listEs = (items: string[]) =>
@@ -138,6 +141,7 @@ export function BackupStatusBanner() {
       >
         <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
         Respaldo automático al día{view.ageLabel ? ` · último ${view.ageLabel}` : ""}
+        {view.tocEntries ? ` · dump verificado (${view.tocEntries.toLocaleString("es-MX")} objetos)` : ""}
       </p>
     )
   }

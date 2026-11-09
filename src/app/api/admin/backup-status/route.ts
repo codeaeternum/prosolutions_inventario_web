@@ -9,6 +9,8 @@ interface BackupArtifact {
   ok: boolean
   bytes: number
   error: string | null
+  // Entradas del TOC verificadas por `pg_restore --list` (solo el artefacto db).
+  tocEntries: number | null
 }
 
 /** Quita rutas absolutas del host (D:\Backups\...) de los errores antes de servirlos. */
@@ -20,7 +22,12 @@ function scrubPaths(message: string, backupRoot: string): string {
 function artifact(value: unknown, backupRoot: string): BackupArtifact {
   const raw = (value ?? {}) as Record<string, unknown>
   const error = typeof raw.error === "string" && raw.error ? scrubPaths(raw.error, backupRoot) : null
-  return { ok: raw.ok === true, bytes: typeof raw.bytes === "number" ? raw.bytes : 0, error }
+  return {
+    ok: raw.ok === true,
+    bytes: typeof raw.bytes === "number" ? raw.bytes : 0,
+    error,
+    tocEntries: typeof raw.tocEntries === "number" && Number.isFinite(raw.tocEntries) ? raw.tocEntries : null,
+  }
 }
 
 const noStore = { "Cache-Control": "private, no-store" }
