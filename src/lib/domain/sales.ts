@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
 import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
+import { nextSaleNumber } from "./tenant-sequence"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
@@ -247,7 +248,8 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
       settled = settleSalePayments(payments, payableCents)
     }
 
-    const sale = await tx.sale.create({ data: { businessId, total, kind, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
+    const number = await nextSaleNumber(tx, businessId)
+    const sale = await tx.sale.create({ data: { businessId, number, total, kind, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
     const committed = await commitSale(tx, {
       sale, businessId, actorId, branchId: branch.id, customerId: customer?.id ?? null,
       lines: lines.map(line => ({ productId: line.product.id, quantity: line.item.quantity, unitCents: line.unitCents, lineCents: line.lineCents })),

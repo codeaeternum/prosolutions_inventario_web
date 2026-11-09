@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 import { businessDayKey } from "@/lib/business-time"
-import { JORNADA_MAX_MS } from "@/lib/asistencia"
+import { JORNADA_ALERTA_MIN, JORNADA_MAX_MS } from "@/lib/asistencia"
 
 // Misma forma que JornadaDerivada de lib/asistencia (la respuesta del GET).
 interface Jornada {
@@ -28,6 +28,8 @@ interface Jornada {
   open?: boolean
   /** Abandonada (>16 h sin cierre): no es una jornada vigente. */
   openEnded?: boolean
+  /** Jornada abierta prolongada (>= 10 h). */
+  longShift?: boolean
   source?: string
 }
 
@@ -227,6 +229,8 @@ export function AsistenciaPanel() {
       const data = porUsuario.get(user.id)
       const js = (data?.jornadas ?? []).slice().sort((a, b) => a.inAt.localeCompare(b.inAt))
       const open = js.find(j => j.open === true) ?? null
+      const openMin = open ? Math.max(0, Math.round((now - new Date(open.inAt).getTime()) / 60_000)) : 0
+      const longShift = Boolean(open && (open.longShift === true || openMin >= JORNADA_ALERTA_MIN))
       const abandonadas = js.filter(j => j.openEnded === true).length
       const totalMin = js.reduce((sum, j) =>
         sum + (j.open === true
@@ -240,7 +244,7 @@ export function AsistenciaPanel() {
       // Jornada sin salida más antigua (abierta o abandonada): es la que
       // "Cerrar turno" sugiere corregir.
       const sinSalida = open ?? js.find(j => j.openEnded === true) ?? null
-      return { user, jornadas: js, events: data?.events ?? [], open, sinSalida, cerradas: js.length - (open ? 1 : 0), abandonadas, totalMin, hasTiempo, fuentes }
+      return { user, jornadas: js, events: data?.events ?? [], open, longShift, sinSalida, cerradas: js.length - (open ? 1 : 0), abandonadas, totalMin, hasTiempo, fuentes }
     })
     // Quien checó pero ya no aparece como staff vigente (suspendido después,
     // p. ej.): la bitácora del día no lo debe esconder — sale con el nombre
@@ -249,11 +253,14 @@ export function AsistenciaPanel() {
       if (!staff.some(s => s.id === userId)) {
         const js = m.jornadas
         const open = js.find(j => j.open === true) ?? null
+        const openMin = open ? Math.max(0, Math.round((now - new Date(open.inAt).getTime()) / 60_000)) : 0
+        const longShift = Boolean(open && (open.longShift === true || openMin >= JORNADA_ALERTA_MIN))
         items.push({
           user: { id: userId, name: m.name, jobTitle: null, role: "" },
           jornadas: js,
           events: m.events,
           open,
+          longShift,
           sinSalida: open ?? js.find(j => j.openEnded === true) ?? null,
           cerradas: js.filter(j => j.open !== true).length,
           abandonadas: js.filter(j => j.openEnded === true).length,
@@ -273,6 +280,11 @@ export function AsistenciaPanel() {
       return a.user.name.localeCompare(b.user.name)
     })
   }, [staff, porUsuario, now])
+
+  const alertaCount = useMemo(
+    () => rows.filter(r => r.longShift || r.abandonadas > 0).length,
+    [rows]
+  )
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -449,6 +461,17 @@ export function AsistenciaPanel() {
         )}
         {!loading && !error && porUsuario.size > 0 && filtered.length > 0 && (
           <>
+            {alertaCount > 0 && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>
+                  {alertaCount} integrante(s) con turno prolongado o sin salida registrada
+                </span>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -472,9 +495,21 @@ export function AsistenciaPanel() {
                       <TableCell>
                         {r.open ? (
                           <div>
-                            <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">
-                              En turno desde {fmtHora(r.open.inAt)}
-                            </Badge>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                                En turno desde {fmtHora(r.open.inAt)}
+                              </Badge>
+                              {r.longShift && (
+                                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                  Turno &gt;10 h
+                                </Badge>
+                              )}
+                              {r.abandonadas > 0 && (
+                                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                  Sin salida (&gt;16 h)
+                                </Badge>
+                              )}
+                            </div>
                             {r.cerradas > 0 && (
                               <p className="text-xs text-muted-foreground mt-1">
                                 + {r.cerradas} {r.cerradas === 1 ? "jornada cerrada" : "jornadas cerradas"}
@@ -483,10 +518,17 @@ export function AsistenciaPanel() {
                           </div>
                         ) : r.jornadas.length > 0 ? (
                           <div>
-                            <span className="text-sm">
-                              {r.jornadas.length} {r.jornadas.length === 1 ? "jornada" : "jornadas"}
-                              {r.hasTiempo && ` — ${fmtDuracion(r.totalMin)}`}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-sm">
+                                {r.jornadas.length} {r.jornadas.length === 1 ? "jornada" : "jornadas"}
+                                {r.hasTiempo && ` — ${fmtDuracion(r.totalMin)}`}
+                              </span>
+                              {r.abandonadas > 0 && (
+                                <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                  Sin salida (&gt;16 h)
+                                </Badge>
+                              )}
+                            </div>
                             {r.abandonadas > 0 && (
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {r.abandonadas} {r.abandonadas === 1 ? "sin salida registrada" : "sin salida registradas"}

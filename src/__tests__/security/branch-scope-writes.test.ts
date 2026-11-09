@@ -245,14 +245,26 @@ describe("admin/tickets/corte/[id] — corte de caja acotado", () => {
     expect(q("payment.groupBy")).not.toHaveBeenCalled()
   })
 
-  it("corte propio imprime y el desglose por método incluye VOIDED", async () => {
+  it("corte propio imprime y el desglose por método incluye VOIDED y concilia efectivo por caja", async () => {
     mocks.auth.mockResolvedValue(restricted(["caja"]))
     q("cashRegister.findUnique").mockResolvedValue(registerRow("b1"))
     q("payment.groupBy").mockResolvedValue([])
     await expect(page("reg-1")).resolves.toBeTruthy()
     // VOIDED +X y su reembolso REFUNDED −X se cancelan a 0 — sin VOIDED el
     // ticket imprimía un negativo fantasma (espejo de /api/caja).
-    expect(q("payment.groupBy").mock.calls[0][0].where.status.in).toEqual(["CONFIRMED", "REFUNDED", "VOIDED"])
+    const where = q("payment.groupBy").mock.calls[0][0].where
+    expect(where.status.in).toEqual(["CONFIRMED", "REFUNDED", "VOIDED"])
+    expect(where.OR).toEqual([
+      { cashMovement: { register: { branchId: "b1" } } },
+      {
+        cashMovementId: null,
+        OR: [
+          { sale: { branchId: "b1" } },
+          { repairOrder: { currentBranchId: "b1" } },
+          { encargo: { branchId: "b1" } },
+        ],
+      },
+    ])
   })
 })
 

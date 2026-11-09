@@ -1,4 +1,4 @@
-import type { CashMovement, CashRegister, PrismaClient } from "@prisma/client"
+import type { CashMovement, CashRegister, Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, amount, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, resolveBranch } from "./operations"
 
@@ -48,6 +48,46 @@ export function expectedCashCents(initialAmount: number, movements: CashMovement
     total += (movement.type === "IN" ? 1 : -1) * Math.round(movement.amount * 100)
   }
   return total
+}
+
+/**
+ * Filtro Prisma de `Payment` para el desglose "Cobrado por método" de un turno
+ * (`GET /api/caja` y `/admin/tickets/corte/[id]`).
+ *
+ * Conciliación multi-sucursal:
+ *   • Pagos con asiento de caja (`cashMovementId != null`, efectivo): se
+ *     atribuyen a la sucursal del cajón donde entró/salió el billete
+ *     (`cashMovement.register.branchId`), aunque la venta, apartado o encargo
+ *     se haya originado en otra sucursal.
+ *   • Pagos sin asiento de caja (`cashMovementId: null`, tarjeta/transferencia/
+ *     crédito): no tocan ningún cajón físico y se acotan a la sucursal del
+ *     documento (`sale.branchId` / `repairOrder.currentBranchId` /
+ *     `encargo.branchId`), igual que en `/api/caja/movements`.
+ */
+export function registerPaymentWhere(
+  businessId: string,
+  register: { branchId: string | null; openedAt: Date; closedAt: Date | null },
+): Prisma.PaymentWhereInput {
+  return {
+    businessId,
+    status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
+    createdAt: { gte: register.openedAt, ...(register.closedAt ? { lte: register.closedAt } : {}) },
+    ...(register.branchId
+      ? {
+          OR: [
+            { cashMovement: { register: { branchId: register.branchId } } },
+            {
+              cashMovementId: null,
+              OR: [
+                { sale: { branchId: register.branchId } },
+                { repairOrder: { currentBranchId: register.branchId } },
+                { encargo: { branchId: register.branchId } },
+              ],
+            },
+          ],
+        }
+      : {}),
+  }
 }
 
 const schema = z.object({

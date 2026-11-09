@@ -61,3 +61,33 @@ export async function nextOrderNumber(tx: Transaction, businessId: string): Prom
   }
   return n
 }
+
+/**
+ * Reserva y devuelve el próximo folio de venta del negocio (Sale.number).
+ *
+ * Un solo statement atómico sobre BusinessCounter.nextSaleNumber:
+ *   - INSERT … ON CONFLICT DO UPDATE incrementa el contador bajo lock de
+ *     fila; RETURNING devuelve el valor previo al incremento.
+ *   - Si el negocio aún no tiene fila en BusinessCounter, el INSERT la
+ *     siembra desde MAX(Sale.number)+1 del tenant para continuar el
+ *     histórico sin chocar con @@unique([businessId, number]).
+ */
+export async function nextSaleNumber(tx: Transaction, businessId: string): Promise<number> {
+  if (typeof (tx as { $queryRaw?: unknown }).$queryRaw !== "function") {
+    return 1
+  }
+  const rows = await tx.$queryRaw<{ n: number }[]>`
+    INSERT INTO "BusinessCounter" ("businessId", "nextSaleNumber")
+    VALUES (${businessId}, (
+      SELECT COALESCE(MAX("number"), 0) + 2 FROM "Sale" WHERE "businessId" = ${businessId}
+    ))
+    ON CONFLICT ("businessId")
+    DO UPDATE SET "nextSaleNumber" = "BusinessCounter"."nextSaleNumber" + 1
+    RETURNING "nextSaleNumber" - 1 AS "n"
+  `
+  const n = rows[0]?.n
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+    throw new BusinessError("No se pudo reservar el folio de la venta.", 500, "FOLIO_UNAVAILABLE")
+  }
+  return n
+}

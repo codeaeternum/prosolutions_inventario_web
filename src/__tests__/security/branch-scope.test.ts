@@ -438,4 +438,36 @@ describe("GET /api/caja — Cobrado por método", () => {
     const body = await res.json()
     expect(body.register.methodTotals.CASH).toBe(50)
   })
+
+  it("atribuye efectivo a la caja donde se asentó el CashMovement y pagos sin asiento a la sucursal del documento", async () => {
+    mocks.auth.mockResolvedValue(staff("ADMIN"))
+    mocks.cashRegisterFindFirst.mockResolvedValue({
+      id: "reg-a", businessId: "biz-test", branchId: "b1", status: "OPEN",
+      openedAt: new Date(Date.now() - 60 * 60 * 1000), closedAt: null,
+      initialAmount: 100, finalAmount: null, notes: null,
+      branch: { id: "b1", name: "Sucursal A" }, openedBy: { name: "Cajero" }, closedBy: null,
+      movements: [],
+    })
+    mocks.paymentGroupBy.mockResolvedValue([
+      { method: "CASH", _sum: { amount: 250 } },
+      { method: "CARD", _sum: { amount: 400 } },
+    ])
+
+    const res = await caja(new Request("https://app.invalid/api/caja?branchId=b1"))
+    expect(res.status).toBe(200)
+    const where = mocks.paymentGroupBy.mock.calls[0][0].where
+    expect(where.OR).toEqual([
+      { cashMovement: { register: { branchId: "b1" } } },
+      {
+        cashMovementId: null,
+        OR: [
+          { sale: { branchId: "b1" } },
+          { repairOrder: { currentBranchId: "b1" } },
+          { encargo: { branchId: "b1" } },
+        ],
+      },
+    ])
+    const body = await res.json()
+    expect(body.register.methodTotals).toEqual({ CASH: 250, CARD: 400, TRANSFER: 0, CREDIT: 0 })
+  })
 })

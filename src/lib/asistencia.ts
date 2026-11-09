@@ -20,6 +20,10 @@ import { businessDayKey } from "@/lib/business-time"
 /** Ventana máxima de una jornada: pasadas 16 h sin OUT se abandona. */
 export const JORNADA_MAX_MS = 16 * 60 * 60 * 1000
 
+/** Umbral de jornada abierta prolongada: a partir de 10 h (600 min) se alerta. */
+export const JORNADA_ALERTA_MIN = 600
+export const JORNADA_ALERTA_MS = 10 * 60 * 60 * 1000
+
 export interface ClockEventLike {
   id: string
   type: string
@@ -44,6 +48,8 @@ export interface JornadaDerivada {
   open: boolean
   /** Jornada abandonada: pasaron >16 h sin un cierre confiable. */
   openEnded: boolean
+  /** Jornada abierta prolongada: `open` con >= 600 min (entre 10 h y 16 h). */
+  longShift?: boolean
   /** Fuente de la jornada — las derivadas aquí siempre salen del checador;
    *  la bandera existe para que la UI distinga fuentes cuando se mezclen. */
   source: "clock" | "activity"
@@ -70,6 +76,7 @@ export function deriveJornadas(events: ClockEventLike[], now: Date = new Date())
     minutos: null,
     open: false,
     openEnded: true,
+    longShift: false,
     source: "clock",
   })
 
@@ -94,6 +101,7 @@ export function deriveJornadas(events: ClockEventLike[], now: Date = new Date())
           minutos: Math.max(0, Math.round(durMs / 60000)),
           open: false,
           openEnded: false,
+          longShift: false,
           source: "clock",
         })
       } else {
@@ -108,15 +116,17 @@ export function deriveJornadas(events: ClockEventLike[], now: Date = new Date())
   if (openIn) {
     const ageMs = now.getTime() - openIn.at.getTime()
     if (ageMs <= JORNADA_MAX_MS) {
+      const minutos = Math.max(0, Math.round(ageMs / 60000))
       jornadas.push({
         inEventId: openIn.id,
         inAt: openIn.at.toISOString(),
         branchId: openIn.branchId ?? null,
         outEventId: null,
         outAt: null,
-        minutos: Math.max(0, Math.round(ageMs / 60000)),
+        minutos,
         open: true,
         openEnded: false,
+        longShift: minutos >= JORNADA_ALERTA_MIN,
         source: "clock",
       })
     } else {

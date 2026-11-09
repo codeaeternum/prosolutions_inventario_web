@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Transaction } from "@/lib/domain/operations"
-import { nextOrderNumber } from "@/lib/domain/tenant-sequence"
+import { nextOrderNumber, nextSaleNumber } from "@/lib/domain/tenant-sequence"
 
 /**
  * nextOrderNumber: folio por tenant via BusinessCounter. El statement debe
@@ -61,5 +61,50 @@ describe("nextOrderNumber", () => {
   ])("rechaza resultado inválido (%s)", async (_label, rows) => {
     queryRaw.mockResolvedValueOnce(rows)
     await expect(nextOrderNumber(tx, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
+  })
+})
+
+describe("nextSaleNumber", () => {
+  it("devuelve folios consecutivos reservados por el RETURNING", async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 1 }]).mockResolvedValueOnce([{ n: 2 }])
+    await expect(nextSaleNumber(tx, "biz-1")).resolves.toBe(1)
+    await expect(nextSaleNumber(tx, "biz-1")).resolves.toBe(2)
+  })
+
+  it("emite UN statement atómico de upsert + RETURNING sobre nextSaleNumber", async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 1 }])
+    await nextSaleNumber(tx, "biz-1")
+    expect(queryRaw).toHaveBeenCalledTimes(1)
+    const sql = sqlOf(queryRaw.mock.calls[0])
+    expect(sql).toContain('INSERT INTO "BusinessCounter" ("businessId", "nextSaleNumber")')
+    expect(sql).toContain('ON CONFLICT ("businessId")')
+    expect(sql).toContain('DO UPDATE SET "nextSaleNumber"')
+    expect(sql).toContain('RETURNING "nextSaleNumber" - 1 AS "n"')
+  })
+
+  it("siembra la fila faltante desde MAX(number) de Sale del tenant (auto-curación)", async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 42 }])
+    await nextSaleNumber(tx, "biz-1")
+    const sql = sqlOf(queryRaw.mock.calls[0])
+    expect(sql).toContain('SELECT COALESCE(MAX("number"), 0) + 2 FROM "Sale"')
+  })
+
+  it("pasa businessId como parámetro ligado, nunca interpolado en la SQL", async () => {
+    const hostile = 'biz"; DROP TABLE "BusinessCounter'
+    queryRaw.mockResolvedValueOnce([{ n: 3 }])
+    await nextSaleNumber(tx, hostile)
+    const call = queryRaw.mock.calls[0]
+    expect(sqlOf(call)).not.toContain("DROP TABLE")
+    expect(call.slice(1)).toEqual([hostile, hostile])
+  })
+
+  it.each([
+    ["sin filas", []],
+    ["folio < 1", [{ n: 0 }]],
+    ["folio no entero", [{ n: 1.5 }]],
+    ["folio no numérico", [{ n: "7" }]],
+  ])("rechaza resultado inválido (%s)", async (_label, rows) => {
+    queryRaw.mockResolvedValueOnce(rows)
+    await expect(nextSaleNumber(tx, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
   })
 })

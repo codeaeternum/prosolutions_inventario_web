@@ -4,7 +4,7 @@ import { hasBranchAccess, hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { getBusinessSettingsMap } from "@/lib/settings"
 import prisma from "@/lib/prisma"
-import { DENOMINATION_CENTS, expectedCashCents, type CashMovementLike } from "@/lib/domain/cash"
+import { DENOMINATION_CENTS, expectedCashCents, registerPaymentWhere, type CashMovementLike } from "@/lib/domain/cash"
 import { CorteTicketView, type CorteTicketData } from "./corte-ticket-view"
 
 export const dynamic = "force-dynamic"
@@ -49,22 +49,14 @@ export default async function CorteTicketPage({
   // cortes de sucursales que no tiene asignadas.
   if (!hasBranchAccess(session.user, register.branchId)) notFound()
 
-  // Cobrado por método durante el turno: los pagos CARD/TRANSFER no generan
-  // CashMovement, así que el desglose sale de Payment acotado a la ventana
-  // apertura→cierre y a la sucursal de la caja (vía venta u orden de taller).
-  // VOIDED entra en la suma como en methodTotals de /api/caja: al anular una
-  // venta del mismo turno el cobro +X queda VOIDED y su reembolso REFUNDED
-  // −X los cancela a 0 — sin VOIDED el ticket imprimía un −X fantasma.
+  // Cobrado por método durante el turno: usa el mismo filtro multi-sucursal que
+  // methodTotals de /api/caja (efectivo por la caja donde se asentó el
+  // CashMovement; pagos sin asiento de caja por la sucursal del documento).
+  // VOIDED entra en la suma para que al anular una venta del mismo turno el
+  // cobro +X (VOIDED) y su reembolso −X (REFUNDED) se cancelen a 0.
   const paymentRows = await prisma.payment.groupBy({
     by: ["method"],
-    where: {
-      businessId,
-      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
-      createdAt: { gte: register.openedAt, lte: register.closedAt },
-      ...(register.branchId
-        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }, { encargo: { branchId: register.branchId } }] }
-        : {}),
-    },
+    where: registerPaymentWhere(businessId, register),
     _sum: { amount: true },
   })
   // _sum.amount es Float en pesos: el agregado se redondea a centavos

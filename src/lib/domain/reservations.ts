@@ -2,6 +2,7 @@ import type { PaymentMethod, PrismaClient, Reservation } from "@prisma/client"
 import { z } from "zod"
 import { isOwnedPaymentProof } from "../payment-proofs"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, resolveBranch, takeStock, transaction, type Transaction } from "./operations"
+import { nextSaleNumber } from "./tenant-sequence"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 export const ACTIVE_RESERVATIONS = ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"] as const
@@ -173,8 +174,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       // sales.ts). Sin esto el apartado cobrado a mayoreo reportaba retail.
       const customer = await tx.user.findUnique({ where: { id: reservation.userId }, select: { customerType: true, role: true } })
       const workshopSale = customer?.customerType === "STORE" || customer?.customerType === "TECHNICIAN" || customer?.role === "WORKSHOP"
+      const number = await nextSaleNumber(tx, businessId)
       const sale = await tx.sale.create({ data: {
-        businessId, branchId: branch.id, sellerId: actorId!, customerId: reservation.userId,
+        businessId, number, branchId: branch.id, sellerId: actorId!, customerId: reservation.userId,
         kind: workshopSale ? "WORKSHOP" : "RETAIL", status: "COMPLETED", total: reservation.totalPrice, discountCents: 0,
       } })
       await tx.saleItem.create({ data: {

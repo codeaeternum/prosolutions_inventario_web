@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Loader2, LogIn, LogOut, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { businessDayKey } from "@/lib/business-time"
+import { JORNADA_ALERTA_MIN } from "@/lib/asistencia"
 
 // Misma forma que JornadaDerivada de lib/asistencia (la respuesta del GET).
 interface Jornada {
@@ -18,6 +19,8 @@ interface Jornada {
   open?: boolean
   /** Abandonada (>16 h sin cierre): no es una jornada vigente. */
   openEnded?: boolean
+  /** Jornada abierta prolongada (>= 10 h). */
+  longShift?: boolean
   source?: string
 }
 
@@ -136,9 +139,12 @@ export function AsistenciaWidget({ userId }: { userId?: string }) {
   const elapsedMin = jornadaAbierta
     ? Math.max(0, Math.floor((now - new Date(jornadaAbierta.inAt).getTime()) / 60_000))
     : 0
+  const isLongShift = Boolean(
+    jornadaAbierta && (jornadaAbierta.longShift === true || elapsedMin >= JORNADA_ALERTA_MIN)
+  )
 
   return (
-    <Card>
+    <Card className={!loading && !error && isLongShift ? "border-amber-500/40 bg-amber-500/5" : undefined}>
       <CardContent className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-4">
         <div className="flex items-center gap-3 min-w-0">
           <span
@@ -161,11 +167,18 @@ export function AsistenciaWidget({ userId }: { userId?: string }) {
                 </Button>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground" aria-live="polite">
-                {jornadaAbierta
-                  ? <>Llevas <span className="font-medium text-foreground tabular-nums">{fmtDuracion(elapsedMin)}</span> — entrada {fmtHora(jornadaAbierta.inAt)}</>
-                  : "Sin jornada abierta"}
-              </p>
+              <>
+                <p className="text-sm text-muted-foreground" aria-live="polite">
+                  {jornadaAbierta
+                    ? <>Llevas <span className="font-medium text-foreground tabular-nums">{fmtDuracion(elapsedMin)}</span> — entrada {fmtHora(jornadaAbierta.inAt)}</>
+                    : "Sin jornada abierta"}
+                </p>
+                {isLongShift && (
+                  <p role="status" className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    Llevas más de 10 h con turno abierto — si ya terminaste, registra tu salida.
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>

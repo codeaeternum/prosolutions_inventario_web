@@ -45,6 +45,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import { POST, GET } from "@/app/api/asistencia/route"
 import { GET as NominaGET } from "@/app/api/actividad/nomina/route"
+import { deriveJornadas, JORNADA_ALERTA_MIN, JORNADA_ALERTA_MS } from "@/lib/asistencia"
 
 const session = (id: string, role: string, extra: Record<string, unknown> = {}) => ({
   user: { id, name: "X", role, status: "APPROVED", businessId: "biz-1", ...extra },
@@ -322,6 +323,64 @@ describe("GET /api/asistencia — rango y jornadas", () => {
     const res = await get("?userId=u-emp&from=2026-06-01&to=2026-06-15")
     const { users } = await res.json()
     expect(users[0].jornadas[0]).toMatchObject({ openEnded: true, open: false, minutos: null })
+  })
+})
+
+describe("deriveJornadas — umbral de jornada abierta prolongada (longShift >= 10 h)", () => {
+  const now = new Date("2026-06-10T22:00:00Z")
+
+  it("exporta JORNADA_ALERTA_MIN = 600 y JORNADA_ALERTA_MS = 10 h", () => {
+    expect(JORNADA_ALERTA_MIN).toBe(600)
+    expect(JORNADA_ALERTA_MS).toBe(10 * 60 * 60 * 1000)
+  })
+
+  it("jornada abierta de 11 h marca open: true, longShift: true", () => {
+    const jornadas = deriveJornadas(
+      [{ id: "in-1", type: "IN", at: new Date(now.getTime() - 11 * 3600e3) }],
+      now
+    )
+    expect(jornadas).toHaveLength(1)
+    expect(jornadas[0]).toMatchObject({
+      inEventId: "in-1",
+      minutos: 660,
+      open: true,
+      openEnded: false,
+      longShift: true,
+    })
+  })
+
+  it("jornada abierta de 4 h tiene open: true, longShift: false", () => {
+    const jornadas = deriveJornadas(
+      [{ id: "in-1", type: "IN", at: new Date(now.getTime() - 4 * 3600e3) }],
+      now
+    )
+    expect(jornadas).toHaveLength(1)
+    expect(jornadas[0]).toMatchObject({
+      inEventId: "in-1",
+      minutos: 240,
+      open: true,
+      openEnded: false,
+      longShift: false,
+    })
+  })
+
+  it("jornada cerrada de 11 h tiene open: false, longShift: false", () => {
+    const jornadas = deriveJornadas(
+      [
+        { id: "in-1", type: "IN", at: new Date(now.getTime() - 12 * 3600e3) },
+        { id: "out-1", type: "OUT", at: new Date(now.getTime() - 1 * 3600e3) },
+      ],
+      now
+    )
+    expect(jornadas).toHaveLength(1)
+    expect(jornadas[0]).toMatchObject({
+      inEventId: "in-1",
+      outEventId: "out-1",
+      minutos: 660,
+      open: false,
+      openEnded: false,
+      longShift: false,
+    })
   })
 })
 

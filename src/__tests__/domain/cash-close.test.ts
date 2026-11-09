@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
-import { changeCash, countsAsCash, denominationsTotalCents, expectedCashCents } from "@/lib/domain/cash"
+import { changeCash, countsAsCash, denominationsTotalCents, expectedCashCents, registerPaymentWhere } from "@/lib/domain/cash"
 
 const BIZ = "biz-cash-test"
 const admin = { id: "admin-1", name: "Admin", role: "ADMIN", status: "APPROVED", businessId: BIZ, homeBranchId: null }
@@ -89,6 +89,38 @@ describe("countsAsCash / expectedCashCents", () => {
     ])
     // 100 + 250.5 + 60 - 30 - 20 - 15 = 345.5
     expect(expected).toBe(34550)
+  })
+})
+
+describe("registerPaymentWhere", () => {
+  it("prioriza cashMovement.register.branchId y exige cashMovementId: null al filtrar por documento", () => {
+    const openedAt = new Date("2025-06-10T14:00:00Z")
+    const closedAt = new Date("2025-06-10T22:00:00Z")
+    expect(registerPaymentWhere(BIZ, { branchId: "branch-1", openedAt, closedAt })).toEqual({
+      businessId: BIZ,
+      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
+      createdAt: { gte: openedAt, lte: closedAt },
+      OR: [
+        { cashMovement: { register: { branchId: "branch-1" } } },
+        {
+          cashMovementId: null,
+          OR: [
+            { sale: { branchId: "branch-1" } },
+            { repairOrder: { currentBranchId: "branch-1" } },
+            { encargo: { branchId: "branch-1" } },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("omite OR de sucursal y lte cuando la caja es histórica sin branchId y sigue abierta", () => {
+    const openedAt = new Date("2025-06-10T14:00:00Z")
+    expect(registerPaymentWhere(BIZ, { branchId: null, openedAt, closedAt: null })).toEqual({
+      businessId: BIZ,
+      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
+      createdAt: { gte: openedAt },
+    })
   })
 })
 

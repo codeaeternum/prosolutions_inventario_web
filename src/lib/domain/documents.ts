@@ -3,6 +3,7 @@ import { z } from "zod"
 import { actor, amount, BusinessError, cents, itemsSchema, mergeItems, operation, operationKeySchema, releaseStock, resolveBranch, takeStock } from "./operations"
 import { channelOfPaymentMethod, checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
 import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
+import { nextSaleNumber } from "./tenant-sequence"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Documentos vivos del mostrador sobre el mismo modelo Sale:
@@ -145,8 +146,9 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
     const anticipoCents = settled.reduce((sum, p) => sum + p.cents, 0)
     if (anticipoCents >= totalCents) throw new BusinessError("Un apartado debe quedar con saldo; si lo liquida completo cobra como venta.", 409)
 
+    const number = await nextSaleNumber(tx, businessId)
     const sale = await tx.sale.create({ data: {
-      businessId, total, kind: input.kind, branchId: branch.id, sellerId: actorId,
+      businessId, number, total, kind: input.kind, branchId: branch.id, sellerId: actorId,
       customerId: customer?.id ?? null, expiresAt, note: input.note ?? null,
       status: input.kind === "LAYAWAY" ? "OPEN" : "DRAFT",
     } })

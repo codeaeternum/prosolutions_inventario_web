@@ -1,4 +1,4 @@
-import { changeCash, expectedCashCents, type CashMovementLike } from "@/lib/domain/cash"
+import { changeCash, expectedCashCents, registerPaymentWhere, type CashMovementLike } from "@/lib/domain/cash"
 import { businessFailure } from "@/lib/domain/http"
 import { NextResponse } from "next/server"
 import { assertBranchAllowed, assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
@@ -13,25 +13,16 @@ const NO_STORE = { "Cache-Control": "private, no-store" } as const
 
 /** Totales cobrados por método durante el turno (neto: cobros − reembolsos). */
 async function methodTotals(businessId: string, register: { branchId: string | null; openedAt: Date; closedAt: Date | null }) {
-  // Los pagos no llevan registerId: se acotan a la ventana apertura→cierre y a
-  // la sucursal de la caja vía su venta, orden de taller o encargo (mismo
-  // alcance que el feed unificado de /api/caja/movements — un anticipo de
-  // encargo cobrado en mostrador sí forma parte del turno de esa sucursal).
-  // Un pago de tarjeta o transferencia no genera CashMovement, así que este
-  // total no sale de los movimientos sino directo de Payment.
-  // VOIDED entra en la suma: al anular una venta del mismo turno el cobro
-  // positivo queda VOIDED y su reembolso REFUNDED (−X) — contar solo el
-  // negativo inflaba "Cobrado por método" en rojo; juntos cancelan a 0.
+  // Los pagos con asiento de caja (efectivo) se atribuyen a la sucursal del
+  // cajón donde se cobraron (cashMovement.register.branchId); los que no tocan
+  // cajón (cashMovementId: null — tarjeta, transferencia, crédito) se acotan a
+  // la sucursal del documento (venta, orden de taller o encargo), igual que en
+  // /api/caja/movements. VOIDED entra en la suma: al anular una venta del mismo
+  // turno el cobro positivo queda VOIDED y su reembolso REFUNDED (−X) — juntos
+  // cancelan a 0.
   const rows = await prisma.payment.groupBy({
     by: ["method"],
-    where: {
-      businessId,
-      status: { in: ["CONFIRMED", "REFUNDED", "VOIDED"] },
-      createdAt: { gte: register.openedAt, ...(register.closedAt ? { lte: register.closedAt } : {}) },
-      ...(register.branchId
-        ? { OR: [{ sale: { branchId: register.branchId } }, { repairOrder: { currentBranchId: register.branchId } }, { encargo: { branchId: register.branchId } }] }
-        : {}),
-    },
+    where: registerPaymentWhere(businessId, register),
     _sum: { amount: true },
   })
   const totals = Object.fromEntries(METHODS.map(m => [m, 0])) as Record<(typeof METHODS)[number], number>

@@ -150,9 +150,16 @@ try {
         Write-Log "pg_dump -Fc $DbName -> $dbFile"
         Invoke-DockerStdoutToFile -DockerArgs $dumpArgs -OutFile $dbFile
         $bytes = (Get-Item -LiteralPath $dbFile).Length
-        if ($bytes -lt 100) { throw "dump sospechosamente pequeño ($bytes bytes); se descarta" }
-        $status.db = @{ file = $dbFile; bytes = $bytes; ok = $true; error = $null }
-        Write-Log ("DB OK ({0:N1} MB)" -f ($bytes / 1MB))
+        if ($bytes -lt 100) { throw "dump sospechosamente pequeno ($bytes bytes); se descarta" }
+        # Verificar cabecera y TOC del archivo custom-format con pg_restore --list
+        $dbDirDocker = ((Join-Path $BackupRoot "db") -replace "\\", "/")
+        $dbLeaf = Split-Path -Leaf $dbFile
+        $tocLines = & docker run --rm -v "${dbDirDocker}:/backup:ro" postgres:16-alpine pg_restore --list "/backup/$dbLeaf" 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "pg_restore --list fallo (exit $LASTEXITCODE): $tocLines" }
+        $tocCount = ($tocLines | Where-Object { $_ -and -not $_.StartsWith(";") }).Count
+        if ($tocCount -lt 10) { throw "TOC del dump incompleto ($tocCount entradas)" }
+        $status.db = @{ file = $dbFile; bytes = $bytes; tocEntries = $tocCount; ok = $true; error = $null }
+        Write-Log ("DB OK ({0:N1} MB, {1} entradas TOC verificadas)" -f ($bytes / 1MB), $tocCount)
     } catch {
         $script:hadFailure = $true
         $status.db.error = "$_"

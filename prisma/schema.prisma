@@ -803,7 +803,10 @@ model Sale {
   id                 String              @id @default(cuid())
   businessId         String
   business           Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  number             Int                 @unique @default(autoincrement())
+  // Folio visible V-1, por negocio: nextSaleNumber() lo reserva desde
+  // BusinessCounter dentro de la tx serializable; @@unique([businessId, number])
+  // es la red de seguridad.
+  number             Int
   version            Int                 @default(1)
   status             SaleStatus          @default(COMPLETED)
   kind               SaleKind            @default(RETAIL)
@@ -830,6 +833,7 @@ model Sale {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
+  @@unique([businessId, number])
   @@index([branchId, createdAt])
   @@index([customerId, createdAt])
   @@index([status, createdAt])
@@ -1052,6 +1056,8 @@ model BusinessCounter {
   business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Próximo folio disponible para RepairOrder.number de este negocio.
   nextOrderNumber Int      @default(1)
+  // Próximo folio disponible para Sale.number de este negocio.
+  nextSaleNumber  Int      @default(1)
 }
 
 // Refacción o insumo registrado contra una orden de reparación.
