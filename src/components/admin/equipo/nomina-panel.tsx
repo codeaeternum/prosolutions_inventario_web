@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { csvCell } from "@/lib/csv"
 import { formatPrice } from "@/lib/utils"
+import { businessDayKey } from "@/lib/business-time"
 
 interface NominaEmployee {
   userId: string
@@ -43,7 +44,7 @@ const PAY_TYPE_LABELS: Record<string, string> = {
 
 // Las llaves de día "YYYY-MM-DD" se calculan en la zona del negocio para que
 // "quincena actual" o "mes actual" coincidan con el reporte del servidor.
-const mxDayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" })
+const mxDayKey = (d: Date) => businessDayKey(d)
 
 const shiftDayKey = (key: string, days: number) => {
   const [y, m, d] = key.split("-").map(Number)

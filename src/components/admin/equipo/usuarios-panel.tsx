@@ -45,7 +45,7 @@ import {
   Wallet,
 } from "lucide-react"
 import { toast } from "sonner"
-import { formatDate } from "@/lib/utils"
+import { formatDate, formatPrice } from "@/lib/utils"
 import { csvCell } from "@/lib/csv"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -614,7 +614,7 @@ export function UsuariosPanel() {
         body: JSON.stringify({ creditLimit: limit }),
       })
       if (res.ok) {
-        toast.success(limit === null ? "Línea de crédito removida" : `Límite actualizado a $${limit.toLocaleString()}`)
+        toast.success(limit === null ? "Línea de crédito removida" : `Límite actualizado a ${formatPrice(limit)}`)
         fetchUsers()
       } else {
         const data = await res.json()
@@ -653,7 +653,7 @@ export function UsuariosPanel() {
       const data = await res.json()
       if (res.ok) {
         abonoOperation.current = null
-        toast.success(`Abono de $${amount.toLocaleString()} registrado`)
+        toast.success(`Abono de ${formatPrice(amount)} registrado`)
         setAbonoAmount("")
         setAbonoNotes("")
         setAbonoReference("")
@@ -1234,8 +1234,8 @@ export function UsuariosPanel() {
                       {(user.creditLimit != null || (user.creditBalance ?? 0) > 0) && (
                         <p className="flex items-center gap-1 mt-1">
                           <CreditCard className="h-3.5 w-3.5" />
-                          Crédito: ${(user.creditBalance ?? 0).toLocaleString()} deuda
-                          {user.creditLimit != null && ` / $${user.creditLimit.toLocaleString()} límite`}
+                          Crédito: {formatPrice(user.creditBalance ?? 0)} deuda
+                          {user.creditLimit != null && ` / ${formatPrice(user.creditLimit)} límite`}
                         </p>
                       )}
                       {(user.allowedModules?.length ?? 0) > 0 && (
@@ -1626,7 +1626,7 @@ export function UsuariosPanel() {
                 )}
                 {(creditUser.creditBalance ?? 0) > 0 && (
                   <p className="text-sm font-medium text-destructive mt-1">
-                    Deuda actual: ${(creditUser.creditBalance ?? 0).toLocaleString()}
+                    Deuda actual: {formatPrice(creditUser.creditBalance ?? 0)}
                   </p>
                 )}
               </div>
@@ -1651,7 +1651,7 @@ export function UsuariosPanel() {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Actual: {creditUser.creditLimit != null ? `$${creditUser.creditLimit.toLocaleString()}` : "Sin crédito"}
+                  Actual: {creditUser.creditLimit != null ? formatPrice(creditUser.creditLimit) : "Sin crédito"}
                 </p>
               </div>
 

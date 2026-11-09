@@ -2,6 +2,7 @@ import { expireReservations } from "../lib/domain/reservations"
 import { purgePendingSignups } from "../lib/pending-signup-purge"
 import { purgeOldEvents } from "../lib/event-retention"
 import { reconcileDelegations } from "../lib/domain/delegation-reconcile"
+import { BUSINESS_TIME_ZONE } from "../lib/business-time"
 import 'dotenv/config'
 import * as fs from 'node:fs'
 import { Telegraf } from 'telegraf'
@@ -33,6 +34,19 @@ if (!BOT_TOKEN) {
     console.error('❌ TELEGRAM_BOT_TOKEN required')
     process.exit(1)
 }
+
+// Diagnóstico de fallos no atrapados: sin handler, Node ≥22 aborta el
+// proceso con un dump mínimo. Registrarlos aquí deja la traza en los logs
+// de Docker y conserva el comportamiento actual (exit 1 → el contenedor
+// reinicia por `restart: unless-stopped`); NO se traga el error.
+process.on('unhandledRejection', reason => {
+    console.error('Unhandled rejection:', reason)
+    process.exit(1)
+})
+process.on('uncaughtException', error => {
+    console.error('Uncaught exception:', error)
+    process.exit(1)
+})
 
 const bot = new Telegraf(BOT_TOKEN)
 const _prisma = getPrisma()
@@ -253,9 +267,10 @@ scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {
     }
 }))
 
-// Purga diaria (04:17) de altas de negocio cuyo owner sigue PENDING — nunca
-// verificaron su contacto. El endpoint /api/cron/purge-pending-signups usa
-// la misma lógica para forzarla a mano o desde schedulers externos.
+// Purga diaria (04:17 hora del negocio) de altas de negocio cuyo owner sigue
+// PENDING — nunca verificaron su contacto. El endpoint
+// /api/cron/purge-pending-signups usa la misma lógica para forzarla a mano o
+// desde schedulers externos.
 scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
     if (!_prisma) return
     try {
@@ -266,10 +281,14 @@ scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
     } catch (e) {
         console.error('Error in pending signup purge job:', e)
     }
-}))
+    // Los jobs a hora fija corren en la zona del negocio (no en UTC del
+    // contenedor): 04:17 es de madrugada local, igual que el resumen de las
+    // 20:00. Las tareas por intervalo (*/30, heartbeat) no necesitan zona.
+}, { timezone: BUSINESS_TIME_ZONE }))
 
-// Retención diaria (04:25) de bitácoras: AuditEvent >AUDIT_RETENTION_DAYS
-// (default 90d) y PlatformEvent >PLATFORM_RETENTION_DAYS (default 365d).
+// Retención diaria (04:25 hora del negocio) de bitácoras: AuditEvent
+// >AUDIT_RETENTION_DAYS (default 90d) y PlatformEvent
+// >PLATFORM_RETENTION_DAYS (default 365d).
 // El endpoint /api/cron/purge-events usa la misma lógica para disparo manual.
 scheduledTasks.push(cron.schedule('25 4 * * *', async () => {
     if (!_prisma) return
@@ -281,9 +300,9 @@ scheduledTasks.push(cron.schedule('25 4 * * *', async () => {
     } catch (e) {
         console.error('Error in event retention job:', e)
     }
-}))
+}, { timezone: BUSINESS_TIME_ZONE }))
 
-// Reconciliación diaria (04:35) de delegaciones cross-tenant: la espejo en el
+// Reconciliación diaria (04:35 hora del negocio) de delegaciones cross-tenant: la espejo en el
 // tenant reparador y la marca local son commits separados — un fallo a media
 // operación deja vínculos divergentes. El barrido solo DETECTA (issue en la
 // respuesta + RepairEvent privado de alerta en la orden); la corrección es
@@ -300,14 +319,30 @@ scheduledTasks.push(cron.schedule('35 4 * * *', async () => {
     } catch (e) {
         console.error('Error in delegation reconcile job:', e)
     }
-}))
+}, { timezone: BUSINESS_TIME_ZONE }))
 
 // ======= LAUNCH =======
 
 // Node ≥22 aborta ante unhandled rejection: todo error que escape de un
 // middleware/handler pasa por aquí en vez de tumbar el proceso.
-bot.catch(err => {
-    console.error('Bot error', err)
+//
+// PII: el TelegrafError trae `on` con el payload de la request que falló
+// (el texto del mensaje del cliente) — se registra solo el diagnóstico:
+// tipo de update, código Telegram y descripción truncada, nunca el cuerpo.
+bot.catch((err, errorCtx) => {
+    const e = err as {
+        message?: unknown
+        code?: unknown
+        description?: unknown
+        response?: { description?: unknown; error_code?: unknown }
+    }
+    const description = e.response?.description ?? e.description
+    console.error('Bot error:', {
+        updateType: errorCtx?.updateType,
+        code: e.response?.error_code ?? e.code,
+        description: typeof description === 'string' ? description.slice(0, 300) : undefined,
+        message: typeof e.message === 'string' ? e.message.slice(0, 300) : String(err).slice(0, 300),
+    })
 })
 
 bot.launch(async () => {

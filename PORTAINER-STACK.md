@@ -12,9 +12,9 @@
 .\deploy.ps1
 ```
 
-o bien `.\deploy-n5.ps1`. Eso hace en esta máquina: **build** de las imágenes (incluida `prosolutions-migrate`) → **db** → **`prisma migrate deploy`** → **up** de `app`/`bot` con `docker-compose.portainer.yml` y tu `.env` → **espera a que `/api/health` reporte healthy**. Si la migración falla, el script se detiene y la app nueva no se promueve. No hace falta abrir Portainer ni SSH.
+o bien `.\deploy-n5.ps1`. Eso hace en esta máquina: **build** de las imágenes (incluida `prosolutions-migrate`) → **db** → **`prisma migrate deploy`** → **up** de `app`/`bot` con `docker-compose.portainer.yml` y tu `.env.docker` → **espera a que `/api/health` reporte healthy**. Si la migración falla, el script se detiene y la app nueva no se promueve. No hace falta abrir Portainer ni SSH.
 
-**Requisitos en el N5:** Tener el repo (clonado o esta carpeta) y un `.env` en la misma carpeta con `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD` y `CRON_SECRET` (todas obligatorias en el compose actual).
+**Requisitos en el N5:** Tener el repo (clonado o esta carpeta) y un `.env.docker` en la misma carpeta — se genera copiando **`.env.docker.example`** y rellenando los valores (la plantilla lista todo lo usado con comentarios). Obligatorias en el compose actual: `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD` y `CRON_SECRET`.
 
 *(Si algún día trabajas desde otro PC y quieres desplegar en el N5 por SSH: `.\deploy.ps1 -Remote`.)*
 

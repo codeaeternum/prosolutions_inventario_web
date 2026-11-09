@@ -1,4 +1,5 @@
 import { Context, type MiddlewareFn } from "telegraf"
+import { errorText } from "../lib/format"
 
 const isDev = process.env.NODE_ENV !== "production"
 
@@ -14,6 +15,8 @@ export const loggerMiddleware: MiddlewareFn<Context> = async (ctx, next) => {
     }
     await next()
   } catch (e) {
-    console.error("Bot Error:", e)
+    // Solo el mensaje: el error crudo (TelegrafError.on) lleva el payload de
+    // la request, incluido el texto que mandó el cliente — PII en logs.
+    console.error("Bot Error:", errorText(e))
   }
 }

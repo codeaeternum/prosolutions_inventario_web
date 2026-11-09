@@ -1,5 +1,6 @@
 import type { Telegraf, Types } from "telegraf"
 import { getPrisma } from "./prisma"
+import { errorText } from "./format"
 
 /**
  * Indica si el usuario con el telegramId dado es ADMIN en la base de datos.
@@ -37,7 +38,9 @@ export async function notifyAdmins(bot: Telegraf, businessId: string, message: s
           if (isDev) console.log(`[Notify] Message sent to admin ${admin.name}`)
         }
       } catch (e: unknown) {
-        console.error(`[Notify] Failed to send to admin ${admin.name} (${admin.telegramId}):`, e)
+        // Sin nombre/telegramId ni el TelegrafError crudo (su `on` lleva el
+        // payload con el texto enviado): el userId identifica al admin.
+        console.error(`[Notify] Failed to send to admin ${admin.id}:`, errorText(e))
       }
     }
   } catch (e) {

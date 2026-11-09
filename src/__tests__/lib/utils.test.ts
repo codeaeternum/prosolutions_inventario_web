@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { formatDate, formatPrice, generateSlug, normalizePhone, normalizeProductName, titleCaseName } from "@/lib/utils"
+import { formatCents, formatDate, formatDayMonth, formatInt, formatMonthYear, formatPrice, generateSlug, normalizePhone, normalizeProductName, titleCaseName } from "@/lib/utils"
 
 describe("formatDate", () => {
   it("formats a date string in es-MX locale", () => {
@@ -130,5 +130,30 @@ describe("normalizeProductName", () => {
     expect(normalizeProductName("")).toBe("")
     expect(normalizeProductName("   ")).toBe("")
     expect(normalizeProductName("12345")).toBe("12345")
+  })
+})
+
+describe("formatCents", () => {
+  it("convierte centavos a moneda MXN", () => {
+    expect(formatCents(12345)).toBe(formatPrice(123.45))
+    expect(formatCents(0)).toBe(formatPrice(0))
+  })
+})
+
+describe("formatDayMonth / formatMonthYear / formatInt", () => {
+  it("día y mes corto sin año", () => {
+    const result = formatDayMonth("2025-11-05T12:00:00")
+    expect(result).toMatch(/05/)
+    expect(result).toMatch(/nov/)
+    expect(result).not.toMatch(/2025/)
+  })
+
+  it("mes corto y año de dos dígitos", () => {
+    expect(formatMonthYear("2025-11-15T12:00:00")).toMatch(/nov/)
+    expect(formatMonthYear("2025-11-15T12:00:00")).toMatch(/25/)
+  })
+
+  it("enteros con separador de miles es-MX", () => {
+    expect(formatInt(12345)).toBe((12345).toLocaleString("es-MX"))
   })
 })

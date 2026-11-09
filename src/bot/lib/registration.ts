@@ -4,6 +4,7 @@ import { customerTypeLabels } from "./types"
 import { generateQRCode } from "./utils"
 import { notifyAdmins } from "./notify"
 import { getDefaultBusinessId } from "../../lib/settings"
+import { normalizePhone as normalizePhoneWeb } from "../../lib/utils"
 
 // La implementación vive en lib/format (fuente única de escapes del bot);
 // se re-exporta aquí para no romper importadores existentes.
@@ -33,6 +34,10 @@ export async function submitRegistration({ prisma, bot, sessions }: Pick<BotCont
   const user = await prisma.user.create({ data: {
     businessId: await getDefaultBusinessId(),
     name: session.data.name!.slice(0, 200), phone: session.data.phone!.slice(0, 50),
+    // Espejo indexado con la normalización WEB (últimos 10 dígitos): el bot
+    // guarda phone en formato internacional ("52…"/"+52…"), phoneNormalized
+    // es el campo comparable que usa linkCustomerByPhone.
+    phoneNormalized: normalizePhoneWeb(session.data.phone) || null,
     businessName: session.data.businessName?.slice(0, 200), telegramId, qrCode: generateQRCode(),
     role: "CUSTOMER", status: "PENDING", customerType: "NORMAL", requestedCustomerType,
     monthlyPurchaseGoal: Number.isFinite(goal) && goal > 0 ? Math.min(goal, 100000000) : null,

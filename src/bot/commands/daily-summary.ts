@@ -2,7 +2,7 @@ import * as cron from 'node-cron'
 import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
-import { clipMessage, escapeHtml } from '../lib/format'
+import { clipMessage, errorText, escapeHtml } from '../lib/format'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey, parseBusinessDateParam } from '../../lib/business-time'
 
@@ -158,7 +158,8 @@ export function formatDailySummaryMessage(businessName: string, summary: DailySu
 export function dailySummaryRecipients(db: Pick<DailySummaryDb, 'user'>, businessId: string) {
     return db.user.findMany({
         where: { businessId, role: 'ADMIN', status: 'APPROVED', telegramId: { not: null } },
-        select: { name: true, telegramId: true },
+        // id para los logs de envío fallido (el nombre/telegramId son PII).
+        select: { id: true, name: true, telegramId: true },
     })
 }
 
@@ -181,7 +182,9 @@ export async function sendDailySummaryToAdmins(
             await bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: 'HTML' })
             sent++
         } catch (e) {
-            console.warn(`[DailySummary] No se pudo enviar a ${admin.name} (${admin.telegramId}):`, e)
+            // Sin nombre/telegramId ni el error crudo de Telegraf: el id del
+            // usuario basta para encontrar al admin afectado en la BD.
+            console.warn(`[DailySummary] No se pudo enviar al admin ${admin.id}:`, errorText(e))
         }
     }
     return sent
@@ -200,7 +203,7 @@ export async function runDailySummary(bot: Pick<Telegraf, 'telegram'>, db: Prism
             const sent = await sendDailySummaryToAdmins(bot, db, business.id, message)
             if (isDev) console.log(`📊 [DailySummary] ${business.name}: ${sent} admin(s) notificados`)
         } catch (e) {
-            console.error(`[DailySummary] Error con el negocio ${business.id} (${business.name}):`, e)
+            console.error(`[DailySummary] Error con el negocio ${business.id}:`, errorText(e))
         }
     }
 }

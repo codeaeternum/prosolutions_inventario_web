@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Bell, Check, CheckCheck, Package, PackageCheck, ShoppingCart, User, AlertTriangle, X, Wrench, Store, Clock, ShieldAlert } from "lucide-react"
 import { useNotifications, notificationHref, Notification, NotificationType } from "@/hooks/use-notifications"
@@ -59,10 +59,16 @@ function NotificationItem({
   notification: Notification
   onOpen: (notification: Notification) => void
 }) {
+  // Sin destino el clic solo marca leída (acción real pero sutil): el cursor
+  // de "enlace" prometería navegación que no existe.
+  const navigable = notificationHref(notification) !== null
   return (
-    <div
+    <button
+      type="button"
       className={cn(
-        "flex items-start gap-3 p-3 border-b last:border-0 hover:bg-muted/50 transition-colors cursor-pointer",
+        "flex w-full items-start gap-3 p-3 border-b last:border-0 text-left hover:bg-muted/50 transition-colors",
+        "focus-visible:outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        navigable ? "cursor-pointer" : "cursor-default",
         !notification.read && "bg-blue-50 dark:bg-blue-950/20"
       )}
       onClick={() => onOpen(notification)}
@@ -71,20 +77,21 @@ function NotificationItem({
         {getNotificationIcon(notification.type)}
       </div>
       <div className="flex-1 min-w-0">
-        <p className={cn("text-sm font-medium", !notification.read && "font-semibold")}>
+        <span className={cn("block text-sm font-medium", !notification.read && "font-semibold")}>
+          {!notification.read && <span className="sr-only">Sin leer: </span>}
           {notification.title}
-        </p>
-        <p className="text-xs text-muted-foreground line-clamp-2">
+        </span>
+        <span className="block text-xs text-muted-foreground line-clamp-2">
           {notification.message}
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
+        </span>
+        <span className="block text-xs text-muted-foreground mt-1">
           {formatTime(notification.timestamp)}
-        </p>
+        </span>
       </div>
       {!notification.read && (
-        <div className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0 mt-1.5" />
+        <div className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0 mt-1.5" aria-hidden="true" />
       )}
-    </div>
+    </button>
   )
 }
 
@@ -110,6 +117,16 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
     }
   }
 
+  // Escape cierra el dropdown (además del backdrop clickable).
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsOpen(false)
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [isOpen])
+
   return (
     <div className="relative">
       <Button
@@ -117,10 +134,13 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
         size="icon"
         className="relative"
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={`Notificaciones${unreadCount > 0 ? ` (${unreadCount} sin leer)` : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
       >
-        <Bell className="h-5 w-5" />
+        <Bell className="h-5 w-5" aria-hidden="true" />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-medium">
+          <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-medium" aria-hidden="true">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
@@ -130,7 +150,9 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
             "absolute bottom-0 right-0 h-2 w-2 rounded-full border border-background",
             isConnected ? "bg-green-500" : "bg-red-500"
           )}
+          aria-hidden="true"
         />
+        <span className="sr-only">{isConnected ? "Conectado" : "Desconectado"}</span>
       </Button>
 
       {isOpen && (
@@ -155,8 +177,9 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
                       className="h-7 text-xs"
                       onClick={markAllAsRead}
                       title="Marcar todas como leídas"
+                      aria-label="Marcar todas las notificaciones como leídas"
                     >
-                      <CheckCheck className="h-3.5 w-3.5" />
+                      <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -164,8 +187,9 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
                       className="h-7 text-xs"
                       onClick={clearNotifications}
                       title="Limpiar todas"
+                      aria-label="Limpiar todas las notificaciones"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   </>
                 )}

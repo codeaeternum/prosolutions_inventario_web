@@ -13,42 +13,26 @@ export interface StockDriftRow {
 }
 
 async function computeStockDrift(businessId: string): Promise<{ totalChecked: number; drifted: StockDriftRow[] }> {
-  const [products, branchSums] = await Promise.all([
-    prisma.product.findMany({
-      where: { businessId, isActive: true },
-      select: { id: true, name: true, stock: true },
-    }),
-    prisma.branchStock.groupBy({
-      by: ["productId"],
-      where: { businessId },
-      _sum: { quantity: true },
-    }),
+  // El desfase se compara en BD (stock vs Σ BranchStock): el INNER JOIN
+  // replica la regla "solo productos con al menos una fila en BranchStock"
+  // —los legacy sin fila no se marcan— y el HAVING deja solo los que
+  // difieren, en vez de materializar el catálogo activo completo.
+  const [driftRows, totalChecked] = await Promise.all([
+    prisma.$queryRaw<Omit<StockDriftRow, "diff">[]>`
+      SELECT p."id" AS "productId", p."name" AS "name", p."stock" AS "cachedStock",
+             COALESCE(SUM(bs."quantity"), 0)::int AS "branchesStock"
+      FROM "Product" p
+      JOIN "BranchStock" bs ON bs."productId" = p."id" AND bs."businessId" = p."businessId"
+      WHERE p."businessId" = ${businessId} AND p."isActive" = true
+      GROUP BY p."id", p."name", p."stock"
+      HAVING COALESCE(SUM(bs."quantity"), 0) <> p."stock"
+      ORDER BY p."name" ASC
+    `,
+    prisma.product.count({ where: { businessId, isActive: true } }),
   ])
 
-  const sumByProduct = new Map<string, number>()
-  for (const row of branchSums) {
-    sumByProduct.set(row.productId, row._sum.quantity ?? 0)
-  }
-
-  // Solo evaluamos productos que ya tienen al menos una fila en BranchStock,
-  // para no marcar como "desfase" productos legacy previos a multi-sucursal
-  // que nunca han tenido fila en BranchStock.
-  const drifted: StockDriftRow[] = []
-  for (const product of products) {
-    if (!sumByProduct.has(product.id)) continue
-    const branchesStock = sumByProduct.get(product.id) ?? 0
-    if (product.stock !== branchesStock) {
-      drifted.push({
-        productId: product.id,
-        name: product.name,
-        cachedStock: product.stock,
-        branchesStock,
-        diff: branchesStock - product.stock,
-      })
-    }
-  }
-
-  return { totalChecked: products.length, drifted }
+  const drifted = driftRows.map((r) => ({ ...r, diff: r.branchesStock - r.cachedStock }))
+  return { totalChecked, drifted }
 }
 
 /**

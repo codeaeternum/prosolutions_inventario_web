@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
-  productFindMany: vi.fn(),
+  queryRaw: vi.fn(),
+  productCount: vi.fn(),
   productUpdate: vi.fn(),
-  branchStockGroupBy: vi.fn(),
   auditCreate: vi.fn(),
   transaction: vi.fn(),
 }))
@@ -12,12 +12,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: mocks.queryRaw,
     product: {
-      findMany: mocks.productFindMany,
+      count: mocks.productCount,
       update: mocks.productUpdate,
-    },
-    branchStock: {
-      groupBy: mocks.branchStockGroupBy,
     },
     auditEvent: {
       create: mocks.auditCreate,
@@ -35,24 +33,25 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
       user: { id: "u-admin", role: "ADMIN", status: "APPROVED", businessId: "biz-1" },
     })
     mocks.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops))
+    mocks.queryRaw.mockResolvedValue([])
+    mocks.productCount.mockResolvedValue(0)
     mocks.productUpdate.mockResolvedValue({})
     mocks.auditCreate.mockResolvedValue({})
   })
 
   it("detecta productos cuyo Product.stock difiere de la suma de BranchStock", async () => {
-    mocks.productFindMany.mockResolvedValue([
-      { id: "p-ok", name: "Pantalla A54", stock: 10 },
-      { id: "p-drift", name: "Batería iPhone 13", stock: 4 },
+    // El drift se calcula en SQL (JOIN Product↔BranchStock + HAVING): la
+    // consulta solo devuelve los desfasados; el total sale del count.
+    mocks.queryRaw.mockResolvedValue([
+      { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },
     ])
-    mocks.branchStockGroupBy.mockResolvedValue([
-      { productId: "p-ok", _sum: { quantity: 10 } },
-      { productId: "p-drift", _sum: { quantity: 7 } },
-    ])
+    mocks.productCount.mockResolvedValue(2)
 
     const res = await GET()
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.ok).toBe(false)
+    expect(json.totalChecked).toBe(2)
     expect(json.driftedCount).toBe(1)
     expect(json.drifted).toEqual([
       {
@@ -63,14 +62,18 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
         diff: 3,
       },
     ])
+    // La comparación y el recorte van en la consulta parametrizada.
+    const [strings, businessId] = mocks.queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, string]
+    const sql = strings.join(" ")
+    expect(businessId).toBe("biz-1")
+    expect(sql).toContain('JOIN "BranchStock"')
+    expect(sql).toContain("HAVING")
+    expect(sql).toContain('"isActive" = true')
   })
 
   it("reconcilia el stock en POST y registra evento en la bitácora", async () => {
-    mocks.productFindMany.mockResolvedValue([
-      { id: "p-drift", name: "Batería iPhone 13", stock: 4 },
-    ])
-    mocks.branchStockGroupBy.mockResolvedValue([
-      { productId: "p-drift", _sum: { quantity: 7 } },
+    mocks.queryRaw.mockResolvedValue([
+      { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },
     ])
 
     const res = await POST()

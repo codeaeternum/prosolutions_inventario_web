@@ -212,6 +212,8 @@ model InventoryMovement {
   @@index([branchId, createdAt])
   @@index([saleId])
   @@index([businessId])
+  @@index([businessId, createdAt])
+  @@index([businessId, productId, createdAt])
 }
 
 model User {
@@ -225,6 +227,12 @@ model User {
   name                  String
   businessName          String? // Nombre del negocio (para STORE) o taller (para TECHNICIAN)
   phone                 String?      @unique // Único si se proporciona
+  // Espejo normalizado de `phone` (dígitos, últimos 10 — misma regla que
+  // normalizePhone en lib/utils): permite ligar cuentas por teléfono con
+  // índice en vez de barrer los clientes del tenant (linkCustomerByPhone).
+  // Lo escribe cada write-path de `phone` y lo pobló la migración
+  // perf_indexes_phone_normalized. NULL cuando phone es null o no tiene dígitos.
+  phoneNormalized       String?
   role                  UserRole     @default(CUSTOMER)
   isSuperAdmin          Boolean      @default(false)
   jobTitle              String? // Puesto visible del staff: "Técnico", "Recepción", "Dueño"…
@@ -311,6 +319,8 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([businessId])
+  @@index([businessId, role])
+  @@index([businessId, phoneNormalized])
 }
 
 model Brand {
@@ -540,6 +550,7 @@ model CreditMovement {
   @@index([createdAt])
   @@index([businessId])
   @@index([businessId, createdAt])
+  @@index([businessId, userId, createdAt])
 }
 
 model Settings {
@@ -642,6 +653,7 @@ model CashMovement {
 
   @@index([businessId])
   @@index([registerId])
+  @@index([businessId, createdAt])
 }
 
 // Configuraciones del Sistema (Dólar, Tiempos, Banco)
@@ -913,6 +925,13 @@ model RepairOrder {
   customerPhone        String
   // Segundo contacto opcional (familiar, trabajo, otro responsable).
   customerPhoneAlt     String?
+  // Espejos normalizados de los teléfonos de contacto (dígitos, últimos 10 —
+  // misma regla que normalizePhone en lib/utils): la ficha 360 del cliente
+  // empata por estos campos indexados en vez de regexp_replace por fila.
+  // Se escriben en recepción (createRepair) y los pobló la migración
+  // perf_indexes_phone_normalized.
+  customerPhoneNormalized    String?
+  customerPhoneAltNormalized String?
   customerId           String?
   customer             User?          @relation("RepairCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   equipmentType        String
@@ -1038,6 +1057,8 @@ model RepairOrder {
   @@index([customerPhone])
   @@index([customerId])
   @@index([businessId])
+  @@index([businessId, customerPhoneNormalized])
+  @@index([businessId, customerPhoneAltNormalized])
   @@index([intakeBranchId])
   @@index([originBusinessId])
   @@index([delegatedToBusinessId])
@@ -1091,6 +1112,7 @@ model RepairPart {
   @@index([orderId])
   @@index([status])
   @@index([businessId])
+  @@index([businessId, status])
 }
 
 model RepairEvent {
@@ -1109,6 +1131,7 @@ model RepairEvent {
 
   @@index([orderId, createdAt])
   @@index([businessId])
+  @@index([businessId, createdAt])
 }
 
 enum PartStatus {
@@ -1368,6 +1391,7 @@ model SupplierPayment {
   @@index([supplierId])
   @@index([purchaseId])
   @@index([encargoId])
+  @@index([businessId, supplierId])
 }
 
 // ==================== CONTEO FÍSICO ====================

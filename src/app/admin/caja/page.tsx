@@ -29,7 +29,9 @@ import {
     CalendarDays,
     Truck,
     ArrowLeftRight,
-    Loader2
+    Loader2,
+    AlertTriangle,
+    RefreshCw
 } from "lucide-react"
 
 const CashRequestsPanel = dynamic(
@@ -114,6 +116,17 @@ interface ClosureResult {
     difference: number
 }
 
+/** Qué pinta el tab «Turno actual». Helper puro exportado para pruebas:
+ *  un fallo de la carga INICIAL (sin datos previos) muestra tarjeta de
+ *  error con reintento en lugar de "Abrir caja" — sin esto el empleado
+ *  podría intentar abrir un turno que ya existe en otra terminal. */
+export type CajaTurnoView = "loading" | "error" | "closed" | "open"
+export function cajaTurnoView(state: { loading: boolean; loadError: boolean; hasRegister: boolean }): CajaTurnoView {
+    if (state.loading) return "loading"
+    if (state.loadError) return "error"
+    return state.hasRegister ? "open" : "closed"
+}
+
 /** Importe capturado en pesos → centavos; null cuando no es un monto válido (≥0, ≤2 decimales). */
 function parseMoneyCents(value: string): number | null {
     if (value.trim() === "") return null
@@ -139,6 +152,8 @@ function CajaPanel() {
     const userId = session?.user?.id ?? ""
     const [register, setRegister] = useState<Register | null>(null)
     const [loading, setLoading] = useState(true)
+    // Fallo sin datos previos: la vista de error sustituye a "Abrir caja".
+    const [loadError, setLoadError] = useState(false)
     const [submitting, setSubmitting] = useState(false)
     const inFlight = useRef(false)
     const operationKeys = useRef<Record<string, ClientOperationKey | null>>({})
@@ -198,11 +213,15 @@ function CajaPanel() {
             if (version !== requestVersion.current) return
             if (!res.ok) {
                 // Un fallo transitorio no debe voltear la UI a "Caja Cerrada":
-                // se conserva el estado actual y solo se avisa.
-                toast.error("No se pudo actualizar la caja")
+                // se conserva el estado actual y solo se avisa. Solo cuando
+                // NUNCA hubo un fetch exitoso (carga inicial) se muestra la
+                // tarjeta de error con reintento.
+                if (lastFetchOkAt.current === 0) setLoadError(true)
+                else toast.error("No se pudo actualizar la caja")
                 return
             }
             lastFetchOkAt.current = Date.now()
+            setLoadError(false)
             if (data.active) {
                 setRegister(data.register)
             } else {
@@ -213,7 +232,8 @@ function CajaPanel() {
             setLastClosure(data.lastClosure ?? null)
         } catch {
             if (version !== requestVersion.current) return
-            toast.error("Error al cargar la caja")
+            if (lastFetchOkAt.current === 0) setLoadError(true)
+            else toast.error("Error al cargar la caja")
         } finally {
             if (version === requestVersion.current) setLoading(false)
         }
@@ -233,9 +253,13 @@ function CajaPanel() {
                 // Al cambiar de sucursal la vista anterior pertenece a OTRA
                 // caja: se limpia (incluido el último corte) para no mostrar
                 // el efectivo esperado ni el cuadre de una sucursal ajena.
+                // lastFetchOkAt vuelve a cero: un fallo al cargar LA NUEVA
+                // sucursal también cuenta como carga inicial sin datos.
                 setLoading(true)
+                setLoadError(false)
                 setRegister(null)
                 setLastClosure(null)
+                lastFetchOkAt.current = 0
                 void fetchRegister()
             }
         }, 0)
@@ -406,6 +430,35 @@ function CajaPanel() {
             setReprinting(false)
         }
     }
+
+    // Reintento de la carga inicial: vuelve al spinner; si vuelve a fallar,
+    // fetchRegister reactiva loadError (sigue sin datos previos).
+    const retryInitialLoad = () => {
+        setLoading(true)
+        setLoadError(false)
+        void fetchRegister()
+    }
+
+    const loadErrorCard = (
+        <div className="max-w-md mx-auto mt-6">
+            <Card role="alert">
+                <CardHeader className="text-center">
+                    <div className="mx-auto bg-destructive/10 p-3 rounded-full mb-2 w-fit">
+                        <AlertTriangle className="w-8 h-8 text-destructive" />
+                    </div>
+                    <CardTitle>No se pudo cargar la caja</CardTitle>
+                    <CardDescription>
+                        Revisa tu conexión y reintenta. Sin conocer el estado del turno no se puede abrir la caja.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <Button className="w-full" onClick={retryInitialLoad} disabled={submitting}>
+                        <RefreshCw className="w-4 h-4 mr-2" /> Reintentar
+                    </Button>
+                </CardContent>
+            </Card>
+        </div>
+    )
 
     const differenceBadge = (diffCents: number) => {
         if (diffCents === 0) return <Badge variant="success">Cuadrado</Badge>
@@ -717,11 +770,16 @@ function CajaPanel() {
             </div>
 
             <TabsContent value="caja">
-                {loading ? (
-                    <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
-                ) : (
-                    shiftView
-                )}
+                {(() => {
+                    switch (cajaTurnoView({ loading, loadError, hasRegister: register !== null })) {
+                        case "loading":
+                            return <div className="p-8 text-center text-muted-foreground">Cargando caja...</div>
+                        case "error":
+                            return loadErrorCard
+                        default:
+                            return shiftView
+                    }
+                })()}
             </TabsContent>
 
             <TabsContent value="semana">

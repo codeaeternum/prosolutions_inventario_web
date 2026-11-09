@@ -210,6 +210,7 @@ export async function POST(req: Request) {
             name: adminName,
             email: emailNorm,
             phone: phoneOrNull,
+            phoneNormalized: phoneOrNull,
             password: hashedPassword,
             role: "ADMIN",
             status: canVerify ? "PENDING" : "APPROVED",

@@ -804,11 +804,13 @@ function CatalogoView() {
               >
                 {products.map((product) => (
                   <Card key={product.id} className="overflow-hidden group hover:shadow-md transition-shadow relative">
-                    {/* Card Content - Make clickable for details */}
+                    {/* Un solo tab-stop por tarjeta: imagen y datos abren el
+                        mismo detalle (antes eran dos role=button hermanos). */}
                     <div
                       className="cursor-pointer"
                       role="button"
                       tabIndex={0}
+                      aria-label={`Ver detalles de ${product.name}`}
                       onClick={() => {
                         setDetailsProduct(product)
                         setDetailsOpen(true)
@@ -853,37 +855,7 @@ function CatalogoView() {
                           </Badge>
                         )}
                       </div>
-                    </div>
-
-                    {/* Add button - Always visible and separated from click area */}
-                    {product.stock > 0 && (
-                      <div className="absolute bottom-3 right-3 z-20">
-                        <Button
-                          size="sm"
-                          className="h-9 px-3 rounded-full shadow-lg font-medium"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleAddToCartClick(product)
-                          }}
-                        >
-                          <ShoppingCart className="h-4 w-4 mr-2" />
-                          Agregar
-                        </Button>
-                      </div>
-                    )}
-                    <CardContent
-                      className="p-3 cursor-pointer"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => { setDetailsProduct(product); setDetailsOpen(true); }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          setDetailsProduct(product)
-                          setDetailsOpen(true)
-                        }
-                      }}
-                    >
+                    <CardContent className="p-3">
                       <div className="text-[10px] text-muted-foreground truncate mb-0.5">
                         {product.models[0]?.model?.brand?.name} {product.models[0]?.model?.name}
                       </div>
@@ -906,6 +878,24 @@ function CatalogoView() {
                         )}
                       </div>
                     </CardContent>
+                    </div>
+
+                    {/* Add button - Always visible and separated from click area */}
+                    {product.stock > 0 && (
+                      <div className="absolute bottom-3 right-3 z-20">
+                        <Button
+                          size="sm"
+                          className="h-9 px-3 rounded-full shadow-lg font-medium"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAddToCartClick(product)
+                          }}
+                        >
+                          <ShoppingCart className="h-4 w-4 mr-2" />
+                          Agregar
+                        </Button>
+                      </div>
+                    )}
                   </Card>
                 ))}
               </div>

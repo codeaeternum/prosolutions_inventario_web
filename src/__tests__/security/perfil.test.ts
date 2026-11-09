@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   userFindUnique: vi.fn(),
-  userFindMany: vi.fn(),
+  userFindFirst: vi.fn(),
   userUpdate: vi.fn(),
   codeUpdateMany: vi.fn(),
   codeCreate: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: mocks.userFindUnique,
-      findMany: mocks.userFindMany,
+      findFirst: mocks.userFindFirst,
       update: mocks.userUpdate,
     },
     verificationCode: {
@@ -79,7 +79,7 @@ const patchReq = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.userFindMany.mockResolvedValue([])
+  mocks.userFindFirst.mockResolvedValue(null)
   mocks.userUpdate.mockImplementation((args: { where: { id: string }; data: Record<string, unknown> }) =>
     Promise.resolve({ id: args.where.id, ...args.data })
   )
@@ -151,7 +151,7 @@ describe("PATCH /api/perfil", () => {
 
     expect(mocks.userUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { phone: "5599998888", phoneVerifiedAt: null },
+        data: { phone: "5599998888", phoneNormalized: "5599998888", phoneVerifiedAt: null },
       })
     )
     await vi.waitFor(() =>
@@ -187,9 +187,9 @@ describe("PATCH /api/perfil", () => {
   it("teléfono ya registrado en otra cuenta → 409 sin escribir", async () => {
     mocks.auth.mockResolvedValue(session("u-dupe2"))
     mocks.userFindUnique.mockResolvedValue(dbUser("u-dupe2"))
-    mocks.userFindMany.mockResolvedValue([
-      { id: "u-otro", phone: "+52 55 0000 1111" }, // legacy con formato crudo
-    ])
+    // El chequeo de duplicado resuelve por phoneNormalized: la fila legacy
+    // con formato crudo tiene el mismo espejo normalizado.
+    mocks.userFindFirst.mockResolvedValue({ id: "u-otro" })
 
     const res = await PATCH(patchReq({ phone: "55 0000 1111" }))
     expect(res.status).toBe(409)

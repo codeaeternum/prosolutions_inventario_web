@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   modelFindMany: vi.fn(),
   settingsFindFirst: vi.fn(),
   userFindUnique: vi.fn(),
-  userFindMany: vi.fn(),
+  userFindFirst: vi.fn(),
   userCreate: vi.fn(),
   queryRaw: vi.fn(),
 }))
@@ -50,7 +50,7 @@ vi.mock("@/lib/prisma", () => ({
     settings: { findFirst: mocks.settingsFindFirst },
     user: {
       findUnique: mocks.userFindUnique,
-      findMany: mocks.userFindMany,
+      findFirst: mocks.userFindFirst,
       create: mocks.userCreate,
     },
     $queryRaw: mocks.queryRaw,
@@ -109,7 +109,7 @@ beforeEach(() => {
   mocks.modelFindMany.mockResolvedValue([])
   mocks.settingsFindFirst.mockResolvedValue(null)
   mocks.userFindUnique.mockResolvedValue(null)
-  mocks.userFindMany.mockResolvedValue([])
+  mocks.userFindFirst.mockResolvedValue(null)
   mocks.userCreate.mockResolvedValue({ id: "u-new" })
   mocks.queryRaw.mockResolvedValue([])
 })

@@ -8,6 +8,15 @@ import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { normalizePhone } from "@/lib/utils"
 
+/**
+ * Anti-oráculo cross-tenant: el duplicado LOCAL (400 + "Este correo/teléfono
+ * ya está registrado") y el GLOBAL (P2002 → 409 con texto por campo) se
+ * respondían distinto, así que se podía averiguar si un correo/teléfono
+ * existía AQUÍ, en OTRO tenant o en ninguno. Todos los caminos de "ya
+ * existe" devuelven el mismo 409 con el mismo texto genérico.
+ */
+const DUPLICATE_REGISTRATION_ERROR = "No se pudo completar el registro con esos datos"
+
 /** Prisma P2002 (unique violado): email/phone ya existe en OTRO tenant. */
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -84,27 +93,21 @@ export async function POST(req: Request) {
         where: { email: emailOrNull, businessId },
       })
       if (existingByEmail) {
-        return NextResponse.json(
-          { error: "Este correo ya está registrado" },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: DUPLICATE_REGISTRATION_ERROR }, { status: 409 })
       }
     }
 
     if (phoneOrNull) {
       // User.phone es único en crudo: filas legacy guardadas como "+52 811…"
-      // no empatan con la búsqueda exacta. Se compara normalizado en memoria
-      // sobre los usuarios del tenant (volumen de piloto), igual que
+      // no empatan con la búsqueda exacta. Se compara sobre phoneNormalized
+      // (índice businessId+phoneNormalized) — mismo criterio que
       // linkCustomerByPhone en lib/domain/customers.
-      const candidates = await prisma.user.findMany({
-        where: { businessId, phone: { not: null } },
-        select: { id: true, phone: true },
+      const taken = await prisma.user.findFirst({
+        where: { businessId, phoneNormalized: phoneOrNull },
+        select: { id: true },
       })
-      if (candidates.some((u) => normalizePhone(u.phone) === phoneOrNull)) {
-        return NextResponse.json(
-          { error: "Este teléfono ya está registrado" },
-          { status: 400 }
-        )
+      if (taken) {
+        return NextResponse.json({ error: DUPLICATE_REGISTRATION_ERROR }, { status: 409 })
       }
     }
 
@@ -125,6 +128,8 @@ export async function POST(req: Request) {
           name,
           email: emailOrNull,
           phone: phoneOrNull,
+          // Espejo indexado (misma normalización que phoneOrNull).
+          phoneNormalized: phoneOrNull,
           password: hashedPassword,
           role: "CUSTOMER",
           customerType: "NORMAL",
@@ -134,12 +139,9 @@ export async function POST(req: Request) {
       })
     } catch (error) {
       if (isUniqueViolation(error)) {
-        const target = (error as { meta?: { target?: unknown } }).meta?.target
-        const onPhone = Array.isArray(target) ? target.includes("phone") : target === "phone"
-        return NextResponse.json(
-          { error: onPhone ? "Este teléfono ya está registrado" : "Este correo ya está registrado" },
-          { status: 409 }
-        )
+        // Mismo 409 + mismo texto que el duplicado local: ni el status ni el
+        // mensaje distinguen correo/teléfono ni tenant del conflicto.
+        return NextResponse.json({ error: DUPLICATE_REGISTRATION_ERROR }, { status: 409 })
       }
       throw error
     }

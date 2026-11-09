@@ -1,7 +1,58 @@
-import type { PrismaClient } from "@prisma/client"
+import { Prisma, type PrismaClient } from "@prisma/client"
 
 /** Anti-spam: un producto bajo mínimo no vuelve a avisar hasta pasado este tiempo. */
 const ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000
+
+// Cliente mínimo para las consultas raw: lo cumplen PrismaClient y el tx de
+// las operaciones (Prisma.TransactionClient).
+type RawQueryable = Pick<Prisma.TransactionClient, "$queryRaw">
+
+/** Fila del catálogo en o bajo su stock mínimo (campos que usan los consumidores). */
+export interface LowStockProduct {
+  id: string
+  name: string
+  stock: number
+  minStock: number
+  costPrice: number | null
+  retailPrice: number
+  barcode: string | null
+}
+
+/**
+ * Productos activos del negocio con `stock <= minStock`, ordenados por
+ * severidad del faltante (minStock − stock desc) y nombre. La comparación
+ * entre dos columnas no se expresa en Prisma — antes varios consumidores
+ * materializaban TODO el catálogo activo para filtrarla en JS; aquí la
+ * hace la BD. `take` limita en SQL (LIMIT parametrizado).
+ */
+export async function lowStockProducts(
+  db: RawQueryable,
+  businessId: string,
+  opts?: { take?: number },
+): Promise<LowStockProduct[]> {
+  const take = opts?.take != null && Number.isFinite(opts.take) ? Math.trunc(opts.take) : null
+  return db.$queryRaw<LowStockProduct[]>`
+    SELECT "id", "name", "stock", "minStock", "costPrice", "retailPrice", "barcode"
+    FROM "Product"
+    WHERE "businessId" = ${businessId}
+      AND "isActive" = true
+      AND "stock" <= "minStock"
+    ORDER BY ("minStock" - "stock") DESC, "name" ASC
+    ${take !== null && take > 0 ? Prisma.sql`LIMIT ${take}` : Prisma.empty}
+  `
+}
+
+/** Cuántos productos activos están en o bajo su mínimo (misma condición de arriba). */
+export async function countLowStockProducts(db: RawQueryable, businessId: string): Promise<number> {
+  const rows = await db.$queryRaw<{ n: number }[]>`
+    SELECT COUNT(*)::int AS "n"
+    FROM "Product"
+    WHERE "businessId" = ${businessId}
+      AND "isActive" = true
+      AND "stock" <= "minStock"
+  `
+  return rows[0]?.n ?? 0
+}
 
 /** Junta productIds únicos desde filas que pueden no tener producto vinculado. */
 export function collectLowStockIds(parts: { productId?: string | null }[]): string[] {

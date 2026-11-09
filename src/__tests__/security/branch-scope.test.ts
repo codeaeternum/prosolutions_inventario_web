@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   systemSettingsFindUnique: vi.fn(),
   transaction: vi.fn(),
+  queryRaw: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST: vi.fn() } }))
@@ -63,6 +64,8 @@ vi.mock("@/lib/prisma", () => {
     user: { findUnique: mocks.userFindUnique },
     systemSettings: { findUnique: mocks.systemSettingsFindUnique },
     $transaction: mocks.transaction,
+    // El filtro stock <= minStock de la lista de compras va en SQL.
+    $queryRaw: mocks.queryRaw,
   }
   return { prisma: client, default: client }
 })
@@ -133,6 +136,7 @@ beforeEach(() => {
   mocks.branchFindFirst.mockResolvedValue(null)
   mocks.userFindUnique.mockResolvedValue(null)
   mocks.systemSettingsFindUnique.mockResolvedValue(null)
+  mocks.queryRaw.mockResolvedValue([])
   // Tx falso para las operaciones que PASAN el assert de sucursal: el actor
   // aprueba y el dominio no encuentra el documento → 404/409 controlado.
   tx.user.findUnique.mockResolvedValue({ id: "employee-1", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-test" })
@@ -377,8 +381,10 @@ describe("GET /api/encargos/compras — costo solo para ADMIN", () => {
     mocks.repairPartFindMany.mockResolvedValue([
       { productId: "p1", qty: 2, orderId: "o1", order: { number: 5 }, product: { id: "p1", name: "Pantalla", stock: 0, costPrice: 300 } },
     ])
-    mocks.productFindMany.mockResolvedValue([
-      { id: "p2", name: "Batería", stock: 1, minStock: 3, costPrice: 150, isActive: true },
+    // El stock bajo lo filtra la BD (stock <= minStock va en el raw): el
+    // resultado ya trae solo los productos bajo mínimo del negocio.
+    mocks.queryRaw.mockResolvedValue([
+      { id: "p2", name: "Batería", stock: 1, minStock: 3, costPrice: 150, retailPrice: 300, barcode: null },
     ])
   })
 

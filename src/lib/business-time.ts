@@ -87,6 +87,20 @@ export function businessMonthKey(instant: Date, timeZone: string = BUSINESS_TIME
   return businessDayKey(instant, timeZone).slice(0, 7)
 }
 
+/**
+ * Hora "HH:MM" del instante en la zona del negocio. Va fijada a
+ * BUSINESS_TIME_ZONE a propósito: una checada o un turno se leen en la
+ * hora de la sucursal aunque la tableta esté en otra zona horaria.
+ */
+export function formatBusinessTime(instant: Date | string, timeZone: string = BUSINESS_TIME_ZONE): string {
+  return new Date(instant).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone })
+}
+
+/** Fecha y hora legibles en la zona del negocio: "5 nov 2025, 14:30". */
+export function formatBusinessDateTime(instant: Date | string, timeZone: string = BUSINESS_TIME_ZONE): string {
+  return new Date(instant).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone })
+}
+
 const SHORT_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**

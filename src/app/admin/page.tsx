@@ -30,6 +30,8 @@ import { OnboardingCard } from "@/components/admin/onboarding-card"
 import { BackupStatusBanner } from "@/components/admin/backup-status-banner"
 import { AsistenciaWidget } from "@/components/admin/asistencia-widget"
 import { getPendientes, type PendienteSeverity } from "@/lib/pendientes"
+import { countLowStockProducts } from "@/lib/low-stock"
+import { getLowStockList } from "@/lib/admin-dashboard"
 
 async function getDashboardStats() {
   try {
@@ -44,7 +46,7 @@ async function getDashboardStats() {
       totalUsers,
       pendingUsers,
       pendingReservations,
-      allProducts,
+      lowStockProducts,
       totalBrands,
       recentReservations,
       todaysSales,
@@ -57,10 +59,9 @@ async function getDashboardStats() {
       prisma.user.count({ where: { businessId, role: "CUSTOMER" } }),
       prisma.user.count({ where: { businessId, status: "PENDING" } }),
       prisma.reservation.count({ where: { businessId, status: "PENDING" } }),
-      prisma.product.findMany({
-        where: { businessId, isActive: true },
-        select: { stock: true, minStock: true },
-      }),
+      // stock <= minStock se compara en BD (Prisma no compara columnas):
+      // antes se traía el catálogo activo completo para contar en JS.
+      countLowStockProducts(prisma, businessId),
       prisma.brand.count({ where: { businessId } }),
       prisma.reservation.findMany({
         where: { businessId, status: { in: ["PENDING", "DEPOSIT_VERIFIED"] } },
@@ -91,9 +92,6 @@ async function getDashboardStats() {
       prisma.repairOrder.count({ where: { businessId, status: { notIn: ["DELIVERED", "CANCELLED", "NOT_REPAIRED", "NOT_AUTHORIZED"] }, promisedAt: { lt: new Date() } } })
     ])
 
-    // Contar productos con stock bajo en JS
-    const lowStockProducts = allProducts.filter(p => p.stock <= p.minStock).length
-    
     // Total caja activa — en centavos: initialAmount/amount son Float en
     // pesos y la corrida fila a fila en pesos arrastra epsilon binario.
     let cashTotal = activeRegister?.initialAmount || 0;
@@ -147,26 +145,10 @@ async function getLowStockProducts() {
     const session = await auth()
     if (!session) throw new Error("Sin sesión")
     const businessId = businessIdOf(session)
-    // Obtener productos con stock bajo (stock <= minStock)
-    const products = await prisma.product.findMany({
-      where: {
-        businessId,
-        isActive: true,
-      },
-      include: {
-        models: {
-          include: {
-            model: { include: { brand: true } },
-          },
-          take: 1,
-        },
-        category: true,
-      },
-      orderBy: { stock: "asc" },
-      take: 10,
-    })
-    // Filtrar en JS los que tienen stock <= minStock
-    return products.filter(p => p.stock <= p.minStock).slice(0, 5)
+    // Productos bajo mínimo: el filtro stock <= minStock va en SQL y la
+    // lista hidrata marca/modelo/categoría (lib/admin-dashboard). La card
+    // pinta lo que recibe — antes se recortaba a 5 tras filtrar.
+    return await getLowStockList(businessId, 5)
   } catch (error) {
     console.error("Error fetching low stock products:", error)
     return []
@@ -422,7 +404,7 @@ export default async function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold text-warning">
+                <span className="text-2xl font-bold text-warning-strong">
                   {stats.pendingUsers}
                 </span>
                 <Button asChild>

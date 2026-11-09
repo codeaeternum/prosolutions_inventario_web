@@ -117,6 +117,10 @@ function fakeDb(res: Record<string, unknown>) {
     },
     payment: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.payments.push(data); return { id: "pay-1", ...data } }),
+      // El reintento idempotente localiza la venta ya documentada por su
+      // Payment (purpose RESERVATION + reference = id de la reserva).
+      findFirst: vi.fn(async ({ where }: { where: { reference?: string } }) =>
+        created.payments.find(p => p.purpose === "RESERVATION" && p.reference === where.reference && p.saleId) ?? null),
     },
   }
   const db = { $transaction: async (work: (t: unknown) => Promise<unknown>) => work(tx) }
@@ -180,6 +184,9 @@ describe("entrega de reserva → Sale + SaleItem + Payment", () => {
     await changeReservation(db, "admin-1", BIZ, "res-1", { action: "deliver", finalPaymentMethod: "EFECTIVO" })
     const again = await changeReservation(db, "admin-1", BIZ, "res-1", { action: "deliver", finalPaymentMethod: "EFECTIVO" })
     expect(again.changed).toBe(false)
+    // El reintento devuelve la venta de la primera ejecución (reimpresión),
+    // no null: el mostrador necesita el mismo documento tras un timeout.
+    expect(again.saleId).toBe("sale-1")
     expect(created.sales).toHaveLength(1)
     expect(created.saleItems).toHaveLength(1)
     expect(created.payments).toHaveLength(1)

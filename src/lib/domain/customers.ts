@@ -7,8 +7,10 @@ import { normalizePhone } from "../utils"
  *
  * Los teléfonos se guardan tal como los escribió cada canal: User.phone es
  * único en crudo, no en forma normalizada, así que "+52 811..." y "811..."
- * pueden existir como cuentas distintas. La comparación se hace en memoria
- * sobre los customers con teléfono del tenant — volumen de piloto.
+ * pueden existir como cuentas distintas. La comparación corre en SQL sobre
+ * User.phoneNormalized — columna espejo indexada (businessId, phoneNormalized)
+ * que cada write-path de User.phone mantiene al día — ya no se barren todos
+ * los customers del tenant dentro de la tx serializable.
  *
  * Ambigüedad: si varias cuentas comparten el número normalizado se liga a la
  * MÁS ANTIGUA (createdAt asc) — casi siempre son duplicados del mismo cliente
@@ -26,11 +28,10 @@ export async function linkCustomerByPhone(
 ): Promise<string | null> {
   const normalized = normalizePhone(phone)
   if (normalized.length < 7) return null
-  const candidates = await db.user.findMany({
-    where: { businessId, role: "CUSTOMER", phone: { not: null } },
-    select: { id: true, phone: true },
+  const match = await db.user.findFirst({
+    where: { businessId, role: "CUSTOMER", phoneNormalized: normalized },
+    select: { id: true },
     orderBy: { createdAt: "asc" },
   })
-  const match = candidates.find((u) => normalizePhone(u.phone) === normalized)
   return match?.id ?? null
 }

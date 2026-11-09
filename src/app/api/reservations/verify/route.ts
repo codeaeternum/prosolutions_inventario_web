@@ -50,6 +50,8 @@ export async function POST(req: Request) {
     const deniedBranch = assertBranchAllowed(session, reservation.branchId)
     if (deniedBranch) return deniedBranch
     const result = await changeReservation(prisma, session.user.id, businessId, reservation.id, { action: "complete", finalPaymentMethod: body.finalPaymentMethod })
-    return NextResponse.json({ success: true, message: "Reserva entregada", reservation: result.reservation, changed: result.changed })
+    // saleId llega también cuando la entrega ya estaba registrada (reintento):
+    // el lector QR puede abrir el ticket de la venta original.
+    return NextResponse.json({ success: true, message: "Reserva entregada", reservation: result.reservation, changed: result.changed, saleId: result.saleId })
   } catch (error) { return businessFailure(error) }
 }

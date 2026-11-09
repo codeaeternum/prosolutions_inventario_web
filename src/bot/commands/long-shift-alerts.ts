@@ -2,7 +2,7 @@ import * as cron from 'node-cron'
 import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
-import { clipMessage, escapeHtml } from '../lib/format'
+import { clipMessage, errorText, escapeHtml } from '../lib/format'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey } from '../../lib/business-time'
 
@@ -106,7 +106,9 @@ export async function findLongOpenShifts(db: LongShiftDb, now: Date = new Date()
                 })
             }
         } catch (e) {
-            console.warn(`[LongShift] Error leyendo checadas del negocio ${business.id} (${business.name}):`, e)
+            // Sin business.name ni el error crudo: el id basta para ubicar el
+            // tenant y el mensaje truncado no filtra PII ni datos de la query.
+            console.warn(`[LongShift] Error leyendo checadas del negocio ${business.id}:`, errorText(e))
         }
     }
     return shifts
@@ -204,11 +206,13 @@ export async function sendLongShiftAlerts(
                     },
                 })
             } catch (e) {
-                console.warn(`[LongShift] Ping enviado a ${shift.name} pero la Notification de dedup falló (puede re-pinguear en la próxima hora):`, e)
+                console.warn(`[LongShift] Ping enviado al userId ${shift.userId} pero la Notification de dedup falló (puede re-pinguear en la próxima hora):`, errorText(e))
             }
         } catch (e) {
             result.failed++
-            console.warn(`[LongShift] No se pudo alertar a ${shift.name} (${shift.userId}, negocio ${shift.businessId}):`, e)
+            // Sin nombre/telegramId ni el TelegrafError crudo (su `on` lleva
+            // el payload del sendMessage): userId+businessId identifican la jornada.
+            console.warn(`[LongShift] No se pudo alertar (userId ${shift.userId}, negocio ${shift.businessId}):`, errorText(e))
         }
     }
     return result

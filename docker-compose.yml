@@ -91,7 +91,6 @@ services:
       retries: 2
       start_period: 90s
     networks: [prosolutions-network]
-    extra_hosts: ["host.docker.internal:host-gateway"]
 
   db:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}

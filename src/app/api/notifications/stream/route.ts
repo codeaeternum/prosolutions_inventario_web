@@ -18,17 +18,47 @@ const sameModules = (a: readonly string[], b: readonly string[]) => a.length ===
 // muere si cambian el rol o los módulos respecto al snapshot del conectar —
 // el broadcast filtra por ese snapshot, así que un empleado degradado o sin
 // "notificaciones" ya no seguiría recibiendo el feed con privilegio viejo.
+//
+// La fila del usuario se cachea 10 s por userId: el heartbeat (30 s) y cada
+// broadcast preguntaban lo mismo a la BD. Se cachea la FILA y no el veredicto
+// porque cada conexión compara su propio snapshot (dos pestañas del mismo
+// usuario pueden tener passwords de épocas distintas). Revocar un acceso
+// tarda ≤10 s en cortar el stream — gracia aceptada por diseño.
+const AUTH_CACHE_TTL_MS = 10_000
+type AuthUserRow = {
+  status: string; password: string | null; businessId: string; role: string
+  allowedModules: string[] | null; business: { isActive: boolean } | null
+}
+const authCache = new Map<string, { user: AuthUserRow | null; expiresAt: number }>()
+
+/** Limpia la caché de revalidación. Solo para tests: es estado del módulo
+ *  (como `connections`) y sobreviviría entre casos del mismo archivo. */
+export function resetAuthCacheForTests() {
+  authCache.clear()
+}
+
 async function stillAuthorized(connection: Connection): Promise<boolean> {
-  const user = await prisma.user.findUnique({
-    where: { id: connection.userId },
-    select: { status: true, password: true, businessId: true, role: true, allowedModules: true, business: { select: { isActive: true } } },
-  })
+  const now = Date.now()
+  const cached = authCache.get(connection.userId)
+  let user = cached && cached.expiresAt > now ? cached.user : undefined
+  if (user === undefined) {
+    user = await prisma.user.findUnique({
+      where: { id: connection.userId },
+      select: { status: true, password: true, businessId: true, role: true, allowedModules: true, business: { select: { isActive: true } } },
+    })
+    // Barrido perezoso: el mapa crece con usuarios que ya se fueron; purgar
+    // los expirados cuando crece evita retener basura indefinidamente.
+    if (authCache.size > 500) {
+      for (const [key, entry] of authCache) if (entry.expiresAt <= now) authCache.delete(key)
+    }
+    authCache.set(connection.userId, { user, expiresAt: now + AUTH_CACHE_TTL_MS })
+  }
   return user?.status === "APPROVED"
     && user.password === connection.password
     && user.businessId === connection.businessId
     && user.role === connection.role
     && sameModules(user.allowedModules ?? [], connection.allowedModules)
-    && user.business.isActive
+    && (user.business?.isActive ?? false)
 }
 
 // Tipos de eventos (fuente única: el POST de /send los valida con este enum)

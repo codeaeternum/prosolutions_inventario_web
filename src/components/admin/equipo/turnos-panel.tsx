@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { Clock, Download, History, RefreshCw, Search, AlertTriangle } from "lucide-react"
 import { csvCell } from "@/lib/csv"
+import { formatBusinessTime } from "@/lib/business-time"
 
 interface TurnoDia {
   dia: string
@@ -23,8 +24,8 @@ interface TurnoDia {
   porTipo: Record<string, number>
 }
 
-const fmtHora = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" })
+// Horas de turno en la zona del negocio (business-time), no en la del dispositivo.
+const fmtHora = formatBusinessTime
 
 const fmtDia = (dia: string) =>
   new Date(`${dia}T12:00:00`).toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short" })

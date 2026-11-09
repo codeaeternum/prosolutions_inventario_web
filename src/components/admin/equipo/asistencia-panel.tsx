@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, MonitorCheck, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
-import { businessDayKey } from "@/lib/business-time"
+import { businessDayKey, formatBusinessDateTime, formatBusinessTime } from "@/lib/business-time"
 import { JORNADA_ALERTA_MIN, JORNADA_MAX_MS } from "@/lib/asistencia"
 
 // Misma forma que JornadaDerivada de lib/asistencia (la respuesta del GET).
@@ -51,11 +51,10 @@ interface StaffUser {
 
 const STAFF_ROLES = ["ADMIN", "EMPLOYEE", "WORKSHOP"] as const
 
-const fmtHora = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" })
-
-const fmtFechaHora = (iso: string) =>
-  new Date(iso).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Mexico_City" })
+// Checadas se leen SIEMPRE en la zona del negocio (business-time), aunque la
+// tableta que consulta el panel esté configurada en otra zona horaria.
+const fmtHora = formatBusinessTime
+const fmtFechaHora = formatBusinessDateTime
 
 const fmtDuracion = (min: number) => {
   if (min < 60) return `${min} min`
@@ -426,8 +425,8 @@ export function AsistenciaPanel() {
               Abrir kiosco
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} aria-label="Actualizar asistencia">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
           </Button>
         </div>
       </CardHeader>

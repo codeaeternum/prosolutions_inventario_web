@@ -93,7 +93,8 @@ Definidas en Portainer (stack) o en `.env` si usas `docker compose` por CLI:
 | `POSTGRES_*` | No (en compose) | User/password/DB definidos en el servicio `db` |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` | No | Web push (opcional) |
 | `CRON_SECRET` | No | Protección del endpoint de reservas expiradas |
-| `OLLAMA_HOST` | No | Solo bot; ej. `http://host.docker.internal:11434` |
+
+La lista completa y comentada está en `.env.docker.example` (raíz del repo) — copiarla a `.env.docker` y rellenar.
 
 ---
 

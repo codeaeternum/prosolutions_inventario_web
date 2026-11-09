@@ -33,6 +33,32 @@ export function formatPrice(price: number): string {
   }).format(price)
 }
 
+/** Atajo para los importes que la API devuelve en centavos. */
+export function formatCents(cents: number): string {
+  return formatPrice(cents / 100)
+}
+
+/** "05 nov" — día y mes corto sin año (etiquetas de series, reservas recientes). */
+export function formatDayMonth(date: Date | string): string {
+  return new Date(date).toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "short",
+  })
+}
+
+/** "nov 25" — mes corto y año de dos dígitos (series mensuales). */
+export function formatMonthYear(date: Date | string): string {
+  return new Date(date).toLocaleDateString("es-MX", {
+    month: "short",
+    year: "2-digit",
+  })
+}
+
+/** Enteros con separador de miles es-MX ("12,345"). */
+export function formatInt(value: number): string {
+  return value.toLocaleString("es-MX")
+}
+
 /** "hace 3 h" / "hace 2 días"; vacío cuando no hay edad conocida. */
 export function formatBackupAge(ageHours: number | null): string {
   if (ageHours === null || !Number.isFinite(ageHours)) return ""

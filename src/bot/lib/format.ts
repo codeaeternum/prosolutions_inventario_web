@@ -55,3 +55,16 @@ export function clipMessage(text: string, max = TG_MESSAGE_MAX): string {
     if (text.length <= max) return text
     return `${text.slice(0, max - 1)}…`
 }
+
+/**
+ * Diagnóstico de un error para logs: solo el mensaje, truncado.
+ *
+ * Nunca pasar el objeto de error entero a console.*: un TelegrafError lleva
+ * `on.payload` con el cuerpo de la request que falló (texto del mensaje del
+ * cliente = PII) y un PrismaError puede incluir datos de la query. El
+ * mensaje basta para depurar (código/descripción de Telegram incluidos).
+ */
+export function errorText(error: unknown, max = 300): string {
+    const text = error instanceof Error ? error.message : String(error)
+    return text.slice(0, max)
+}

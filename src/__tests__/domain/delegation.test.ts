@@ -66,8 +66,11 @@ beforeEach(() => {
   // espejo (operation de createRepair), admin local para la marca.
   tx.user.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
     Promise.resolve(where.id === repairerStaff.id ? repairerStaff : localAdmin))
-  tx.user.findMany.mockResolvedValue([]) // linkCustomerByPhone sin clientes
-  tx.user.findFirst.mockResolvedValue(repairerStaff) // staff habilitado del reparador
+  // findFirst lo usan resolveRepairPartner (staff habilitado del reparador,
+  // role in ADMIN/EMPLOYEE) y linkCustomerByPhone (role CUSTOMER — sin
+  // clientes que ligar en estos tests).
+  tx.user.findFirst.mockImplementation(({ where }: { where: { role?: unknown } }) =>
+    Promise.resolve(where.role === "CUSTOMER" ? null : repairerStaff))
   tx.businessOperation.findUnique.mockResolvedValue(null)
   tx.businessOperation.create.mockResolvedValue({ id: "op-1" })
   tx.businessOperation.update.mockResolvedValue({})

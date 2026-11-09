@@ -8,6 +8,7 @@ import { DEFAULT_FOLIO_DIGITS, DEFAULT_WARRANTY_DAYS, DEFAULT_WARRANTY_MAX_CYCLE
 import { orderHeldCents, orderTotalCents } from "../workshop-money"
 import { newQuoteToken, newTrackingToken, quoteExpiry, rotatedUploadToken, uploadTokenFields } from "../workshop-tokens"
 import { encryptAccessValue } from "../device-secret"
+import { normalizePhone } from "../utils"
 
 // Los totales de dinero del taller viven en ../workshop-money (módulo puro,
 // lo comparten rutas API y componentes). Se re-exportan para que el dominio
@@ -164,7 +165,7 @@ export async function createRepair(db: PrismaClient, actorId: string, businessId
     // BusinessCounter dentro de esta misma tx serializable — un rollback
     // devuelve el número sin quemarlo (domain/tenant-sequence).
     const number = await nextOrderNumber(tx, businessId)
-    const order = await tx.repairOrder.create({ data: { ...input, number, ...uploadTokenFields(), quoteToken: newQuoteToken(), trackingToken: newTrackingToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
+    const order = await tx.repairOrder.create({ data: { ...input, number, ...uploadTokenFields(), quoteToken: newQuoteToken(), trackingToken: newTrackingToken(), deviceAccessValue: input.deviceAccessValue ? encryptAccessValue(input.deviceAccessValue) : input.deviceAccessValue, businessId, customerId, customerPhoneAlt: input.customerPhoneAlt || null, customerPhoneNormalized: normalizePhone(input.customerPhone) || null, customerPhoneAltNormalized: normalizePhone(input.customerPhoneAlt) || null, functionalConditions: functionalConditions?.join(",") ?? null, currentBranchId: branch.id, createdById: recorderId, promisedAt: promisedAt ? new Date(promisedAt) : null, scheduledAt: scheduledAt ? new Date(scheduledAt) : null }, omit: { signatureData: true, deliverySignatureData: true, deviceAccessValue: true } })
     // Sin firma digital capturada, el evento asienta la forma alternativa de
     // confirmación configurada: "pin" = terminación telefónica (el pin nunca
     // se persiste); "ticket" = firma en el comprobante impreso.
@@ -214,8 +215,14 @@ async function syncPartStock(tx: Prisma.TransactionClient, args: {
     // Se repone solo lo que realmente se descontó (los movimientos OUT de esta
     // refacción, identificados por su id en `notes`) menos lo ya repuesto —
     // así un segundo RETURN por la misma refacción no duplica existencias.
-    const outs = await tx.inventoryMovement.findMany({ where: { businessId, productId, type: "OUT", notes: { contains: part.id } }, select: { quantity: true, branchId: true } })
-    const returned = await tx.inventoryMovement.aggregate({ where: { businessId, productId, type: "RETURN", notes: { contains: part.id } }, _sum: { quantity: true } })
+    // El id va anclado al patrón completo "Refacción OT <id> ·" (el formato
+    // con el que SIEMPRE se escriben estos movimientos): a diferencia de
+    // contains (%…%), el LIKE 'prefijo%' puede aprovechar índice y ni barre
+    // la descripción ni confunde un id que sea prefijo de otro
+    // (…OT abc · ≠ …OT abcXYZ ·).
+    const partRef = `Refacción OT ${part.id} ·`
+    const outs = await tx.inventoryMovement.findMany({ where: { businessId, productId, type: "OUT", notes: { startsWith: partRef } }, select: { quantity: true, branchId: true } })
+    const returned = await tx.inventoryMovement.aggregate({ where: { businessId, productId, type: "RETURN", notes: { startsWith: partRef } }, _sum: { quantity: true } })
     const returnQty = outs.reduce((sum, movement) => sum + movement.quantity, 0) - (returned._sum.quantity ?? 0)
     if (returnQty <= 0) return { deducted: 0, stock: 0 }
     // La reposición va a la sucursal donde ocurrió el OUT (la orden pudo

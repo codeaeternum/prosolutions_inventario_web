@@ -10,7 +10,7 @@ import { normalizeProductName } from "@/lib/utils"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
-import { syncLowStockAlerts } from "@/lib/low-stock"
+import { lowStockProducts, syncLowStockAlerts } from "@/lib/low-stock"
 import { money, recordAudit } from "@/lib/audit"
 
 const createProductSchema = z
@@ -163,18 +163,23 @@ export async function GET(req: Request) {
       : Promise.resolve(null)
 
     if (lowStock) {
-      // lowStock se filtra en JS (no se puede comparar columnas en Prisma)
-      const [all, stats] = await Promise.all([
+      // stock <= minStock se resuelve en BD una sola vez (solo los ids) y la
+      // página sale del findMany+count ya recortado — antes se traía el
+      // catálogo entero con todos sus includes para filtrar y paginar en
+      // memoria. La intersección con `where` preserva los filtros de catálogo.
+      const lowIds = (await lowStockProducts(prisma, businessId)).map((r) => r.id)
+      const lowWhere = { ...where, id: { in: lowIds } }
+      const [products, total, stats] = await Promise.all([
         prisma.product.findMany({
-          where,
+          where: lowWhere,
           include,
           orderBy: { createdAt: "desc" },
+          skip: (page - 1) * limit,
+          take: limit,
         }),
+        prisma.product.count({ where: lowWhere }),
         statsPromise,
       ])
-      const filtered = all.filter((p) => p.stock <= p.minStock)
-      const total = filtered.length
-      const products = filtered.slice((page - 1) * limit, page * limit)
       const totalPages = Math.ceil(total / limit) || 1
       return NextResponse.json({
         products: products.map(p => productDto(p, viewer)),

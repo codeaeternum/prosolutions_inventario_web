@@ -27,18 +27,22 @@ const CLOSED_REPAIR_STATUSES = ["DELIVERED", "CANCELLED"] as const
 // Documentos de venta vivos: apartados (OPEN) y ventas suspendidas/cotizaciones (DRAFT).
 const OPEN_DOCUMENT_STATUSES = ["OPEN", "DRAFT"] as const
 
-// Misma transformación que normalizePhone pero en SQL: quita no-dígitos y
-// conserva los últimos 10. Los teléfonos cortos quedan intactos (RIGHT con n
-// mayor que la longitud devuelve la cadena completa).
+// Búsqueda por las columnas espejo normalizadas e indexadas
+// (customerPhoneNormalized / customerPhoneAltNormalized: dígitos, últimos 10,
+// escritas por createRepair y el backfill de la migración). El UNION sobre
+// dos lookups indexados reemplaza al OR con regexp_replace por fila — cada
+// rama resuelve con su propio índice (businessId, *Normalized).
 async function repairOrderIdsByPhone(businessId: string, phoneNorm: string, branchIds: readonly string[] | null | undefined): Promise<string[]> {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "RepairOrder"
     WHERE "businessId" = ${businessId}
       ${branchIds?.length ? Prisma.sql`AND "currentBranchId" IN (${Prisma.join(branchIds)})` : Prisma.empty}
-      AND (
-        RIGHT(regexp_replace("customerPhone", '[^0-9]', '', 'g'), 10) = ${phoneNorm}
-        OR RIGHT(regexp_replace(COALESCE("customerPhoneAlt", ''), '[^0-9]', '', 'g'), 10) = ${phoneNorm}
-      )
+      AND "customerPhoneNormalized" = ${phoneNorm}
+    UNION
+    SELECT "id" FROM "RepairOrder"
+    WHERE "businessId" = ${businessId}
+      ${branchIds?.length ? Prisma.sql`AND "currentBranchId" IN (${Prisma.join(branchIds)})` : Prisma.empty}
+      AND "customerPhoneAltNormalized" = ${phoneNorm}
   `
   return rows.map((r) => r.id)
 }

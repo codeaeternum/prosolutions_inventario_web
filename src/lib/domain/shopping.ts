@@ -2,6 +2,9 @@ import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
 import { DEFAULT_FOLIO_DIGITS, repairFolio } from "../workshop-labels"
+// low-stock.ts solo importa tipos + @prisma/client: seguro en el dominio (la
+// cadena prohibida es purchasing.ts → ../low-stock → SSE, que sigue evitada).
+import { lowStockProducts } from "../low-stock"
 
 // Mismo folio que purchaseFolio (purchasing.ts). Se declara local porque
 // importar purchasing.ts arrastra ../low-stock → ruta SSE → next-auth, y esa
@@ -118,14 +121,10 @@ export async function listShoppingNeeds(db: PrismaClient, businessId: string, br
     .sort((a, b) => b.shortage - a.shortage)
     .slice(0, 100)
 
-  // b) Stock bajo: Prisma no compara dos columnas, así que el umbral
-  //    stock <= minStock se filtra en JS.
-  const products = await db.product.findMany({
-    where: { businessId, isActive: true },
-    select: { id: true, name: true, stock: true, minStock: true, costPrice: true },
-  })
+  // b) Stock bajo: el umbral stock <= minStock lo filtra la BD (Prisma no
+  //    compara dos columnas) — antes se traía el catálogo activo completo.
+  const products = await lowStockProducts(db, businessId)
   const lowStock: LowStockRow[] = products
-    .filter(product => product.stock <= product.minStock)
     .map(product => ({
       productId: product.id,
       name: product.name,
@@ -258,10 +257,18 @@ export async function createPurchaseFromNeeds(db: PrismaClient, actorId: string,
         : item)
     }
 
+    // Validación en lote: una sola consulta trae los productos del pedido
+    // (antes un findFirst por línea dentro de la tx serializable — hasta 200
+    // roundtrips); la pertenencia al negocio queda en el where y la vigencia
+    // se revisa en memoria.
+    const productRows = merged.size
+      ? await tx.product.findMany({ where: { id: { in: [...merged.keys()] }, businessId } })
+      : []
+    const productById = new Map(productRows.map(p => [p.id, p]))
     const lines = []
     let totalCents = 0
     for (const item of merged.values()) {
-      const product = await tx.product.findFirst({ where: { id: item.productId, businessId } })
+      const product = productById.get(item.productId)
       if (!product || !product.isActive) throw new BusinessError("Un producto de la compra no está disponible.", 409)
       lines.push({ businessId, productId: product.id, quantity: item.quantity, unitCostCents: item.unitCostCents })
       totalCents += item.unitCostCents * item.quantity

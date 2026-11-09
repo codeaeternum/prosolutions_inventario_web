@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -163,6 +163,24 @@ interface AdminSidebarProps {
 export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  // Drawer móvil: foco al primer enlace al abrir y de vuelta a la
+  // hamburguesa al cerrar (incluida la tecla Escape).
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+    drawerRef.current?.querySelector<HTMLElement>("nav a")?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileMenuOpen(false)
+    }
+    document.addEventListener("keydown", onKeyDown)
+    const menuButton = menuButtonRef.current
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      menuButton?.focus()
+    }
+  }, [mobileMenuOpen])
 
   const filteredNavigation = (user.role === "WORKSHOP" ? workshopGroups : navigationGroups)
     .map(group => ({
@@ -218,9 +236,11 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
     <>
       {/* Mobile menu button - visible in header area */}
       <Button
+        ref={menuButtonRef}
         variant="outline"
         size="icon"
         aria-label="Abrir menú de navegación"
+        aria-expanded={mobileMenuOpen}
         className="fixed top-4 left-4 z-[100] lg:hidden bg-background shadow-md"
         onClick={() => setMobileMenuOpen(true)}
       >
@@ -235,8 +255,16 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
         />
       )}
 
-      {/* Mobile Drawer */}
+      {/* Mobile Drawer: diálogo modal mientras está abierto (Escape cierra,
+          foco entra al primer enlace y vuelve a la hamburguesa al salir). */}
       <div
+        ref={drawerRef}
+        role={mobileMenuOpen ? "dialog" : undefined}
+        aria-modal={mobileMenuOpen ? true : undefined}
+        aria-label={mobileMenuOpen ? "Menú" : undefined}
+        // Cerrado sigue en el DOM para animar la salida: inert lo saca del
+        // orden de tab y del árbol de accesibilidad mientras está oculto.
+        inert={!mobileMenuOpen}
         className={cn(
           "fixed inset-y-0 left-0 z-[100] w-72 bg-card border-r transform transition-transform duration-300 ease-in-out lg:hidden",
           mobileMenuOpen ? "translate-x-0" : "-translate-x-full"

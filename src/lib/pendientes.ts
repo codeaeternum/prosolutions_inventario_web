@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma"
 import { businessIdOf } from "@/lib/tenant"
 import { hasModule, type ModuleKey } from "@/lib/access"
 import { ACTIVE_RESERVATIONS } from "@/lib/domain/reservations"
+import { countLowStockProducts } from "@/lib/low-stock"
 
 export type PendienteSeverity = "alta" | "media" | "baja"
 
@@ -77,10 +78,9 @@ export async function getPendientes(session: {
     prisma.cashRegister.count({
       where: { businessId, status: "OPEN", openedAt: { lt: stale }, ...(branchScope ? { branchId: branchScope } : {}) },
     }),
-    prisma.product.findMany({
-      where: { businessId, isActive: true },
-      select: { stock: true, minStock: true },
-    }).then(rows => rows.filter(p => p.stock <= p.minStock).length),
+    // stock <= minStock se cuenta en BD: antes se traía stock+minStock del
+    // catálogo activo completo para filtrar en JS.
+    countLowStockProducts(prisma, businessId),
   ])
 
   const items: PendienteItem[] = [

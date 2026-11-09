@@ -16,7 +16,7 @@ Sistema de inventario, reservas y ventas para refacciones de celulares. Incluye 
 npm install
 ```
 
-2. Crear `.env` en la raíz con al menos:
+2. Crear `.env` en la raíz copiando la plantilla `.env.example` (`cp .env.example .env`) — incluye todas las variables con comentarios. Mínimo indispensable:
 
 ```env
 DATABASE_URL="postgresql://usuario:contraseña@localhost:5432/nombre_bd"

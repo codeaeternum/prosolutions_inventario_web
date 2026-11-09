@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
-import { cents } from "@/lib/domain/operations"
 import { repairFolio } from "@/lib/workshop-labels"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { prisma } from "@/lib/prisma"
@@ -45,9 +44,15 @@ const MAX_DAYS = 90
 const DEFAULT_TAKE = 200
 const MAX_TAKE = 500
 
-/** Montos guardados como Float → centavos con signo (cents() solo acepta ≥ 0). */
+/**
+ * Montos guardados como Float → centavos con signo. Es conversión por fila,
+ * no validación: cents() lanza con >2 decimales y una fila legada con
+ * precisión residual (p. ej. 19.999) tumbaría el feed entero. Se redondea al
+ * centavo más cercano; los importes de escritura nueva ya vienen a 2 dec.
+ */
 function signedCents(value: number): number {
-  return value < 0 ? -cents(-value, true) : cents(value, true)
+  const scaled = value * 100
+  return Number.isFinite(scaled) ? Math.round(scaled) : 0
 }
 
 type BranchScope = string | { in: string[] } | undefined

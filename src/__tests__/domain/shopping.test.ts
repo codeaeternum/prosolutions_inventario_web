@@ -26,6 +26,8 @@ const tx = {
   branch: { findFirst: vi.fn() },
   supplier: { findFirst: vi.fn() },
   purchase: { create: vi.fn(), aggregate: vi.fn() },
+  // El umbral stock <= minStock se filtra en BD vía lowStockProducts.
+  $queryRaw: vi.fn(),
 }
 // listShoppingNeeds lee directo de db; las operaciones entran por $transaction.
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
@@ -39,6 +41,7 @@ beforeEach(() => {
   tx.repairPart.findMany.mockResolvedValue([])
   tx.branchStock.findMany.mockResolvedValue([])
   tx.product.findMany.mockResolvedValue([])
+  tx.$queryRaw.mockResolvedValue([])
   tx.shoppingItem.findMany.mockResolvedValue([])
   tx.branch.findFirst.mockResolvedValue(branch)
   // El folio es por tenant: MAX(number)=2 → la OC se crea con number 3.
@@ -100,16 +103,21 @@ describe("refacciones faltantes", () => {
 
 describe("stock bajo", () => {
   it("incluye productos en su mínimo o debajo y sugiere reabasto al doble del mínimo", async () => {
-    tx.product.findMany.mockResolvedValue([
+    // La BD solo regresa los que ya están en/bajo su mínimo (el filtro de
+    // dos columnas va en el raw; "Flex" con stock 10 > mínimo 1 no vendría).
+    tx.$queryRaw.mockResolvedValue([
       { id: "p1", name: "Batería", stock: 2, minStock: 5, costPrice: 200 },        // sugerido: 10-2 = 8
       { id: "p2", name: "Centro de carga", stock: 5, minStock: 5, costPrice: 90 }, // en el mínimo: 10-5 = 5
-      { id: "p3", name: "Flex", stock: 10, minStock: 1, costPrice: 15 },           // excluido
       { id: "p4", name: "Tapa", stock: 0, minStock: 0, costPrice: 10 },            // mínimo 0: sugiere 1
     ])
     const { lowStock } = await listShoppingNeeds(db, BIZ)
-    expect(tx.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { businessId: BIZ, isActive: true },
-    }))
+    // El filtro y el negocio van en la consulta raw parametrizada, no en un
+    // findMany del catálogo completo.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1)
+    const [strings, businessId] = tx.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, string]
+    expect(businessId).toBe(BIZ)
+    expect(strings.join("")).toContain('"stock" <= "minStock"')
+    expect(tx.product.findMany).not.toHaveBeenCalled()
     expect(lowStock.map(row => row.productId).sort()).toEqual(["p1", "p2", "p4"])
     const byId = Object.fromEntries(lowStock.map(row => [row.productId, row]))
     expect(byId.p1.suggested).toBe(8)
@@ -194,7 +202,7 @@ describe("orden de compra desde la lista", () => {
   const purchase = { id: "pu-1", number: 3, businessId: BIZ, branchId: "b1" }
 
   it("crea la OC y liga los insumos manuales como PURCHASED en la misma transacción", async () => {
-    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: BIZ, isActive: true })
+    tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
     tx.shoppingItem.findMany.mockResolvedValue([
       { id: "si-1", businessId: BIZ, status: "PENDING" },
       { id: "si-2", businessId: BIZ, status: "PENDING" },
@@ -222,7 +230,7 @@ describe("orden de compra desde la lista", () => {
   })
 
   it("si un insumo ya no está pendiente, la OC entera se aborta", async () => {
-    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: BIZ, isActive: true })
+    tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
     tx.shoppingItem.findMany.mockResolvedValue([{ id: "si-1", businessId: BIZ, status: "PURCHASED" }])
     await expect(createPurchaseFromNeeds(db, "admin-1", BIZ, {
       idempotencyKey: key(), branchId: "b1",
@@ -233,7 +241,7 @@ describe("orden de compra desde la lista", () => {
   })
 
   it("un insumo de otro negocio no entra a la OC", async () => {
-    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: BIZ, isActive: true })
+    tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
     // El where filtra por businessId: el encargo ajeno no regresa y falta uno.
     tx.shoppingItem.findMany.mockResolvedValue([])
     await expect(createPurchaseFromNeeds(db, "admin-1", BIZ, {
@@ -245,7 +253,7 @@ describe("orden de compra desde la lista", () => {
   })
 
   it("el mismo producto tildado en dos secciones queda en una sola línea", async () => {
-    tx.product.findFirst.mockResolvedValue({ id: "p1", businessId: BIZ, isActive: true })
+    tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
     tx.purchase.create.mockResolvedValue(purchase)
     await createPurchaseFromNeeds(db, "admin-1", BIZ, {
       idempotencyKey: key(), branchId: "b1",
@@ -260,5 +268,40 @@ describe("orden de compra desde la lista", () => {
         items: { create: [{ businessId: BIZ, productId: "p1", quantity: 5, unitCostCents: 1000 }] },
       }),
     }))
+  })
+
+  it("valida todos los productos del pedido con UNA sola consulta en lote", async () => {
+    tx.product.findMany.mockResolvedValue([
+      { id: "p1", businessId: BIZ, isActive: true },
+      { id: "p2", businessId: BIZ, isActive: true },
+    ])
+    tx.purchase.create.mockResolvedValue(purchase)
+    await createPurchaseFromNeeds(db, "admin-1", BIZ, {
+      idempotencyKey: key(), branchId: "b1",
+      items: [
+        { productId: "p1", quantity: 1, unitCostCents: 500 },
+        { productId: "p2", quantity: 3, unitCostCents: 700 },
+      ],
+    })
+    // Antes era un findFirst por línea (N+1 dentro de la tx serializable).
+    expect(tx.product.findMany).toHaveBeenCalledTimes(1)
+    expect(tx.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: expect.arrayContaining(["p1", "p2"]) }, businessId: BIZ },
+    }))
+    expect(tx.product.findFirst).not.toHaveBeenCalled()
+  })
+
+  it("un producto inactivo o ajeno aborta la OC entera", async () => {
+    // La consulta en lote solo regresa lo que existe y es del negocio: p2
+    // no vuelve → mismo 409 de siempre, sin crear la compra.
+    tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
+    await expect(createPurchaseFromNeeds(db, "admin-1", BIZ, {
+      idempotencyKey: key(), branchId: "b1",
+      items: [
+        { productId: "p1", quantity: 1, unitCostCents: 500 },
+        { productId: "p2", quantity: 1, unitCostCents: 700 },
+      ],
+    })).rejects.toMatchObject({ status: 409, message: "Un producto de la compra no está disponible." })
+    expect(tx.purchase.create).not.toHaveBeenCalled()
   })
 })

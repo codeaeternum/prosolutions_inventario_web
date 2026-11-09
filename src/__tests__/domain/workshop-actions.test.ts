@@ -233,6 +233,15 @@ describe("reposición de stock al cerrar", () => {
       where: { orderId: "o1", status: { in: ["APPROVED", "REQUESTED"] } },
       data: expect.objectContaining({ status: "REJECTED" }),
     }))
+    // Los OUT/RETURN de la pieza se localizan por el prefijo anclado
+    // "Refacción OT <id> ·" — el formato con que se escriben — no por un
+    // contains que pueda chocar con la descripción o con un id prefijo.
+    expect(tx.inventoryMovement.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ type: "OUT", productId: "p1", notes: { startsWith: "Refacción OT pt1 ·" } }),
+    }))
+    expect(tx.inventoryMovement.aggregate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ type: "RETURN", notes: { startsWith: "Refacción OT pt1 ·" } }),
+    }))
   })
 })
 

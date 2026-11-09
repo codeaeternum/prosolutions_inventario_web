@@ -70,14 +70,71 @@ export async function GET(req: NextRequest) {
       ])
 
     // Aging FIFO por deudor: los abonos cubren primero los cargos más viejos.
-    const debtorMovements = debtors.length
+    // La ventana se acota a 24 meses y el historial anterior entra como saldo
+    // de apertura agregado por usuario (groupBy), en vez de materializar
+    // décadas de movimientos de los top-20 deudores.
+    const AGE_WINDOW_MONTHS = 24
+    const agingCutoff = new Date()
+    agingCutoff.setMonth(agingCutoff.getMonth() - AGE_WINDOW_MONTHS)
+    const debtorIds = debtors.map((d) => d.id)
+
+    const [windowMovements, preWindowSums] = debtorIds.length
+      ? await Promise.all([
+          prisma.creditMovement.findMany({
+            where: { businessId, userId: { in: debtorIds }, createdAt: { gte: agingCutoff } },
+            select: { userId: true, type: true, amount: true, createdAt: true },
+            orderBy: { createdAt: "asc" },
+          }),
+          // Saldo de apertura: cargos positivos (los que el FIFO sí consume)
+          // y todo abono/reverso previo a la ventana, por usuario.
+          prisma.creditMovement.groupBy({
+            by: ["userId", "type"],
+            where: {
+              businessId,
+              userId: { in: debtorIds },
+              createdAt: { lt: agingCutoff },
+              OR: [{ type: { not: "DEBT" } }, { amount: { gt: 0 } }],
+            },
+            _sum: { amount: true },
+          }),
+        ])
+      : [[], []]
+
+    const opening = new Map<string, { debt: number; credits: number }>()
+    for (const row of preWindowSums) {
+      const o = opening.get(row.userId) ?? { debt: 0, credits: 0 }
+      if (row.type === "DEBT") o.debt += row._sum.amount ?? 0
+      else o.credits += row._sum.amount ?? 0
+      opening.set(row.userId, o)
+    }
+    // Si los abonos viejos no alcanzan a cubrir los cargos viejos, el primer
+    // DEBT descubierto —el que fija la antigüedad real— está antes del
+    // cutoff: esos cargos sí se traen (solo DEBT positivo, solo de esos
+    // usuarios) y el FIFO queda exacto.
+    const uncoveredIds = [...opening.entries()]
+      .filter(([, o]) => o.credits < o.debt)
+      .map(([userId]) => userId)
+    const oldDebts = uncoveredIds.length
       ? await prisma.creditMovement.findMany({
-          where: { businessId, userId: { in: debtors.map((d) => d.id) } },
+          where: { businessId, userId: { in: uncoveredIds }, type: "DEBT", amount: { gt: 0 }, createdAt: { lt: agingCutoff } },
           select: { userId: true, type: true, amount: true, createdAt: true },
           orderBy: { createdAt: "asc" },
         })
       : []
-    const agingByUser = creditAgingByUser(debtorMovements)
+
+    // Saldo de apertura como movimientos sintéticos: al cubierto le entra el
+    // crédito neto (abonos − cargos ya saldados); al descubierto, sus abonos
+    // íntegros (sus cargos reales vienen en oldDebts). Las fechas no importan
+    // para los abonos — creditAging los suma, no los ordena.
+    const openingMovements = [...opening.entries()].flatMap(([userId, o]) => {
+      const net = o.credits - o.debt
+      if (o.credits >= o.debt) {
+        return net > 0 ? [{ userId, type: "PAYMENT" as const, amount: net, createdAt: agingCutoff }] : []
+      }
+      return o.credits > 0 ? [{ userId, type: "PAYMENT" as const, amount: o.credits, createdAt: agingCutoff }] : []
+    })
+
+    const agingByUser = creditAgingByUser([...oldDebts, ...openingMovements, ...windowMovements])
     const debtorsWithAging = debtors
       .map((d) => ({ ...d, aging: agingByUser.get(d.id) ?? null }))
       .sort(

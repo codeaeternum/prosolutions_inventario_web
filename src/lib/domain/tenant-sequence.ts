@@ -74,6 +74,14 @@ export async function nextOrderNumber(tx: Transaction, businessId: string): Prom
  */
 export async function nextSaleNumber(tx: Transaction, businessId: string): Promise<number> {
   if (typeof (tx as { $queryRaw?: unknown }).$queryRaw !== "function") {
+    // Los dobles de los tests unitarios no implementan $queryRaw (su "folio"
+    // no se persiste): ahí el 1 fijo es inofensivo. En producción, un tx sin
+    // $queryRaw es un cliente incompleto o una tx simulada — devolver 1 en
+    // silencio asignaría el folio 1 a TODAS las ventas hasta chocar con
+    // @@unique([businessId, number]). Fallar es barato; un folio falso, no.
+    if (process.env.NODE_ENV !== "test") {
+      throw new BusinessError("No se pudo reservar el folio de la venta: transacción sin acceso a SQL.", 500, "FOLIO_UNAVAILABLE")
+    }
     return 1
   }
   const rows = await tx.$queryRaw<{ n: number }[]>`

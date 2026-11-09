@@ -41,6 +41,7 @@ import {
   GET as openStream,
   sendNotificationToAdmins,
   sendNotificationToStaff,
+  resetAuthCacheForTests,
 } from "@/app/api/notifications/stream/route"
 
 const session = (id: string, role = "ADMIN", status = "APPROVED", allowedModules?: string[]) => ({
@@ -70,6 +71,9 @@ const row = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // La revalidación del stream se cachea 10 s por usuario (estado del
+  // módulo): sin reset, el veredicto de un caso contaminaría al siguiente.
+  resetAuthCacheForTests()
   mocks.auth.mockResolvedValue(null)
   mocks.notifCreate.mockResolvedValue({ id: "notif-db-1" })
   mocks.notifFindMany.mockResolvedValue([])
@@ -243,6 +247,51 @@ describe("broadcast — destinatarios", () => {
       expect(mocks.userFindUnique).not.toHaveBeenCalled() // no-destinatario: sin revalidación
       expect(await pendingOrClosed(reader)).toBe("pending")
     } finally {
+      await reader.cancel()
+    }
+  })
+
+  it("la revalidación se cachea 10 s: un 2º broadcast no repite la consulta", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // "connected"
+      mocks.userFindUnique.mockClear()
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      await reader.read() // frame del broadcast
+      expect(mocks.userFindUnique).toHaveBeenCalledTimes(1)
+      // Dentro del TTL la fila cacheada se reutiliza: cero consultas nuevas.
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      await reader.read()
+      expect(mocks.userFindUnique).toHaveBeenCalledTimes(1)
+    } finally {
+      await reader.cancel()
+    }
+  })
+
+  it("vencida la caché vuelve a consultar (revocación con gracia ≤10 s)", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // "connected"
+      mocks.userFindUnique.mockClear()
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      await reader.read()
+      expect(mocks.userFindUnique).toHaveBeenCalledTimes(1)
+      // El password cambia y pasan >10 s: la siguiente revalidación consulta
+      // de nuevo y la conexión muere.
+      mocks.userFindUnique.mockResolvedValue({
+        role: "ADMIN", status: "APPROVED", password: "nueva", allowedModules: [], businessId: "biz-test", business: { isActive: true },
+      })
+      vi.useFakeTimers()
+      vi.setSystemTime(Date.now() + 11_000)
+      await sendNotificationToAdmins({ type: "sensitive_alert", title: "t", message: "m" }, "biz-test")
+      expect(mocks.userFindUnique).toHaveBeenCalledTimes(2)
+      expect((await reader.read()).done).toBe(true)
+    } finally {
+      vi.useRealTimers()
       await reader.cancel()
     }
   })

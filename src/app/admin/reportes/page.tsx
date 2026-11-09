@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { csvCell } from "@/lib/csv"
-import { formatDate } from "@/lib/utils"
+import { formatCents, formatDate, formatDayMonth, formatInt, formatMonthYear } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
 import { repairLabels } from "@/lib/workshop-labels"
 
@@ -463,19 +463,11 @@ export default function ReportsPage() {
     ? Math.max(1, ...demand.weekly.map((w) => w.qty))
     : 1
 
-  // Las series llegan en centavos; formatPrice espera pesos.
-  const money = (cents: number) => formatPrice(cents / 100)
-  const dayLabel = (d: string) =>
-    new Date(`${d}T12:00:00`).toLocaleDateString("es-MX", {
-      day: "2-digit",
-      month: "short",
-    })
-  const monthLabel = (m: string) =>
-    new Date(`${m}-15T12:00:00`).toLocaleDateString("es-MX", {
-      month: "short",
-      year: "2-digit",
-    })
-  const intFmt = (v: number) => v.toLocaleString("es-MX")
+  // Las series llegan en centavos; formatCents espera centavos.
+  const money = formatCents
+  const dayLabel = (d: string) => formatDayMonth(`${d}T12:00:00`)
+  const monthLabel = (m: string) => formatMonthYear(`${m}-15T12:00:00`)
+  const intFmt = formatInt
 
   const salesTotal = series?.salesByDay.reduce((s, d) => s + d.salesCents, 0) ?? 0
   const salesCount = series?.salesByDay.reduce((s, d) => s + d.count, 0) ?? 0
@@ -1074,10 +1066,7 @@ export default function ReportsPage() {
                         }}
                       />
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                        {new Date(`${w.weekStart}T12:00:00`).toLocaleDateString(
-                          "es-MX",
-                          { day: "2-digit", month: "short" }
-                        )}
+                        {formatDayMonth(`${w.weekStart}T12:00:00`)}
                       </span>
                     </div>
                   ))}
@@ -1118,7 +1107,7 @@ export default function ReportsPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-center font-semibold">
-                            {p.totalQty.toLocaleString()}
+                            {formatInt(p.totalQty)}
                           </TableCell>
                           <TableCell className="text-center">
                             {p.requestCount}
@@ -1197,7 +1186,7 @@ export default function ReportsPage() {
                         {t.requestCount}
                       </TableCell>
                       <TableCell className="text-center font-semibold">
-                        {t.totalQty.toLocaleString()}
+                        {formatInt(t.totalQty)}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">

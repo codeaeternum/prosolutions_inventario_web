@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { fillDays, fillMonths, lastDayKeys, lastMonthKeys } from "@/lib/chart-utils"
-import { businessDayKey, businessMonthKey, parseBusinessDateParam } from "@/lib/business-time"
+import { BUSINESS_TIME_ZONE, parseBusinessDateParam } from "@/lib/business-time"
+import { Prisma } from "@prisma/client"
 
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"
@@ -350,49 +351,71 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
   const since6m = parseBusinessDateParam(`${months[0]}-01`, "start")!
   // Recorte por sucursal: ventas/caja/cobros/órdenes de las asignadas.
   const branchScope = branchIds?.length ? { in: [...branchIds] } : undefined
+  // Lista de sucursales para el IN(...) de las consultas raw (misma frontera
+  // que branchScope en los groupBy).
+  const scoped = branchIds?.length ? [...branchIds] : null
 
-  const toCents = (v: number | null | undefined) => Math.round((v ?? 0) * 100)
-  const dayKey = (d: Date) => businessDayKey(d)
-  const monthKey = (d: Date) => businessMonthKey(d)
-
+  // Las series se agregan en SQL (un renglón por día/mes en vez de todas las
+  // filas de la ventana). El bucket es el día/mes del horario del negocio:
+  // createdAt se guarda como timestamp UTC, así que primero se interpreta en
+  // UTC (`AT TIME ZONE 'UTC'` → timestamptz) y luego se re-expresa en
+  // BUSINESS_TIME_ZONE — mismo criterio que businessDayKey/businessMonthKey
+  // de business-time.ts, no el día UTC del servidor.
   const [
-    sales,
-    movements,
-    repairPayments,
+    salesByDayRows,
+    cashByDayRows,
+    repairMoneyRows,
     modelGroups,
     partGroups,
     statusGroups,
-    newCustomers,
+    customersByMonthRows,
     customerGroups,
   ] = await Promise.all([
     // Ventas de los últimos 30 días: solo COMPLETED cuenta como ingreso
     // (DRAFT/OPEN son documentos vivos sin comprometer; VOIDED se excluye).
     // Sale.total es el importe de CATÁLOGO; lo cobrado de verdad es
-    // total − discountCents (descuento autorizado al cobrar).
-    prisma.sale.findMany({
-      where: { businessId, status: "COMPLETED", createdAt: { gte: since30 }, ...(branchScope ? { branchId: branchScope } : {}) },
-      select: { createdAt: true, total: true, discountCents: true },
-    }),
+    // total − discountCents (descuento autorizado al cobrar). El centavo se
+    // redondea por fila igual que toCents: SUM de valores enteros es exacta.
+    prisma.$queryRaw<{ day: string; salesCents: number; count: number }[]>`
+      SELECT to_char(("Sale"."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${BUSINESS_TIME_ZONE}, 'YYYY-MM-DD') AS "day",
+             SUM(ROUND("total" * 100) - "discountCents")::float8 AS "salesCents",
+             COUNT(*)::int AS "count"
+      FROM "Sale"
+      WHERE "businessId" = ${businessId}
+        AND "status" = 'COMPLETED'
+        AND "createdAt" >= ${since30}
+        ${scoped ? Prisma.sql`AND "branchId" IN (${Prisma.join(scoped)})` : Prisma.empty}
+      GROUP BY 1
+    `,
     // Movimientos de caja: IN suma efectivo, OUT lo retira (la caja lleva
     // la sucursal; movimiento sin registro abierto queda fuera del recorte).
-    prisma.cashMovement.findMany({
-      where: { businessId, createdAt: { gte: since30 }, ...(branchScope ? { register: { branchId: branchScope } } : {}) },
-      select: { createdAt: true, amount: true, type: true },
-    }),
+    prisma.$queryRaw<{ day: string; inCents: number; outCents: number }[]>`
+      SELECT to_char(("CashMovement"."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${BUSINESS_TIME_ZONE}, 'YYYY-MM-DD') AS "day",
+             COALESCE(SUM(CASE WHEN "CashMovement"."type" = 'IN' THEN ROUND("CashMovement"."amount" * 100) END), 0)::float8 AS "inCents",
+             COALESCE(SUM(CASE WHEN "CashMovement"."type" <> 'IN' THEN ROUND("CashMovement"."amount" * 100) END), 0)::float8 AS "outCents"
+      FROM "CashMovement"
+      ${scoped ? Prisma.sql`JOIN "CashRegister" ON "CashRegister"."id" = "CashMovement"."registerId"` : Prisma.empty}
+      WHERE "CashMovement"."businessId" = ${businessId}
+        AND "CashMovement"."createdAt" >= ${since30}
+        ${scoped ? Prisma.sql`AND "CashRegister"."branchId" IN (${Prisma.join(scoped)})` : Prisma.empty}
+      GROUP BY 1
+    `,
     // Cobros de taller netos: CONFIRMED suma anticipos/abonos/liquidaciones
     // y REFUNDED resta las devoluciones (su amount ya es negativo) — sin las
     // refundidas el reporte inflaba el ingreso. PENDING_REVIEW no es dinero
     // confirmado y VOIDED describe pagos anulados junto con su venta.
-    prisma.payment.findMany({
-      where: {
-        businessId,
-        repairOrderId: { not: null },
-        status: { in: ["CONFIRMED", "REFUNDED"] },
-        createdAt: { gte: since30 },
-        ...(branchScope ? { repairOrder: { currentBranchId: branchScope } } : {}),
-      },
-      select: { createdAt: true, amount: true },
-    }),
+    prisma.$queryRaw<{ day: string; paymentsCents: number }[]>`
+      SELECT to_char(("Payment"."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${BUSINESS_TIME_ZONE}, 'YYYY-MM-DD') AS "day",
+             SUM(ROUND("Payment"."amount" * 100))::float8 AS "paymentsCents"
+      FROM "Payment"
+      ${scoped ? Prisma.sql`JOIN "RepairOrder" ON "RepairOrder"."id" = "Payment"."repairOrderId"` : Prisma.empty}
+      WHERE "Payment"."businessId" = ${businessId}
+        AND "Payment"."repairOrderId" IS NOT NULL
+        AND "Payment"."status" IN ('CONFIRMED', 'REFUNDED')
+        AND "Payment"."createdAt" >= ${since30}
+        ${scoped ? Prisma.sql`AND "RepairOrder"."currentBranchId" IN (${Prisma.join(scoped)})` : Prisma.empty}
+      GROUP BY 1
+    `,
     // Modelos más reparados (histórico, brand+model concatenados abajo).
     prisma.repairOrder.groupBy({
       by: ["brand", "model"],
@@ -415,11 +438,17 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
       where: { businessId, ...(branchScope ? { currentBranchId: branchScope } : {}) },
       _count: { _all: true },
     }),
-    // Clientes (User rol CUSTOMER) dados de alta en los últimos 6 meses.
-    prisma.user.findMany({
-      where: { businessId, role: "CUSTOMER", createdAt: { gte: since6m } },
-      select: { createdAt: true },
-    }),
+    // Clientes (User rol CUSTOMER) dados de alta en los últimos 6 meses;
+    // la lista por sucursal no aplica (las altas son por negocio).
+    prisma.$queryRaw<{ month: string; count: number }[]>`
+      SELECT to_char(("User"."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${BUSINESS_TIME_ZONE}, 'YYYY-MM') AS "month",
+             COUNT(*)::int AS "count"
+      FROM "User"
+      WHERE "businessId" = ${businessId}
+        AND "role" = 'CUSTOMER'
+        AND "createdAt" >= ${since6m}
+      GROUP BY 1
+    `,
     // Clientes del taller con más órdenes (histórico).
     prisma.repairOrder.groupBy({
       by: ["customerName"],
@@ -429,45 +458,24 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
     }),
   ])
 
-  // Ventas por día: lo cobrado = catálogo (total) − descuento autorizado.
-  const salesAgg = new Map<string, { salesCents: number; count: number }>()
-  for (const s of sales) {
-    const k = dayKey(s.createdAt)
-    const a = salesAgg.get(k) ?? { salesCents: 0, count: 0 }
-    a.salesCents += toCents(s.total) - s.discountCents
-    a.count++
-    salesAgg.set(k, a)
-  }
+  // Las filas ya vienen agregadas por día/mes del negocio desde SQL; fillDays/
+  // fillMonths rellenan con cero las claves sin datos y descartan las que caen
+  // fuera del rango (mismo contrato que tenía la agregación en memoria).
   const salesByDay = fillDays(
     days,
-    [...salesAgg].map(([day, v]) => ({ day, ...v })),
+    salesByDayRows.map((r) => ({ day: r.day, salesCents: Math.round(r.salesCents), count: r.count })),
     { salesCents: 0, count: 0 }
   )
 
-  // Ingresos/egresos de caja por día
-  const cashAgg = new Map<string, { inCents: number; outCents: number }>()
-  for (const m of movements) {
-    const k = dayKey(m.createdAt)
-    const a = cashAgg.get(k) ?? { inCents: 0, outCents: 0 }
-    if (m.type === "IN") a.inCents += toCents(m.amount)
-    else a.outCents += toCents(m.amount)
-    cashAgg.set(k, a)
-  }
   const cashByDay = fillDays(
     days,
-    [...cashAgg].map(([day, v]) => ({ day, ...v })),
+    cashByDayRows.map((r) => ({ day: r.day, inCents: Math.round(r.inCents), outCents: Math.round(r.outCents) })),
     { inCents: 0, outCents: 0 }
   )
 
-  // Cobros de taller por día
-  const repairAgg = new Map<string, number>()
-  for (const p of repairPayments) {
-    const k = dayKey(p.createdAt)
-    repairAgg.set(k, (repairAgg.get(k) ?? 0) + toCents(p.amount))
-  }
   const repairMoney = fillDays(
     days,
-    [...repairAgg].map(([day, paymentsCents]) => ({ day, paymentsCents })),
+    repairMoneyRows.map((r) => ({ day: r.day, paymentsCents: Math.round(r.paymentsCents) })),
     { paymentsCents: 0 }
   )
 
@@ -509,15 +517,10 @@ async function buildReportSeries(businessId: string, branchIds?: readonly string
     .map((g) => ({ status: g.status, count: g._count._all }))
     .sort((a, b) => b.count - a.count)
 
-  // Clientes nuevos por mes
-  const custAgg = new Map<string, number>()
-  for (const u of newCustomers) {
-    const k = monthKey(u.createdAt)
-    custAgg.set(k, (custAgg.get(k) ?? 0) + 1)
-  }
+  // Clientes nuevos por mes del negocio (ya agrupados en SQL).
   const customersByMonth = fillMonths(
     months,
-    [...custAgg].map(([month, count]) => ({ month, count })),
+    customersByMonthRows.map((r) => ({ month: r.month, count: r.count })),
     { count: 0 }
   )
 

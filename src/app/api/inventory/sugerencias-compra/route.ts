@@ -4,6 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { findAllyOffers } from "@/lib/domain/ally-catalog"
+import { lowStockProducts } from "@/lib/low-stock"
 
 /**
  * "Sugerir compra": qué conviene pedir al proveedor según la demanda.
@@ -47,11 +48,10 @@ export async function GET() {
         // Ventana de rotación: piezas vendidas en los últimos 30 días.
         const desde30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
-        const [products, pendingEncargos, pendingItems, ventas30dAgg] = await Promise.all([
-            prisma.product.findMany({
-                where: { businessId, isActive: true },
-                select: { id: true, name: true, stock: true, minStock: true, retailPrice: true, barcode: true },
-            }),
+        const [lowStockRows, pendingEncargos, pendingItems, ventas30dAgg] = await Promise.all([
+            // stock <= minStock filtrado en BD (antes el catálogo activo
+            // completo venía a memoria solo para ese where de dos columnas).
+            lowStockProducts(prisma, businessId),
             prisma.encargo.groupBy({
                 by: ["productId"],
                 where: { businessId, status: "PENDING", productId: { not: null }, ...(branchScope ? { branchId: branchScope } : {}) },
@@ -78,6 +78,18 @@ export async function GET() {
         for (const row of pendingEncargos) {
             if (row.productId) encargosByProduct.set(row.productId, row._sum.quantity ?? 0)
         }
+        // Un producto con encargos pendientes entra aunque esté SOBRE el
+        // mínimo (un cliente esperando pieza): solo faltan los que el raw de
+        // stock bajo no trajo — se consultan por id, no el catálogo entero.
+        const lowIds = new Set(lowStockRows.map((r) => r.id))
+        const extraIds = [...encargosByProduct.keys()].filter((id) => !lowIds.has(id))
+        const encargoProducts = extraIds.length
+            ? await prisma.product.findMany({
+                where: { businessId, isActive: true, id: { in: extraIds } },
+                select: { id: true, name: true, stock: true, minStock: true, retailPrice: true, barcode: true },
+            })
+            : []
+        const products = [...lowStockRows, ...encargoProducts]
         const inList = new Set(
             pendingItems.map(row => row.productId).filter((id): id is string => Boolean(id)),
         )
@@ -91,10 +103,9 @@ export async function GET() {
             )
         }
 
-        // Prisma no compara dos columnas: stock <= minStock se filtra en JS
-        // (mismo patrón que listShoppingNeeds en lib/domain/shopping.ts).
-        // También entran productos con encargos pendientes aunque estén sobre
-        // el mínimo: un encargo PENDING significa un cliente esperando pieza.
+        // El umbral ya vino filtrado de la BD; aquí solo se re-admiten los
+        // extras por encargo (entran aunque estén sobre el mínimo: un
+        // encargo PENDING significa un cliente esperando pieza).
         const suggestions = products
             .filter(p => p.stock <= p.minStock || (encargosByProduct.get(p.id) ?? 0) > 0)
             .map(p => {

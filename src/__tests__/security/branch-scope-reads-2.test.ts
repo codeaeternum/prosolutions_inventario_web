@@ -97,6 +97,25 @@ const unrestricted = (modules: string[]) => staff("EMPLOYEE", { modules })
 
 const nx = (req: Request) => req as unknown as NextRequest
 const params = (id: string) => ({ params: Promise.resolve({ id }) })
+/** Localiza una llamada $queryRaw por su tabla y aplana SQL + parámetros
+ *  (los fragmentos Prisma.sql anidados —JOIN e IN(...)— viajan como valores
+ *  con .strings/.values propios). */
+const rawFor = (table: string) => {
+  const calls = (q("$queryRaw")?.mock.calls ?? []) as unknown[][]
+  const call = calls.find(([s]) => (s as TemplateStringsArray).join(" ").includes(`FROM "${table}"`))
+  if (!call) return null
+  const flatSql = (v: unknown, out: string[]): void => {
+    if (v && typeof v === "object" && "strings" in v) {
+      for (const s of (v as { strings: readonly string[] }).strings) out.push(s)
+      for (const inner of (v as { values?: unknown[] }).values ?? []) flatSql(inner, out)
+    }
+  }
+  const flatVals = (vals: unknown[]): unknown[] =>
+    vals.flatMap((v) => (v && typeof v === "object" && "values" in v ? flatVals((v as { values: unknown[] }).values) : [v]))
+  const sql: string[] = [...(call[0] as TemplateStringsArray)]
+  for (const v of call.slice(1)) flatSql(v, sql)
+  return { sql: sql.join(" "), params: flatVals(call.slice(1)) }
+}
 /** Acceso al mock auto-generado: q("reservation.count") → vi.fn() usado por
  *  la ruta. Materializa el mock (el Proxy lo crea al primer acceso) para que
  *  exista aunque la ruta aún no lo haya llamado. */
@@ -237,9 +256,16 @@ describe("GET /api/reports — agregados recortados por sucursal", () => {
   it("?series=1: ventas, caja, cobros de taller y órdenes se recortan", async () => {
     mocks.auth.mockResolvedValue(restricted(["reportes"]))
     await reports(nx(new Request("https://app.invalid/api/reports?series=1")))
-    expect(q("sale.findMany").mock.calls[0][0].where.branchId).toEqual({ in: ["b1"] })
-    expect(q("cashMovement.findMany").mock.calls[0][0].where.register).toEqual({ branchId: { in: ["b1"] } })
-    expect(q("payment.findMany").mock.calls[0][0].where.repairOrder).toEqual({ currentBranchId: { in: ["b1"] } })
+    // Las series se agregan en SQL: el recorte es el IN(...) parametrizado.
+    const sale = rawFor("Sale")
+    expect(sale?.sql).toContain('"branchId" IN')
+    expect(sale?.params).toContain("b1")
+    const cash = rawFor("CashMovement")
+    expect(cash?.sql).toContain('"CashRegister"."branchId" IN')
+    expect(cash?.params).toContain("b1")
+    const pay = rawFor("Payment")
+    expect(pay?.sql).toContain('"RepairOrder"."currentBranchId" IN')
+    expect(pay?.params).toContain("b1")
     expect(q("repairOrder.groupBy").mock.calls[0][0].where.currentBranchId).toEqual({ in: ["b1"] })
     // Refacciones más usadas: groupBy por orden también recortado.
     expect(q("repairPart.groupBy").mock.calls[0][0].where.order).toEqual({ currentBranchId: { in: ["b1"] } })

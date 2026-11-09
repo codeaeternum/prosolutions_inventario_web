@@ -36,6 +36,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (denied) return denied
     }
     const result = await changeReservation(prisma, session.user.id, businessIdOf(session), id, await req.json())
-    return NextResponse.json({ ...result.reservation, changed: result.changed, requiresRefund: result.requiresRefund })
+    // saleId: la venta documentada por la entrega — también en el reintento
+    // idempotente (changed:false), así el ticket se puede reimprimir.
+    return NextResponse.json({ ...result.reservation, changed: result.changed, requiresRefund: result.requiresRefund, saleId: result.saleId })
   } catch (error) { return businessFailure(error) }
 }

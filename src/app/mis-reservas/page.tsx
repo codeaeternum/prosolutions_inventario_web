@@ -37,6 +37,7 @@ import {
   QrCode,
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
+import { formatDayMonth } from "@/lib/utils"
 import { useSession } from "next-auth/react"
 import { CountdownTimer } from "@/components/countdown-timer"
 import { ReservationQR } from "@/components/reservation-qr"
@@ -421,7 +422,7 @@ export default function MisReservasPage() {
                             <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
                               <span>x{reservation.quantity}</span>
                               <span>{formatPrice(reservation.totalPrice)}</span>
-                              <span>{new Date(reservation.createdAt).toLocaleDateString("es-MX", { day: "2-digit", month: "short" })}</span>
+                              <span>{formatDayMonth(reservation.createdAt)}</span>
                             </div>
                           </div>
                         </div>

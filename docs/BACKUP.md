@@ -163,13 +163,25 @@ Sale con código 1 si cualquier paso falla — misma convención que el backup d
 
 El JSON está pensado para que Kuma (o la app) lo exponga como chequeo. Dos opciones:
 
-**Opción A — monitor Push (recomendada, sin exponer nada).** Crear en Kuma un monitor tipo *Push* y usar el parámetro `-KumaPushUrl` del propio backup — al terminar hace `GET <url>?status=up|down&msg=backup&ping=` según el resultado de la corrida:
+**Opción A — monitor Push (recomendada, sin exponer nada).** Crear en Kuma un monitor tipo *Push* y usar el parámetro `-KumaPushUrl` del propio backup — al terminar hace `GET <url>?status=up|down&msg=backup&ping=` según el resultado de la corrida.
+
+Para crear el monitor en la UI de Kuma (`http://localhost:3001`):
+
+1. **+ Add New Monitor** → tipo **Push**.
+2. Nombre: `ProSolutions Backup`. En *Heartbeat Interval* pon algo mayor al ciclo del backup (diario → `86400` s, más tolerancia con *Retries* si hace falta).
+3. Guarda y copia la **Push URL** que genera: `http://localhost:3001/api/push/<TOKEN>`.
+
+Con la URL en la mano, prueba manual y re-registra la tarea para que el push quede en la acción programada (es idempotente: borra y recrea la tarea conservando horario/cuenta):
 
 ```powershell
+# Prueba directa
 powershell -ExecutionPolicy Bypass -File .\scripts\backup-n5.ps1 -KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"
-# Para la tarea programada: registrar con -ArgumentList extra o editar la acción
-# en taskschd.msc para añadir: -KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"
+
+# Re-registrar la tarea diaria CON el push (PowerShell elevado)
+powershell -ExecutionPolicy Bypass -File .\scripts\register-backup-task.ps1 -KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"
 ```
+
+Alternativa sin re-registrar: editar la acción en `taskschd.msc` y añadir `-KumaPushUrl "http://localhost:3001/api/push/<TOKEN>"` a los argumentos.
 
 Alternativa equivalente: añadir al final del flujo un pequeño chequeo de frescura, p. ej. una segunda tarea diaria a las 08:00 o estas líneas en un wrapper:
 

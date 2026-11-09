@@ -510,14 +510,14 @@ export default function VentasPage() {
                         </Select>
                     )}
                     <ExportButton type="sales" branchId={activeBranchId || undefined} />
-                    <Button onClick={() => setShowSalesHistory(true)} disabled={processing} variant="outline" title="Consultar tickets recientes y procesar devoluciones o anulaciones (F4)">
-                        <RotateCcw className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Devoluciones / Tickets</span>
+                    <Button onClick={() => setShowSalesHistory(true)} disabled={processing} variant="outline" title="Consultar tickets recientes y procesar devoluciones o anulaciones (F4)" aria-label="Devoluciones / Tickets">
+                        <RotateCcw className="h-5 w-5 sm:mr-2" aria-hidden="true" /><span className="hidden sm:inline">Devoluciones / Tickets</span>
                     </Button>
-                    <Button onClick={() => { setScanMode("qr"); setShowScanner(true) }} disabled={processing} variant="outline" title="Escanea el QR que muestra el cliente para entregar su apartado">
-                        <QrCode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">QR apartado</span>
+                    <Button onClick={() => { setScanMode("qr"); setShowScanner(true) }} disabled={processing} variant="outline" title="Escanea el QR que muestra el cliente para entregar su apartado" aria-label="Escanear QR de apartado">
+                        <QrCode className="h-5 w-5 sm:mr-2" aria-hidden="true" /><span className="hidden sm:inline">QR apartado</span>
                     </Button>
-                    <Button onClick={() => { setScanMode("producto"); setShowScanner(true) }} disabled={processing} variant="outline">
-                        <ScanBarcode className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">Escanear</span>
+                    <Button onClick={() => { setScanMode("producto"); setShowScanner(true) }} disabled={processing} variant="outline" aria-label="Escanear producto">
+                        <ScanBarcode className="h-5 w-5 sm:mr-2" aria-hidden="true" /><span className="hidden sm:inline">Escanear</span>
                     </Button>
                     <Button
                         variant="ghost" size="icon"

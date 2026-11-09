@@ -5,7 +5,10 @@ import { prisma } from "@/lib/prisma"
 import { BusinessError, releaseStock, takeStock, transaction } from "@/lib/domain/operations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { recordAudit } from "@/lib/audit"
-import * as XLSX from "xlsx"
+
+// xlsx (~1 MB) se carga solo cuando este endpoint se usa, no en el bundle
+// común del servidor: el import estático lo arrastraba a cada cold start.
+type XlsxModule = typeof import("xlsx")
 
 // Límites de la importación: el archivo se lee completo en memoria y cada fila
 // corre su propia transacción serializable — 10 MB / 5,000 filas por tanda.
@@ -56,6 +59,7 @@ function describeRowError(error: unknown): string {
 
 export async function GET() {
     try {
+        const XLSX: XlsxModule = await import("xlsx")
         const result = await requireModule("inventario")
         if (result.error) return result.error
 
@@ -163,6 +167,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
+        const XLSX: XlsxModule = await import("xlsx")
         const result = await requireModule("inventario")
         if (result.error) return result.error
         const session = getSession(result)!

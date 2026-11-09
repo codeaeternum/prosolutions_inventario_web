@@ -119,7 +119,23 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     if (!reservation || reservation.businessId !== businessId) throw new BusinessError("Reserva no encontrada.", 404)
     if (user && !["ADMIN", "EMPLOYEE"].includes(user.role) && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)
     const target = input.action === "cancel" ? "CANCELLED" : input.action === "reject" ? "REJECTED" : input.action === "expire" ? "EXPIRED" : input.action === "approve" ? "APPROVED" : ["pay", "verify_deposit"].includes(input.action) ? "DEPOSIT_VERIFIED" : "COMPLETED"
-    if (reservation.status === target) return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid, saleId: null as string | null }
+    if (reservation.status === target) {
+      // Reintento de una entrega que SÍ hizo commit (timeout del cliente tras
+      // grabar): antes devolvía saleId:null aunque la venta ya existiera, y
+      // el mostrador no podía reimprimir el documento. El enlace
+      // reserva→venta vive en Payment.reference+purpose (la Sale no tiene
+      // reservationId), así que se recupera desde ahí. Una reserva de total
+      // $0 no genera Payment — en ese caso saleId sigue en null.
+      let saleId: string | null = null
+      if (target === "COMPLETED") {
+        const delivered = await tx.payment.findFirst({
+          where: { businessId, purpose: "RESERVATION", reference: id, saleId: { not: null } },
+          select: { saleId: true },
+        })
+        saleId = delivered?.saleId ?? null
+      }
+      return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid, saleId }
+    }
     if (!active(reservation.status)) throw new BusinessError("La reserva ya tiene un estado final y no admite esta acción.", 409, "TERMINAL_RESERVATION")
     const expired = reservation.expiresAt.getTime() <= Date.now()
     if (input.action === "expire" && !expired) throw new BusinessError("La reserva todavía no ha expirado.", 409)
@@ -181,7 +197,12 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       } })
       await tx.saleItem.create({ data: {
         businessId, saleId: sale.id, productId: reservation.productId, quantity: reservation.quantity,
-        unitPrice: reservation.totalPrice / reservation.quantity, totalPrice: reservation.totalPrice,
+        // totalPrice/quantity puede dar >2 decimales (100/3) y el Float se
+        // guardaba tal cual — documents.ts:284 hace cents(unitPrice) al
+        // devolver y lanzaba "máximo dos decimales". El unitario se fija al
+        // centavo más cercano y el residuo queda absorbido en totalPrice,
+        // que conserva el total exacto de la reserva.
+        unitPrice: amount(Math.round(totalCents / reservation.quantity)), totalPrice: reservation.totalPrice,
       } })
       // Un Payment por cada bolsa de dinero que realmente se movió: el
       // anticipo verificado (transferencia con comprobante, cobrada antes) y

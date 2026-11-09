@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertTriangle, Clock, Delete, Loader2, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
+import { formatBusinessTime } from "@/lib/business-time"
 
 // GET /api/staff — la misma lista que alimenta el cambio rápido de usuario.
 interface StaffMember {
@@ -25,8 +26,8 @@ interface StaffMember {
 // marcado aquí de forma optimista.
 type EstadoLocal = { open: boolean; since: string | null }
 
-const fmtHora = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" })
+// Checadas en la zona del negocio (business-time), no en la del dispositivo.
+const fmtHora = formatBusinessTime
 
 const initials = (name: string) =>
   name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)

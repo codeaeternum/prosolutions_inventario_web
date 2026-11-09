@@ -3,6 +3,7 @@
 import type { DragEvent } from "react"
 import { CalendarClock, ChevronRight, MapPin, MessageCircle, Store } from "lucide-react"
 import { hasWhatsAppPhone } from "@/lib/whatsapp"
+import { formatCents, formatDate } from "@/lib/utils"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import type { SlaHours } from "@/lib/workshop-config"
 import { orderBalanceCents as balanceOf, type PartLike } from "@/lib/workshop-money"
@@ -51,8 +52,10 @@ export type BoardCardOrder = {
 // negocio (order_folio_digits); repairFolio queda como respaldo de 6 dígitos.
 export const folioOf = (order: { folio?: string; number: number }) => order.folio ?? repairFolio(order.number)
 
-export const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
-export const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
+// Formatos compartidos de utils: money llega en CENTAVOS (api) y date es la
+// fecha+hora legible estándar del panel.
+export const money = formatCents
+export const date = (value: string) => formatDate(value)
 
 // Cierres definitivos para la promesa: una orden entregada o cancelada ya no
 // compite contra su fecha prometida (mismo criterio que la vista "Atrasadas").

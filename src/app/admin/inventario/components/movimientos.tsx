@@ -138,10 +138,22 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
     }
 
     const handleScan = async (code: string) => {
+        // El escáner solo se cierra cuando la búsqueda respondió: ante un
+        // fallo de red/servidor queda abierto para reintentar el escaneo.
+        let res: Response
+        try {
+            res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}${branchId ? `&branchId=${branchId}` : ""}`)
+        } catch {
+            toast.error("Error de conexión al buscar el producto")
+            return
+        }
+        if (!res.ok) {
+            toast.error("Error de conexión al buscar el producto")
+            return
+        }
         setShowScanner(false)
-        const res = await fetch(`/api/search/pos?q=${encodeURIComponent(code)}${branchId ? `&branchId=${branchId}` : ""}`)
-        const data = await res.json()
-        if (data.products && data.products.length > 0) {
+        const data = await res.json().catch(() => null)
+        if (data?.products && data.products.length > 0) {
             const exact = data.products.find((product: Product) => product.barcode === code || product.id === code)
             if (exact) addItem(exact)
             else toast.error("No hay coincidencia exacta; selecciona el producto en la búsqueda.")
@@ -229,7 +241,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                     {/* Buscador */}
                     <div className="space-y-2 relative">
                         <Input
-                            placeholder="Buscar producto por nombre o código..."
+                            placeholder="Buscar producto por nombre o código…"
                             value={searchProducts}
                             onChange={(e) => setSearchProducts(e.target.value)}
                             className="max-w-md text-lg h-12"
@@ -292,9 +304,9 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                             </Select>
                                         </div>
                                         <div className="sm:col-span-3 flex items-center gap-2">
-                                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => updateItem(item.id, { quantity: Math.max(1, item.quantity - 1) })}>-</Button>
-                                            <Input type="number" min={1} value={item.quantity} onChange={e => updateItem(item.id, { quantity: parseInt(e.target.value) || 1 })} className="h-9 text-center" />
-                                            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => updateItem(item.id, { quantity: item.quantity + 1 })}>+</Button>
+                                            <Button variant="outline" size="icon" className="h-10 w-10" aria-label={`Disminuir cantidad de ${item.product.name}`} onClick={() => updateItem(item.id, { quantity: Math.max(1, item.quantity - 1) })}>-</Button>
+                                            <Input type="number" min={1} value={item.quantity} onChange={e => updateItem(item.id, { quantity: parseInt(e.target.value) || 1 })} className="h-9 text-center" aria-label={`Cantidad de ${item.product.name}`} />
+                                            <Button variant="outline" size="icon" className="h-10 w-10" aria-label={`Aumentar cantidad de ${item.product.name}`} onClick={() => updateItem(item.id, { quantity: item.quantity + 1 })}>+</Button>
                                         </div>
                                         {item.type === "TRANSFER" && (
                                             <div className="sm:col-span-12 -mt-1">
@@ -311,7 +323,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                             </div>
                                         )}
                                         <div className="sm:col-span-1 flex justify-end">
-                                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400" onClick={() => removeItem(item.id)}>
+                                            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-red-500 dark:hover:text-red-400" aria-label={`Quitar ${item.product.name}`} onClick={() => removeItem(item.id)}>
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                         </div>
@@ -320,13 +332,13 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                             </div>
                             <div className="p-4 bg-muted/30 border-t space-y-4">
                                 <div className="space-y-2">
-                                    <Label>Motivo Global (requerido)</Label>
-                                    <Input placeholder="Ej: Compra proveedor Apple, Inventario de marzo..." value={globalReason} onChange={e => setGlobalReason(e.target.value)} />
+                                    <Label htmlFor="lote-motivo-global">Motivo global (requerido)</Label>
+                                    <Input id="lote-motivo-global" placeholder="Ej: Compra proveedor Apple, Inventario de marzo…" value={globalReason} onChange={e => setGlobalReason(e.target.value)} />
                                     <p className="text-xs text-muted-foreground">Se usará como motivo en todos los movimientos de este lote (ej.: compra, inventario, corrección).</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Notas (opcional)</Label>
-                                    <Textarea placeholder="Factura #1234, etc..." value={globalNotes} onChange={e => setGlobalNotes(e.target.value)} className="resize-none h-16" />
+                                    <Label htmlFor="lote-notas">Notas (opcional)</Label>
+                                    <Textarea id="lote-notas" placeholder="Factura #1234, etc…" value={globalNotes} onChange={e => setGlobalNotes(e.target.value)} className="resize-none h-16" />
                                     <p className="text-xs text-muted-foreground">Información extra (factura, observaciones) que quedará registrada con el lote.</p>
                                 </div>
                                 <Button className="w-full sm:w-auto h-12" onClick={handleSaveBatch} disabled={saving || !globalReason.trim()} title="Guarda todos los movimientos del lote con el motivo indicado y actualiza el stock.">

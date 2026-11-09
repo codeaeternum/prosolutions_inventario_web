@@ -107,4 +107,20 @@ describe("nextSaleNumber", () => {
     queryRaw.mockResolvedValueOnce(rows)
     await expect(nextSaleNumber(tx, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
   })
+
+  it("tx sin $queryRaw devuelve 1 solo en test; fuera de test lanza", async () => {
+    const txSinRaw = {} as unknown as Transaction
+    // NODE_ENV=test (vitest): el doble del test no tiene raw y el folio no se
+    // persiste — el 1 fijo es inofensivo ahí.
+    await expect(nextSaleNumber(txSinRaw, "biz-1")).resolves.toBe(1)
+
+    // Fuera de test un tx sin $queryRaw es un cliente incompleto: devolver 1
+    // asignaría el mismo folio a todas las ventas. Mejor un 500 explícito.
+    vi.stubEnv("NODE_ENV", "production")
+    try {
+      await expect(nextSaleNumber(txSinRaw, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })

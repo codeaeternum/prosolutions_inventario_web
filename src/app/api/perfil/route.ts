@@ -160,12 +160,13 @@ export async function PATCH(req: Request) {
     }
     if (phoneChanged && nextPhone) {
       // Igual que signup/register: teléfonos legacy guardados como "+52…" no
-      // empatan en búsqueda exacta; se compara normalizado en memoria.
-      const candidates = await prisma.user.findMany({
-        where: { phone: { not: null } },
-        select: { id: true, phone: true },
+      // empatan en búsqueda exacta; se compara sobre phoneNormalized sin
+      // traer los teléfonos de toda la tabla a memoria.
+      const taken = await prisma.user.findFirst({
+        where: { phoneNormalized: nextPhone, id: { not: userId } },
+        select: { id: true },
       })
-      if (candidates.some((u) => u.id !== userId && normalizePhone(u.phone) === nextPhone)) {
+      if (taken) {
         return NextResponse.json(
           { error: "Ya existe una cuenta con ese teléfono" },
           { status: 409 }
@@ -178,6 +179,7 @@ export async function PATCH(req: Request) {
       email?: string | null
       emailVerifiedAt?: Date | null
       phone?: string | null
+      phoneNormalized?: string | null
       phoneVerifiedAt?: Date | null
     } = {}
     if (nameChanged) data.name = nextName
@@ -188,6 +190,8 @@ export async function PATCH(req: Request) {
     }
     if (phoneChanged) {
       data.phone = nextPhone
+      // Espejo indexado: nextPhone ya salió de normalizePhone.
+      data.phoneNormalized = nextPhone
       data.phoneVerifiedAt = null
     }
 

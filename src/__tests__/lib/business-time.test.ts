@@ -3,6 +3,8 @@ import {
   BUSINESS_TIME_ZONE,
   businessDayKey,
   businessMonthKey,
+  formatBusinessDateTime,
+  formatBusinessTime,
   parseBusinessDateParam,
   timeZoneOffsetMs,
   zonedTimeToUtc,
@@ -114,5 +116,23 @@ describe("zonedTimeToUtc / timeZoneOffsetMs", () => {
     const sixHours = 6 * 60 * 60 * 1000
     expect(timeZoneOffsetMs(BUSINESS_TIME_ZONE, new Date("2025-06-15T18:00:00Z"))).toBe(-sixHours)
     expect(timeZoneOffsetMs(BUSINESS_TIME_ZONE, new Date("2021-06-15T18:00:00Z"))).toBe(-(5 * 60 * 60 * 1000))
+  })
+})
+
+describe("formatBusinessTime / formatBusinessDateTime", () => {
+  // 2025-06-15T18:30:00Z = 12:30 en America/Mexico_City (UTC−6).
+  // es-MX formatea en 12 h ("12:30 p. m."), así que se compara la hora y
+  // no la cadena literal.
+  it("la hora se lee en la zona del negocio, no en UTC ni en la del dispositivo", () => {
+    expect(formatBusinessTime("2025-06-15T18:30:00Z")).toMatch(/12:30/)
+    expect(formatBusinessTime("2025-06-15T18:30:00Z", "UTC")).toMatch(/6:30/)
+  })
+
+  it("fecha y hora legibles en la zona del negocio", () => {
+    const result = formatBusinessDateTime("2025-06-15T18:30:00Z")
+    expect(result).toMatch(/15/)
+    expect(result).toMatch(/jun/)
+    expect(result).toMatch(/2025/)
+    expect(result).toMatch(/12:30/)
   })
 })

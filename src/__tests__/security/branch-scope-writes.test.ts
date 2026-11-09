@@ -61,7 +61,7 @@ import { PATCH as workshopUpdate } from "@/app/api/workshop/[id]/route"
 import { POST as photoUpload, DELETE as photoDelete } from "@/app/api/workshop/[id]/photos/route"
 import { POST as supplierPay } from "@/app/api/supplier-payments/route"
 import { POST as notificationsRead } from "@/app/api/notifications/read/route"
-import { GET as notificationStream, sendNotificationToStaff } from "@/app/api/notifications/stream/route"
+import { GET as notificationStream, sendNotificationToStaff, resetAuthCacheForTests } from "@/app/api/notifications/stream/route"
 import TicketPage from "@/app/admin/tickets/[tipo]/[id]/page"
 import CorteTicketPage from "@/app/admin/tickets/corte/[id]/page"
 
@@ -104,6 +104,9 @@ const registerRow = (branchId: string) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // La revalidación del stream se cachea 10 s por usuario (estado del
+  // módulo): sin reset un caso dejaría una fila vieja para el siguiente.
+  resetAuthCacheForTests()
   mocks.auth.mockResolvedValue(null)
   // Tx falso: las operaciones del dominio corren contra el mismo proxy; el
   // actor queda aprobado y las entidades faltantes resuelven a 404 — así un
