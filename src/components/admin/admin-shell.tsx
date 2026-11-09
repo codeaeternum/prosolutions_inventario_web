@@ -90,7 +90,7 @@ export function AdminShell({ user, homeBranchId, hasPartner, businessKind, child
   return (
     <div className="min-h-screen bg-background">
       <AdminSidebar user={{ role: user.role, isSuperAdmin: user.isSuperAdmin, allowedModules: user.allowedModules }} hasPartner={hasPartner} businessKind={businessKind} collapsed={collapsed} />
-      <div className={cn("transition-all duration-300", collapsed ? "lg:pl-20" : "lg:pl-64")}>
+      <div className={cn("motion-safe:transition-all motion-safe:duration-300", collapsed ? "lg:pl-20" : "lg:pl-64")}>
         <AdminHeader
           user={user}
           homeBranchId={homeBranchId}

@@ -77,8 +77,8 @@ export async function POST(req: Request, { params }: Params) {
     const passwordHash = await bcrypt.hash(parsed.data.password, 12)
     const actor = auth.session.user
 
-    const [user] = await prisma.$transaction([
-      prisma.user.create({
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
         data: {
           businessId: business.id,
           name: parsed.data.name,
@@ -92,8 +92,8 @@ export async function POST(req: Request, { params }: Params) {
           emailVerifiedAt: new Date(),
         },
         select: { id: true, name: true, email: true, role: true, status: true },
-      }),
-      prisma.platformEvent.create({
+      })
+      await tx.platformEvent.create({
         data: {
           kind: "USER_CREATED_BY_PLATFORM",
           businessId: business.id,
@@ -101,9 +101,16 @@ export async function POST(req: Request, { params }: Params) {
           businessName: business.name,
           actorId: actor.id,
           actorEmail: actor.email ?? null,
+          detail: {
+            targetUserId: created.id,
+            targetEmail: created.email,
+            targetName: created.name,
+            role: created.role,
+          },
         },
-      }),
-    ])
+      })
+      return created
+    })
 
     return NextResponse.json({ user }, { status: 201 })
   } catch (error) {

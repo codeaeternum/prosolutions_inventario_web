@@ -2,6 +2,7 @@
 
 import { MessageCircle } from "lucide-react"
 import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
+import { openWhatsApp } from "@/lib/whatsapp"
 
 export type WorkshopEvent = { id: string; type: string; detail: string; isPublic: boolean; createdAt: string; actor: { name: string } }
 
@@ -22,9 +23,7 @@ export function OrderHistory({ events, folio, phone, defaultOpen = false }: { ev
   const count = events?.length ?? 0
   async function shareNote(detail: string) {
     const name = await businessName()
-    const digits = phone.replace(/\D/g, "")
-    const base = digits ? `https://wa.me/${digits}` : "https://wa.me/"
-    window.open(`${base}?text=${encodeURIComponent(`${folio} · ${name}: ${detail}`)}`, "_blank", "noopener,noreferrer")
+    openWhatsApp(phone, `${folio} · ${name}: ${detail}`)
   }
   // Sección de consulta — la más larga de la ficha: arranca colapsada.
   return <CollapsibleSection

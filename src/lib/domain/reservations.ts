@@ -113,7 +113,7 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     // Gestión en mostrador (aprobar, verificar anticipo, entregar, rechazar):
     // staff = admin|empleado. "cancel" queda como acción de cliente y la
     // pertencia se valida abajo; staff puede cancelar cualquier reserva.
-    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "customer" : "staff", businessId) : null
+    const user = actorId ? await actor(tx, actorId, input.action === "cancel" ? "any" : "staff", businessId) : null
     const reservation = await tx.reservation.findUnique({ where: { id }, include: { product: { select: { id: true, name: true } } } })
     if (!reservation || reservation.businessId !== businessId) throw new BusinessError("Reserva no encontrada.", 404)
     if (user && !["ADMIN", "EMPLOYEE"].includes(user.role) && reservation.userId !== user.id) throw new BusinessError("No autorizado.", 403)

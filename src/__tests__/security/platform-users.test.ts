@@ -127,6 +127,7 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
           targetUserId: "u-target",
           targetUserName: "Administrador ProSolutions",
           targetUserEmail: "admin@prosolutions.com",
+          fieldsChanged: ["isSuperAdmin"],
         },
       },
     })
@@ -168,6 +169,12 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
       data: expect.objectContaining({
         kind: "USER_CREDENTIALS_UPDATED",
         businessId: "biz-default",
+        detail: {
+          targetUserId: "u-target",
+          targetUserName: "Administrador ProSolutions",
+          targetUserEmail: "admin@prosolutions.com",
+          fieldsChanged: ["name", "email", "password"],
+        },
       }),
     })
   })

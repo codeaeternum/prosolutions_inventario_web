@@ -108,6 +108,7 @@ describe("GET exportación", () => {
       take: 5000,
       where: { businessId: "biz-1" },
     }))
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
     expect(res.headers.get("x-export-truncated")).toBeNull()
     expect(res.headers.get("x-export-total")).toBeNull()
   })

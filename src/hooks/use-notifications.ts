@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useSession } from "next-auth/react"
+import { hasModule } from "@/lib/access"
 import {
   LEGACY_NOTIFICATION_KEYS,
   notificationClearedKey,
@@ -46,6 +47,7 @@ interface UseNotificationsOptions {
 // del panel de otro al cambiar de cuenta o entrar en modo soporte.
 const NOTIFICATION_SOUND = "/sounds/notification.mp3"
 const MAX_NOTIFICATIONS = 50
+const AUTO_RECONNECT_COOLDOWN_MS = 15_000
 
 /** Destino al hacer clic en una notificación (null = solo marca leída). */
 export function notificationHref(notification: Notification): string | null {
@@ -152,12 +154,14 @@ function playNotificationSound() {
 export function useNotifications(options: UseNotificationsOptions = {}) {
   const { onNotification, enabled = true, playSound = true, persist = true } = options
   const { data: session } = useSession()
+  const canAccessNotifications = session?.user ? hasModule(session.user, "notificaciones") : false
+  const active = enabled && canAccessNotifications
   // Alcance tenant+usuario de la sesión: null mientras no se resuelve — sin
   // scope no se lee ni escribe localStorage (evita un bucket compartido).
   const scope = notificationScope(session?.user?.businessId, session?.user?.id)
   // Initialize empty to avoid hydration mismatch
   const [notifications, setNotifications] = useState<Notification[]>([])
-  // rawConnected refleja el socket; isConnected expuesto también respeta `enabled`.
+  // rawConnected refleja el socket; isConnected expuesto también respeta `active`.
   const [rawConnected, setRawConnected] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   // Bump de generación = reconectar desde cero (reconnect público).
@@ -174,6 +178,11 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // Scope vigente del estado en memoria; al cambiar de cuenta/negocio la
   // lista anterior se descarta antes de hidratar (ver effect de hidratación).
   const scopeRef = useRef<string | null>(null)
+  // Error fatal de permisos/sesión (401/403): detiene reconexiones en vano.
+  const fatalAuthErrorRef = useRef(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastAutoReconnectRef = useRef(0)
 
   // Único punto de mutación de la lista: mantiene state + ref + caché local.
   const applyList = useCallback((updater: (prev: Notification[]) => Notification[]) => {
@@ -187,12 +196,17 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     return next
   }, [])
 
+  const reconnect = useCallback(() => {
+    fatalAuthErrorRef.current = false
+    setGeneration((g) => g + 1)
+  }, [])
+
   // Hidrata el historial: el SERVIDOR es la fuente de verdad; localStorage
   // queda como caché offline. Corre al montar y en cada reconexión. Va en
   // microtask: setState síncrono en el effect dispararía renders en cascada
   // (react-hooks/set-state-in-effect) y en useState() rompería la hidratación.
   useEffect(() => {
-    if (!enabled || !scope) return
+    if (!active || !scope) return
     let cancelled = false
     queueMicrotask(async () => {
       if (cancelled) return
@@ -201,6 +215,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       // hidratar para no mezclar notificaciones de otro tenant en el merge.
       if (scopeRef.current !== scope) {
         scopeRef.current = scope
+        fatalAuthErrorRef.current = false
         seenRef.current = new Set()
         applyList(() => [])
         setUnreadCount(0)
@@ -217,6 +232,16 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       let serverUnread: number | null = null
       try {
         const res = await fetch("/api/notifications", { cache: "no-store" })
+        if (res.status === 401 || res.status === 403) {
+          fatalAuthErrorRef.current = true
+          eventSourceRef.current?.close()
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current)
+            reconnectTimeoutRef.current = null
+          }
+          setRawConnected(false)
+          return
+        }
         if (res.ok) {
           const body = await res.json()
           if (Array.isArray(body?.notifications)) remote = body.notifications as Notification[]
@@ -246,7 +271,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       setUnreadCount(Math.max(serverUnread ?? 0, merged.filter((n) => !n.read).length))
     })
     return () => { cancelled = true }
-  }, [enabled, persist, generation, applyList, scope])
+  }, [active, persist, generation, applyList, scope])
 
   // Actualizar ref cuando cambia onNotification
   useEffect(() => {
@@ -257,7 +282,7 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   // setState solo ocurren en callbacks de eventos (onopen/onmessage/onerror),
   // que es el patrón correcto para suscribirse a un sistema externo.
   useEffect(() => {
-    if (!enabled || !scope) return
+    if (!active || !scope) return
 
     const maxReconnectAttempts = 5
     let attempts = 0
@@ -265,28 +290,27 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
 
     const connect = () => {
-      // Evitar reconexiones excesivas
-      if (attempts >= maxReconnectAttempts) {
-        console.log("SSE: Máximo de intentos de reconexión alcanzado")
+      // Evitar reconexiones excesivas o cuando hay error fatal de permisos
+      if (fatalAuthErrorRef.current || attempts >= maxReconnectAttempts) {
         return
       }
 
       eventSource?.close()
       eventSource = new EventSource("/api/notifications/stream")
+      eventSourceRef.current = eventSource
 
       eventSource.onopen = () => {
         attempts = 0 // Reset intentos al conectar
         setRawConnected(true)
-        console.log("SSE: Conectado a notificaciones")
       }
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
 
-          // Si recibimos error de autenticación, no reconectar
-          if (data.type === "error" && data.code === "UNAUTHORIZED") {
-            console.log("SSE: No autorizado, desconectando")
+          // Si recibimos error de autenticación/permisos, no reconectar
+          if (data.type === "error" && (data.code === "UNAUTHORIZED" || data.code === "FORBIDDEN")) {
+            fatalAuthErrorRef.current = true
             attempts = maxReconnectAttempts
             eventSource?.close()
             setRawConnected(false)
@@ -323,35 +347,58 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
 
           onNotificationRef.current?.(notification)
         } catch (error) {
-          console.error("SSE: Error parsing message", error)
+          if (process.env.NODE_ENV === "development") {
+            console.error("SSE: Error parsing message", error)
+          }
         }
       }
 
       eventSource.onerror = () => {
         setRawConnected(false)
         eventSource?.close()
+        if (fatalAuthErrorRef.current) {
+          attempts = maxReconnectAttempts
+          return
+        }
         attempts += 1
 
         // Reconectar con backoff exponencial
         if (attempts < maxReconnectAttempts) {
           const delay = Math.min(5000 * Math.pow(2, attempts - 1), 30000)
-          console.log(`SSE: Reconectando en ${delay / 1000}s (intento ${attempts}/${maxReconnectAttempts})`)
 
           if (reconnectTimeout) {
             clearTimeout(reconnectTimeout)
           }
           reconnectTimeout = setTimeout(connect, delay)
+          reconnectTimeoutRef.current = reconnectTimeout
         }
       }
     }
 
+    // Cuando el stream agotó sus 5 reintentos y quedó desconectado, reconecta
+    // al recuperar visibilidad o red (con cooldown de 15 s para no hacer spam).
+    const handleResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+      if (fatalAuthErrorRef.current || attempts < maxReconnectAttempts) return
+      const now = Date.now()
+      if (now - lastAutoReconnectRef.current < AUTO_RECONNECT_COOLDOWN_MS) return
+      lastAutoReconnectRef.current = now
+      reconnect()
+    }
+
     connect()
+    document.addEventListener("visibilitychange", handleResume)
+    window.addEventListener("online", handleResume)
 
     return () => {
+      document.removeEventListener("visibilitychange", handleResume)
+      window.removeEventListener("online", handleResume)
       eventSource?.close()
+      eventSourceRef.current = null
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
+      reconnectTimeoutRef.current = null
     }
-  }, [enabled, generation, applyList, scope])
+  }, [active, generation, applyList, scope, reconnect])
 
   // Marca leída en servidor y corrige el contador con el unreadCount real
   // (puede haber no leídas fuera de la ventana de 50 que el hook no lista).
@@ -391,13 +438,9 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
     void postRead({ all: true })
   }, [applyList])
 
-  const reconnect = useCallback(() => {
-    setGeneration(g => g + 1)
-  }, [])
-
   return {
     notifications,
-    isConnected: enabled && rawConnected,
+    isConnected: active && rawConnected,
     unreadCount,
     markAsRead,
     markAllAsRead,

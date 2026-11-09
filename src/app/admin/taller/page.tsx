@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Wrench, Plus, ArrowLeft, Search, ClipboardList, Printer, Eye, EyeOff, FileText, Store, Send, BookOpen, MessageCircle, Link2 } from "lucide-react"
@@ -13,16 +14,13 @@ import { useSession } from "next-auth/react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { repairDeliverableStages, repairFolio, repairLabels, repairNextStages, type RepairStage } from "@/lib/workshop-labels"
 import { BusinessName } from "@/components/admin/business-name"
-import { ShareRepairOrder } from "@/components/admin/taller/share-order"
-import { OrderHistory, type WorkshopEvent } from "@/components/admin/taller/order-history"
-import { PaymentsPanel, emptyPaymentForm, emptyRefundForm, emptySettleForm, orderBalanceCents, type PaymentForm, type RefundForm, type SettleForm, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
-import { WorkPlan, toLocalInput, type PlanForm } from "@/components/admin/taller/work-plan"
-import { PartsSection, type PartActionPayload } from "@/components/admin/taller/parts-section"
-import { CatalogoPanel } from "@/components/admin/taller/catalogo-panel"
+import type { WorkshopEvent } from "@/components/admin/taller/order-history"
+import type { PaymentForm, RefundForm, SettleForm, WorkshopPayment } from "@/components/admin/taller/payments-panel"
+import type { PlanForm } from "@/components/admin/taller/work-plan"
+import type { PartActionPayload } from "@/components/admin/taller/parts-section"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ExportButton } from "@/components/admin/export-button"
-import { EvidenceSection } from "@/components/admin/taller/evidence-section"
 import { semaforo } from "@/components/admin/taller/semaforo"
 import { BoardOrderCard, OrderListRow, closedColumnStyle, date, folioOf, money, stageStyles } from "@/components/admin/taller/order-card"
 import { ClosedRail } from "@/components/admin/taller/closed-rail"
@@ -33,7 +31,49 @@ import { useBoardAutoScroll } from "@/components/admin/taller/use-board-autoscro
 import { BOARD_PHASES, phaseOrders, phaseStageCounts, phaseTotal, type BoardPhase } from "@/lib/taller-board"
 import { DEFAULT_SLA_HOURS, readSlaHours, type SlaHours } from "@/lib/workshop-config"
 import { localDateTimeToIso, textOrUndefined } from "@/lib/workshop-form"
+import { orderBalanceCents as balanceOf } from "@/lib/workshop-money"
 import { toast } from "sonner"
+
+const ShareRepairOrder = dynamic(
+  () => import("@/components/admin/taller/share-order").then(m => m.ShareRepairOrder),
+  { ssr: false }
+)
+const OrderHistory = dynamic(
+  () => import("@/components/admin/taller/order-history").then(m => m.OrderHistory),
+  { ssr: false }
+)
+const PaymentsPanel = dynamic(
+  () => import("@/components/admin/taller/payments-panel").then(m => m.PaymentsPanel),
+  { ssr: false }
+)
+const WorkPlan = dynamic(
+  () => import("@/components/admin/taller/work-plan").then(m => m.WorkPlan),
+  { ssr: false }
+)
+const PartsSection = dynamic(
+  () => import("@/components/admin/taller/parts-section").then(m => m.PartsSection),
+  { ssr: false }
+)
+const CatalogoPanel = dynamic(
+  () => import("@/components/admin/taller/catalogo-panel").then(m => m.CatalogoPanel),
+  { ssr: false }
+)
+const EvidenceSection = dynamic(
+  () => import("@/components/admin/taller/evidence-section").then(m => m.EvidenceSection),
+  { ssr: false }
+)
+
+const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "", reference: "" }
+const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "", deliveredToParty: "CUSTOMER" }
+const emptyRefundForm: RefundForm = { amount: "", method: "", note: "" }
+const orderBalanceCents = (order: Order) => balanceOf(order, order.parts ?? [], order.payments ?? [])
+const toLocalInput = (iso: string | null) => {
+  if (!iso) return ""
+  const value = new Date(iso)
+  if (Number.isNaN(value.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`
+}
 
 type Branch = { id: string; name: string }
 type ActionDraft = { detail?: string; quote?: string; status?: string; branchId?: string; assignedToId?: string; noteIsPublic?: boolean }

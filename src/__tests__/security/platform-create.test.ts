@@ -113,13 +113,27 @@ describe("POST /api/platform/businesses & /api/platform/businesses/[id]/users", 
     )
     expect(mocks.platformEventCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ kind: "TENANT_CREATED", businessId: "biz-new" }),
+        data: expect.objectContaining({
+          kind: "TENANT_CREATED",
+          businessId: "biz-new",
+          detail: {
+            adminEmail: "carlos@norte.mx",
+            businessKind: "REPAIR",
+          },
+        }),
       }),
     )
   })
 
   it("crea un usuario aprobado dentro de una empresa existente desde /platform/[id]", async () => {
     mocks.businessFindUnique.mockResolvedValue({ id: "biz-1", name: "ProSolutions", slug: "prosolutions" })
+    mocks.userCreate.mockResolvedValueOnce({
+      id: "u-tech",
+      name: "Nuevo Técnico",
+      email: "tecnico@prosolutions.com",
+      role: "EMPLOYEE",
+      status: "APPROVED",
+    })
 
     const res = await createBusinessUser(
       new Request("https://app.invalid/api/platform/businesses/biz-1/users", {
@@ -151,7 +165,16 @@ describe("POST /api/platform/businesses & /api/platform/businesses/[id]/users", 
     )
     expect(mocks.platformEventCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ kind: "USER_CREATED_BY_PLATFORM", businessId: "biz-1" }),
+        data: expect.objectContaining({
+          kind: "USER_CREATED_BY_PLATFORM",
+          businessId: "biz-1",
+          detail: {
+            targetUserId: "u-tech",
+            targetEmail: "tecnico@prosolutions.com",
+            targetName: "Nuevo Técnico",
+            role: "EMPLOYEE",
+          },
+        }),
       }),
     )
   })

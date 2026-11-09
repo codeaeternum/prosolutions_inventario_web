@@ -87,7 +87,7 @@ function NotificationItem({
   )
 }
 
-export function NotificationsDropdown() {
+export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } = {}) {
   const [isOpen, setIsOpen] = useState(false)
   const router = useRouter()
   const {
@@ -97,12 +97,7 @@ export function NotificationsDropdown() {
     markAsRead,
     markAllAsRead,
     clearNotifications,
-  } = useNotifications({
-    onNotification: (notification) => {
-      // Opcional: mostrar toast o sonido
-      console.log("Nueva notificación:", notification)
-    },
-  })
+  } = useNotifications({ enabled })
 
   // Click = marcar leída + navegar al módulo relacionado cuando aplica.
   const openNotification = (notification: Notification) => {

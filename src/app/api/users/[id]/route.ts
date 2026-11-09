@@ -24,6 +24,7 @@ const accountSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
   customerType: z.enum(["NORMAL", "TECHNICIAN", "STORE"]).optional(),
   suspensionReason: z.string().trim().max(200).optional(),
+  newPassword: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(128).optional(),
 })
 
 // Esquema de pago del staff (solo ADMIN lo escribe): un solo tipo en v1 —
@@ -59,6 +60,7 @@ export async function PATCH(
         status: true,
         customerType: true,
         role: true,
+        isSuperAdmin: true,
         homeBranchId: true,
         jobTitle: true,
         publicSlug: true,
@@ -88,13 +90,14 @@ export async function PATCH(
     }
 
     // Rol, estatus, tipo de cliente, módulos/sucursales permitidas, esquema
-    // de pago y PIN rápido son exclusivos del ADMIN. El empleado solo ajusta
-    // puesto, sucursal base y el slug público del taller (campos operativos).
+    // de pago, PIN rápido y contraseña son exclusivos del ADMIN. El empleado solo
+    // ajusta puesto, sucursal base y el slug público del taller (campos operativos).
     if (!isAdmin && (
       role !== undefined ||
       status !== undefined ||
       customerType !== undefined ||
       body.suspensionReason !== undefined ||
+      body.newPassword !== undefined ||
       quickPin !== undefined ||
       body.allowedModules !== undefined ||
       body.allowedBranchIds !== undefined ||
@@ -105,6 +108,13 @@ export async function PATCH(
       return NextResponse.json({ error: "Solo un administrador puede cambiar rol, estatus, módulos, esquema de pago o PIN" }, { status: 403 })
     }
 
+    if (body.newPassword !== undefined && existingUser.isSuperAdmin && !session.user.isSuperAdmin) {
+      return NextResponse.json(
+        { error: "No puedes cambiar la contraseña de un superadministrador" },
+        { status: 403 }
+      )
+    }
+
     const accessParsed = accessSchema.safeParse({ allowedModules: body.allowedModules, allowedBranchIds: body.allowedBranchIds })
     if (!accessParsed.success) {
       return NextResponse.json({ error: "Módulos o sucursales inválidos" }, { status: 400 })
@@ -113,11 +123,21 @@ export async function PATCH(
 
     // Enum estricto para estatus y tipo de cliente (400 en vez de un 500
     // de Prisma cuando llegaba un valor inventado).
-    const accountParsed = accountSchema.safeParse({ status, customerType, suspensionReason: body.suspensionReason })
+    const accountParsed = accountSchema.safeParse({
+      status,
+      customerType,
+      suspensionReason: body.suspensionReason,
+      newPassword: body.newPassword,
+    })
     if (!accountParsed.success) {
-      return NextResponse.json({ error: "Estatus, tipo de cliente o motivo de suspensión inválidos" }, { status: 400 })
+      const firstIssue = accountParsed.error.issues[0]
+      const msg =
+        firstIssue?.path[0] === "newPassword"
+          ? firstIssue.message
+          : "Estatus, tipo de cliente o motivo de suspensión inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
     }
-    const { status: statusUpdate, customerType: customerTypeUpdate } = accountParsed.data
+    const { status: statusUpdate, customerType: customerTypeUpdate, newPassword } = accountParsed.data
     // "" (tras trim) equivale a no enviar motivo.
     const suspensionReason = accountParsed.data.suspensionReason || undefined
 
@@ -157,6 +177,11 @@ export async function PATCH(
         return NextResponse.json({ error: "El PIN rápido debe tener de 4 a 6 dígitos" }, { status: 400 })
       }
       quickPinUpdate = await bcrypt.hash(quickPin, 12)
+    }
+
+    let passwordUpdate: string | undefined
+    if (newPassword !== undefined) {
+      passwordUpdate = await bcrypt.hash(newPassword, 12)
     }
 
     if (homeBranchId) {
@@ -213,6 +238,7 @@ export async function PATCH(
         ...(homeBranchId !== undefined && { homeBranchId: homeBranchId || null }),
         ...(jobTitleUpdate !== undefined && { jobTitle: jobTitleUpdate }),
         ...(quickPinUpdate !== undefined && { quickPin: quickPinUpdate }),
+        ...(passwordUpdate !== undefined && { password: passwordUpdate }),
         ...(publicSlugUpdate !== undefined && { publicSlug: publicSlugUpdate }),
         ...(allowedModules !== undefined && { allowedModules }),
         ...(allowedBranchIds !== undefined && { allowedBranchIds }),
@@ -263,7 +289,7 @@ export async function PATCH(
       sucursales: user.allowedBranchIds,
       esquemaPago: payTypeUpdate ?? existingUser.payType,
     }
-    let changes = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
+    let changes: Record<string, Prisma.InputJsonValue> | null = diffChanges(auditBefore, auditAfter, Object.keys(auditAfter))
     // Tarifa y % se auditan solo como "cambió el esquema de pago": la
     // bitácora no guarda importes de sueldo.
     const payChanged =
@@ -273,7 +299,7 @@ export async function PATCH(
     // El motivo solo tiene sentido cuando el cambio deja la cuenta
     // suspendida; con otro estatus se descarta aunque llegue en el body.
     const motivoSuspension = statusUpdate === "REJECTED" ? suspensionReason : undefined
-    if (changes || quickPinUpdate !== undefined || payChanged || motivoSuspension) {
+    if (changes || quickPinUpdate !== undefined || passwordUpdate !== undefined || payChanged || motivoSuspension) {
       const parts: string[] = []
       if (changes?.rol) parts.push(`Rol ${auditBefore.rol} → ${auditAfter.rol}`)
       if (changes?.estatus) parts.push(`Estatus ${auditBefore.estatus} → ${auditAfter.estatus}`)
@@ -284,6 +310,10 @@ export async function PATCH(
       if (changes?.modulos) parts.push(`Módulos: ${listText(auditBefore.modulos, "todos")} → ${listText(auditAfter.modulos, "todos")}`)
       if (changes?.sucursales) parts.push(`Sucursales: ${listText(auditBefore.sucursales, "todas")} → ${listText(auditAfter.sucursales, "todas")}`)
       if (quickPinUpdate !== undefined) parts.push(quickPinUpdate === null ? "PIN rápido eliminado" : "PIN rápido actualizado")
+      if (passwordUpdate !== undefined) {
+        parts.push("Contraseña restablecida")
+        ;(changes ??= {}).contraseñaRestablecida = true
+      }
       if (motivoSuspension) {
         parts.push(`Motivo: "${motivoSuspension}"`)
         // Va también al detalle machine-readable del evento (User no tiene

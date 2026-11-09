@@ -63,6 +63,8 @@ function parseFolioDigits(raw: string | undefined): number {
     : FOLIO_DIGITS_DEFAULT
 }
 
+const SETTINGS_GET_HEADERS = { "Cache-Control": "private, no-store", Vary: "Cookie" } as const
+
 // GET - Obtener configuración.
 // Sin sesión staff (anónimo, CUSTOMER, WORKSHOP o cuenta pendiente): solo los
 // campos que la reserva pública /carrito necesita — nunca datos bancarios
@@ -78,7 +80,7 @@ export async function GET(req?: Request) {
     // Anónimo: ?biz=<slug> (o header x-tenant-slug) fija el tenant de la
     // vitrina; slug explícito inválido → 404, no el default ajeno.
     const businessId = session ? businessIdOf(session) : await resolvePublicBusinessId(req)
-    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404 })
+    if (!businessId) return NextResponse.json({ error: "Negocio no encontrado" }, { status: 404, headers: SETTINGS_GET_HEADERS })
     const settings = await prisma.settings.findFirst({
       where: { businessId },
     })
@@ -93,7 +95,7 @@ export async function GET(req?: Request) {
         depositReservationHours: settings?.depositReservationHours ?? DEFAULTS.depositReservationHours,
         pendingVerificationHours: settings?.pendingVerificationHours ?? DEFAULTS.pendingVerificationHours,
         exchangeRate: settings?.exchangeRate ?? DEFAULTS.exchangeRate,
-      })
+      }, { headers: SETTINGS_GET_HEADERS })
     }
 
     // Datos bancarios (CLABE/cuentas): solo el dueño o quien opera el módulo
@@ -149,18 +151,18 @@ export async function GET(req?: Request) {
       // Etiqueta 50×40 del equipo: imprimir la falla y el desbloqueo.
       labelShowProblem: systemSettings.get("label_show_problem") !== "false",
       labelShowAccess: systemSettings.get("label_show_access") !== "false",
-    })
+    }, { headers: SETTINGS_GET_HEADERS })
   } catch (error: unknown) {
     // Tabla Settings no existe (P2021): devolver valores por defecto hasta que se ejecute prisma db push
     const isPrisma = error && typeof error === "object" && "code" in error
     if (isPrisma && (error as { code: string }).code === "P2021") {
       console.warn("[settings] Tabla Settings no existe. Ejecuta: npx prisma db push")
-      return NextResponse.json(DEFAULT_SETTINGS)
+      return NextResponse.json(DEFAULT_SETTINGS, { headers: SETTINGS_GET_HEADERS })
     }
     console.error("Error fetching settings:", error)
     return NextResponse.json(
       { error: "Error al obtener configuración" },
-      { status: 500 }
+      { status: 500, headers: SETTINGS_GET_HEADERS }
     )
   }
 }

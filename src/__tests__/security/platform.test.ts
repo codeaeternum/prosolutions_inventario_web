@@ -214,14 +214,14 @@ describe("platform console API", () => {
     mocks.findBusiness.mockResolvedValueOnce(null)
     expect((await patchBusiness(patchReq("missing", JSON.stringify({ isActive: false })), paramsOf("missing"))).status).toBe(404)
 
-    mocks.findBusiness.mockResolvedValueOnce({ id: "b1", name: "Taller Uno", slug: "taller-uno" })
+    mocks.findBusiness.mockResolvedValueOnce({ id: "b1", name: "Taller Uno", slug: "taller-uno", isActive: true })
     mocks.updateBusiness.mockResolvedValue({ id: "b1", name: "Taller Uno", slug: "taller-uno", isActive: false, updatedAt: new Date() })
     const res = await patchBusiness(patchReq("b1", JSON.stringify({ isActive: false })), paramsOf("b1"))
     expect(res.status).toBe(200)
     expect(mocks.updateBusiness).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "b1" }, data: { isActive: false } }))
     expect((await res.json()).business.isActive).toBe(false)
 
-    // Bitácora: suspensión queda registrada con snapshot del negocio + actor.
+    // Bitácora: suspensión queda registrada con snapshot del negocio + actor + diff.
     expect(mocks.platformEventCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         businessId: "b1",
@@ -229,6 +229,47 @@ describe("platform console API", () => {
         businessName: "Taller Uno",
         kind: "TENANT_SUSPENDED",
         actorId: "op",
+        detail: {
+          changes: {
+            isActive: { before: true, after: false },
+          },
+        },
+      }),
+    })
+
+    // Edición de campos generales registra TENANT_UPDATED con diff en detail.changes.
+    mocks.platformEventCreate.mockClear()
+    mocks.findBusiness.mockResolvedValueOnce({
+      id: "b1",
+      name: "Taller Uno",
+      slug: "taller-uno",
+      isActive: true,
+      phone: "5550001111",
+    })
+    mocks.updateBusiness.mockResolvedValue({
+      id: "b1",
+      name: "Taller Norte",
+      slug: "taller-uno",
+      isActive: true,
+      updatedAt: new Date(),
+    })
+    const editRes = await patchBusiness(
+      patchReq("b1", JSON.stringify({ name: "Taller Norte", phone: "5559998888" })),
+      paramsOf("b1"),
+    )
+    expect(editRes.status).toBe(200)
+    expect(mocks.platformEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        businessId: "b1",
+        businessName: "Taller Norte",
+        kind: "TENANT_UPDATED",
+        actorId: "op",
+        detail: {
+          changes: {
+            name: { before: "Taller Uno", after: "Taller Norte" },
+            phone: { before: "5550001111", after: "5559998888" },
+          },
+        },
       }),
     })
   })

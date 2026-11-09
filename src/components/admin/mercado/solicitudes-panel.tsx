@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { cn, formatDay } from "@/lib/utils"
+import { waLink } from "@/lib/whatsapp"
 
 export interface PartRequest {
   id: string
@@ -60,12 +61,9 @@ function timeAgo(iso: string): string {
   return formatDay(iso)
 }
 
-// wa.me exige formato internacional; la API guarda 10 dígitos MX → +52.
+// wa.me exige formato internacional; waLink normaliza +52 para 10 dígitos MX.
 function whatsappUrl(request: PartRequest): string {
-  const digits = request.phone.replace(/\D/g, "")
-  const intl = digits.length === 10 ? `52${digits}` : digits
-  const text = `Hola, vi tu solicitud de ${request.name} en Reficio`
-  return `https://wa.me/${intl}?text=${encodeURIComponent(text)}`
+  return waLink(request.phone, `Hola, vi tu solicitud de ${request.name} en Reficio`)
 }
 
 interface SolicitudesPanelProps {

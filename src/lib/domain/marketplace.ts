@@ -76,8 +76,8 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
     businessId,
     kind: "MARKETPLACE_REQUEST",
     // Tocar un encargo es trabajo de mostrador; la solicitud suelta también
-    // la registra una cuenta WORKSHOP (permission customer = solo APPROVED).
-    permission: input.encargoId ? "staff" : "customer",
+    // la registra una cuenta WORKSHOP (permission any = staff o WORKSHOP aprobado).
+    permission: input.encargoId ? "staff" : "any",
     payload: input,
   }, async tx => {
     // Producto ordenable: activo y publicado para aliados (ALLIES o PUBLIC)

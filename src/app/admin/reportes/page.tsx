@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,18 +34,35 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { EmptyState } from "@/components/admin/empty-state"
-import { ComparadorSucursales } from "@/components/admin/reportes/comparador-sucursales"
 import { csvCell } from "@/lib/csv"
 import { formatDate } from "@/lib/utils"
 import { useCurrency } from "@/components/currency-provider"
-import {
-  BarChart,
-  DonutChart,
-  GroupedBars,
-  HorizontalBars,
-  LineChart,
-} from "@/components/admin/charts"
 import { repairLabels } from "@/lib/workshop-labels"
+
+const ComparadorSucursales = dynamic(
+  () => import("@/components/admin/reportes/comparador-sucursales").then((m) => m.ComparadorSucursales),
+  { ssr: false }
+)
+const BarChart = dynamic(
+  () => import("@/components/admin/charts").then((m) => m.BarChart),
+  { ssr: false }
+)
+const DonutChart = dynamic(
+  () => import("@/components/admin/charts").then((m) => m.DonutChart),
+  { ssr: false }
+)
+const GroupedBars = dynamic(
+  () => import("@/components/admin/charts").then((m) => m.GroupedBars),
+  { ssr: false }
+)
+const HorizontalBars = dynamic(
+  () => import("@/components/admin/charts").then((m) => m.HorizontalBars),
+  { ssr: false }
+)
+const LineChart = dynamic(
+  () => import("@/components/admin/charts").then((m) => m.LineChart),
+  { ssr: false }
+)
 
 interface ReportStats {
   totalProducts: number

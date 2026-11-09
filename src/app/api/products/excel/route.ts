@@ -146,6 +146,7 @@ export async function GET() {
             headers: {
                 "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "Content-Disposition": `attachment; filename="productos_${new Date().toISOString().split("T")[0]}.xlsx"`,
+                "Cache-Control": "private, no-store",
                 ...(truncated
                     ? { "X-Export-Truncated": "true", "X-Export-Total": String(total) }
                     : {}),

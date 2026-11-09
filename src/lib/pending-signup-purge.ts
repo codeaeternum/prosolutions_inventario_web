@@ -14,11 +14,24 @@ import type { PrismaClient } from "@prisma/client"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_PENDING_DAYS = 7
+const DEFAULT_PENDING_CUSTOMER_DAYS = 30
+const MIN_PENDING_CUSTOMER_DAYS = 7
+const MAX_PENDING_CUSTOMER_DAYS = 180
 
 /** Días de gracia antes de purgar un alta PENDING. Mínimo 1 aunque el env diga menos. */
 export function pendingSignupDays(): number {
   const parsed = Number.parseInt(process.env.SIGNUP_PENDING_PURGE_DAYS ?? "", 10)
   return Math.max(1, Number.isFinite(parsed) ? parsed : DEFAULT_PENDING_DAYS)
+}
+
+/**
+ * Días de gracia antes de purgar cuentas individuales CUSTOMER en estado
+ * PENDING sin actividad operativa (default 30, clamp 7–180).
+ */
+export function pendingCustomerDays(): number {
+  const parsed = Number.parseInt(process.env.PENDING_CUSTOMER_TTL_DAYS ?? "", 10)
+  if (!Number.isFinite(parsed)) return DEFAULT_PENDING_CUSTOMER_DAYS
+  return Math.min(MAX_PENDING_CUSTOMER_DAYS, Math.max(MIN_PENDING_CUSTOMER_DAYS, parsed))
 }
 
 /** P2014 (delete con relación requerida con filas) y P2003 (FK constraint). */
@@ -93,12 +106,50 @@ export interface PurgeResult {
   purged: number
   skipped: { slug: string; reason: string }[]
   tenants: string[]
+  purgedPendingCustomers: number
+}
+
+/**
+ * Limpia cuentas individuales CUSTOMER en estado PENDING anteriores al cutoff
+ * que nunca tuvieron ventas, apartados, órdenes de taller, movimientos de
+ * crédito, encargos ni operaciones registradas.
+ */
+export async function purgePendingCustomers(
+  db: PrismaClient,
+  customerDays: number = pendingCustomerDays(),
+): Promise<number> {
+  const cutoff = new Date(Date.now() - customerDays * DAY_MS)
+  try {
+    const deleted = await db.user.deleteMany({
+      where: {
+        role: "CUSTOMER",
+        status: "PENDING",
+        createdAt: { lt: cutoff },
+        salesAsCustomer: { none: {} },
+        reservations: { none: {} },
+        customerRepairs: { none: {} },
+        creditMovements: { none: {} },
+        encargosAsCustomer: { none: {} },
+        businessOperations: { none: {} },
+      },
+    })
+    if (deleted.count > 0) {
+      console.warn(
+        `[purge-pending-signups] ${deleted.count} cuenta(s) CUSTOMER PENDING purgada(s) (${customerDays}+d)`,
+      )
+    }
+    return deleted.count
+  } catch (error) {
+    console.error("[purge-pending-signups] error purgando clientes PENDING:", error)
+    return 0
+  }
 }
 
 /** Borra cada candidato en una transacción propia con orden FK-seguro. */
 export async function purgePendingSignups(
   db: PrismaClient,
   days: number = pendingSignupDays(),
+  customerDays: number = pendingCustomerDays(),
 ): Promise<PurgeResult> {
   const { purgeable, skipped } = await findPendingSignupCandidates(db, days)
   const tenants: string[] = []
@@ -145,5 +196,7 @@ export async function purgePendingSignups(
     }
   }
 
-  return { purged: tenants.length, skipped, tenants }
+  const purgedPendingCustomers = await purgePendingCustomers(db, customerDays)
+
+  return { purged: tenants.length, skipped, tenants, purgedPendingCustomers }
 }

@@ -99,7 +99,11 @@ export function CashRequestsPanel(props: { branchId: string; isAdmin: boolean; u
             createKey.current = null
             setAmount("")
             setConcept("")
-            toast.success(data.duplicate ? "Ya tenías una solicitud igual registrada" : "Solicitud enviada. Pendiente de autorización.")
+            if (data.duplicate) {
+                toast.info("Ya habías enviado una solicitud idéntica hace unos segundos")
+            } else {
+                toast.success("Solicitud enviada. Pendiente de autorización.")
+            }
             await fetchRequests()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Error de conexión. Reintenta sin cambiar los datos.")

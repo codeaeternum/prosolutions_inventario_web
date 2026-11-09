@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma"
 import { sell } from "@/lib/domain/sales"
 import { businessFailure } from "@/lib/domain/http"
 
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 const decideSchema = z.object({
   action: z.enum(["APPROVE", "REJECT", "FULFILL"]),
   decisionNote: z.string().trim().max(500).optional(),
@@ -45,7 +47,7 @@ export async function PATCH(
 
     const parseResult = decideSchema.safeParse(await req.json().catch(() => null))
     if (!parseResult.success) {
-      return NextResponse.json({ error: "Datos inválidos" }, { status: 400 })
+      return NextResponse.json({ error: "Datos inválidos" }, { status: 400, headers: NO_STORE })
     }
     const { action, decisionNote, paymentMethod, reference, branchId, customerId } = parseResult.data
 
@@ -54,7 +56,7 @@ export async function PATCH(
       include: { requestedBy: { select: { id: true, role: true } } },
     })
     if (!existing || existing.businessId !== businessId) {
-      return NextResponse.json({ error: "Solicitud no encontrada" }, { status: 404 })
+      return NextResponse.json({ error: "Solicitud no encontrada" }, { status: 404, headers: NO_STORE })
     }
 
     // ---- FULFILL: APPROVED -> FULFILLED generando la venta al taller ----
@@ -62,13 +64,13 @@ export async function PATCH(
       if (existing.status !== "APPROVED") {
         return NextResponse.json(
           { error: "Solo puedes marcar como surtida una solicitud aprobada." },
-          { status: 409 }
+          { status: 409, headers: NO_STORE }
         )
       }
       if (!paymentMethod) {
         return NextResponse.json(
           { error: "Selecciona el método de pago del surtido." },
-          { status: 400 }
+          { status: 400, headers: NO_STORE }
         )
       }
       // A crédito se cobra a la cuenta WORKSHOP del taller: la que venga en el
@@ -79,7 +81,7 @@ export async function PATCH(
       if (paymentMethod === "CREDITO" && !saleCustomerId) {
         return NextResponse.json(
           { error: "El cobro a crédito requiere la cuenta del taller." },
-          { status: 400 }
+          { status: 400, headers: NO_STORE }
         )
       }
 
@@ -116,7 +118,7 @@ export async function PATCH(
       if (updated.count !== 1) {
         return NextResponse.json(
           { error: "La solicitud ya fue decidida." },
-          { status: 409 }
+          { status: 409, headers: NO_STORE }
         )
       }
 
@@ -124,7 +126,7 @@ export async function PATCH(
         where: { id },
         include: requestInclude,
       })
-      return NextResponse.json({ request, saleNumber: result.sale.number })
+      return NextResponse.json({ request, saleNumber: result.sale.number }, { headers: NO_STORE })
     }
 
     // ---- APPROVE / REJECT: PENDING -> APPROVED / REJECTED ----
@@ -140,7 +142,7 @@ export async function PATCH(
     if (updated.count !== 1) {
       return NextResponse.json(
         { error: "La solicitud ya fue decidida." },
-        { status: 409 }
+        { status: 409, headers: NO_STORE }
       )
     }
 
@@ -148,9 +150,9 @@ export async function PATCH(
       where: { id },
       include: requestInclude,
     })
-    return NextResponse.json({ request })
+    return NextResponse.json({ request }, { headers: NO_STORE })
   } catch (error) {
     console.error("Error deciding marketplace request:", error)
-    return NextResponse.json({ error: "Error al actualizar la solicitud" }, { status: 500 })
+    return NextResponse.json({ error: "Error al actualizar la solicitud" }, { status: 500, headers: NO_STORE })
   }
 }

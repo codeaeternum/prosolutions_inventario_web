@@ -5,9 +5,9 @@ import { CalendarClock, ChevronRight, MapPin, MessageCircle, Store } from "lucid
 import { hasWhatsAppPhone } from "@/lib/whatsapp"
 import { repairFolio, repairLabels, type RepairStage } from "@/lib/workshop-labels"
 import type { SlaHours } from "@/lib/workshop-config"
-import type { PartLike } from "@/lib/workshop-money"
+import { orderBalanceCents as balanceOf, type PartLike } from "@/lib/workshop-money"
 import { SemaforoBadge } from "@/components/admin/taller/semaforo"
-import { orderBalanceCents, type WorkshopPayment } from "@/components/admin/taller/payments-panel"
+import type { WorkshopPayment } from "@/components/admin/taller/payments-panel"
 
 /** Lo mínimo que necesitan la tarjeta del tablero y la fila de la lista: la
  *  Order completa de /admin/taller lo satisface por tipado estructural, sin
@@ -142,6 +142,8 @@ function AvisarOverlay({ order, onAvisar, className }: { order: BoardCardOrder; 
     <MessageCircle size={14} />
   </button>
 }
+
+const orderBalanceCents = (order: BoardCardOrder) => balanceOf(order, order.parts ?? [], order.payments ?? [])
 
 function DebtChip({ order }: { order: BoardCardOrder }) {
   const balanceCents = orderBalanceCents(order)

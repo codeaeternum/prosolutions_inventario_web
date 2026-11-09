@@ -143,4 +143,20 @@ describe("Sale.kind — nota de venta a taller", () => {
     }))
     expect(result.sale.total).toBe(500)
   })
+
+  it("rechaza con 403 si se pasa una cuenta EMPLOYEE como customerId", async () => {
+    const employeeAsCustomer = {
+      id: "cust-1",
+      name: "Empleado Mostrador",
+      role: "EMPLOYEE",
+      status: "APPROVED",
+      businessId: BIZ,
+      customerType: "NORMAL",
+    }
+    const { db, tx } = fakeDb({ customer: employeeAsCustomer })
+    await expect(
+      sell(db, "admin-1", BIZ, input({ customerId: "cust-1" })),
+    ).rejects.toMatchObject({ status: 403, code: "INVALID_CUSTOMER_ROLE" })
+    expect(tx.sale.create).not.toHaveBeenCalled()
+  })
 })

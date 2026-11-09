@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { BranchSwitcher } from "@/components/admin/branch-switcher"
 import { UserSwitcher } from "@/components/admin/user-switcher"
+import { hasModule } from "@/lib/access"
 import { LogOut, Home, Search, PanelLeft, PanelLeftClose, UserCog } from "lucide-react"
 import type { UserRole, CustomerType, UserStatus } from "@prisma/client"
 
@@ -29,6 +30,7 @@ interface AdminHeaderProps {
     customerType: CustomerType
     status: UserStatus
     jobTitle?: string | null
+    allowedModules?: string[]
     impersonator?: string | null
   }
   homeBranchId?: string | null
@@ -38,6 +40,7 @@ interface AdminHeaderProps {
 
 export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSidebar }: AdminHeaderProps) {
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  const canViewNotifications = hasModule(user, "notificaciones")
 
   const initials = user.name
     .split(" ")
@@ -91,7 +94,7 @@ export function AdminHeader({ user, homeBranchId, sidebarCollapsed, onToggleSide
         </div>
 
         <div className="flex items-center gap-1 sm:gap-2">
-          <NotificationsDropdown />
+          {canViewNotifications && <NotificationsDropdown enabled={canViewNotifications} />}
           <ThemeToggle />
 
           <DropdownMenu>

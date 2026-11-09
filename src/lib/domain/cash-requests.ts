@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client"
 import { z } from "zod"
-import { BusinessError, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "./operations"
+import { actor, BusinessError, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "./operations"
 
 // Decisión sobre una solicitud de gasto: solo ADMIN y nunca sobre la propia.
 // APPROVE asienta el CashMovement OUT en la caja abierta de la sucursal.
@@ -19,6 +19,7 @@ const requestInclude = {
 } satisfies Prisma.CashRequestInclude
 
 async function decide(tx: Transaction, actorId: string, businessId: string, id: string, input: DecideCashRequestInput) {
+  await actor(tx, actorId, "admin", businessId)
   const request = await tx.cashRequest.findUnique({ where: { id } })
   if (!request || request.businessId !== businessId) throw new BusinessError("Solicitud no encontrada.", 404)
   if (request.requestedById === actorId) throw new BusinessError("No puedes autorizar tu propio gasto.", 403)

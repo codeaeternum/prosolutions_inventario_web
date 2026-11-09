@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
+import { checkAndRecord } from "@/lib/rate-limit"
 import { sendNotificationToAdmins, NOTIFICATION_TYPES } from "../stream/route"
 
 // `data` viaja por SSE y se persiste en Notification: se acota en tamaño y
@@ -39,7 +40,15 @@ const bodySchema = z.object({
 export async function POST(req: NextRequest) {
   const result = await requireModule("notificaciones")
   if (result.error) return result.error
-  const businessId = businessIdOf(getSession(result)!)
+  const session = getSession(result)!
+  const businessId = businessIdOf(session)
+
+  if (!checkAndRecord("notifications-send", session.user.id, 60_000, 20)) {
+    return NextResponse.json(
+      { error: "Demasiadas notificaciones. Intenta en un minuto." },
+      { status: 429 }
+    )
+  }
 
   try {
     const parsed = bodySchema.safeParse(await req.json().catch(() => null))

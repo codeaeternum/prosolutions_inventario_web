@@ -11,6 +11,7 @@ const MAX_RESULTS = 10
 
 const WINDOW_MS = 60_000
 const MAX_ATTEMPTS = 60
+const NO_STORE = { ...catalogResponseHeaders, "Cache-Control": "private, no-store" } as const
 
 // GET /api/marketplace/sugerencias?q=texto
 // Búsqueda B2B en el catálogo de OTROS negocios: productos activos con
@@ -28,7 +29,7 @@ export async function GET(req: Request) {
     if (!checkAndRecord("marketplace-sugerencias", getClientIp(req), WINDOW_MS, MAX_ATTEMPTS)) {
       return NextResponse.json(
         { error: "Demasiadas búsquedas. Intenta de nuevo en un minuto." },
-        { status: 429, headers: { "Cache-Control": "no-store" } }
+        { status: 429, headers: { "Cache-Control": "private, no-store" } }
       )
     }
 
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
     if (q.length < MIN_CHARS) {
       return NextResponse.json(
         { suggestions: [], minChars: MIN_CHARS },
-        { headers: catalogResponseHeaders }
+        { headers: NO_STORE }
       )
     }
 
@@ -93,10 +94,10 @@ export async function GET(req: Request) {
 
     return NextResponse.json(
       { suggestions },
-      { headers: catalogResponseHeaders }
+      { headers: NO_STORE }
     )
   } catch (error) {
     console.error("Error en sugerencias de mercado:", error)
-    return NextResponse.json({ error: "Error al buscar sugerencias" }, { status: 500 })
+    return NextResponse.json({ error: "Error al buscar sugerencias" }, { status: 500, headers: NO_STORE })
   }
 }

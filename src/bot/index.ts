@@ -238,7 +238,7 @@ scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
     if (!_prisma) return
     try {
         const result = await purgePendingSignups(_prisma)
-        if (result.purged > 0 || result.skipped.length > 0) {
+        if (result.purged > 0 || result.purgedPendingCustomers > 0 || result.skipped.length > 0) {
             console.log('Pending signup purge:', result)
         }
     } catch (e) {

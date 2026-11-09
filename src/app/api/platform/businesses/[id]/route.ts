@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import type { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
@@ -101,7 +102,17 @@ export async function PATCH(req: Request, { params }: Params) {
   try {
     const existing = await prisma.business.findUnique({
       where: { id },
-      select: { id: true, name: true, slug: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        category: true,
+        businessKind: true,
+        phone: true,
+        address: true,
+        showInDirectory: true,
+      },
     })
     if (!existing) {
       return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 })
@@ -125,6 +136,16 @@ export async function PATCH(req: Request, { params }: Params) {
       ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone || null } : {}),
       ...(parsed.data.address !== undefined ? { address: parsed.data.address || null } : {}),
       ...(parsed.data.showInDirectory !== undefined ? { showInDirectory: parsed.data.showInDirectory } : {}),
+    }
+
+    const changes: Record<string, { before: Prisma.InputJsonValue | null; after: Prisma.InputJsonValue | null }> = {}
+    for (const [field, after] of Object.entries(updateData)) {
+      const rawBefore = (existing as Record<string, unknown>)[field]
+      const before = (rawBefore ?? null) as Prisma.InputJsonValue | null
+      const afterVal = (after ?? null) as Prisma.InputJsonValue | null
+      if (rawBefore === undefined || before !== afterVal) {
+        changes[field] = { before, after: afterVal }
+      }
     }
 
     const onlyToggleActive =
@@ -156,6 +177,7 @@ export async function PATCH(req: Request, { params }: Params) {
           kind: eventKind,
           actorId: actor.id,
           actorEmail: actor.email ?? null,
+          detail: { changes },
         },
       }),
     ])

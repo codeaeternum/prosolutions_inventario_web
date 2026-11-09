@@ -158,6 +158,7 @@ export async function POST(req: Request) {
           businessName: business.name,
           actorId: actor.id,
           actorEmail: actor.email ?? null,
+          detail: { adminEmail: emailNorm, businessKind },
         },
       })
       return business

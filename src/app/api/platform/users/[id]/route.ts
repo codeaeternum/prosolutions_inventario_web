@@ -117,6 +117,8 @@ export async function PATCH(req: Request, { params }: Params) {
         ? (parsed.data.isSuperAdmin ? "SUPERADMIN_GRANTED" : "SUPERADMIN_REVOKED")
         : "USER_CREDENTIALS_UPDATED"
 
+    const fieldsChanged = Object.keys(updateData)
+
     const [user] = await prisma.$transaction([
       prisma.user.update({
         where: { id },
@@ -131,9 +133,14 @@ export async function PATCH(req: Request, { params }: Params) {
           businessName: target.business.name,
           actorId: auth.session.user.id,
           actorEmail: auth.session.user.email ?? null,
-          // A quién se le aplicó el cambio: sin esto un reset de contraseña
-          // o un grant de superadmin no identifican a la cuenta afectada.
-          detail: { targetUserId: target.id, targetUserName: target.name, targetUserEmail: target.email },
+          // A quién se le aplicó el cambio y qué campos se tocaron (sin hashes):
+          // distingue un reset de contraseña de un cambio de estatus o perfil.
+          detail: {
+            targetUserId: target.id,
+            targetUserName: target.name,
+            targetUserEmail: target.email,
+            fieldsChanged,
+          },
         },
       }),
     ])

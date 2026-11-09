@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import { useSession } from "next-auth/react"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
@@ -169,6 +170,8 @@ type ConfirmAction = {
 }
 
 export function UsuariosPanel() {
+  const { data: session } = useSession()
+  const isAdmin = (session?.user?.role ?? "ADMIN") === "ADMIN"
   const searchParams = useSearchParams()
   const pathname = usePathname()
   const router = useRouter()
@@ -246,13 +249,14 @@ export function UsuariosPanel() {
   })
   const [branches, setBranches] = useState<Branch[]>([])
 
-  // Staff edit dialog (puesto + PIN rápido)
+  // Staff edit dialog (puesto + PIN rápido + contraseña)
   const [editOpen, setEditOpen] = useState(false)
   const [editUser, setEditUser] = useState<User | null>(null)
   const [editJobTitle, setEditJobTitle] = useState("")
   const [editPublicSlug, setEditPublicSlug] = useState("")
   const [editPin, setEditPin] = useState("")
   const [editPinClear, setEditPinClear] = useState(false)
+  const [editNewPassword, setEditNewPassword] = useState("")
   const [editModules, setEditModules] = useState<string[]>([])
   const [editBranchesAllowed, setEditBranchesAllowed] = useState<string[]>([])
   const [editSaving, setEditSaving] = useState(false)
@@ -493,6 +497,7 @@ export function UsuariosPanel() {
     setEditPublicSlug(user.publicSlug ?? "")
     setEditPin("")
     setEditPinClear(false)
+    setEditNewPassword("")
     setEditModules(user.allowedModules ?? [])
     setEditBranchesAllowed(user.allowedBranchIds ?? [])
     setEditOpen(true)
@@ -504,6 +509,11 @@ export function UsuariosPanel() {
       toast.error("El PIN rápido debe tener de 4 a 6 dígitos")
       return
     }
+    const trimmedPassword = editNewPassword.trim()
+    if (trimmedPassword && trimmedPassword.length < 8) {
+      toast.error("La contraseña debe tener al menos 8 caracteres")
+      return
+    }
     if (editUser.role === "WORKSHOP") {
       const slugError = slugFieldError(editPublicSlug)
       if (slugError) {
@@ -513,7 +523,7 @@ export function UsuariosPanel() {
     }
     setEditSaving(true)
     try {
-      const payload: { jobTitle: string; quickPin?: string; publicSlug?: string; allowedModules?: string[]; allowedBranchIds?: string[] } = {
+      const payload: { jobTitle: string; quickPin?: string; newPassword?: string; publicSlug?: string; allowedModules?: string[]; allowedBranchIds?: string[] } = {
         jobTitle: editJobTitle.trim(),
         allowedModules: editModules,
         allowedBranchIds: editBranchesAllowed,
@@ -525,6 +535,9 @@ export function UsuariosPanel() {
         payload.quickPin = "CLEAR"
       } else if (editPin) {
         payload.quickPin = editPin
+      }
+      if (isAdmin && trimmedPassword) {
+        payload.newPassword = trimmedPassword
       }
       const res = await fetch(`/api/users/${editUser.id}`, {
         method: "PATCH",
@@ -1811,6 +1824,25 @@ export function UsuariosPanel() {
                   Quitar PIN actual
                 </label>
               </div>
+              )}
+              {isAdmin && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-newPassword">Nueva contraseña (opcional, mín. 8 caracteres)</Label>
+                  <Input
+                    id="edit-newPassword"
+                    type="password"
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                    value={editNewPassword}
+                    disabled={editSaving}
+                    onChange={(e) => setEditNewPassword(e.target.value)}
+                    placeholder="Dejar vacío para no cambiar"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Al cambiarla se cerrarán las sesiones activas de este usuario.
+                  </p>
+                </div>
               )}
               <div className="space-y-3 border-t pt-3">
                 <div className="space-y-2" role="group" aria-labelledby="edit-modules-label">

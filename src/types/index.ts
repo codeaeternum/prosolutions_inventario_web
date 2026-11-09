@@ -1,6 +1,6 @@
 // ==================== ENUMS (alineados con Prisma) ====================
 
-export type UserRole = "ADMIN" | "EMPLOYEE" | "CUSTOMER"
+export type UserRole = "ADMIN" | "EMPLOYEE" | "CUSTOMER" | "WORKSHOP"
 
 export type CustomerType = "TECHNICIAN" | "STORE" | "NORMAL"
 

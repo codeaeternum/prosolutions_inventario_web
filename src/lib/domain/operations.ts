@@ -34,12 +34,15 @@ export function mergeItems(input: Item[]): Item[] {
   return [...merged].sort(([a], [b]) => a.localeCompare(b)).map(([productId, quantity]) => itemSchema.parse({ productId, quantity }))
 }
 
-export async function actor(tx: Transaction, id: string, permission: "customer" | "staff" | "admin" = "customer", businessId?: string) {
+export async function actor(tx: Transaction, id: string, permission: "customer" | "staff" | "admin" | "any" = "customer", businessId?: string) {
   const user = await tx.user.findUnique({ where: { id } })
   // Mismo mensaje genérico para cuenta ajena: no revelar que el usuario existe en otro negocio.
   if (!user || user.status !== "APPROVED" || (businessId && user.businessId !== businessId)) throw new BusinessError("La cuenta no está autorizada para operar.", 403, "ACCOUNT_NOT_APPROVED")
   if (permission === "admin" && user.role !== "ADMIN") throw new BusinessError("Se requiere administrador.", 403)
   if (permission === "staff" && !["ADMIN", "EMPLOYEE"].includes(user.role)) throw new BusinessError("Acceso denegado.", 403)
+  if (permission === "customer" && user.role && user.role !== "CUSTOMER" && user.role !== "WORKSHOP") {
+    throw new BusinessError("La cuenta indicada no es de cliente.", 403, "INVALID_CUSTOMER_ROLE")
+  }
   return user
 }
 
@@ -60,7 +63,7 @@ export async function transaction<T>(db: PrismaClient, work: (tx: Transaction) =
 /** Receipt and every business write commit together. Reuse with a changed actor/payload fails closed. */
 export async function operation<T extends object>(
   db: PrismaClient,
-  input: { key: string; actorId: string; kind: string; businessId: string; payload: unknown; permission?: "customer" | "staff" | "admin" },
+  input: { key: string; actorId: string; kind: string; businessId: string; payload: unknown; permission?: "customer" | "staff" | "admin" | "any" },
   work: (tx: Transaction, operationId: string) => Promise<T>,
 ): Promise<T & { operationId: string }> {
   const key = operationKeySchema.parse(input.key)

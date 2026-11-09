@@ -71,6 +71,63 @@ export async function sendVerificationEmail(
 }
 
 /**
+ * Envía el código de 6 dígitos para restablecer la contraseña.
+ * Misma garantía que sendVerificationEmail: nunca lanza; sin RESEND_API_KEY
+ * devuelve { sent: false, reason: "unconfigured" }.
+ */
+export async function sendPasswordResetEmail(
+  email: string,
+  code: string,
+  businessName?: string | null,
+): Promise<SendResult> {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) return { sent: false, reason: "unconfigured" }
+
+  const from = process.env.RESEND_FROM || "Reficio <noreply@resend.dev>"
+  const business = businessName?.trim() || "Reficio"
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:24px">
+      <h2 style="margin:0 0 8px">Recupera tu contraseña</h2>
+      <p style="color:#444;margin:0 0 16px">
+        ${escapeHtml(business)}: usa este código para restablecer tu contraseña en Reficio.
+        Expira en 15 minutos.
+      </p>
+      <p style="font-size:36px;font-weight:700;letter-spacing:8px;text-align:center;
+                background:#f4f4f5;border-radius:12px;padding:18px 0;margin:0 0 16px">
+        ${escapeHtml(code)}
+      </p>
+      <p style="color:#888;font-size:12px;margin:0">
+        Si no solicitaste este cambio, ignora este mensaje.
+      </p>
+    </div>`
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: "Código para restablecer tu contraseña",
+        html,
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "")
+      console.error(`[mailer] Resend respondió ${res.status}: ${detail.slice(0, 300)}`)
+      return { sent: false, reason: "failed" }
+    }
+    return { sent: true }
+  } catch (error) {
+    console.error("[mailer] Error llamando a Resend:", error)
+    return { sent: false, reason: "failed" }
+  }
+}
+
+/**
  * Correo de bienvenida para un dueño que acaba de activar su cuenta al
  * verificar su contacto (PENDING+ADMIN → APPROVED). Misma garantía que
  * sendVerificationEmail: nunca lanza; sin API key devuelve unconfigured.

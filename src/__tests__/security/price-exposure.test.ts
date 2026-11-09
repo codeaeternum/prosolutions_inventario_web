@@ -707,6 +707,7 @@ describe("GET /api/marketplace/sugerencias", () => {
     const res = await marketplaceSugerencias(req("https://app.invalid/api/marketplace/sugerencias?q=pa"))
     const json = await res.json()
     expect(res.status).toBe(200)
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
     expect(json.suggestions[0].wholesalePrice).toBe(1100)
     expectNoInternalKeys(json)
     const select = mocks.prisma.product.findMany.mock.calls[0][0].select
@@ -1089,7 +1090,10 @@ describe("GET /api/settings", () => {
   ])("staff %s aprobado: recibe la configuración completa con datos bancarios", async (_label, session) => {
     mocks.auth.mockResolvedValue(session)
     seedSettings()
-    const json = await (await settingsGet()).json()
+    const res = await settingsGet()
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+    expect(res.headers.get("vary")).toBe("Cookie")
+    const json = await res.json()
     expect(json.bankTransferInfo).toBe("CLABE 999888777")
     expect(json.repairPartnerBusinessId).toBe("biz-taller-aliado")
   })

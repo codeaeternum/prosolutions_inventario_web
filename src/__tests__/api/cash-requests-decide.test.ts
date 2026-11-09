@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   transaction: vi.fn(),
+  userFindUnique: vi.fn(),
   cashRequestFindUnique: vi.fn(),
   cashRequestFindUniqueOrThrow: vi.fn(),
   cashRequestUpdateMany: vi.fn(),
@@ -27,8 +28,13 @@ vi.mock("@/lib/prisma", () => ({
 }))
 
 import { POST } from "@/app/api/cash-requests/[id]/route"
+import { prisma } from "@/lib/prisma"
+import { decideCashRequest } from "@/lib/domain/cash-requests"
 
 const tx = {
+  user: {
+    findUnique: mocks.userFindUnique,
+  },
   cashRequest: {
     findUnique: mocks.cashRequestFindUnique,
     findUniqueOrThrow: mocks.cashRequestFindUniqueOrThrow,
@@ -62,6 +68,12 @@ const post = (body: unknown, id = "cr-1") =>
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(session("u-admin", "ADMIN"))
+  mocks.userFindUnique.mockResolvedValue({
+    id: "u-admin",
+    role: "ADMIN",
+    status: "APPROVED",
+    businessId: "biz-1",
+  })
   mocks.transaction.mockImplementation((work: (t: unknown) => unknown) => work(tx))
   mocks.cashRequestFindUnique.mockResolvedValue(null)
   mocks.cashRequestUpdateMany.mockResolvedValue({ count: 1 })
@@ -69,6 +81,19 @@ beforeEach(() => {
 })
 
 describe("permisos", () => {
+  it("decideCashRequest en dominio rechaza a un EMPLOYEE aunque se invoque sin idempotencyKey", async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: "u-emp",
+      role: "EMPLOYEE",
+      status: "APPROVED",
+      businessId: "biz-1",
+    })
+    await expect(
+      decideCashRequest(prisma as never, "u-emp", "biz-1", "cr-1", { decision: "APPROVE" })
+    ).rejects.toMatchObject({ status: 403, message: expect.stringContaining("administrador") })
+    expect(mocks.cashRequestFindUnique).not.toHaveBeenCalled()
+  })
+
   it("un empleado CON el módulo caja NO puede decidir (403, sin tocar la BD)", async () => {
     mocks.auth.mockResolvedValue(session("u-emp", "EMPLOYEE", { allowedModules: ["caja"] }))
     const res = await post({ decision: "APPROVE" })

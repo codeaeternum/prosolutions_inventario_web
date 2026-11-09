@@ -63,8 +63,8 @@ export async function GET(req: Request) {
     })
   }
 
-  const { purged, skipped, tenants } = await purgePendingSignups(prisma, days)
-  return NextResponse.json({ purged, skipped, tenants })
+  const { purged, skipped, tenants, purgedPendingCustomers } = await purgePendingSignups(prisma, days)
+  return NextResponse.json({ purged, skipped, tenants, purgedPendingCustomers })
 }
 
 export const POST = GET

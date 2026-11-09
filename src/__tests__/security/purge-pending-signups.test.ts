@@ -152,8 +152,62 @@ describe("cron purge-pending-signups", () => {
     mocks.fixtures.push(tenant({ users: [{ role: "ADMIN", status: "APPROVED" }] }))
     const res = await get()
     expect((await res.json()).purged).toBe(0)
-    expect(mocks.del.user).not.toHaveBeenCalled()
+    expect(mocks.del.user).not.toHaveBeenCalledWith({ where: { businessId: "b1" } })
     expect(mocks.businessDelete).not.toHaveBeenCalled()
+  })
+
+  it("purges abandoned CUSTOMER+PENDING accounts with zero operational records and clamps PENDING_CUSTOMER_TTL_DAYS", async () => {
+    mocks.del.user.mockResolvedValueOnce({ count: 4 })
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.purgedPendingCustomers).toBe(4)
+
+    const { where } = mocks.del.user.mock.calls[0][0] as {
+      where: {
+        role: string
+        status: string
+        createdAt: { lt: Date }
+        salesAsCustomer: object
+        reservations: object
+        customerRepairs: object
+        creditMovements: object
+        encargosAsCustomer: object
+        businessOperations: object
+      }
+    }
+    expect(where).toMatchObject({
+      role: "CUSTOMER",
+      status: "PENDING",
+      salesAsCustomer: { none: {} },
+      reservations: { none: {} },
+      customerRepairs: { none: {} },
+      creditMovements: { none: {} },
+      encargosAsCustomer: { none: {} },
+      businessOperations: { none: {} },
+    })
+    // Default 30 días.
+    const defaultAgeDays = (Date.now() - where.createdAt.lt.getTime()) / DAY_MS
+    expect(defaultAgeDays).toBeGreaterThanOrEqual(30)
+    expect(defaultAgeDays).toBeLessThan(30 + 60_000 / DAY_MS)
+
+    // Clamp inferior (<7 → 7) y superior (>180 → 180).
+    mocks.del.user.mockClear()
+    vi.stubEnv("PENDING_CUSTOMER_TTL_DAYS", "2")
+    await get()
+    const minCutoff = (mocks.del.user.mock.calls[0][0] as { where: { createdAt: { lt: Date } } }).where.createdAt.lt
+    const minAgeDays = (Date.now() - minCutoff.getTime()) / DAY_MS
+    expect(minAgeDays).toBeGreaterThanOrEqual(7)
+    expect(minAgeDays).toBeLessThan(7 + 60_000 / DAY_MS)
+
+    mocks.del.user.mockClear()
+    vi.stubEnv("PENDING_CUSTOMER_TTL_DAYS", "999")
+    await get()
+    const maxCutoff = (mocks.del.user.mock.calls[0][0] as { where: { createdAt: { lt: Date } } }).where.createdAt.lt
+    const maxAgeDays = (Date.now() - maxCutoff.getTime()) / DAY_MS
+    expect(maxAgeDays).toBeGreaterThanOrEqual(180)
+    expect(maxAgeDays).toBeLessThan(180 + 60_000 / DAY_MS)
   })
 
   it("does not touch a PENDING tenant newer than N days, and honors SIGNUP_PENDING_PURGE_DAYS", async () => {
