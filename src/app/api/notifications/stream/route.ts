@@ -45,6 +45,7 @@ export const NOTIFICATION_TYPES = [
   "encargo_listo",
   "delegation_update",
   "sensitive_alert",
+  "long_shift",
 ] as const
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number]
 

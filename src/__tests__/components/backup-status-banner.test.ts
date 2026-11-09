@@ -4,6 +4,7 @@ import {
   formatBackupAge,
   parseBackupStatus,
   type BackupStatusResponse,
+  type RestoreDrillInfo,
 } from "@/components/admin/backup-status-banner"
 
 // El dashboard no puede renderizar componentes en vitest (ambiente node, sin
@@ -23,6 +24,18 @@ const status = (over: Partial<BackupStatusResponse> = {}): BackupStatusResponse 
     proofs: { ok: true, bytes: 512, error: null },
     evidence: { ok: true, bytes: 256, error: null },
   },
+  ...over,
+})
+
+/** Resumen del simulacro semanal tal como lo sirve la API. */
+const drill = (over: Partial<RestoreDrillInfo> = {}): RestoreDrillInfo => ({
+  configured: true,
+  ok: true,
+  stale: false,
+  finishedAt: "2026-01-05T04:00:00.000Z",
+  ageHours: 50,
+  tocEntries: 214,
+  error: null,
   ...over,
 })
 
@@ -82,6 +95,60 @@ describe("backupBannerView", () => {
     expect(view.kind).toBe("failed")
     if (view.kind === "failed") expect(view.failedLabels).toEqual([])
   })
+
+  it("fresco sin simulacro -> drillLabel null (payload viejo de la API)", () => {
+    const view = backupBannerView(status())
+    expect(view.kind).toBe("fresh")
+    if (view.kind === "fresh") expect(view.drillLabel).toBeNull()
+  })
+
+  it("fresco con simulacro OK -> 'simulacro OK hace X' en la línea verde", () => {
+    const view = backupBannerView(status({ restoreDrill: drill() }))
+    expect(view.kind).toBe("fresh")
+    if (view.kind === "fresh") {
+      expect(view.drillLabel).toBe("simulacro OK hace 2 días")
+      expect(view.drillHint).toContain("Último simulacro")
+    }
+  })
+
+  it("simulacro stale (>192 h) -> 'simulacro pendiente' sin cambiar el puntito verde", () => {
+    const view = backupBannerView(status({ restoreDrill: drill({ stale: true, ageHours: 240 }) }))
+    expect(view.kind).toBe("fresh")
+    if (view.kind === "fresh") {
+      expect(view.drillLabel).toBe("simulacro pendiente")
+      expect(view.drillHint).toContain("8 días")
+    }
+  })
+
+  it("simulacro aún no configurado -> 'simulacro pendiente'", () => {
+    const view = backupBannerView(
+      status({ restoreDrill: drill({ configured: false, ok: false, stale: true, finishedAt: null, ageHours: null }) }),
+    )
+    expect(view.kind).toBe("fresh")
+    if (view.kind === "fresh") expect(view.drillLabel).toBe("simulacro pendiente")
+  })
+
+  it("simulacro fallido -> 'simulacro falló' sin romper la vista fresh del backup", () => {
+    const view = backupBannerView(
+      status({ restoreDrill: drill({ ok: false, error: "pg_restore fallo: <path>" }) }),
+    )
+    expect(view.kind).toBe("fresh")
+    if (view.kind === "fresh") {
+      expect(view.drillLabel).toBe("simulacro falló")
+      expect(view.drillHint).toContain("<path>")
+    }
+  })
+
+  it("backup stale -> el drill se ignora (el foco es el backup diario)", () => {
+    const view = backupBannerView(status({ stale: true, ageHours: 72, restoreDrill: drill() }))
+    expect(view.kind).toBe("stale")
+    expect("drillLabel" in view).toBe(false)
+  })
+
+  it("backup fallido -> failed aunque el simulacro esté sano", () => {
+    const view = backupBannerView(status({ ok: false, restoreDrill: drill() }))
+    expect(view.kind).toBe("failed")
+  })
 })
 
 describe("parseBackupStatus", () => {
@@ -110,6 +177,47 @@ describe("parseBackupStatus", () => {
       extra: "del host",
     })
     expect(parsed).toMatchObject({ ok: true, ageHours: null, finishedAt: null })
+  })
+
+  it("parsea restoreDrill cuando viene en la respuesta", () => {
+    const parsed = parseBackupStatus({ ...status(), restoreDrill: drill() })
+    expect(parsed?.restoreDrill).toMatchObject({
+      configured: true,
+      ok: true,
+      stale: false,
+      ageHours: 50,
+      tocEntries: 214,
+      finishedAt: "2026-01-05T04:00:00.000Z",
+    })
+  })
+
+  it("tolera la ausencia de restoreDrill -> undefined, no rompe", () => {
+    const parsed = parseBackupStatus(status())
+    expect(parsed).not.toBeNull()
+    expect(parsed!.restoreDrill).toBeUndefined()
+  })
+
+  it("restoreDrill malformado (no objeto) -> undefined sin romper el parseo", () => {
+    for (const bad of ["ayer", 42, [1, 2], null]) {
+      const parsed = parseBackupStatus({ ...status(), restoreDrill: bad })
+      expect(parsed).not.toBeNull()
+      expect(parsed!.restoreDrill).toBeUndefined()
+    }
+  })
+
+  it("restoreDrill parcial -> campos con defaults seguros", () => {
+    const parsed = parseBackupStatus({
+      ...status(),
+      restoreDrill: { ok: false, error: 7, ageHours: "viejo" },
+    })
+    expect(parsed?.restoreDrill).toMatchObject({
+      configured: false,
+      ok: false,
+      stale: false,
+      finishedAt: null,
+      ageHours: null,
+      error: null,
+    })
   })
 })
 

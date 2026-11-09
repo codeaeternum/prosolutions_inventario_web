@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react"
 import { AlertTriangle, DatabaseBackup } from "lucide-react"
-import { formatDate } from "@/lib/utils"
+import { formatBackupAge, formatDate } from "@/lib/utils"
+
+// Se re-exporta para no romper imports existentes (la lógica vive en utils
+// para que también la use la consola de plataforma, que es server-side).
+export { formatBackupAge }
 
 /**
  * Estado del backup nocturno (GET /api/admin/backup-status). El archivo de
@@ -11,6 +15,9 @@ import { formatDate } from "@/lib/utils"
  * - atrasado: { configured: true, stale: true } cuando ageHours > 48
  * - falló:    { configured: true, ok: false, stale: false, artifacts }
  * - sin datos: { configured: false, ok: false, stale: true } (archivo ausente)
+ * Además trae restoreDrill: el simulacro semanal de restauración del host
+ * (scripts/verify-backup-restore.ps1), que restaura el último .pgdump en un
+ * postgres efímero. Es indicador secundario: nunca provoca banner por sí solo.
  */
 export interface BackupArtifact {
   ok: boolean
@@ -18,6 +25,17 @@ export interface BackupArtifact {
   error: string | null
   // Entradas del TOC del dump verificadas con pg_restore --list (solo db).
   tocEntries?: number | null
+}
+
+/** Resumen del simulacro de restauración tal como lo sirve la API. */
+export interface RestoreDrillInfo {
+  configured: boolean
+  ok: boolean
+  stale: boolean
+  finishedAt: string | null
+  ageHours: number | null
+  tocEntries?: number | null
+  error?: string | null
 }
 
 export interface BackupStatusResponse {
@@ -28,6 +46,7 @@ export interface BackupStatusResponse {
   startedAt?: string | null
   finishedAt?: string | null
   artifacts?: Partial<Record<"db" | "uploads" | "proofs" | "evidence", BackupArtifact>>
+  restoreDrill?: RestoreDrillInfo
 }
 
 export const BACKUP_ARTIFACT_LABELS = {
@@ -59,6 +78,23 @@ export function parseBackupStatus(json: unknown): BackupStatusResponse | null {
     }
   }
 
+  // El simulacro se añadió después: un payload viejo sin restoreDrill, o un
+  // valor no-objeto, se tolera y queda undefined — nunca rompe el parseo.
+  let restoreDrill: RestoreDrillInfo | undefined
+  const d = raw.restoreDrill
+  if (d && typeof d === "object" && !Array.isArray(d)) {
+    const drill = d as Record<string, unknown>
+    restoreDrill = {
+      configured: drill.configured === true,
+      ok: drill.ok === true,
+      stale: drill.stale === true,
+      finishedAt: iso(drill.finishedAt),
+      ageHours: typeof drill.ageHours === "number" && Number.isFinite(drill.ageHours) ? drill.ageHours : null,
+      tocEntries: typeof drill.tocEntries === "number" && Number.isFinite(drill.tocEntries) ? drill.tocEntries : null,
+      error: typeof drill.error === "string" ? drill.error : null,
+    }
+  }
+
   return {
     configured: raw.configured === true,
     ok: raw.ok,
@@ -67,20 +103,21 @@ export function parseBackupStatus(json: unknown): BackupStatusResponse | null {
     startedAt: iso(raw.startedAt),
     finishedAt: iso(raw.finishedAt),
     artifacts,
+    restoreDrill,
   }
 }
 
-/** "hace 3 h" / "hace 2 días"; vacío cuando no hay edad conocida. */
-export function formatBackupAge(ageHours: number | null): string {
-  if (ageHours === null || !Number.isFinite(ageHours)) return ""
-  if (ageHours < 1) return "hace menos de 1 h"
-  if (ageHours < 24) return `hace ${Math.floor(ageHours)} h`
-  const days = Math.round(ageHours / 24)
-  return `hace ${days} ${days === 1 ? "día" : "días"}`
-}
-
 export type BackupBannerView =
-  | { kind: "fresh"; ageLabel: string; lastRun: string | null; tocEntries: number | null }
+  | {
+      kind: "fresh"
+      ageLabel: string
+      lastRun: string | null
+      tocEntries: number | null
+      /** Texto suave del simulacro ("simulacro OK hace 2 días" / "pendiente" / "falló"). */
+      drillLabel: string | null
+      /** Detalle del simulacro para el tooltip de la línea verde. */
+      drillHint: string | null
+    }
   | { kind: "stale"; configured: boolean; ageLabel: string; lastRun: string | null; lastFailed: boolean }
   | { kind: "failed"; lastRun: string | null; failedLabels: string[] }
 
@@ -103,7 +140,31 @@ export function backupBannerView(status: BackupStatusResponse): BackupBannerView
       .map((key) => BACKUP_ARTIFACT_LABELS[key])
     return { kind: "failed", lastRun, failedLabels }
   }
-  return { kind: "fresh", ageLabel, lastRun, tocEntries: status.artifacts?.db?.tocEntries ?? null }
+
+  // El simulacro solo se reporta en la línea del puntito verde: es un
+  // indicador semanal y secundario — su retraso o fallo se muestra como
+  // texto suave, nunca como banner ámbar/rojo (eso lo decide el backup
+  // diario, que en los kinds stale/failed ignora el drill por completo).
+  const drill = status.restoreDrill
+  let drillLabel: string | null = null
+  let drillHint: string | null = null
+  if (drill) {
+    if (!drill.configured) {
+      drillLabel = "simulacro pendiente"
+      drillHint = "El simulacro de restauración aún no reporta (corre semanal en el servidor)."
+    } else if (!drill.ok) {
+      drillLabel = "simulacro falló"
+      drillHint = `El último simulacro de restauración falló${drill.finishedAt ? ` (${formatDate(drill.finishedAt)})` : ""}${drill.error ? `: ${drill.error}` : ""}`
+    } else if (drill.stale) {
+      drillLabel = "simulacro pendiente"
+      drillHint = `El simulacro de restauración lleva más de 8 días sin correr${drill.finishedAt ? ` (último: ${formatDate(drill.finishedAt)})` : ""}.`
+    } else {
+      const age = formatBackupAge(drill.ageHours)
+      drillLabel = `simulacro OK${age ? ` ${age}` : ""}`
+      drillHint = drill.finishedAt ? `Último simulacro de restauración: ${formatDate(drill.finishedAt)}` : null
+    }
+  }
+  return { kind: "fresh", ageLabel, lastRun, tocEntries: status.artifacts?.db?.tocEntries ?? null, drillLabel, drillHint }
 }
 
 const listEs = (items: string[]) =>
@@ -134,14 +195,16 @@ export function BackupStatusBanner() {
 
   // Sano: solo un puntito verde con la edad — la fecha exacta va en el tooltip.
   if (view.kind === "fresh") {
+    const title = [
+      view.lastRun ? `Último respaldo: ${formatDate(view.lastRun)}` : null,
+      view.drillHint,
+    ].filter(Boolean).join("\n") || undefined
     return (
-      <p
-        className="flex items-center gap-2 text-xs text-muted-foreground"
-        title={view.lastRun ? `Último respaldo: ${formatDate(view.lastRun)}` : undefined}
-      >
+      <p className="flex items-center gap-2 text-xs text-muted-foreground" title={title}>
         <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
         Respaldo automático al día{view.ageLabel ? ` · último ${view.ageLabel}` : ""}
         {view.tocEntries ? ` · dump verificado (${view.tocEntries.toLocaleString("es-MX")} objetos)` : ""}
+        {view.drillLabel ? ` · ${view.drillLabel}` : ""}
       </p>
     )
   }

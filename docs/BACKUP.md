@@ -21,6 +21,8 @@ Qué respalda cada noche:
 3. `prosolutions_payment_proofs` (comprobantes de pago) → `payment-proofs\payment-proofs-...tar.gz`
 4. `prosolutions_repair_evidence` (evidencias de reparación) → `repair-evidence\repair-evidence-...tar.gz`
 
+Además, tras el `pg_dump` el propio script valida la integridad del archivo con `pg_restore --list` en un contenedor `postgres:16-alpine` efímero (montando la carpeta `db` en `:ro`): exige TOC completo y guarda `tocEntries` en el status — un dump truncado nunca se marca como `ok`.
+
 Los volúmenes se montan **solo-lectura** (`-v volumen:/data:ro`); el backup nunca escribe en ellos. El dump se genera dentro del contenedor y se vuelca byte a byte a disco (no usa `>` de PowerShell, que corrompería el binario en Windows PowerShell 5.1).
 
 **Requisito:** Docker Desktop debe estar corriendo a las 03:30 → el N5 debe quedar con sesión de usuario iniciada (bloqueada vale, cerrada no) y *"Start Docker Desktop when you sign in"* activado.
@@ -51,11 +53,12 @@ Get-ScheduledTaskInfo "ProSolutions-Backup"   # LastRunTime / LastTaskResult (0 
 
 ```
 D:\Backups\prosolutions\
-├── db\20260115-0330.pgdump            # pg_dump -Fc
+├── db\20260115-0330.pgdump            # pg_dump -Fc (verificado con pg_restore --list)
 ├── uploads\uploads-20260115-0330.tar.gz
 ├── payment-proofs\payment-proofs-20260115-0330.tar.gz
 ├── repair-evidence\repair-evidence-20260115-0330.tar.gz
-└── last-backup-status.json            # resultado de la última corrida
+├── last-backup-status.json            # resultado de la última corrida (incluye db.tocEntries)
+└── last-restore-drill.json            # resultado del último simulacro semanal
 ```
 
 `last-backup-status.json` (ejemplo):
@@ -122,6 +125,28 @@ Get-ScheduledTaskInfo "ProSolutions-Backup"   # LastTaskResult: 0 = éxito
 ```
 
 Verificación de verdad (una vez al menos): restaurar el dump en un Postgres desechable — `docker run --rm -d --name pgtest -e POSTGRES_PASSWORD=x postgres:16-alpine`, `docker cp` del `.pgdump`, `docker exec pgtest pg_restore -U postgres -d postgres ...`, `docker exec pgtest psql -U postgres -c "\dt"`.
+
+---
+
+## Simulacro automático de restauración (semanal)
+
+Un backup que no restaura no es un backup: la tarea `ProSolutions-RestoreDrill` corre `scripts\verify-backup-restore.ps1` **domingos 04:15** y prueba la cadena completa sin tocar `prosolutions-db`:
+
+1. Toma el `.pgdump` más reciente de `D:\Backups\prosolutions\db` (o `-DumpFile` explícito).
+2. Valida el TOC con `pg_restore --list` en contenedor efímero.
+3. Levanta `prosolutions-restore-drill` (`postgres:16-alpine`, efímero) y restaura con `pg_restore --no-owner --no-privileges`.
+4. Cuenta filas de tablas críticas (`Business`, `WorkshopBranch`, `User`, `Product`, `ProductModel`, `Sale`, `RepairOrder`, `Payment`, `InventoryMovement`, `AuditEvent`): exige que existan, `Business ≥ 1` y total `≥ 100`.
+5. Escribe `last-restore-drill.json` y lo copia al volumen `prosolutions_payment_proofs` como `.restore-drill.json`.
+
+Correr a mano:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-backup-restore.ps1
+Start-ScheduledTask -TaskName "ProSolutions-RestoreDrill"
+Get-Content D:\Backups\prosolutions\last-restore-drill.json   # ok:true + tables{...} + tocEntries
+```
+
+Sale con código 1 si cualquier paso falla — misma convención que el backup diario para monitoreo.
 
 ---
 

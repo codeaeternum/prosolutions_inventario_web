@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { NextRequest } from "next/server"
 
-const mocks = vi.hoisted(() => ({ getAuthRedirect: vi.fn() }))
-// auth(handler) devuelve el handler pelado: en producción envuelve la sesión,
-// aquí solo se ejercita la barrera de origen del proxy.
-vi.mock("@/lib/auth", () => ({ auth: (arg?: unknown) => (typeof arg === "function" ? arg : null) }))
+const mocks = vi.hoisted(() => ({ getAuthRedirect: vi.fn(), sessionHandler: vi.fn() }))
+// auth(handler) devuelve el handler espiado: en producción envuelve la sesión;
+// aquí además registra cuándo se ejecuta, para comprobar que /api nunca llega
+// al handler con sesión (la barrera de origen corre antes, sin auth()).
+vi.mock("@/lib/auth", () => ({
+  auth: (arg?: unknown) => {
+    if (typeof arg !== "function") return null
+    mocks.sessionHandler.mockImplementation(arg as (req: unknown) => unknown)
+    return mocks.sessionHandler
+  },
+}))
 vi.mock("@/lib/auth.config", () => ({ getAuthRedirect: mocks.getAuthRedirect }))
 
 import { proxy } from "@/proxy"
@@ -16,6 +23,7 @@ const post = (path: string, headers: Record<string, string> = {}) => request(pat
 
 beforeEach(() => {
   mocks.getAuthRedirect.mockReturnValue(null)
+  mocks.sessionHandler.mockClear()
 })
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -108,6 +116,17 @@ describe("API Origin/Fetch-Metadata barrier (CSRF)", () => {
     expect(run(post("/api/sales", { origin: "https://preview.example.com" })).status).toBe(200)
     expect(run(post("/api/sales", { origin: "https://tenant.reficio.mx" })).status).toBe(200)
     expect(run(post("/api/sales", { origin: "https://other.example.com" })).status).toBe(403)
+  })
+
+  it("never invokes the session handler for /api (no DB session lookup)", () => {
+    // Mutables bloqueados y permitidos, y lecturas: ninguno debe tocar auth().
+    run(post("/api/sales", { origin: "https://evil.com", "sec-fetch-site": "cross-site" }))
+    run(post("/api/sales"))
+    run(request("/api/sales", "GET", { origin: "https://evil.com" }))
+    expect(mocks.sessionHandler).not.toHaveBeenCalled()
+    // Una página sí pasa por el handler con sesión.
+    run(request("/admin/ventas", "GET"))
+    expect(mocks.sessionHandler).toHaveBeenCalled()
   })
 
   it("does not interfere with non-API paths", () => {

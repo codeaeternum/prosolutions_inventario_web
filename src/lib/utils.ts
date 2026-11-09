@@ -33,6 +33,15 @@ export function formatPrice(price: number): string {
   }).format(price)
 }
 
+/** "hace 3 h" / "hace 2 días"; vacío cuando no hay edad conocida. */
+export function formatBackupAge(ageHours: number | null): string {
+  if (ageHours === null || !Number.isFinite(ageHours)) return ""
+  if (ageHours < 1) return "hace menos de 1 h"
+  if (ageHours < 24) return `hace ${Math.floor(ageHours)} h`
+  const days = Math.round(ageHours / 24)
+  return `hace ${days} ${days === 1 ? "día" : "días"}`
+}
+
 /**
  * Normaliza un teléfono a sus últimos 10 dígitos para empalmar formatos
  * distintos del mismo número: "811 234 5678", "+52 811 234 5678" y

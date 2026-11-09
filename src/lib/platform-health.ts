@@ -1,7 +1,12 @@
 import type { RepairStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { getRateLimitStats, type RateLimitStats } from "@/lib/rate-limit"
-import { readBackupStatus, type BackupStatusSummary } from "@/lib/backup-status"
+import {
+  readBackupStatus,
+  readRestoreDrill,
+  type BackupStatusSummary,
+  type RestoreDrillSummary,
+} from "@/lib/backup-status"
 
 /**
  * Salud global de la plataforma (consola Reficio, solo superadmin).
@@ -56,6 +61,12 @@ export interface PlatformHealth {
   rateLimits: RateLimitStats
   /** Frescura del respaldo nocturno del host (status JSON del script de backup). */
   backup: BackupStatusSummary
+  /**
+   * Último simulacro semanal de restauración (verify-backup-restore.ps1):
+   * restaura el dump más reciente en un postgres efímero. Indicador
+   * secundario — el backup diario sigue siendo la señal primaria.
+   */
+  restoreDrill: RestoreDrillSummary
   generatedAt: Date
 }
 
@@ -74,6 +85,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     eventsTotal,
     eventsLast,
     backupStatus,
+    drillStatus,
   ] = await Promise.all([
     prisma.business.count(),
     prisma.business.count({ where: { isActive: true } }),
@@ -94,15 +106,24 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     prisma.platformEvent.count(),
     prisma.platformEvent.aggregate({ _max: { createdAt: true } }),
     readBackupStatus(),
+    readRestoreDrill(),
   ])
 
-  // `raw` trae rutas del host (backupRoot): no entra a la respuesta.
+  // `raw` trae rutas del host (backupRoot, dumpFile): no entra a la respuesta.
   const backup: BackupStatusSummary = {
     configured: backupStatus.configured,
     ok: backupStatus.ok,
     finishedAt: backupStatus.finishedAt,
     ageHours: backupStatus.ageHours,
     stale: backupStatus.stale,
+  }
+  const restoreDrill: RestoreDrillSummary = {
+    configured: drillStatus.configured,
+    ok: drillStatus.ok,
+    finishedAt: drillStatus.finishedAt,
+    ageHours: drillStatus.ageHours,
+    stale: drillStatus.stale,
+    tocEntries: drillStatus.tocEntries,
   }
 
   return {
@@ -126,6 +147,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     platformEvents: { total: eventsTotal, lastAt: eventsLast._max.createdAt },
     rateLimits: getRateLimitStats(),
     backup,
+    restoreDrill,
     generatedAt: new Date(),
   }
 }

@@ -23,6 +23,7 @@ export type NotificationType =
   | "encargo_listo"
   | "delegation_update"
   | "sensitive_alert"
+  | "long_shift"
   | "connected"
 
 export interface Notification {
@@ -69,6 +70,7 @@ export function notificationHref(notification: Notification): string | null {
     case "encargo_listo":
       return "/admin/inventario?tab=encargos"
     case "sensitive_alert":
+    case "long_shift":
       return "/admin/equipo"
     default:
       return null

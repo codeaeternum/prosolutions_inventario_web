@@ -31,6 +31,7 @@ function getNotificationIcon(type: NotificationType) {
       return <ShieldAlert className="h-4 w-4 text-red-500" />
     case "reservation_expired":
     case "reservation_expiring_soon":
+    case "long_shift":
       return <Clock className="h-4 w-4 text-orange-500" />
     default:
       return <Bell className="h-4 w-4" />

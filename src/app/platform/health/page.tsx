@@ -3,7 +3,7 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth"
 import { getPlatformHealth } from "@/lib/platform-health"
-import { formatDate, formatPrice } from "@/lib/utils"
+import { formatBackupAge, formatDate, formatPrice } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -202,6 +202,18 @@ export default async function PlatformHealthPage() {
                   : health.backup.stale
                     ? "Obsoleto — corre a diario, no debería pasar de 48 h"
                     : "Al corriente"}
+            </p>
+            {/* Simulacro semanal de restauración (verify-backup-restore.ps1):
+                indicador secundario — el backup diario manda en esta tarjeta. */}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Simulacro de restauración:{" "}
+              {!health.restoreDrill.configured
+                ? "sin datos"
+                : !health.restoreDrill.ok
+                  ? "falló"
+                  : health.restoreDrill.stale
+                    ? "pendiente"
+                    : `OK ${formatBackupAge(health.restoreDrill.ageHours) || "reciente"}`}
             </p>
           </CardContent>
         </Card>
