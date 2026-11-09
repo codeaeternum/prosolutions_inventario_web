@@ -144,7 +144,7 @@ Toda la salida del simulacro queda en `D:\Backups\prosolutions\restore-drill-tas
 1. Toma el `.pgdump` más reciente de `D:\Backups\prosolutions\db` (o `-DumpFile` explícito).
 2. Valida el TOC con `pg_restore --list` en contenedor efímero.
 3. Levanta `prosolutions-restore-drill` (`postgres:16-alpine`, efímero) y restaura con `pg_restore --no-owner --no-privileges`.
-4. Cuenta filas de tablas críticas (`Business`, `WorkshopBranch`, `User`, `Product`, `ProductModel`, `Sale`, `RepairOrder`, `Payment`, `InventoryMovement`, `AuditEvent`): exige que existan, `Business ≥ 1` y total `≥ 100`.
+4. Cuenta filas de las tablas críticas — la lista única `scripts/critical-tables.json` (la misma que verifica el preflight de arranque del contenedor, `scripts/docker-preflight.mjs`): exige que existan todas, `Business ≥ 1` y total `≥ 100`.
 5. Escribe `last-restore-drill.json` y lo copia al volumen `prosolutions_payment_proofs` como `.restore-drill.json`.
 
 Correr a mano:

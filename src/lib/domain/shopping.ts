@@ -1,6 +1,7 @@
 import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
+import { nextPurchaseNumber } from "./tenant-sequence"
 import { DEFAULT_FOLIO_DIGITS, repairFolio } from "../workshop-labels"
 // low-stock.ts solo importa tipos + @prisma/client: seguro en el dominio (la
 // cadena prohibida es purchasing.ts → ../low-stock → SSE, que sigue evitada).
@@ -285,12 +286,14 @@ export async function createPurchaseFromNeeds(db: PrismaClient, actorId: string,
     }
 
     // Folio por negocio (no global), mismo patrón que createPurchase:
-    // MAX(number) del tenant + 1 dentro de esta tx serializable.
-    const agg = await tx.purchase.aggregate({ where: { businessId }, _max: { number: true } })
+    // nextPurchaseNumber() lo reserva desde BusinessCounter con un upsert
+    // atómico dentro de esta tx serializable (tenant-sequence.ts solo importa
+    // operations — no arrastra la cadena purchasing.ts → low-stock → SSE).
+    const number = await nextPurchaseNumber(tx, businessId)
     const purchase = await tx.purchase.create({
       data: {
         businessId,
-        number: (agg._max.number ?? 0) + 1,
+        number,
         branchId: branch.id,
         supplierId: supplier?.id ?? null,
         notes: input.notes || null,

@@ -343,9 +343,14 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
         throw new BusinessError(`El apartado venció el ${fecha}; pide autorización al administrador para seguir cobrando.`, 409)
       }
     }
-    const confirmed = await tx.payment.findMany({ where: { saleId: sale.id, status: "CONFIRMED" } })
+    // Cobrado neto: abonos CONFIRMED menos las devoluciones REFUNDED (amount
+    // negativo en la misma fila) — el mismo criterio por-medio que netea
+    // voidSale al reembolsar (payments de la venta con encargoId excluidos:
+    // un anticipo de encargo no es cobro del apartado). PENDING_REVIEW y
+    // VOIDED no mueven el saldo.
+    const settledPayments = await tx.payment.findMany({ where: { saleId: sale.id, status: { in: ["CONFIRMED", "REFUNDED"] }, encargoId: null } })
     const totalCents = cents(sale.total)
-    const paidCents = confirmed.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+    const paidCents = settledPayments.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
     const balanceCents = totalCents - paidCents
     // Un abono único sin monto liquida el saldo restante ("cobra lo que falta").
     const settled: SettledPayment[] = input.payments.map(p => ({

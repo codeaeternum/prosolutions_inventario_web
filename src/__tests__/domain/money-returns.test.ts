@@ -71,7 +71,7 @@ const saleFixture = (over: SaleFixture) => ({
 
 /** Réplica mínima del tx que usan sell/moveInventory/returnSaleItems/changeCredit. */
 function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMovement?: Record<string, unknown> | null; reservation?: Record<string, unknown> | null; creditBalance?: number } = {}) {
-  const created = { inventory: [] as Record<string, unknown>[], payments: [] as Record<string, unknown>[], cash: [] as Record<string, unknown>[], credit: [] as Record<string, unknown>[] }
+  const created = { inventory: [] as Record<string, unknown>[], payments: [] as Record<string, unknown>[], cash: [] as Record<string, unknown>[], credit: [] as Record<string, unknown>[], audits: [] as Record<string, unknown>[] }
   const tx = {
     user: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
@@ -125,7 +125,10 @@ function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMove
     },
     cashMovement: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.cash.push(data); return { id: "cash-1", ...data } }),
-      groupBy: vi.fn(async () => [{ type: "IN", _sum: { amount: 500 } }]),
+      findMany: vi.fn(async () => [{ type: "IN", amount: 500 }]),
+    },
+    auditEvent: {
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.audits.push(data); return { id: "ae-1", ...data } }),
     },
     businessOperation: {
       findUnique: vi.fn(async () => null),
@@ -276,6 +279,58 @@ describe("reembolso con descuento — precio efectivamente cobrado", () => {
     // Segunda unidad: línea efectiva $100 − $50 ya devueltos = $50.
     expect(created.payments[0]).toMatchObject({ amount: -50 })
     expect(result.refunded).toBe(50)
+  })
+})
+
+describe("folio bancario del reembolso (TARJETA/TRANSFERENCIA)", () => {
+  const voidInput = (over: Record<string, unknown> = {}) => ({
+    saleId: "sale-1", reason: "Venta capturada por error", idempotencyKey: key(), ...over,
+  })
+
+  it("devolución TARJETA sin folio: el Payment queda REFUNDED y la advertencia en bitácora", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput())
+    // No se bloquea (el panel aún no captura folio), pero el hueco de
+    // conciliación queda como AuditEvent de advertencia — nunca mudo.
+    expect(created.payments[0]).toMatchObject({ method: "CARD", amount: -100, status: "REFUNDED", reference: null })
+    const warn = created.audits.find(a => a.action === "REFUND_NO_REFERENCE")
+    expect(warn).toBeTruthy()
+    expect(warn).toMatchObject({ entity: "payment", entityId: "pay-1", businessId: BIZ })
+    expect(String(warn!.summary)).toContain("100.00 MXN")
+  })
+
+  it("devolución TARJETA con folio: se guarda en la fila y no hay advertencia", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ reference: "AUTH-7788" }))
+    expect(created.payments[0]).toMatchObject({ method: "CARD", amount: -100, status: "REFUNDED", reference: "AUTH-7788" })
+    expect(created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
+  })
+
+  it("devolución TRANSFERENCIA sin folio también deja advertencia", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ refundMethod: "TRANSFERENCIA" }))
+    expect(created.payments[0]).toMatchObject({ method: "TRANSFER", status: "REFUNDED", reference: null })
+    expect(created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(true)
+  })
+
+  it("devolución EFECTIVO no genera advertencia (sale por el cajón con su asiento)", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ refundMethod: "EFECTIVO" }))
+    expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 100 })
+    expect(created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
+  })
+
+  it("anulación con cobro TARJETA sin folio advierte; con references lo guarda", async () => {
+    const sale = saleFixture({ status: "COMPLETED", payments: [{ method: "CARD", amount: 100, status: "CONFIRMED" }] })
+    const noFolio = fakeDb({ sale })
+    await voidSale(noFolio.db, "admin-1", BIZ, voidInput())
+    expect(noFolio.created.payments[0]).toMatchObject({ method: "CARD", status: "REFUNDED", reference: null })
+    expect(noFolio.created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(true)
+
+    const conFolio = fakeDb({ sale })
+    await voidSale(conFolio.db, "admin-1", BIZ, voidInput({ references: { TARJETA: "AUTH-VOID-1" } }))
+    expect(conFolio.created.payments[0]).toMatchObject({ method: "CARD", status: "REFUNDED", reference: "AUTH-VOID-1" })
+    expect(conFolio.created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
   })
 })
 

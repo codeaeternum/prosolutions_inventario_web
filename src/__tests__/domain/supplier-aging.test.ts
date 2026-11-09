@@ -129,7 +129,7 @@ describe("paySupplier — cashFromRegister", () => {
             },
             cashMovement: {
                 create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.cash.push(data); return { id: "cash-1", ...data } }),
-                groupBy: vi.fn(async () => [{ type: "IN", _sum: { amount: (opts.cashInCents ?? 1000) / 100 } }]),
+                findMany: vi.fn(async () => [{ type: "IN", amount: (opts.cashInCents ?? 1000) / 100 }]),
             },
             businessOperation: {
                 findUnique: vi.fn(async () => null),

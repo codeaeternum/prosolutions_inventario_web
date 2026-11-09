@@ -46,12 +46,19 @@ if (-not $isAdmin) {
     exit 1
 }
 
-$actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$backupScript`" -BackupRoot `"$BackupRoot`""
+# *> redirige TODOS los streams al log (en PS 5.1 Write-Host cae al stream
+# Information y tambien queda capturado). Se usa -Command porque -File no
+# interpreta redirecciones - mismo patron que register-restore-drill-task.ps1.
+# La carpeta del log debe existir ANTES de la primera corrida.
+New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
+$logFile = Join-Path $BackupRoot "backup-task.log"
+$actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"& '$backupScript' -BackupRoot '$BackupRoot'"
 # La URL de Kuma viaja como argumento de la acción programada: el push del
 # backup también corre cuando nadie edita la tarea a mano (taskschd.msc).
 if ($KumaPushUrl) {
-    $actionArgs += " -KumaPushUrl `"$KumaPushUrl`""
+    $actionArgs += " -KumaPushUrl '$KumaPushUrl'"
 }
+$actionArgs += " *> '$logFile'`""
 $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArgs -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]$At)
 $settings = New-ScheduledTaskSettingsSet `
@@ -89,6 +96,7 @@ Write-Host "Tarea '$TaskName' registrada:" -ForegroundColor Green
 Write-Host "  - Horario: diario a las $At (StartWhenAvailable: recupera ejecuciones perdidas)"
 Write-Host "  - Cuenta:  $runAsDesc"
 Write-Host "  - Acción:  powershell.exe $actionArgs"
+Write-Host "  - Log:     $logFile"
 Write-Host ""
 Write-Host "Prueba manual sin esperar a las $At :" -ForegroundColor Cyan
 Write-Host "  Start-ScheduledTask -TaskName `"$TaskName`"; Start-Sleep 5; Get-ScheduledTaskInfo `"$TaskName`""

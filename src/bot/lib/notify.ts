@@ -1,6 +1,7 @@
 import type { Telegraf, Types } from "telegraf"
 import { getPrisma } from "./prisma"
 import { errorText } from "./format"
+import { TELEGRAM_API_TIMEOUT_MS, withTimeout } from "./utils"
 
 /**
  * Indica si el usuario con el telegramId dado es ADMIN en la base de datos.
@@ -22,7 +23,7 @@ export async function isAdmin(telegramId: string): Promise<boolean> {
  * así que jamás se notifica a admins de otros tenants.
  * Usado para notificaciones internas (nuevos registros, reservas, etc.).
  */
-export async function notifyAdmins(bot: Telegraf, businessId: string, message: string, extraOptions?: Types.ExtraReplyMessage): Promise<void> {
+export async function notifyAdmins(bot: Pick<Telegraf, "telegram">, businessId: string, message: string, extraOptions?: Types.ExtraReplyMessage): Promise<void> {
   const prisma = getPrisma()
   if (!prisma) return
   const isDev = process.env.NODE_ENV !== "production"
@@ -34,7 +35,11 @@ export async function notifyAdmins(bot: Telegraf, businessId: string, message: s
     for (const admin of admins) {
       try {
         if (admin.telegramId) {
-          await bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: "HTML", ...extraOptions })
+          await withTimeout(
+            bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: "HTML", ...extraOptions }),
+            TELEGRAM_API_TIMEOUT_MS,
+            "sendMessage a admin",
+          )
           if (isDev) console.log(`[Notify] Message sent to admin ${admin.name}`)
         }
       } catch (e: unknown) {

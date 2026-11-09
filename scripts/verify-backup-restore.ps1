@@ -34,13 +34,6 @@ $drillDb = "restore_drill"
 $drillUser = "drill"
 $drillPass = "drill-pass"
 
-# Tablas Prisma que deben existir y responder COUNT(*) tras restaurar.
-# OJO: el modelo Branch se mapea a la tabla "WorkshopBranch" (@@map del schema).
-$tables = @(
-    "Business", "WorkshopBranch", "User", "Product", "ProductModel",
-    "Sale", "RepairOrder", "Payment", "InventoryMovement", "AuditEvent"
-)
-
 $status = [ordered]@{
     startedAt  = (Get-Date).ToString("o")
     host       = $env:COMPUTERNAME
@@ -74,6 +67,17 @@ function Remove-DrillContainer {
 try {
     $t0 = Get-Date
     Write-Log "=== Simulacro de restauracion ProSolutions ==="
+
+    # ---------- 0) Tablas criticas a verificar ----------
+    # Fuente unica: scripts/critical-tables.json (la misma lista que lee el
+    # preflight de arranque del contenedor, scripts/docker-preflight.mjs).
+    # Una sola fuente evita que drill y preflight se desacuerden al agregar
+    # modelos. OJO: el modelo Branch se mapea a la tabla "WorkshopBranch"
+    # (@@map del schema).
+    $tablesFile = Join-Path $PSScriptRoot "critical-tables.json"
+    if (-not (Test-Path -LiteralPath $tablesFile)) { throw "No se encuentra $tablesFile" }
+    $tables = @((Get-Content -LiteralPath $tablesFile -Raw | ConvertFrom-Json).tables)
+    if ($tables.Count -lt 10) { throw "critical-tables.json incompleto ($($tables.Count) tablas)" }
 
     # ---------- 1) Localizar el dump ----------
     if ($DumpFile) {

@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   cashRegisterFindUniqueOrThrow: vi.fn(),
   cashRegisterUpdateMany: vi.fn(),
   branchFindFirst: vi.fn(),
-  cashMovementGroupBy: vi.fn(),
+  cashMovementFindMany: vi.fn(),
   cashMovementCreate: vi.fn(),
 }))
 
@@ -54,7 +54,7 @@ const tx = {
     findFirst: mocks.branchFindFirst,
   },
   cashMovement: {
-    groupBy: mocks.cashMovementGroupBy,
+    findMany: mocks.cashMovementFindMany,
     create: mocks.cashMovementCreate,
   },
 }
@@ -196,7 +196,7 @@ describe("decisión", () => {
     })
     mocks.cashRegisterFindMany.mockResolvedValue([{ id: "reg-1" }])
     mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 100 })
-    mocks.cashMovementGroupBy.mockResolvedValue([])
+    mocks.cashMovementFindMany.mockResolvedValue([])
     const res = await post({ decision: "APPROVE" })
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("no alcanza para autorizar")
@@ -215,7 +215,7 @@ describe("decisión", () => {
     })
     mocks.cashRegisterFindMany.mockResolvedValue([{ id: "reg-1" }])
     mocks.cashRegisterFindUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 500 })
-    mocks.cashMovementGroupBy.mockResolvedValue([])
+    mocks.cashMovementFindMany.mockResolvedValue([])
     mocks.cashMovementCreate.mockResolvedValue({ id: "mov-1" })
     mocks.cashRequestUpdate.mockResolvedValue({ id: "cr-1", status: "APPROVED", cashMovementId: "mov-1" })
 

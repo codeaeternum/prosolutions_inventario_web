@@ -89,12 +89,17 @@ export function BranchSwitcher({ homeBranchId }: BranchSwitcherProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="gap-2 px-2 sm:px-3" title="Sucursal activa">
-          <Building2 className="h-4 w-4 shrink-0" />
+        <Button
+          variant="outline"
+          className="gap-2 px-2 sm:px-3"
+          title="Sucursal activa"
+          aria-label={`Sucursal activa: ${selectedBranch?.name ?? "sin elegir"}. Cambiar de sucursal`}
+        >
+          <Building2 className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="hidden sm:inline max-w-[140px] truncate">
             {selectedBranch?.name ?? "Sucursal"}
           </span>
-          <ChevronDown className="hidden sm:inline h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronDown className="hidden sm:inline h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">

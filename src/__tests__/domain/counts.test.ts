@@ -21,12 +21,15 @@ const key = () => `counts-test-${++seq}`
 const tx = {
   user: { findUnique: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-  inventoryCount: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
+  inventoryCount: { findFirst: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
   branch: { findFirst: vi.fn() },
   inventoryCountItem: { update: vi.fn() },
   branchStock: { findUnique: vi.fn(), upsert: vi.fn() },
   product: { update: vi.fn(), findMany: vi.fn() },
   inventoryMovement: { create: vi.fn() },
+  // nextCountNumber() reserva el folio con un UPSERT atómico sobre
+  // BusinessCounter ($queryRaw → RETURNING nextCountNumber - 1).
+  $queryRaw: vi.fn(),
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
@@ -62,12 +65,12 @@ beforeEach(() => {
 })
 
 describe("createCount — folio por negocio", () => {
-  it("asigna MAX(number) del tenant + 1, no el autoincrement global", async () => {
+  it("reserva el folio desde BusinessCounter (upsert atómico), no el autoincrement global", async () => {
     tx.inventoryCount.findFirst.mockResolvedValue(null) // sin conteo abierto
-    tx.inventoryCount.aggregate.mockResolvedValue({ _max: { number: 4 } })
+    tx.$queryRaw.mockResolvedValue([{ n: 5 }]) // BusinessCounter.nextCountNumber reservado
     tx.inventoryCount.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "count-9", ...data }))
     const result = await createCount(db, admin.id, BIZ, { idempotencyKey: key(), branchId: "b1" })
-    expect(tx.inventoryCount.aggregate).toHaveBeenCalledWith({ where: { businessId: BIZ }, _max: { number: true } })
+    expect(tx.$queryRaw).toHaveBeenCalled()
     expect(tx.inventoryCount.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ businessId: BIZ, number: 5 }),
     }))
@@ -76,7 +79,7 @@ describe("createCount — folio por negocio", () => {
 
   it("el primer conteo de un negocio arranca en 1 aunque existan folios globales", async () => {
     tx.inventoryCount.findFirst.mockResolvedValue(null)
-    tx.inventoryCount.aggregate.mockResolvedValue({ _max: { number: null } })
+    tx.$queryRaw.mockResolvedValue([{ n: 1 }])
     tx.inventoryCount.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "count-1", ...data }))
     const result = await createCount(db, admin.id, BIZ, { idempotencyKey: key(), branchId: "b1" })
     expect(tx.inventoryCount.create).toHaveBeenCalledWith(expect.objectContaining({

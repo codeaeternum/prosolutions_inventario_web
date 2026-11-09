@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
+import { recordAudit } from "../audit"
 import { linkCustomerByPhone } from "./customers"
 import { nextOrderNumber } from "./tenant-sequence"
 import { syncLowStockAlerts } from "../low-stock"
@@ -627,6 +628,21 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
       const refundableCents = await heldCents() - orderTotalCents(order, await orderParts())
       if (input.paymentCents > refundableCents) throw new BusinessError(`La devolución excede lo cobrado de más (${(Math.max(0, refundableCents) / 100).toFixed(2)} MXN).`, 409)
       const payment = await tx.payment.create({ data: { businessId, repairOrderId: id, purpose: "REFUND", method: input.paymentMethod, amount: -input.paymentCents / 100, status: "REFUNDED", reference: input.paymentReference ?? null, createdById: actorId, notes: input.detail ?? null } })
+      // Reembolso por tarjeta sin folio de la terminal: el asiento no
+      // concilia contra el estado de cuenta. El panel de reembolso aún no
+      // captura el folio (TRANSFER sí lo exige arriba), así que no se
+      // bloquea — el hueco queda visible en la bitácora.
+      if (input.paymentMethod === "CARD" && !input.paymentReference) {
+        const warnFmt = await folioFormatOf(tx, businessId)
+        await recordAudit(tx, {
+          businessId, actorId,
+          action: "REFUND_NO_REFERENCE",
+          entity: "payment",
+          entityId: payment.id,
+          entityName: `Orden ${repairFolio(order.number, warnFmt.digits, warnFmt.prefix)}`,
+          summary: `Reembolso por tarjeta de ${(input.paymentCents / 100).toFixed(2)} MXN sin folio de la terminal — el asiento no concilia contra el estado de cuenta.`,
+        })
+      }
       if (input.paymentMethod === "CASH") {
         const register = await openRegister(tx, order.currentBranchId, businessId)
         // Igual que las devoluciones de venta: la caja no queda en negativo —

@@ -10,9 +10,10 @@ import { BusinessError, type Transaction } from "./operations"
  * una fila en BusinessCounter con el próximo folio disponible; el único
  * @@unique([businessId, number]) del schema es la red de seguridad.
  *
- * Ventaja sobre MAX(number)+1 (patrón de Purchase/InventoryCount): el
- * UPDATE … RETURNING toma un lock de fila y no exige serializar lecturas
- * de TODA la tabla del tenant. Y a diferencia de una secuencia de Postgres,
+ * Ventaja sobre MAX(number)+1 (el patrón viejo que Purchase/InventoryCount
+ * también usaban): el UPDATE … RETURNING toma un lock de fila y no exige
+ * serializar lecturas de TODA la tabla del tenant. Y a diferencia de una
+ * secuencia de Postgres,
  * el incremento es TRANSACCIONAL: si la operación aborta o reintenta, el
  * número reservado se revierte con el rollback — no se queman folios.
  *
@@ -96,6 +97,71 @@ export async function nextSaleNumber(tx: Transaction, businessId: string): Promi
   const n = rows[0]?.n
   if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
     throw new BusinessError("No se pudo reservar el folio de la venta.", 500, "FOLIO_UNAVAILABLE")
+  }
+  return n
+}
+
+/**
+ * Reserva y devuelve el próximo folio de compra del negocio
+ * (Purchase.number, OC-000001). Reemplaza al MAX(number)+1 que corría en
+ * createPurchase/createPurchaseFromNeeds: mismo statement atómico sobre
+ * BusinessCounter.nextPurchaseNumber que nextSaleNumber — INSERT …
+ * ON CONFLICT DO UPDATE … RETURNING devuelve el valor previo al
+ * incremento; si el negocio no tiene fila, la siembra desde
+ * MAX(Purchase.number)+1 del tenant para continuar el histórico.
+ */
+export async function nextPurchaseNumber(tx: Transaction, businessId: string): Promise<number> {
+  if (typeof (tx as { $queryRaw?: unknown }).$queryRaw !== "function") {
+    // Misma frontera que nextSaleNumber: en tests el doble puede no llevar
+    // $queryRaw y el 1 fijo es inofensivo; en producción un tx sin raw es un
+    // cliente incompleto y devolver 1 chocaría con @@unique([businessId,
+    // number]) — mejor fallar la operación.
+    if (process.env.NODE_ENV !== "test") {
+      throw new BusinessError("No se pudo reservar el folio de la compra: transacción sin acceso a SQL.", 500, "FOLIO_UNAVAILABLE")
+    }
+    return 1
+  }
+  const rows = await tx.$queryRaw<{ n: number }[]>`
+    INSERT INTO "BusinessCounter" ("businessId", "nextPurchaseNumber")
+    VALUES (${businessId}, (
+      SELECT COALESCE(MAX("number"), 0) + 2 FROM "Purchase" WHERE "businessId" = ${businessId}
+    ))
+    ON CONFLICT ("businessId")
+    DO UPDATE SET "nextPurchaseNumber" = "BusinessCounter"."nextPurchaseNumber" + 1
+    RETURNING "nextPurchaseNumber" - 1 AS "n"
+  `
+  const n = rows[0]?.n
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+    throw new BusinessError("No se pudo reservar el folio de la compra.", 500, "FOLIO_UNAVAILABLE")
+  }
+  return n
+}
+
+/**
+ * Reserva y devuelve el próximo folio de conteo físico del negocio
+ * (InventoryCount.number, CC-000001). Mismo patrón que nextPurchaseNumber:
+ * un solo upsert atómico sobre BusinessCounter.nextCountNumber dentro de la
+ * tx serializable; sin fila, siembra desde MAX(InventoryCount.number)+1.
+ */
+export async function nextCountNumber(tx: Transaction, businessId: string): Promise<number> {
+  if (typeof (tx as { $queryRaw?: unknown }).$queryRaw !== "function") {
+    if (process.env.NODE_ENV !== "test") {
+      throw new BusinessError("No se pudo reservar el folio del conteo: transacción sin acceso a SQL.", 500, "FOLIO_UNAVAILABLE")
+    }
+    return 1
+  }
+  const rows = await tx.$queryRaw<{ n: number }[]>`
+    INSERT INTO "BusinessCounter" ("businessId", "nextCountNumber")
+    VALUES (${businessId}, (
+      SELECT COALESCE(MAX("number"), 0) + 2 FROM "InventoryCount" WHERE "businessId" = ${businessId}
+    ))
+    ON CONFLICT ("businessId")
+    DO UPDATE SET "nextCountNumber" = "BusinessCounter"."nextCountNumber" + 1
+    RETURNING "nextCountNumber" - 1 AS "n"
+  `
+  const n = rows[0]?.n
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+    throw new BusinessError("No se pudo reservar el folio del conteo.", 500, "FOLIO_UNAVAILABLE")
   }
   return n
 }

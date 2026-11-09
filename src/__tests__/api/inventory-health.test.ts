@@ -71,6 +71,57 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
     expect(sql).toContain('"isActive" = true')
   })
 
+  it("reporta refacciones cobradas con descuento de inventario incompleto", async () => {
+    // queryRaw corre dos veces: drift (vacío) y luego las partes cargadas
+    // con deducted < qty — el patrón de conciliación del syncPartStock.
+    mocks.queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          partId: "part-1", orderId: "o1", orderNumber: 12, orderStatus: "READY",
+          description: "Flex de carga", qty: 2, deducted: 1, totalCount: 2,
+        },
+        {
+          partId: "part-2", orderId: "o2", orderNumber: 9, orderStatus: "REPAIRING",
+          description: "Tapa trasera", qty: 3, deducted: 0, totalCount: 2,
+        },
+      ])
+
+    const res = await GET()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.chargedWithoutStock.count).toBe(2)
+    expect(json.chargedWithoutStock.parts).toEqual([
+      {
+        partId: "part-1", orderId: "o1", orderNumber: 12, orderStatus: "READY",
+        description: "Flex de carga", qty: 2, deducted: 1, missing: 1,
+      },
+      {
+        partId: "part-2", orderId: "o2", orderNumber: 9, orderStatus: "REPAIRING",
+        description: "Tapa trasera", qty: 3, deducted: 0, missing: 3,
+      },
+    ])
+    // La consulta es tenant-scoped, une con la OT y ancla el movimiento al
+    // mismo patrón de notes que escribe syncPartStock; viene acotada.
+    const [strings, businessId] = mocks.queryRaw.mock.calls[1] as unknown as [TemplateStringsArray, string]
+    const sql = strings.join(" ")
+    expect(businessId).toBe("biz-1")
+    expect(sql).toContain('FROM "RepairPart"')
+    expect(sql).toContain('JOIN "RepairOrder"')
+    expect(sql).toContain('"notes" LIKE')
+    expect(sql).toContain("Refacción OT ")
+    expect(sql).toContain('rp."status" = \'APPROVED\'')
+    expect(sql).toContain("LIMIT")
+    expect(sql).toContain('rp."businessId" =')
+  })
+
+  it("chargedWithoutStock vacío cuando todas las refacciones descontaron completo", async () => {
+    mocks.queryRaw.mockResolvedValue([])
+    const res = await GET()
+    const json = await res.json()
+    expect(json.chargedWithoutStock).toEqual({ count: 0, parts: [] })
+  })
+
   it("reconcilia el stock en POST y registra evento en la bitácora", async () => {
     mocks.queryRaw.mockResolvedValue([
       { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },

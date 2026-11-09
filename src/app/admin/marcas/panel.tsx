@@ -16,8 +16,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Plus, Loader2, Trash2, Smartphone } from "lucide-react"
+import { Plus, Loader2, Pencil, Trash2, Smartphone } from "lucide-react"
+import { toast } from "sonner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/admin/empty-state"
+import { InlineNameEditor } from "@/components/admin/inline-name-editor"
 
 interface Brand {
   id: string
@@ -36,6 +39,7 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
   const [error, setError] = useState("")
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const fetchBrands = useCallback(async () => {
     try {
@@ -81,6 +85,29 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  // Rename inline: PATCH /api/brands { id, name }. `true` cierra el editor;
+  // `false` lo deja abierto para corregir o cancelar (el toast ya avisó).
+  const handleRename = async (id: string, name: string): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/brands", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || "Error al renombrar la marca")
+        return false
+      }
+      toast.success("Marca renombrada")
+      void fetchBrands()
+      return true
+    } catch {
+      toast.error("Error al renombrar la marca")
+      return false
+    }
+  }
+
   const handleDelete = async (id: string) => {
     setDeleteDialogOpen(false)
     setDeleteTargetId(null)
@@ -89,7 +116,8 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
       if (res.ok) {
         fetchBrands()
       } else {
-        setError("Error al eliminar")
+        const data = await res.json().catch(() => ({}))
+        setError(data.error || "Error al eliminar")
       }
     } catch {
       setError("Error al eliminar")
@@ -98,8 +126,16 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="space-y-6" role="status" aria-label="Cargando marcas">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-9 w-40" />
+          <Skeleton className="h-9 w-36" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-24" />
+          ))}
+        </div>
       </div>
     )
   }
@@ -163,24 +199,42 @@ export function BrandsPanel({ embedded = false }: { embedded?: boolean }) {
         {brands.map((brand) => (
           <Card key={brand.id}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Smartphone className="h-5 w-5 text-muted-foreground" />
-                {brand.name}
-              </CardTitle>
-              <div className="flex gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Eliminar ${brand.name}`}
-                  onClick={() => {
-                    setDeleteTargetId(brand.id)
-                    setDeleteDialogOpen(true)
-                  }}
-                  disabled={brand._count.models > 0}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+              {editingId === brand.id ? (
+                <InlineNameEditor
+                  currentName={brand.name}
+                  onSave={(name) => handleRename(brand.id, name)}
+                  onClose={() => setEditingId(null)}
+                />
+              ) : (
+                <>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Smartphone className="h-5 w-5 text-muted-foreground" />
+                    {brand.name}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Renombrar ${brand.name}`}
+                      onClick={() => setEditingId(brand.id)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Eliminar ${brand.name}`}
+                      onClick={() => {
+                        setDeleteTargetId(brand.id)
+                        setDeleteDialogOpen(true)
+                      }}
+                      disabled={brand._count.models > 0}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardHeader>
             <CardContent>
               <Badge variant="secondary">

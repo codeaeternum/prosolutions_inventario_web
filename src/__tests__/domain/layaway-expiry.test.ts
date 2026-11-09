@@ -63,7 +63,7 @@ function fakeDb(sale: Record<string, unknown> | null, confirmedPayments: Record<
     },
     cashMovement: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.cash.push(data); return { id: "cash-1", ...data } }),
-      groupBy: vi.fn(async () => []),
+      findMany: vi.fn(async () => []),
     },
   }
   const db = { $transaction: async (work: (t: unknown) => Promise<unknown>) => work(tx) }
@@ -107,6 +107,37 @@ describe("apartado vencido — abonos congelados para staff", () => {
     const result = await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), ...abono })
     expect(result.paid).toBe(50)
     expect(created.payments).toHaveLength(1)
+  })
+})
+
+describe("saldo del apartado — paidCents netea devoluciones REFUNDED", () => {
+  it("un REFUNDED del mismo medio resta del cobrado (igual que el neto de voidSale)", async () => {
+    // Apartado de $300: $100 cobrados por tarjeta y $40 ya devueltos → saldo
+    // real pagado $60; el abono de $50 deja $190 por cobrar.
+    const { db, tx } = fakeDb(layaway({ expiresAt: null }), [
+      { method: "CARD", amount: 100, status: "CONFIRMED" },
+      { method: "CARD", amount: -40, status: "REFUNDED" },
+    ])
+    const result = await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), ...abono })
+    expect(result.paid).toBe(110)
+    expect(result.balance).toBe(190)
+    expect(result.completed).toBe(false)
+    // La consulta incluye las filas REFUNDED (amount negativo) y excluye
+    // anticipos de encargo — el mismo criterio que netea voidSale.
+    expect(tx.payment.findMany).toHaveBeenCalledWith({
+      where: { saleId: "doc-1", status: { in: ["CONFIRMED", "REFUNDED"] }, encargoId: null },
+    })
+  })
+
+  it("un REFUNDED que deja el neto en cero permite liquidar el total de nuevo", async () => {
+    const { db } = fakeDb(layaway({ expiresAt: null }), [
+      { method: "CASH", amount: 300, status: "CONFIRMED" },
+      { method: "CASH", amount: -300, status: "REFUNDED" },
+    ])
+    // Abono único sin monto = liquidar el saldo: vuelve a pedir los $300.
+    const result = await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), payments: [{ method: "EFECTIVO" }] })
+    expect(result.completed).toBe(true)
+    expect(result.balance).toBe(0)
   })
 })
 

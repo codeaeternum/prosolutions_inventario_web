@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import type { PrismaClient, PurchaseStatus } from "@prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, operation, operationKeySchema, releaseStock, resolveBranch } from "./operations"
+import { nextPurchaseNumber } from "./tenant-sequence"
 import { syncLowStockAlerts } from "../low-stock"
 
 /** Folio público de una orden de compra: OC-000001. */
@@ -49,15 +50,15 @@ export async function createPurchase(db: PrismaClient, actorId: string, business
       totalCents += item.unitCostCents * item.quantity
     }
 
-    // Folio por negocio (no global): MAX(number) del tenant + 1. Seguro porque
-    // operation() corre Serializable y reintenta ante conflicto; la restricción
-    // @@unique([businessId, number]) es la red de seguridad. El autoincrement
-    // del schema queda como fallback inerte para inserts que no fijen number.
-    const agg = await tx.purchase.aggregate({ where: { businessId }, _max: { number: true } })
+    // Folio por negocio (no global): nextPurchaseNumber() lo reserva desde
+    // BusinessCounter con un upsert atómico dentro de esta tx serializable
+    // (mismo patrón que ventas y órdenes); @@unique([businessId, number]) es
+    // la red de seguridad y el autoincrement del schema queda inerte.
+    const number = await nextPurchaseNumber(tx, businessId)
     const purchase = await tx.purchase.create({
       data: {
         businessId,
-        number: (agg._max.number ?? 0) + 1,
+        number,
         branchId: branch.id,
         supplierId: supplier?.id ?? null,
         notes: input.notes || null,

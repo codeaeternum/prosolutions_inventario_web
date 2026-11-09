@@ -3,6 +3,7 @@ import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { clipMessage, errorText, escapeHtml } from '../lib/format'
+import { TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey, parseBusinessDateParam } from '../../lib/business-time'
 
@@ -179,7 +180,11 @@ export async function sendDailySummaryToAdmins(
     for (const admin of admins) {
         if (!admin.telegramId) continue
         try {
-            await bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: 'HTML' })
+            await withTimeout(
+                bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: 'HTML' }),
+                TELEGRAM_API_TIMEOUT_MS,
+                'sendMessage de resumen diario',
+            )
             sent++
         } catch (e) {
             // Sin nombre/telegramId ni el error crudo de Telegraf: el id del

@@ -3,6 +3,7 @@ import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { clipMessage, errorText, escapeHtml } from '../lib/format'
+import { TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey } from '../../lib/business-time'
 
@@ -188,7 +189,11 @@ export async function sendLongShiftAlerts(
                 continue
             }
 
-            await bot.telegram.sendMessage(shift.telegramId, formatLongShiftMessage(shift, now), { parse_mode: 'HTML' })
+            await withTimeout(
+                bot.telegram.sendMessage(shift.telegramId, formatLongShiftMessage(shift, now), { parse_mode: 'HTML' }),
+                TELEGRAM_API_TIMEOUT_MS,
+                'sendMessage de turno largo',
+            )
             result.sent++
 
             const horas = Math.floor(shift.elapsedMin / 60)

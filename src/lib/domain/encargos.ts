@@ -241,6 +241,9 @@ const transitionSchema = z.object({
   // Medio para devolver el anticipo al cancelar; omitido se usa el método
   // del anticipo registrado (o CASH en encargos anteriores al ledger).
   refundMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
+  // Folio bancario del reembolso cuando refundMethod es CARD/TRANSFER
+  // (autorización de terminal / clave SPEI de la devolución).
+  refundReference: z.string().trim().min(1).max(200).optional(),
   // Pago al proveedor al marcar ORDERED (mismo patrón que paySupplier):
   // solo ADMIN lo asienta; CASH documenta la salida salvo que se declare
   // cashFromRegister, que la asienta como CashMovement OUT del cajón.
@@ -302,6 +305,7 @@ export async function transitionEncargoTx(
     supplierNote?: string
     reason?: string
     refundMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
+    refundReference?: string
     supplierId?: string | null
     supplierAmountCents?: number
     supplierMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
@@ -412,11 +416,27 @@ export async function transitionEncargoTx(
         data: {
           businessId: input.businessId, encargoId: encargo.id, purpose: "REFUND", method,
           amount: -heldCents / 100, status: "REFUNDED", createdById: input.actorId,
+          reference: input.refundReference ?? null,
           notes: `Devolución de anticipo por cancelación: ${encargo.description}${reasonSuffix}`,
         },
         select: { id: true },
       })
       refundPaymentId = refund.id
+      // Reembolso bancario sin folio: el asiento no concilia contra el estado
+      // de cuenta. El panel de cancelación aún no captura el folio, así que
+      // no se bloquea — el hueco queda en bitácora (misma regla que los
+      // reembolsos de venta y taller).
+      if ((method === "CARD" || method === "TRANSFER") && !input.refundReference) {
+        await recordAudit(tx, {
+          businessId: input.businessId,
+          actorId: input.actorId,
+          action: "REFUND_NO_REFERENCE",
+          entity: "payment",
+          entityId: refund.id,
+          entityName: `Encargo: ${encargo.description}`,
+          summary: `Devolución de anticipo por ${method === "CARD" ? "tarjeta" : "transferencia"} de ${(heldCents / 100).toFixed(2)} MXN sin folio bancario — el asiento no concilia contra el estado de cuenta.`,
+        })
+      }
       if (method === "CASH") {
         const register = await openRegister(tx, encargo.branchId, input.businessId)
         // La caja no queda en negativo — igual que las devoluciones de venta.
@@ -601,7 +621,7 @@ export async function transitionEncargo(db: PrismaClient, actorId: string, busin
     tx => transitionEncargoTx(tx, {
       actorId, businessId, id, action: input.action,
       marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote,
-      reason: input.reason, refundMethod: input.refundMethod, supplierId: input.supplierId,
+      reason: input.reason, refundMethod: input.refundMethod, refundReference: input.refundReference, supplierId: input.supplierId,
       supplierAmountCents: input.supplierAmountCents, supplierMethod: input.supplierMethod,
       cashFromRegister: input.cashFromRegister,
     }))

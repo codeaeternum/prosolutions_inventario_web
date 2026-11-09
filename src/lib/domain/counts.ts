@@ -1,6 +1,7 @@
 import type { CountStatus, PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
+import { nextCountNumber } from "./tenant-sequence"
 import { syncLowStockAlerts } from "../low-stock"
 
 /** Folio público de un conteo físico: CC-000001. */
@@ -32,13 +33,13 @@ export async function createCount(db: PrismaClient, actorId: string, businessId:
     if (open) {
       throw new BusinessError(`Ya hay un conteo abierto (${countFolio(open.number)}) en ${branch.name}. Aplícalo o cancélalo antes de iniciar otro.`, 409)
     }
-    // Folio por negocio (no global): MAX(number) del tenant + 1. Seguro porque
-    // operation() corre Serializable y reintenta ante conflicto; la restricción
-    // @@unique([businessId, number]) es la red de seguridad. El autoincrement
-    // del schema queda como fallback inerte para inserts que no fijen number.
-    const agg = await tx.inventoryCount.aggregate({ where: { businessId }, _max: { number: true } })
+    // Folio por negocio (no global): nextCountNumber() lo reserva desde
+    // BusinessCounter con un upsert atómico dentro de esta tx serializable
+    // (mismo patrón que ventas y órdenes); @@unique([businessId, number]) es
+    // la red de seguridad y el autoincrement del schema queda inerte.
+    const number = await nextCountNumber(tx, businessId)
     const count = await tx.inventoryCount.create({
-      data: { businessId, number: (agg._max.number ?? 0) + 1, branchId: branch.id, notes: input.notes || null, blind: input.blind ?? false, createdById: actorId },
+      data: { businessId, number, branchId: branch.id, notes: input.notes || null, blind: input.blind ?? false, createdById: actorId },
       include: { branch: { select: { id: true, name: true } } },
     })
     return { count, folio: countFolio(count.number) }

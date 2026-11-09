@@ -111,7 +111,16 @@ export async function recordAudit(db: AuditWriter, entry: AuditEntry): Promise<v
       },
     })
   } catch (error) {
-    console.error("[audit] No se pudo registrar el evento:", error)
+    // La mutación de negocio ya comiteó — el hueco de auditoría no la revierte,
+    // pero tampoco debe ser invisible: queda en el log con su contexto.
+    console.error("[audit] fallo al registrar", {
+      action: entry.action,
+      businessId: entry.businessId,
+      actorId: entry.actorId,
+      entity: entry.entity,
+      entityId: entry.entityId ?? null,
+      error,
+    })
     return
   }
   // Aviso Telegram al dueño cuando un no-admin hace algo sensible. Va

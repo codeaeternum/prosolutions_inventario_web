@@ -105,4 +105,4 @@ Documento de referencia con mejoras priorizadas por impacto y esfuerzo. No todo 
 | CSP (report-only) | ✅ Cabecera `Content-Security-Policy-Report-Only` en `next.config.ts` (script, style, font, img, connect, frame-ancestors, base-uri, form-action). Revisar reportes y pasar a enforce cuando no haya violaciones. |
 | Safe area en móvil | ✅ Clase `safe-area-bottom` en `globals.css`; aplicada a `MobileNav` y `PwaInstallBanner` para respetar notch/barra de gestos en iOS. |
 | Aviso de actualización PWA | ✅ `PwaUpdateBanner`: al recibir `controllerchange` del service worker muestra banner superior “Nueva versión disponible” + botón Recargar. Comprueba actualizaciones al recuperar foco. |
-| npm audit | ✅ Next.js actualizado a 16.1.6 (parches de seguridad). Resumen de vulnerabilidades restantes y recomendaciones en `docs/NPM-AUDIT.md`. |
+| npm audit | ✅ Next.js actualizado a 16.4.5 (parches de seguridad). Resumen de vulnerabilidades restantes y recomendaciones en `docs/NPM-AUDIT.md`. |

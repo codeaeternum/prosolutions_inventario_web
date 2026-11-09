@@ -25,8 +25,10 @@ const tx = {
   shoppingItem: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   branch: { findFirst: vi.fn() },
   supplier: { findFirst: vi.fn() },
-  purchase: { create: vi.fn(), aggregate: vi.fn() },
-  // El umbral stock <= minStock se filtra en BD vía lowStockProducts.
+  purchase: { create: vi.fn() },
+  // El umbral stock <= minStock se filtra en BD vía lowStockProducts y
+  // nextPurchaseNumber() reserva el folio con un UPSERT sobre BusinessCounter
+  // (mismo $queryRaw; en createPurchaseFromNeeds solo viaja el upsert).
   $queryRaw: vi.fn(),
 }
 // listShoppingNeeds lee directo de db; las operaciones entran por $transaction.
@@ -44,8 +46,6 @@ beforeEach(() => {
   tx.$queryRaw.mockResolvedValue([])
   tx.shoppingItem.findMany.mockResolvedValue([])
   tx.branch.findFirst.mockResolvedValue(branch)
-  // El folio es por tenant: MAX(number)=2 → la OC se crea con number 3.
-  tx.purchase.aggregate.mockResolvedValue({ _max: { number: 2 } })
 })
 
 describe("refacciones faltantes", () => {
@@ -207,6 +207,9 @@ describe("orden de compra desde la lista", () => {
       { id: "si-1", businessId: BIZ, status: "PENDING" },
       { id: "si-2", businessId: BIZ, status: "PENDING" },
     ])
+    // El folio es por tenant: BusinessCounter.nextPurchaseNumber reserva 3
+    // ($queryRaw → RETURNING nextPurchaseNumber - 1).
+    tx.$queryRaw.mockResolvedValue([{ n: 3 }])
     tx.purchase.create.mockResolvedValue(purchase)
     tx.shoppingItem.updateMany.mockResolvedValue({ count: 2 })
     const result = await createPurchaseFromNeeds(db, "admin-1", BIZ, {
@@ -216,7 +219,6 @@ describe("orden de compra desde la lista", () => {
     })
     expect(result.folio).toBe("OC-000003")
     expect(result.linkedManualItems).toBe(2)
-    expect(tx.purchase.aggregate).toHaveBeenCalledWith({ where: { businessId: BIZ }, _max: { number: true } })
     expect(tx.purchase.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         businessId: BIZ, number: 3, branchId: "b1", totalCents: 60000, createdById: "admin-1",
@@ -254,6 +256,7 @@ describe("orden de compra desde la lista", () => {
 
   it("el mismo producto tildado en dos secciones queda en una sola línea", async () => {
     tx.product.findMany.mockResolvedValue([{ id: "p1", businessId: BIZ, isActive: true }])
+    tx.$queryRaw.mockResolvedValue([{ n: 3 }])
     tx.purchase.create.mockResolvedValue(purchase)
     await createPurchaseFromNeeds(db, "admin-1", BIZ, {
       idempotencyKey: key(), branchId: "b1",
@@ -275,6 +278,7 @@ describe("orden de compra desde la lista", () => {
       { id: "p1", businessId: BIZ, isActive: true },
       { id: "p2", businessId: BIZ, isActive: true },
     ])
+    tx.$queryRaw.mockResolvedValue([{ n: 3 }])
     tx.purchase.create.mockResolvedValue(purchase)
     await createPurchaseFromNeeds(db, "admin-1", BIZ, {
       idempotencyKey: key(), branchId: "b1",

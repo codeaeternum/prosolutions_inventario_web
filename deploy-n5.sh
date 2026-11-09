@@ -10,8 +10,6 @@ set -e  # Exit on any error
 # Alias configurado en ~/.ssh/config con llave prosolutions_galindoasc_ed25519
 SSH_TARGET="${SSH_TARGET:-galindoasc-desktop}"
 REMOTE_HOST="100.106.83.19"
-# Carpeta en el N5 (usar '/' para SSH aunque sea Windows)
-REMOTE_DIR="/d/Projectos/prosolutions_inventario_web"
 
 # Colores
 RED='\033[0;31m'
@@ -107,6 +105,13 @@ if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5.'; 
 \$env:GIT_SHA = (git rev-parse --short HEAD)
 Write-Host ('>>> Construyendo imagenes (incluida la de migraciones) [build ' + \$env:GIT_SHA + ']...')
 docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
+if (\$LASTEXITCODE -ne 0) { exit 1 }
+
+# Los volumenes son external (docker-compose.yml): un 'up' en host limpio
+# falla si no existen. 'docker volume create' es idempotente (no-op si ya
+# estan), asi que se aseguran antes de cada up sin tocar datos existentes.
+Write-Host '>>> Asegurando volumenes externos (no-op si ya existen)...'
+docker volume create prosolutions_postgres_data prosolutions_uploads prosolutions_payment_proofs prosolutions_repair_evidence
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host '>>> Asegurando DB y aplicando migraciones ANTES de promover la app...'

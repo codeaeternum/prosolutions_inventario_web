@@ -11,7 +11,7 @@ Comandos ejecutados para verificar el estado del repo y del entorno (N5 Pro). Ac
 | **Tailscale** | 100.106.83.19 |
 | **prosolutions-app** | Up, health **healthy** (wget + start_period en uso), 3005→3000 |
 | **prosolutions-bot** | Up |
-| **prosolutions-db** | Up (healthy), 5432→5432 |
+| **prosolutions-db** | Up (healthy), sin puerto al host — solo red interna `prosolutions-network` (app/bot lo alcanzan como `db:5432`; PortBindings vacío en prod) |
 | **.env** | Existe; variables: NEXTAUTH_SECRET, NEXTAUTH_URL, TELEGRAM_BOT_TOKEN, VAPID_*, etc. |
 | **Puertos en uso** | 3000, 3001, 3005, 3010, 3011, 5432, 5433, 6380, 8000, 8010, 8081, 9443, 9888, … (ver docs/MINISFORUM-N5-ESTADO.md) |
 | **Otros stacks** | AeternaSuite (3010, 3011, 5433, 6380), Portainer, cloudflared, Immich, Uptime Kuma, etc. |
@@ -24,9 +24,9 @@ Estado detallado del host y todos los contenedores: **docs/MINISFORUM-N5-ESTADO.
 
 | Comando | Resultado |
 |---------|-----------|
-| `npm run build` | OK — Next.js 16.1.6, Prisma generate, compilación y generación de rutas correctas. |
+| `npm run build` | OK — Next.js 16.4.5, Prisma generate, compilación y generación de rutas correctas. |
 | `npx tsc --noEmit` | OK — Sin errores de TypeScript (incluye tests). |
-| `npm test` | OK — 21 tests (Vitest) pasando. |
+| `npm test` | OK — tests unitarios (Vitest) pasando. |
 | `docker compose -f docker-compose.yml config` | OK — Compose válido. |
 | `docker compose -f docker-compose.portainer.yml config` | OK — Compose Portainer válido. |
 | `npm run lint` | Ejecuta ESLint directo sobre `src` y `scripts` con `--max-warnings 0` (Next 16 ya no tiene `next lint`). |

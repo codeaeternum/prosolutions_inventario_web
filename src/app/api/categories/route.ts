@@ -13,6 +13,11 @@ const createCategorySchema = z.object({
   icon: z.string().max(100).optional().nullable().default(""),
 })
 
+const renameCategorySchema = z.object({
+  id: z.string().min(1, "La categoría es requerida"),
+  name: z.string().trim().min(1, "El nombre es requerido").max(80),
+})
+
 export async function GET(req?: Request) {
   try {
     const session = await auth()
@@ -77,5 +82,70 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Error creating category:", error)
     return NextResponse.json({ error: "Error al crear categoría" }, { status: 500 })
+  }
+}
+
+/** Rename inline desde el panel de clasificación: solo cambia name (y su slug). */
+export async function PATCH(req: Request) {
+  try {
+    const result = await requireModule("inventario")
+    if (result.error) return result.error
+
+    const body = await req.json()
+    const parseResult = renameCategorySchema.safeParse(body)
+    if (!parseResult.success) {
+      const err = parseResult.error.flatten().fieldErrors
+      const msg = err.name?.[0] ?? err.id?.[0] ?? "Datos inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
+    }
+    const { id, name } = parseResult.data
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
+
+    // La categoría debe pertenecer a esta empresa; una ajena responde como inexistente.
+    const category = await prisma.category.findFirst({
+      where: { id, businessId },
+      select: { id: true, name: true },
+    })
+    if (!category) {
+      return NextResponse.json({ error: "Categoría no encontrada" }, { status: 404 })
+    }
+
+    const slug = generateSlug(name)
+
+    // Duplicado en el mismo tenant ignorando mayúsculas: la unique de Postgres
+    // es case-sensitive y "Pantallas"/"pantallas" no deben coexistir.
+    const duplicate = await prisma.category.findFirst({
+      where: {
+        businessId,
+        id: { not: id },
+        OR: [{ name: { equals: name, mode: "insensitive" } }, { slug }],
+      },
+      select: { id: true },
+    })
+    if (duplicate) {
+      return NextResponse.json({ error: "Esta categoría ya existe" }, { status: 400 })
+    }
+
+    const updated = await prisma.category.update({
+      where: { id },
+      data: { name, slug },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "CATEGORY_UPDATE",
+      entity: "category",
+      entityId: updated.id,
+      entityName: updated.name,
+      summary: `Renombró la categoría "${category.name}" a "${updated.name}"`,
+      changes: { name: { before: category.name, after: updated.name } },
+    })
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    console.error("Error renaming category:", error)
+    return NextResponse.json({ error: "Error al renombrar categoría" }, { status: 500 })
   }
 }

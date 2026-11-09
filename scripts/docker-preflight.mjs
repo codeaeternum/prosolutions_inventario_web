@@ -16,6 +16,7 @@
 //   docker compose -f docker-compose.yml --profile migrate run --rm migrate
 //   (o el paso equivalente documentado en PORTAINER-STACK.md)
 
+import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 
 const require = createRequire(import.meta.url)
@@ -24,58 +25,20 @@ const { Pool } = require("pg")
 const CONNECT_ATTEMPTS = 15
 const CONNECT_RETRY_MS = 2000
 
-// Debe cubrir TODOS los modelos de prisma/schema.prisma (respetando @@map).
-// Validado automáticamente en src/__tests__/lib/docker-preflight.test.ts.
-export const REQUIRED_TABLES = [
-  "Business",
-  "VerificationCode",
-  "InventoryMovement",
-  "User",
-  "Brand",
-  "Model",
-  "Category",
-  "Product",
-  "PriceHistory",
-  "ProductModel",
-  "Reservation",
-  "CreditMovement",
-  "Settings",
-  "PushSubscription",
-  "CashRegister",
-  "CashMovement",
-  "SystemSettings",
-  "BusinessOperation",
-  "AuditEvent",
-  "WorkshopBranch", // model Branch @@map("WorkshopBranch")
-  "BranchStock",
-  "Sale",
-  "SaleItem",
-  "Payment",
-  "RepairOrder",
-  "RepairPart",
-  "RepairEvent",
-  "CashRequest",
-  "RepairPhoto",
-  "DeviceModel",
-  "WorkshopService",
-  "WorkshopServicePrice",
-  "MarketplaceRequest",
-  "Supplier",
-  "Purchase",
-  "PurchaseItem",
-  "SupplierPayment",
-  "InventoryCount",
-  "InventoryCountItem",
-  "PartRequest",
-  "ShoppingItem",
-  "Encargo",
-  "DirectoryEvent",
-  "Notification",
-  "NotificationRead",
-  "PlatformEvent",
-  "BusinessCounter",
-  "ClockEvent",
-]
+// Lista única de tablas críticas compartida (scripts/critical-tables.json):
+// la leen este preflight, el simulacro de restauración
+// (scripts/verify-backup-restore.ps1) y el test de cobertura
+// (src/__tests__/lib/docker-preflight.test.ts). Debe cubrir TODOS los
+// modelos de prisma/schema.prisma (respetando @@map: el model Branch vive
+// en la tabla "WorkshopBranch").
+export const REQUIRED_TABLES = JSON.parse(
+  readFileSync(new URL("./critical-tables.json", import.meta.url), "utf8")
+).tables
+
+if (!Array.isArray(REQUIRED_TABLES) || REQUIRED_TABLES.length === 0) {
+  console.error("[preflight] ERROR: scripts/critical-tables.json no contiene una lista 'tables' válida.")
+  process.exit(1)
+}
 
 const REQUIRED_COLUMNS = [
   ["Reservation", "businessVersion"], // 20260911000000

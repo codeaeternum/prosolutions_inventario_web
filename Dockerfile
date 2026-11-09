@@ -31,7 +31,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # los valores reales siempre llegan por el entorno del contenedor.
 RUN rm -f ./.env ./.env.production ./.env.*
 # Fail-fast schema check before starting the server (no Prisma CLI in this image).
-COPY --from=builder --chown=nextjs:nodejs /app/scripts/docker-preflight.mjs ./scripts/docker-preflight.mjs
+# critical-tables.json viaja junto al preflight: es la lista única que también
+# usa el simulacro de restauración (scripts/verify-backup-restore.ps1).
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/docker-preflight.mjs /app/scripts/critical-tables.json ./scripts/
 RUN mkdir -p ./public/uploads ./storage/payment-proofs ./storage/repair-evidence ./.next/cache && chown -R nextjs:nodejs ./public/uploads ./storage ./.next/cache
 USER nextjs
 EXPOSE 3000

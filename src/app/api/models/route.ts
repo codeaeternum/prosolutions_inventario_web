@@ -13,6 +13,11 @@ const createModelSchema = z.object({
   brandId: z.string().min(1, "La marca es requerida"),
 })
 
+const renameModelSchema = z.object({
+  id: z.string().min(1, "El modelo es requerido"),
+  name: z.string().trim().min(1, "El nombre es requerido").max(80),
+})
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
@@ -92,5 +97,72 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Error creating model:", error)
     return NextResponse.json({ error: "Error al crear modelo" }, { status: 500 })
+  }
+}
+
+/** Rename inline desde el panel de clasificación: solo cambia name (y su slug). */
+export async function PATCH(req: Request) {
+  try {
+    const result = await requireModule("inventario")
+    if (result.error) return result.error
+
+    const body = await req.json()
+    const parseResult = renameModelSchema.safeParse(body)
+    if (!parseResult.success) {
+      const err = parseResult.error.flatten().fieldErrors
+      const msg = err.name?.[0] ?? err.id?.[0] ?? "Datos inválidos"
+      return NextResponse.json({ error: msg }, { status: 400 })
+    }
+    const { id, name } = parseResult.data
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
+
+    // El modelo debe pertenecer a esta empresa; uno ajeno responde como inexistente.
+    const model = await prisma.model.findFirst({
+      where: { id, businessId },
+      include: { brand: { select: { name: true } } },
+    })
+    if (!model) {
+      return NextResponse.json({ error: "Modelo no encontrado" }, { status: 404 })
+    }
+
+    const slug = generateSlug(name)
+
+    // La unicidad del modelo es por marca (@@unique([brandId, slug])): el
+    // duplicado se busca dentro de SU marca, ignorando mayúsculas.
+    const duplicate = await prisma.model.findFirst({
+      where: {
+        businessId,
+        brandId: model.brandId,
+        id: { not: id },
+        OR: [{ name: { equals: name, mode: "insensitive" } }, { slug }],
+      },
+      select: { id: true },
+    })
+    if (duplicate) {
+      return NextResponse.json({ error: "Este modelo ya existe para esta marca" }, { status: 400 })
+    }
+
+    const updated = await prisma.model.update({
+      where: { id },
+      data: { name, slug },
+      include: { brand: { select: { name: true } } },
+    })
+
+    await recordAudit(prisma, {
+      businessId,
+      actorId: session.user.id,
+      action: "MODEL_UPDATE",
+      entity: "model",
+      entityId: updated.id,
+      entityName: `${updated.brand.name} ${updated.name}`,
+      summary: `Renombró el modelo "${model.brand.name} ${model.name}" a "${updated.brand.name} ${updated.name}"`,
+      changes: { name: { before: model.name, after: updated.name } },
+    })
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    console.error("Error renaming model:", error)
+    return NextResponse.json({ error: "Error al renombrar modelo" }, { status: 500 })
   }
 }

@@ -100,7 +100,7 @@ function fakeDb(res: Record<string, unknown>) {
         created.cash.push(row)
         return row
       }),
-      groupBy: vi.fn(async () => []),
+      findMany: vi.fn(async () => []),
     },
     inventoryMovement: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.inventory.push(data); return { id: "mv-1", ...data } }),

@@ -110,11 +110,21 @@ describe("recordAudit", () => {
     expect(data.changes).toBeUndefined()
   })
 
-  it("NUNCA lanza: un fallo de la bitácora solo se loguea", async () => {
-    mocks.auditCreate.mockRejectedValue(new Error("db caída"))
+  it("NUNCA lanza: un fallo de la bitácora solo se loguea con su contexto", async () => {
+    const failure = new Error("db caída")
+    mocks.auditCreate.mockRejectedValue(failure)
     const spy = vi.spyOn(console, "error").mockImplementation(() => {})
     await expect(recordAudit(db() as never, entry)).resolves.toBeUndefined()
-    expect(spy).toHaveBeenCalled()
+    // El hueco de auditoría no rompe la operación pero tampoco es invisible:
+    // el log lleva acción, negocio, actor y el error original.
+    expect(spy).toHaveBeenCalledWith("[audit] fallo al registrar", expect.objectContaining({
+      action: "PRODUCT_UPDATE",
+      businessId: "biz-1",
+      actorId: "user-1",
+      entity: "product",
+      entityId: "prod-1",
+      error: failure,
+    }))
     spy.mockRestore()
   })
 

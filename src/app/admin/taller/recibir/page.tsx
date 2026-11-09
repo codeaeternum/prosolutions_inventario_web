@@ -5,6 +5,16 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Store, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { BusinessName } from "@/components/admin/business-name"
 import { IntakeStepper } from "@/components/admin/taller/intake-stepper"
@@ -219,6 +229,11 @@ export default function ReceiveEquipmentPage() {
   const [allyOptions, setAllyOptions] = useState<{ name: string; lastContact: string | null; orderCount: number }[]>([])
   const operationKey = useRef<ClientOperationKey | null>(null)
   const inFlight = useRef(false)
+  // Navegación interna interceptada con recepción sin guardar: el destino
+  // queda aquí mientras el AlertDialog pregunta; allowLeaveRef desactiva el
+  // beforeunload solo para ESTA salida ya confirmada.
+  const [leaveTarget, setLeaveTarget] = useState<string | null>(null)
+  const allowLeaveRef = useRef(false)
   const searchVersion = useRef(0)
   const serviceVersion = useRef(0)
   const brandVersion = useRef(0)
@@ -453,12 +468,16 @@ export default function ReceiveEquipmentPage() {
     return () => clearTimeout(timer)
   }, [modelTerm, form.brand])
 
-  // Aviso de recepción sin guardar: beforeunload cubre recargar/cerrar y el clic
-  // en captura intercepta la navegación interna por <Link>/<a> (SPA).
+  // Aviso de recepción sin guardar: beforeunload cubre recargar/cerrar (el
+  // prompt nativo ahí es inevitable) y el clic en captura intercepta la
+  // navegación interna por <Link>/<a> para preguntar con un AlertDialog.
   useEffect(() => {
     if (!dirty || created) return
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
-    const confirmInternalNavigation = (event: MouseEvent) => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowLeaveRef.current) return
+      event.preventDefault(); event.returnValue = ""
+    }
+    const interceptInternalNavigation = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
       const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null
       if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return
@@ -467,16 +486,17 @@ export default function ReceiveEquipmentPage() {
       let url: URL
       try { url = new URL(href, window.location.href) } catch { return }
       if (url.origin !== window.location.origin || url.href === window.location.href) return
-      if (!window.confirm("Hay una recepción sin guardar. ¿Salir y perder los datos?")) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
+      // Frena la navegación SIEMPRE y que el AlertDialog decida: confirmar
+      // navega con location.assign; cancelar solo cierra y nada se perdió.
+      event.preventDefault()
+      event.stopPropagation()
+      setLeaveTarget(url.href)
     }
     window.addEventListener("beforeunload", warnBeforeUnload)
-    document.addEventListener("click", confirmInternalNavigation, true)
+    document.addEventListener("click", interceptInternalNavigation, true)
     return () => {
       window.removeEventListener("beforeunload", warnBeforeUnload)
-      document.removeEventListener("click", confirmInternalNavigation, true)
+      document.removeEventListener("click", interceptInternalNavigation, true)
     }
   }, [dirty, created])
 
@@ -1516,6 +1536,32 @@ export default function ReceiveEquipmentPage() {
           </section>
         </>
       )}
+
+      {/* Navegación interna interceptada con la recepción a medias: recargar o
+          cerrar la pestaña sigue cubierto por el beforeunload nativo. */}
+      <AlertDialog open={leaveTarget !== null} onOpenChange={(open) => { if (!open) setLeaveTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Salir de la recepción?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Hay una recepción sin guardar. Si sales ahora se perderán los datos capturados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Seguir capturando</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (!leaveTarget) return
+                allowLeaveRef.current = true
+                window.location.assign(leaveTarget)
+              }}
+            >
+              Salir sin guardar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

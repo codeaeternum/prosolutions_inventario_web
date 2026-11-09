@@ -111,7 +111,7 @@ const tx = {
   repairPart: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
   payment: { aggregate: vi.fn(), create: vi.fn(), update: vi.fn() },
   cashRegister: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
-  cashMovement: { create: vi.fn(), groupBy: vi.fn() },
+  cashMovement: { create: vi.fn(), findMany: vi.fn() },
   inventoryMovement: { findMany: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
   branchStock: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
   product: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
@@ -140,7 +140,7 @@ beforeEach(() => {
   tx.repairPart.findMany.mockResolvedValue([])
   tx.repairPart.updateMany.mockResolvedValue({ count: 0 })
   tx.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } })
-  tx.cashMovement.groupBy.mockResolvedValue([])
+  tx.cashMovement.findMany.mockResolvedValue([])
 })
 
 describe("STATUS→CANCELLED rota el token de evidencias", () => {

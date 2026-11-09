@@ -121,7 +121,7 @@ function fakeDb(fix: Fixture = {}) {
     },
     cashMovement: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { const row = { id: `cm-${created.cash.length}`, ...data }; created.cash.push(row); return row }),
-      groupBy: vi.fn(async () => [{ type: "IN", _sum: { amount: 10000 } }]),
+      findMany: vi.fn(async () => [{ type: "IN", amount: 10000 }]),
     },
     creditMovement: { create: vi.fn(async () => ({})) },
     auditEvent: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.audits.push(data); return { id: "ae-1" } }) },

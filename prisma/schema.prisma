@@ -206,12 +206,10 @@ model InventoryMovement {
   createdAt DateTime @default(now())
 
   @@index([productId])
-  @@index([createdAt])
   @@index([relatedId])
   @@index([reservationId])
   @@index([branchId, createdAt])
   @@index([saleId])
-  @@index([businessId])
   @@index([businessId, createdAt])
   @@index([businessId, productId, createdAt])
 }
@@ -432,7 +430,6 @@ model Product {
   @@index([barcode])
   @@index([isUniversal])
   @@index([marketVisibility])
-  @@index([businessId])
   @@index([businessId, isActive])
 }
 
@@ -512,9 +509,7 @@ model Reservation {
 
   @@index([userId])
   @@index([productId])
-  @@index([status])
   @@index([expiresAt])
-  @@index([businessId])
   @@index([businessId, status])
 }
 
@@ -547,8 +542,6 @@ model CreditMovement {
   createdAt DateTime @default(now())
 
   @@index([userId])
-  @@index([createdAt])
-  @@index([businessId])
   @@index([businessId, createdAt])
   @@index([businessId, userId, createdAt])
 }
@@ -667,7 +660,6 @@ model SystemSettings {
   updatedAt  DateTime @updatedAt
 
   @@unique([businessId, key])
-  @@index([businessId])
 }
 
 // Durable receipt for retries; never delete while its business records exist.
@@ -753,7 +745,6 @@ model Branch {
   createdAt         DateTime            @default(now())
 
   @@unique([businessId, name])
-  @@index([businessId])
   @@map("WorkshopBranch")
 }
 
@@ -849,8 +840,11 @@ model Sale {
   @@index([branchId, createdAt])
   @@index([customerId, createdAt])
   @@index([status, createdAt])
-  @@index([businessId])
   @@index([businessId, createdAt])
+  // Bandeja del mostrador (listDocuments /api/sales): businessId + status
+  // ordenado por fecha — evita barrer las ventas COMPLETED del tenant
+  // cuando se filtra DRAFT/OPEN.
+  @@index([businessId, status, createdAt])
   @@index([sellerId])
 }
 
@@ -1056,7 +1050,6 @@ model RepairOrder {
   @@index([assignedToId, status])
   @@index([customerPhone])
   @@index([customerId])
-  @@index([businessId])
   @@index([businessId, customerPhoneNormalized])
   @@index([businessId, customerPhoneAltNormalized])
   @@index([intakeBranchId])
@@ -1066,19 +1059,24 @@ model RepairOrder {
 }
 
 // Contador de folios por tenant: una fila por negocio. El dominio
-// (nextOrderNumber en src/lib/domain/tenant-sequence.ts) lo incrementa de
-// forma ATÓMICA con INSERT … ON CONFLICT … DO UPDATE dentro de la tx
-// serializable — la alternativa MAX(number)+1 obliga a serializar lecturas
-// de toda la tabla del tenant. Las órdenes históricas conservan su número;
-// el backfill de la migración tenant_order_numbers arranca cada contador
-// en MAX(number)+1 y los negocios sin órdenes parten del default 1.
+// (nextOrderNumber/nextSaleNumber/nextPurchaseNumber/nextCountNumber en
+// src/lib/domain/tenant-sequence.ts) lo incrementa de forma ATÓMICA con
+// INSERT … ON CONFLICT … DO UPDATE dentro de la tx serializable — la
+// alternativa MAX(number)+1 obliga a serializar lecturas de toda la tabla
+// del tenant. Los folios históricos conservan su número; el backfill de
+// cada migración de folios arranca el contador en MAX(number)+1 y los
+// negocios sin documentos parten del default 1.
 model BusinessCounter {
-  businessId      String   @id
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  businessId         String   @id
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Próximo folio disponible para RepairOrder.number de este negocio.
-  nextOrderNumber Int      @default(1)
+  nextOrderNumber    Int      @default(1)
   // Próximo folio disponible para Sale.number de este negocio.
-  nextSaleNumber  Int      @default(1)
+  nextSaleNumber     Int      @default(1)
+  // Próximo folio disponible para Purchase.number de este negocio.
+  nextPurchaseNumber Int      @default(1)
+  // Próximo folio disponible para InventoryCount.number de este negocio.
+  nextCountNumber    Int      @default(1)
 }
 
 // Refacción o insumo registrado contra una orden de reparación.
@@ -1110,8 +1108,6 @@ model RepairPart {
   createdAt      DateTime    @default(now())
 
   @@index([orderId])
-  @@index([status])
-  @@index([businessId])
   @@index([businessId, status])
 }
 
@@ -1207,7 +1203,6 @@ model DeviceModel {
   // este índice (NULL != NULL en Postgres) — la migración agrega un índice
   // único parcial WHERE "businessId" IS NULL para ellas.
   @@unique([businessId, brand, model])
-  @@index([businessId])
   @@index([brand])
 
   servicePrices WorkshopServicePrice[]
@@ -1277,7 +1272,6 @@ model MarketplaceRequest {
   sale          Sale?     @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt     DateTime  @default(now())
 
-  @@index([status])
   @@index([productId])
   @@index([businessId])
   @@index([requestedById])
@@ -1301,7 +1295,6 @@ model Supplier {
   payments   SupplierPayment[]
 
   @@unique([businessId, name])
-  @@index([businessId])
 }
 
 enum PurchaseStatus {
@@ -1317,8 +1310,9 @@ model Purchase {
   id               String            @id @default(cuid())
   businessId       String
   business         Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  // Folio visible OC-000001, por negocio: el dominio asigna MAX(number) del
-  // tenant + 1 dentro de la tx serializable; el autoincrement queda inerte.
+  // Folio visible OC-000001, por negocio: nextPurchaseNumber() lo reserva
+  // desde BusinessCounter dentro de la tx serializable; @@unique([businessId,
+  // number]) es la red de seguridad y el autoincrement queda inerte.
   number           Int               @default(autoincrement())
   supplierId       String?
   supplier         Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
@@ -1411,8 +1405,9 @@ model InventoryCount {
   id          String               @id @default(cuid())
   businessId  String
   business    Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  // Folio visible CC-000001, por negocio: el dominio asigna MAX(number) del
-  // tenant + 1 dentro de la tx serializable; el autoincrement queda inerte.
+  // Folio visible CC-000001, por negocio: nextCountNumber() lo reserva
+  // desde BusinessCounter dentro de la tx serializable; @@unique([businessId,
+  // number]) es la red de seguridad y el autoincrement queda inerte.
   number      Int                  @default(autoincrement())
   branchId    String
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
@@ -1588,6 +1583,9 @@ model Notification {
   reads      NotificationRead[]
 
   @@index([businessId, createdAt])
+  // Feed del staff (/api/notifications): businessId + audience (EMPLOYEE solo
+  // ve "STAFF") ordenado por fecha; también cubre el unreadCount con reads.
+  @@index([businessId, audience, createdAt])
 }
 
 // Lectura POR usuario: una notificación del negocio la lee cada miembro del

@@ -3,6 +3,7 @@ import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
 import { encargoQuotedLineCents, prepareEncargoForSaleTx, releaseEncargoFromVoidedSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { nextSaleNumber } from "./tenant-sequence"
+import { recordAudit } from "../audit"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
@@ -280,10 +281,23 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
   return result
 }
 
+/**
+ * Folio bancario del reembolso (autorización de terminal / clave SPEI de la
+ * devolución): el "ya devolví" por TARJETA o TRANSFERENCIA necesita la
+ * referencia externa para cuadrar contra el estado de cuenta, igual que el
+ * cobro (checkSalePayments exige folio en TRANSFERENCIA). El mostrador aún
+ * no la captura, así que no es obligatoria — pero un REFUNDED sin folio
+ * nunca queda mudo: se asienta un AuditEvent REFUND_NO_REFERENCE como
+ * advertencia de conciliación pendiente.
+ */
+export const BANK_REFUND_CHANNELS: readonly MethodInput[] = ["TARJETA", "TRANSFERENCIA"]
+
 /** Devuelve el stock a la sucursal de la venta y revierte el dinero por cada medio. */
 export async function refund(tx: Transaction, input: {
   saleId: string; actorId: string; businessId: string; branchId: string; customerId: string | null;
   refundCents: number; channel: MethodInput; note: string;
+  // Folio bancario del reembolso cuando el medio es TARJETA/TRANSFERENCIA.
+  reference?: string | null;
 }) {
   // Solo los cobros CONFIRMED son dinero reembolsable: un pago VOIDED (la
   // venta ya se anuló) no representa efectivo y contarlo inflaría el tope.
@@ -323,10 +337,26 @@ export async function refund(tx: Transaction, input: {
     }
     if (collectedCents > 0) await cashRefund(collectedCents, `${input.note} · Devolución de abonos ya cobrados`)
   }
-  return tx.payment.create({ data: {
+  const payment = await tx.payment.create({ data: {
     businessId: input.businessId, saleId: input.saleId, method: METHOD_MAP[input.channel], amount: amount(-input.refundCents), status: "REFUNDED",
-    cashMovementId: cashMovementId ?? null, createdById: input.actorId, notes: input.note,
+    reference: input.reference || null, cashMovementId: cashMovementId ?? null, createdById: input.actorId, notes: input.note,
   } })
+  // Reembolso bancario sin folio: el asiento ya no se puede rastrear contra
+  // el estado de cuenta. No se bloquea (la UI de devoluciones aún no captura
+  // folio) pero el hueco de conciliación queda en bitácora — nunca un
+  // REFUNDED de tarjeta/transferencia sin al menos esta advertencia.
+  if (BANK_REFUND_CHANNELS.includes(input.channel) && !input.reference) {
+    await recordAudit(tx, {
+      businessId: input.businessId,
+      actorId: input.actorId,
+      action: "REFUND_NO_REFERENCE",
+      entity: "payment",
+      entityId: payment.id,
+      entityName: `Venta ${input.saleId}`,
+      summary: `Reembolso por ${input.channel === "TARJETA" ? "tarjeta" : "transferencia"} de ${(input.refundCents / 100).toFixed(2)} MXN sin folio bancario — el asiento no concilia contra el estado de cuenta.`,
+    })
+  }
+  return payment
 }
 
 const returnSchema = z.object({
@@ -334,6 +364,10 @@ const returnSchema = z.object({
   items: z.array(z.object({ saleItemId: z.string().min(1), quantity: z.number().int().min(1).max(100000) })).min(1).max(100),
   refundMethod: METHODS,
   reason: z.string().trim().min(1).max(500),
+  // Folio del reembolso bancario (autorización de terminal / clave SPEI):
+  // opcional porque el panel de devoluciones aún no lo captura — refund()
+  // lo guarda cuando llega y deja advertencia en bitácora cuando falta.
+  reference: z.string().trim().max(200).optional(),
   idempotencyKey: operationKeySchema,
 })
 
@@ -362,6 +396,9 @@ export async function returnSaleItemsTx(tx: Transaction, input: {
   businessId: string
   refundMethod: MethodInput
   reason: string
+  // Folio bancario del reembolso cuando refundMethod es TARJETA/TRANSFERENCIA
+  // (opcional: sin él refund() deja advertencia de conciliación en bitácora).
+  reference?: string
   touchedProductIds?: Set<string>
   // Unidades del producto ya repuestas por el ledger viejo (RETURN con
   // relatedId al movimiento OUT, sin tocar returnedQuantity): se absorben
@@ -447,7 +484,7 @@ export async function returnSaleItemsTx(tx: Transaction, input: {
     } }))
     refundCents += lineRefundCents
   }
-  const refundRow = await refund(tx, { saleId: sale.id, actorId: input.actorId, businessId: input.businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}` })
+  const refundRow = await refund(tx, { saleId: sale.id, actorId: input.actorId, businessId: input.businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents, channel: input.refundMethod, note: `Devolución V-${sale.number}: ${input.reason}`, reference: input.reference })
   return { refund: refundRow, refunded: amount(refundCents), kind: sale.kind, sale, movements }
 }
 
@@ -459,7 +496,7 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, busines
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_RETURN", permission: "staff", payload: input }, async tx => {
     const outcome = await returnSaleItemsTx(tx, {
       saleId: input.saleId, items: input.items, actorId, businessId,
-      refundMethod: input.refundMethod, reason: input.reason, touchedProductIds,
+      refundMethod: input.refundMethod, reason: input.reason, reference: input.reference || undefined, touchedProductIds,
     })
     // La devolución hereda el documento original: kind solo se expone, no se decide aquí.
     return { refund: outcome.refund, refunded: outcome.refunded, kind: outcome.kind }
@@ -468,7 +505,17 @@ export async function returnSaleItems(db: PrismaClient, actorId: string, busines
   return result
 }
 
-const voidSchema = z.object({ saleId: z.string().min(1), reason: z.string().trim().min(1).max(500), idempotencyKey: operationKeySchema })
+const voidSchema = z.object({
+  saleId: z.string().min(1), reason: z.string().trim().min(1).max(500),
+  // Folios del reembolso bancario por medio (la anulación devuelve por cada
+  // medio cobrado): opcional — sin folio refund() deja advertencia de
+  // conciliación en bitácora en vez de bloquear la anulación.
+  references: z.object({
+    TARJETA: z.string().trim().min(1).max(200),
+    TRANSFERENCIA: z.string().trim().min(1).max(200),
+  }).partial().optional(),
+  idempotencyKey: operationKeySchema,
+})
 /** Anula una venta COMPLETED: repone stock y reembolsa el neto cobrado por
  *  cada medio. Un EMPLOYEE solo anula sus propias ventas; las ajenas exigen
  *  ADMIN (embolsar el reembolso de una venta ajena es robo interno). */
@@ -518,7 +565,8 @@ export async function voidSale(db: PrismaClient, actorId: string, businessId: st
     for (const method of paidMethods) {
       const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === method)!
       const netCents = sale.payments.filter(p => p.method === method && p.encargoId == null).reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
-      if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Anulación V-${sale.number}: ${input.reason}` })
+      const channelReference = channel === "TARJETA" || channel === "TRANSFERENCIA" ? input.references?.[channel] : undefined
+      if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Anulación V-${sale.number}: ${input.reason}`, reference: channelReference })
       await tx.payment.updateMany({ where: { saleId: sale.id, method, status: "CONFIRMED", encargoId: null }, data: { status: "VOIDED" } })
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { status: "VOIDED" } })

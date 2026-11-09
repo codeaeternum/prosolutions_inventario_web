@@ -16,8 +16,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Plus, Loader2, Trash2, Tags } from "lucide-react"
+import { Plus, Loader2, Pencil, Trash2, Tags } from "lucide-react"
+import { toast } from "sonner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/admin/empty-state"
+import { InlineNameEditor } from "@/components/admin/inline-name-editor"
 
 interface Category {
   id: string
@@ -36,6 +39,7 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
   const [error, setError] = useState("")
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -81,6 +85,29 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  // Rename inline: PATCH /api/categories { id, name }. `true` cierra el editor;
+  // `false` lo deja abierto para corregir o cancelar (el toast ya avisó).
+  const handleRename = async (id: string, name: string): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/categories", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || "Error al renombrar la categoría")
+        return false
+      }
+      toast.success("Categoría renombrada")
+      void fetchCategories()
+      return true
+    } catch {
+      toast.error("Error al renombrar la categoría")
+      return false
+    }
+  }
+
   const handleDelete = async (id: string) => {
     setDeleteDialogOpen(false)
     setDeleteTargetId(null)
@@ -89,7 +116,8 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
       if (res.ok) {
         fetchCategories()
       } else {
-        setError("Error al eliminar")
+        const data = await res.json().catch(() => ({}))
+        setError(data.error || "Error al eliminar")
       }
     } catch {
       setError("Error al eliminar")
@@ -98,8 +126,16 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="space-y-6" role="status" aria-label="Cargando categorías">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-9 w-40" />
+          <Skeleton className="h-9 w-36" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-24" />
+          ))}
+        </div>
       </div>
     )
   }
@@ -163,24 +199,42 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
         {categories.map((category) => (
           <Card key={category.id}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Tags className="h-5 w-5 text-muted-foreground" />
-                {category.name}
-              </CardTitle>
-              <div className="flex gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Eliminar ${category.name}`}
-                  onClick={() => {
-                    setDeleteTargetId(category.id)
-                    setDeleteDialogOpen(true)
-                  }}
-                  disabled={category._count.products > 0}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+              {editingId === category.id ? (
+                <InlineNameEditor
+                  currentName={category.name}
+                  onSave={(name) => handleRename(category.id, name)}
+                  onClose={() => setEditingId(null)}
+                />
+              ) : (
+                <>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Tags className="h-5 w-5 text-muted-foreground" />
+                    {category.name}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Renombrar ${category.name}`}
+                      onClick={() => setEditingId(category.id)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Eliminar ${category.name}`}
+                      onClick={() => {
+                        setDeleteTargetId(category.id)
+                        setDeleteDialogOpen(true)
+                      }}
+                      disabled={category._count.products > 0}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardHeader>
             <CardContent>
               <Badge variant="secondary">

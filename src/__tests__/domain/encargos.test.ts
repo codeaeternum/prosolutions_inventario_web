@@ -41,7 +41,7 @@ const tx = {
   supplier: { findFirst: vi.fn() },
   supplierPayment: { create: vi.fn() },
   cashRegister: { findMany: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
-  cashMovement: { create: vi.fn(), groupBy: vi.fn() },
+  cashMovement: { create: vi.fn(), findMany: vi.fn() },
   auditEvent: { create: vi.fn() },
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
@@ -68,7 +68,7 @@ beforeEach(() => {
   tx.cashRegister.updateMany.mockResolvedValue({ count: 1 })
   tx.cashRegister.findUniqueOrThrow.mockResolvedValue({ id: "reg-1", initialAmount: 0 })
   tx.cashMovement.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "cm-1", ...args.data }))
-  tx.cashMovement.groupBy.mockResolvedValue([])
+  tx.cashMovement.findMany.mockResolvedValue([])
 })
 
 describe("guard de transiciones", () => {
@@ -354,7 +354,7 @@ describe("pago al proveedor al pedir", () => {
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     tx.supplier.findFirst.mockResolvedValue({ id: "sup-1", name: "Repuestos MX" })
     // Caja con 1000 pesos de entradas.
-    tx.cashMovement.groupBy.mockResolvedValue([{ type: "IN", _sum: { amount: 1000 } }])
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 1000 }])
     await transitionEncargo(db, "admin-1", BIZ, "e1", {
       idempotencyKey: key(), action: "ORDERED",
       supplierId: "sup-1", supplierAmountCents: 30000, supplierMethod: "CASH", cashFromRegister: true,
@@ -405,7 +405,7 @@ describe("pago al proveedor al pedir", () => {
     tx.encargo.findFirst.mockResolvedValue(pending)
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     tx.supplier.findFirst.mockResolvedValue({ id: "sup-1", name: "Repuestos MX" })
-    tx.cashMovement.groupBy.mockResolvedValue([{ type: "IN", _sum: { amount: 100 } }])
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 100 }])
     await expect(transitionEncargo(db, "admin-1", BIZ, "e1", {
       idempotencyKey: key(), action: "ORDERED",
       supplierId: "sup-1", supplierAmountCents: 30000, supplierMethod: "CASH", cashFromRegister: true,
@@ -423,7 +423,7 @@ describe("reembolso del anticipo al cancelar", () => {
     tx.encargo.findFirst.mockResolvedValue(withDeposit)
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     tx.payment.findMany.mockImplementation(paidLedger("CASH"))
-    tx.cashMovement.groupBy.mockResolvedValue([{ type: "IN", _sum: { amount: 2000 } }])
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 2000 }])
     const result = await transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED" })
     expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -456,6 +456,32 @@ describe("reembolso del anticipo al cancelar", () => {
     expect(result.refundPaymentId).toBe("pay-1")
   })
 
+  it("devolución por tarjeta sin folio se asienta y deja advertencia de conciliación", async () => {
+    tx.encargo.findFirst.mockResolvedValue(withDeposit)
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    tx.payment.findMany.mockImplementation(paidLedger("CARD"))
+    await transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED", refundMethod: "CARD" })
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: "CARD", status: "REFUNDED", reference: null }),
+    }))
+    expect(tx.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "REFUND_NO_REFERENCE", entity: "payment", entityId: "pay-1" }),
+    }))
+  })
+
+  it("devolución por transferencia con folio lo guarda y no advierte", async () => {
+    tx.encargo.findFirst.mockResolvedValue(withDeposit)
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    tx.payment.findMany.mockImplementation(paidLedger("TRANSFER"))
+    await transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED", refundMethod: "TRANSFER", refundReference: "SPEI-4321" })
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: "TRANSFER", reference: "SPEI-4321" }),
+    }))
+    expect(tx.auditEvent.create).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "REFUND_NO_REFERENCE" }),
+    }))
+  })
+
   it("encargo sin asientos (legacy) devuelve el deposit de la ficha, refundMethod decide el medio", async () => {
     tx.encargo.findFirst.mockResolvedValue(withDeposit)
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
@@ -471,7 +497,7 @@ describe("reembolso del anticipo al cancelar", () => {
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     tx.payment.findMany.mockImplementation(paidLedger("CASH"))
     // Caja con solo 100 pesos: no alcanza para devolver 500.
-    tx.cashMovement.groupBy.mockResolvedValue([{ type: "IN", _sum: { amount: 100 } }])
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 100 }])
     await expect(transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED" }))
       .rejects.toMatchObject({ status: 409, code: "INSUFFICIENT_CASH" })
     expect(tx.cashMovement.create).not.toHaveBeenCalled()

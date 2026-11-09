@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Transaction } from "@/lib/domain/operations"
-import { nextOrderNumber, nextSaleNumber } from "@/lib/domain/tenant-sequence"
+import { nextCountNumber, nextOrderNumber, nextPurchaseNumber, nextSaleNumber } from "@/lib/domain/tenant-sequence"
 
 /**
  * nextOrderNumber: folio por tenant via BusinessCounter. El statement debe
@@ -119,6 +119,70 @@ describe("nextSaleNumber", () => {
     vi.stubEnv("NODE_ENV", "production")
     try {
       await expect(nextSaleNumber(txSinRaw, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+})
+
+/**
+ * nextPurchaseNumber/nextCountNumber: mismo contrato que nextSaleNumber —
+ * folio por tenant vía BusinessCounter con UN statement atómico
+ * (INSERT … ON CONFLICT … DO UPDATE … RETURNING), siembra auto-curativa
+ * desde el histórico del tenant y rechazo de resultados inválidos.
+ */
+describe.each([
+  ["nextPurchaseNumber", nextPurchaseNumber, "nextPurchaseNumber", "Purchase", "compra"],
+  ["nextCountNumber", nextCountNumber, "nextCountNumber", "InventoryCount", "conteo"],
+] as const)("%s", (_name, fn, column, table, label) => {
+  it("devuelve el folio reservado por el RETURNING", async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 9 }])
+    await expect(fn(tx, "biz-1")).resolves.toBe(9)
+  })
+
+  it("emite UN statement atómico de upsert + RETURNING sobre su columna", async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 1 }])
+    await fn(tx, "biz-1")
+    expect(queryRaw).toHaveBeenCalledTimes(1)
+    const sql = sqlOf(queryRaw.mock.calls[0])
+    expect(sql).toContain(`INSERT INTO "BusinessCounter" ("businessId", "${column}")`)
+    expect(sql).toContain('ON CONFLICT ("businessId")')
+    expect(sql).toContain(`DO UPDATE SET "${column}"`)
+    expect(sql).toContain(`RETURNING "${column}" - 1 AS "n"`)
+  })
+
+  it(`siembra la fila faltante desde MAX(number) de ${table} del tenant (auto-curación)`, async () => {
+    queryRaw.mockResolvedValueOnce([{ n: 4 }])
+    await fn(tx, "biz-1")
+    const sql = sqlOf(queryRaw.mock.calls[0])
+    expect(sql).toContain(`SELECT COALESCE(MAX("number"), 0) + 2 FROM "${table}"`)
+  })
+
+  it("pasa businessId como parámetro ligado, nunca interpolado en la SQL", async () => {
+    const hostile = 'biz"; DROP TABLE "BusinessCounter'
+    queryRaw.mockResolvedValueOnce([{ n: 3 }])
+    await fn(tx, hostile)
+    const call = queryRaw.mock.calls[0]
+    expect(sqlOf(call)).not.toContain("DROP TABLE")
+    expect(call.slice(1)).toEqual([hostile, hostile])
+  })
+
+  it.each([
+    ["sin filas", []],
+    ["folio < 1", [{ n: 0 }]],
+    ["folio no entero", [{ n: 1.5 }]],
+    ["folio no numérico", [{ n: "7" }]],
+  ])("rechaza resultado inválido (%s)", async (_label, rows) => {
+    queryRaw.mockResolvedValueOnce(rows)
+    await expect(fn(tx, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
+  })
+
+  it(`tx sin $queryRaw devuelve 1 solo en test; fuera de test lanza (${label})`, async () => {
+    const txSinRaw = {} as unknown as Transaction
+    await expect(fn(txSinRaw, "biz-1")).resolves.toBe(1)
+    vi.stubEnv("NODE_ENV", "production")
+    try {
+      await expect(fn(txSinRaw, "biz-1")).rejects.toMatchObject({ status: 500, code: "FOLIO_UNAVAILABLE" })
     } finally {
       vi.unstubAllEnvs()
     }

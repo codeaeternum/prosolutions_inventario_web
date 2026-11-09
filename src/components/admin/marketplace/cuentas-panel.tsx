@@ -774,7 +774,7 @@ export function CuentasPanel() {
                   <h3 className="text-sm font-semibold text-zinc-600">En proceso — aún no exigibles ({statement.inProcess.length})</h3>
                   <table className="mt-2 w-full text-sm text-zinc-600">
                     <thead>
-                      <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400">
+                      <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
                         <th className="py-1.5 pr-3 font-medium">Folio</th>
                         <th className="py-1.5 pr-3 font-medium">Recibida</th>
                         <th className="py-1.5 pr-3 font-medium">Trabajo</th>
@@ -803,7 +803,7 @@ export function CuentasPanel() {
                   <h3 className="text-sm font-semibold text-zinc-600">Saldadas ({statement.settled.length})</h3>
                   <table className="mt-2 w-full text-sm text-zinc-600">
                     <thead>
-                      <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400">
+                      <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
                         <th className="py-1.5 pr-3 font-medium">Folio</th>
                         <th className="py-1.5 pr-3 font-medium">Recibida</th>
                         <th className="py-1.5 pr-3 font-medium">Pagada</th>
@@ -830,7 +830,7 @@ export function CuentasPanel() {
                 </section>
               )}
 
-              <p className="mt-6 border-t border-zinc-200 pt-3 text-xs text-zinc-400">
+              <p className="mt-6 border-t border-zinc-200 pt-3 text-xs text-zinc-500">
                 Documento interno del convenio entre negocios asociados — no es factura ni comprobante fiscal.
               </p>
             </div>

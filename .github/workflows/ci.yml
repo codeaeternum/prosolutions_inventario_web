@@ -14,14 +14,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      # Node 24 = paridad con las imágenes (Dockerfile usa node:24-alpine);
+      # engines permite >=22.18 <25, así que CI ejercita el mismo mayor.
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
+
+      # Esquema válido antes de cualquier otra cosa: barato y agarra un
+      # schema.prisma roto en segundos.
+      - name: Prisma schema validate
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+        run: npx prisma validate
 
       - name: TypeScript typecheck
         run: npm run typecheck
@@ -41,3 +50,27 @@ jobs:
           NEXTAUTH_SECRET: "ci-build-secret-not-used-in-production"
           NEXTAUTH_URL: "http://localhost:3000"
         run: npm run build
+
+      # Informativo: las dependencias tienen advisories conocidos sin fix
+      # (ver docs/NPM-AUDIT.md); se reporta sin romper el pipeline.
+      - name: npm audit (informativo)
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+  docker:
+    name: Docker images build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Ejercita el Dockerfile real de producción: npm ci + prisma generate
+      # + next build, exactamente lo que corre el stage builder en el N5.
+      - name: Build app builder stage
+        run: docker build --target builder -t prosolutions-ci-builder .
+
+      # Dockerfile.bot tiene sus propios COPY/CMD: un build que solo pasa por
+      # el Dockerfile principal no cubre sus rutas (src acotado, bot:build,
+      # prune de dev deps). Se construye hasta runner, igual que producción.
+      - name: Build bot runner stage
+        run: docker build -f Dockerfile.bot --target runner -t prosolutions-ci-bot .

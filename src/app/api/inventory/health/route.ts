@@ -35,8 +35,62 @@ async function computeStockDrift(businessId: string): Promise<{ totalChecked: nu
   return { totalChecked, drifted }
 }
 
+export interface ChargedWithoutStockRow {
+  partId: string
+  orderId: string
+  orderNumber: number
+  orderStatus: string
+  description: string
+  qty: number
+  deducted: number
+  missing: number
+}
+
+const CHARGED_PARTS_LIMIT = 100
+
 /**
- * GET /api/inventory/health — Verifica invariante Product.stock === Σ BranchStock.quantity.
+ * Refacciones COBRADAS (RepairPart APPROVED con producto del catálogo) cuyo
+ * descuento neto de inventario quedó por debajo de la cantidad cobrada:
+ * syncPartStock (domain/workshop) descuenta min(qty, disponible) y cobra
+ * igual — intencional cuando la pieza se montó antes de catalogarse, pero
+ * sin esta conciliación el faltante era invisible. El descuento aplicado se
+ * reconstruye igual que el RETURN de syncPartStock: Σ OUT − Σ RETURN de los
+ * movimientos cuyo notes ancla al patrón "Refacción OT <partId> ·".
+ * COUNT(*) OVER () da el total real aunque la lista venga acotada.
+ */
+async function computeChargedWithoutStock(businessId: string): Promise<{ count: number; parts: ChargedWithoutStockRow[] }> {
+  const rows = await prisma.$queryRaw<(Omit<ChargedWithoutStockRow, "missing"> & { totalCount: number })[]>`
+    SELECT rp."id" AS "partId", rp."orderId", rp."description", rp."qty",
+           ro."number" AS "orderNumber", ro."status" AS "orderStatus",
+           COALESCE(SUM(CASE WHEN im."type" = 'OUT' THEN im."quantity" WHEN im."type" = 'RETURN' THEN -im."quantity" END), 0)::int AS "deducted",
+           COUNT(*) OVER ()::int AS "totalCount"
+    FROM "RepairPart" rp
+    JOIN "RepairOrder" ro ON ro."id" = rp."orderId"
+    LEFT JOIN "InventoryMovement" im
+      ON im."businessId" = rp."businessId"
+      AND im."type" IN ('OUT', 'RETURN')
+      AND im."notes" LIKE 'Refacción OT ' || rp."id" || ' ·%'
+    WHERE rp."businessId" = ${businessId}
+      AND rp."status" = 'APPROVED'
+      AND rp."productId" IS NOT NULL
+    GROUP BY rp."id", rp."orderId", rp."description", rp."qty", ro."number", ro."status"
+    HAVING COALESCE(SUM(CASE WHEN im."type" = 'OUT' THEN im."quantity" WHEN im."type" = 'RETURN' THEN -im."quantity" END), 0) < rp."qty"
+    ORDER BY ro."number" DESC
+    LIMIT ${CHARGED_PARTS_LIMIT}
+  `
+  return {
+    count: rows[0]?.totalCount ?? 0,
+    parts: rows.map((row) => ({
+      partId: row.partId, orderId: row.orderId, orderNumber: row.orderNumber,
+      orderStatus: row.orderStatus, description: row.description,
+      qty: row.qty, deducted: row.deducted, missing: row.qty - row.deducted,
+    })),
+  }
+}
+
+/**
+ * GET /api/inventory/health — Verifica invariante Product.stock === Σ BranchStock.quantity
+ * y reporta refacciones cobradas sin stock descontado (chargedWithoutStock).
  */
 export async function GET() {
   const auth = await requireAdmin()
@@ -45,13 +99,17 @@ export async function GET() {
   const businessId = businessIdOf(session)
 
   try {
-    const { totalChecked, drifted } = await computeStockDrift(businessId)
+    const [{ totalChecked, drifted }, chargedWithoutStock] = await Promise.all([
+      computeStockDrift(businessId),
+      computeChargedWithoutStock(businessId),
+    ])
     return NextResponse.json(
       {
         ok: drifted.length === 0,
         totalChecked,
         driftedCount: drifted.length,
         drifted,
+        chargedWithoutStock,
       },
       { headers: { "Cache-Control": "private, no-store" } }
     )

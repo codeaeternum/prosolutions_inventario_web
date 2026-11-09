@@ -3,31 +3,47 @@
 import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Clock, History, LogIn, TrendingUp, Users, Wallet } from "lucide-react"
+
+/** Mientras baja el chunk del tab: esqueleto genérico de panel (el tab no queda en blanco). */
+function PanelLoading() {
+    return (
+        <div className="space-y-4" role="status" aria-label="Cargando panel">
+            <Skeleton className="h-9 w-48" />
+            <Skeleton className="h-4 w-72 max-w-full" />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-28" />
+                ))}
+            </div>
+        </div>
+    )
+}
 
 const ActividadPanel = dynamic(
     () => import("@/components/admin/equipo/actividad-panel").then((m) => m.ActividadPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 const UsuariosPanel = dynamic(
     () => import("@/components/admin/equipo/usuarios-panel").then((m) => m.UsuariosPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 const AsistenciaPanel = dynamic(
     () => import("@/components/admin/equipo/asistencia-panel").then((m) => m.AsistenciaPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 const TurnosPanel = dynamic(
     () => import("@/components/admin/equipo/turnos-panel").then((m) => m.TurnosPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 const DesempenoPanel = dynamic(
     () => import("@/components/admin/equipo/desempeno-panel").then((m) => m.DesempenoPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 const NominaPanel = dynamic(
     () => import("@/components/admin/equipo/nomina-panel").then((m) => m.NominaPanel),
-    { ssr: false }
+    { ssr: false, loading: () => <PanelLoading /> }
 )
 
 const TABS = ["actividad", "usuarios", "asistencia", "turnos", "desempeno", "nomina"] as const

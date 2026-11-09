@@ -45,6 +45,7 @@ vi.mock("@/lib/prisma", () => ({
 // Módulo real de settings (lee/escribe via el prisma mockeado arriba).
 
 import { GET, PATCH } from "@/app/api/settings/route"
+import { resetSettingsCacheForTests } from "@/lib/settings"
 
 // Staff aprobado: el GET completo solo sale para ADMIN/EMPLOYEE aprobados —
 // otras sesiones (cliente, aliado, pendiente) reciben el subset público.
@@ -65,6 +66,9 @@ const upsertedKeys = () =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // El módulo real cachea lecturas fuera de tx 30 s: sin reset, las llaves
+  // leídas como ausentes en un test taparían los valores del siguiente.
+  resetSettingsCacheForTests()
   mocks.auth.mockResolvedValue(session)
   mocks.settingsFindFirst.mockResolvedValue(null)
   mocks.settingsCreate.mockResolvedValue({ id: "s1", businessId: "biz-1" })

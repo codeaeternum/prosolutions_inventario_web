@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { PrismaClient } from "@prisma/client"
 import { changeCash, countsAsCash, denominationsTotalCents, expectedCashCents, registerPaymentWhere } from "@/lib/domain/cash"
+import { registerCashCents } from "@/lib/domain/operations"
 
 const BIZ = "biz-cash-test"
 const admin = { id: "admin-1", name: "Admin", role: "ADMIN", status: "APPROVED", businessId: BIZ, homeBranchId: null }
@@ -89,6 +90,33 @@ describe("countsAsCash / expectedCashCents", () => {
     ])
     // 100 + 250.5 + 60 - 30 - 20 - 15 = 345.5
     expect(expected).toBe(34550)
+  })
+})
+
+describe("registerCashCents — conversión por fila igual que expectedCashCents", () => {
+  const txWith = (initialAmount: number, movements: { type: "IN" | "OUT"; amount: number }[]) => ({
+    cashRegister: { findUniqueOrThrow: vi.fn(async () => ({ id: "reg-1", initialAmount })) },
+    cashMovement: { findMany: vi.fn(async () => movements) },
+  })
+
+  it("montos con más de 2 decimales suman igual que el esperado del corte", async () => {
+    // 1.005 dos veces: cada fila es 100.4999… → 100c; la vieja suma de
+    // Floats (2.01) redondeaba al final a 201c — 1¢ de diferencia con el
+    // corte por el mismo cajón.
+    const movements = [
+      { type: "IN" as const, amount: 1.005 },
+      { type: "IN" as const, amount: 1.005 },
+      { type: "OUT" as const, amount: 0.125 },
+    ]
+    const tx = txWith(100, movements)
+    const registerCents = await registerCashCents(tx as never, "reg-1")
+    const expectedCents = expectedCashCents(100, movements.map(m => ({ ...m, payment: null })))
+    expect(registerCents).toBe(expectedCents)
+    expect(registerCents).toBe(10000 + 100 + 100 - 13)
+    // Con la suma-then-round vieja el total salía 1¢ distinto del corte.
+    const legacySumThenRound = Math.round(100 * 100)
+      + Math.round((1.005 + 1.005) * 100) - Math.round(0.125 * 100)
+    expect(legacySumThenRound).not.toBe(registerCents)
   })
 })
 

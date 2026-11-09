@@ -22,3 +22,28 @@ export function normalizePhone(input: string): string {
   }
   return digits
 }
+
+/** Tope de espera para llamadas a la API de Telegram hechas por los crons:
+ *  telegraf fija el timeout HTTP en ~500 s — un socket colgado congelaba el
+ *  barrido completo (alertas de stock, resumen diario, turnos largos). */
+export const TELEGRAM_API_TIMEOUT_MS = 30_000
+
+/**
+ * Corta la ESPERA sobre una promesa (p. ej. `bot.telegram.sendMessage`): si
+ * no resuelve en `ms`, rechaza con un error claro para que el caller siga.
+ * La promesa original NO se cancela (fetch de telegraf no expone abort por
+ * llamada) — solo deja de bloquear; su rechazo tardío queda ya manejado por
+ * el .then adjunto, así que no genera unhandledRejection.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label = "operación"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    // unref: el timer de espera no debe mantener vivo el event loop en el
+    // shutdown del bot.
+    const timer = setTimeout(() => reject(new Error(`${label} excedió ${ms} ms`)), ms)
+    timer.unref()
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (err) => { clearTimeout(timer); reject(err) },
+    )
+  })
+}

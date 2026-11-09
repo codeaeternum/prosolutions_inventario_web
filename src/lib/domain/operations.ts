@@ -159,12 +159,17 @@ export async function openRegister(tx: Transaction, branchId?: string | null, bu
   return registers[0]
 }
 
-/** Efectivo esperado en una caja, en centavos: fondo inicial + entradas − salidas. */
+/** Efectivo esperado en una caja, en centavos: fondo inicial + entradas − salidas.
+ *  Cada fila se convierte a centavos ANTES de sumar (misma convención que
+ *  expectedCashCents de cash.ts): un _sum de Float pesos redondeado al final
+ *  deja escapar el epsilon acumulado y diverge hasta 1¢ con montos legados. */
 export async function registerCashCents(tx: Transaction, registerId: string) {
   const register = await tx.cashRegister.findUniqueOrThrow({ where: { id: registerId } })
-  const grouped = await tx.cashMovement.groupBy({ by: ["type"], where: { registerId }, _sum: { amount: true } })
-  const sum = (type: "IN" | "OUT") => Math.round((grouped.find(row => row.type === type)?._sum.amount ?? 0) * 100)
-  return Math.round(register.initialAmount * 100) + sum("IN") - sum("OUT")
+  const movements = await tx.cashMovement.findMany({ where: { registerId }, select: { type: true, amount: true } })
+  return movements.reduce(
+    (sum, movement) => sum + (movement.type === "IN" ? 1 : -1) * Math.round(movement.amount * 100),
+    Math.round(register.initialAmount * 100),
+  )
 }
 
 export async function addDebt(tx: Transaction, userId: string, totalCents: number, reference: { type: "SALE" | "RESERVATION" | "MANUAL"; id?: string; notes: string }, businessId: string) {

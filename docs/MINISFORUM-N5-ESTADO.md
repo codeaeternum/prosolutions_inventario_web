@@ -26,7 +26,7 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 |------------|--------|--------------------|--------|
 | **prosolutions-app** | Up (healthy) | 3005→3000 | prosolutions-app:latest |
 | **prosolutions-bot** | Up | — | prosolutions-bot:latest |
-| **prosolutions-db** | Up (healthy) | 5432→5432 | postgres:16-alpine |
+| **prosolutions-db** | Up (healthy) | — (sin publicar; solo `prosolutions-network`, lo alcanzan como `db:5432`) | postgres:16-alpine |
 | aeternasuite-web | Up | 3010→3000 | aeternasuite-web:latest |
 | aeternasuite-api | Up | 3011→3001 | — |
 | aeternasuite-postgres | Up (healthy) | 5433→5432 | postgres:16-alpine |
@@ -52,7 +52,7 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 | Puerto en el host | Servicio | Contenedor | Notas |
 |-------------------|----------|------------|--------|
 | **3005** | Web + API (Next.js) | `prosolutions-app` | Mapeo `3005:3000`. Cloudflare Tunnel apunta aquí. |
-| **5432** | PostgreSQL 16 | `prosolutions-db` | Base de datos de ProSolutions. |
+| **—** | PostgreSQL 16 | `prosolutions-db` | YA NO publica puerto al host (`ports` vacío / PortBindings {}): solo accesible por app/bot via `prosolutions-network` como `db:5432`. |
 
 **Importante:** Si despliegas **otra aplicación** en el mismo N5 (ej. AeternaSuite), usa puertos distintos para evitar conflictos, por ejemplo:
 - Otra web: **3010**, **3011**, etc.
@@ -111,12 +111,14 @@ El historial arranca con `20250309000000_baseline`, que crea el esquema inicial 
 2. Si coincide, marca como aplicadas las migraciones ya reflejadas y despliega el resto:
 
 ```powershell
-# En el N5 (PowerShell), desde la carpeta del proyecto, con DATABASE_URL en .env
-# apuntando al Postgres del N5 (ej. postgresql://user:pass@localhost:5432/prosolutions_db):
-npx prisma migrate resolve --applied 20250309000000_baseline
-npx prisma migrate resolve --applied 20250310000000_add_credit_module
-npx prisma migrate deploy
-npx prisma migrate status
+# En el N5 (PowerShell), desde la carpeta del proyecto.
+# OJO: prosolutions-db YA NO publica 5432 al host — `npx prisma` desde
+# Windows no alcanza localhost:5432. Corre los comandos DENTRO de la red
+# docker con la imagen migrate (tiene prisma CLI y DATABASE_URL apuntando a db):
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate npx prisma migrate resolve --applied 20250309000000_baseline
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate npx prisma migrate resolve --applied 20250310000000_add_credit_module
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate npx prisma migrate status
 ```
 
 `.\scripts\migrate-credit-on-existing-db.ps1` sigue disponible para el caso particular de que solo falte el módulo de crédito: (1) ejecuta su SQL con `prisma db execute`, (2) marca la migración como aplicada con `prisma migrate resolve`.
@@ -127,10 +129,10 @@ npx prisma migrate status
 
 Al desplegar **otra** aplicación (p. ej. AeternaSuite) en este mismo Minisforum:
 
-1. **No uses** en el nuevo compose: puerto **3005** (web) ni **5432** (Postgres) en el host, salvo que compartas o cambies la configuración a propósito.
+1. **No uses** en el nuevo compose el puerto **3005** (web de ProSolutions) en el host, salvo que compartas o cambies la configuración a propósito. (El Postgres de ProSolutions ya no publica puerto al host: 5432 quedó libre para el host, pero verifícalo con `netstat`/`docker ps` antes de reutilizarlo.)
 2. **Sugerencia de puertos libres:** Web 3010, API 3011, Postgres 5433, Redis 6380 (documentar en un `PUERTOS.md` del otro proyecto).
 3. **CORS:** Si la nueva app tiene front y API en dominios distintos (Cloudflare), configurar CORS en la API con el origen del front.
-4. Usa el **Contexto adicional** del [prompt de despliegue](PROMPT-DESPLIEGUE-PORTAINER.md) indicando: *"En el mismo host ya corre ProSolutions en 3005 (web) y 5432 (Postgres)."*
+4. Usa el **Contexto adicional** del [prompt de despliegue](PROMPT-DESPLIEGUE-PORTAINER.md) indicando: *"En el mismo host ya corre ProSolutions en 3005 (web); su Postgres no expone puerto al host."*
 
 ---
 
@@ -153,8 +155,9 @@ docker inspect prosolutions-app --format "{{.State.Health.Status}}"
 docker logs prosolutions-app --tail 20
 docker exec prosolutions-app wget -q --spider http://localhost:3000/api/health; echo "Exit: $LASTEXITCODE"
 
-# Puertos en escucha
-netstat -an | findstr "LISTENING" | findstr "3005 5432"
+# Puertos en escucha (el Postgres de ProSolutions ya no publica al host:
+# solo el 3005 de la web debe aparecer LISTENING)
+netstat -an | findstr "LISTENING" | findstr "3005"
 
 # .env (solo nombres de variables)
 Get-Content .env | ForEach-Object { if ($_ -match '^([^#=]+)=') { $matches[1] } }

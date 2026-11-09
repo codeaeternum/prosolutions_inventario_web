@@ -45,6 +45,8 @@ export function expectedCashCents(initialAmount: number, movements: CashMovement
   let total = Math.round(initialAmount * 100)
   for (const movement of movements) {
     if (!countsAsCash(movement)) continue
+    // Conversión a centavos por fila: misma regla que registerCashCents
+    // (operations.ts) — ambos totales del cajón deben coincidir al centavo.
     total += (movement.type === "IN" ? 1 : -1) * Math.round(movement.amount * 100)
   }
   return total

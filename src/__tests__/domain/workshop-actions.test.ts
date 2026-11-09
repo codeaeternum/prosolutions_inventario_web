@@ -17,7 +17,8 @@ const tx = {
   repairPart: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
   payment: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   cashRegister: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
-  cashMovement: { create: vi.fn(), groupBy: vi.fn() },
+  cashMovement: { create: vi.fn(), findMany: vi.fn() },
+  auditEvent: { create: vi.fn() },
   inventoryMovement: { findMany: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
   branchStock: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
   product: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
@@ -52,7 +53,9 @@ beforeEach(() => {
   // El dominio suma el dinero retenido por FILA en centavos (orderHeldCents)
   // — el mock devuelve el ledger de pagos de la orden.
   tx.payment.findMany.mockResolvedValue([])
-  tx.cashMovement.groupBy.mockResolvedValue([])
+  tx.payment.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "pay-1", ...args.data }))
+  tx.cashMovement.findMany.mockResolvedValue([])
+  tx.auditEvent.create.mockResolvedValue({ id: "ae-1" })
   // openRegister (cobros CASH): sucursal válida y lock de fila que siempre
   // confirma — los tests de pago controlan la lista de cajas por findMany.
   tx.branch.findFirst.mockResolvedValue({ id: "b1", name: "Sucursal 1", isActive: true, businessId: "biz" })
@@ -205,6 +208,35 @@ describe("cierre sin reparación persistente", () => {
     await expect(updateRepair(db, "admin-1", "biz", "o1", payload({ action: "REFUND", paymentCents: 10000, paymentMethod: "TRANSFER", detail: "Sin folio" })))
       .rejects.toMatchObject({ message: "Captura la referencia de la transferencia." })
     expect(tx.payment.create).not.toHaveBeenCalled()
+  })
+
+  it("REFUND por CARD sin folio se asienta y deja advertencia de conciliación en bitácora", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "REFUND", paymentCents: 10000, paymentMethod: "CARD", detail: "Excedente en tarjeta" }))
+    // El panel aún no captura folio de terminal: no se bloquea, pero el
+    // REFUNDED nunca queda mudo — la advertencia va a la bitácora.
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ purpose: "REFUND", method: "CARD", status: "REFUNDED", amount: -100, reference: null }),
+    }))
+    expect(tx.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "REFUND_NO_REFERENCE", entity: "payment", entityId: "pay-1",
+        summary: expect.stringContaining("tarjeta"),
+      }),
+    }))
+  })
+
+  it("REFUND por CARD con folio lo guarda en la fila y no advierte", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "REFUND", paymentCents: 10000, paymentMethod: "CARD", paymentReference: "AUTH-5566", detail: "Excedente en tarjeta" }))
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: "CARD", reference: "AUTH-5566" }),
+    }))
+    expect(tx.auditEvent.create).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "REFUND_NO_REFERENCE" }),
+    }))
   })
 })
 
