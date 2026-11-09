@@ -17,6 +17,7 @@ vi.mock("@/lib/prisma", () => ({
 }))
 
 import { GET } from "@/app/api/sales/route"
+import { formatSaleFolio } from "@/components/pos/sales-returns-sheet"
 
 describe("GET /api/sales — búsqueda server-side (?q=)", () => {
   beforeEach(() => {
@@ -44,6 +45,34 @@ describe("GET /api/sales — búsqueda server-side (?q=)", () => {
         }),
       }),
     )
+  })
+
+  it.each([
+    ["A-000018", 18],
+    ["NT-000105", 105],
+    ["C-000007", 7],
+    ["a-42", 42],
+    ["nt99", 99],
+  ])("interpreta folios %s por su consecutivo (%i)", async (folio, expectedNumber) => {
+    const res = await GET(new Request(`https://app.invalid/api/sales?q=${encodeURIComponent(folio)}`))
+    expect(res.status).toBe(200)
+    expect(mocks.saleFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          businessId: "biz-1",
+          OR: expect.arrayContaining([{ number: expectedNumber }]),
+        }),
+      }),
+    )
+  })
+
+  it("formatSaleFolio muestra el prefijo correcto según kind", () => {
+    expect(formatSaleFolio(12, "RETAIL")).toBe("V-000012")
+    expect(formatSaleFolio(12, "LAYAWAY")).toBe("A-000012")
+    expect(formatSaleFolio(12, "WORKSHOP")).toBe("NT-000012")
+    expect(formatSaleFolio(12, "WORKSHOP_NOTE")).toBe("NT-000012")
+    expect(formatSaleFolio(12, "QUOTE")).toBe("C-000012")
+    expect(formatSaleFolio(12)).toBe("V-000012")
   })
 
   it("filtra por nombre de cliente o artículo cuando q no es numérico", async () => {

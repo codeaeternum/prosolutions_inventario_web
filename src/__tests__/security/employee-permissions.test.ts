@@ -257,10 +257,14 @@ describe("gestión de reservas en mostrador", () => {
     expect((await reservationDetail(new Request("https://app.invalid/api/reservations/res-1"), params("res-1"))).status).toBe(403)
   })
 
-  it("GET /api/reservations/verify (lookup de QR) admite staff", async () => {
+  it("GET /api/reservations/verify (lookup de QR) admite staff con módulo reservas o clientes", async () => {
     mocks.reservationFindFirst.mockResolvedValue(activeReservation())
     mocks.auth.mockResolvedValue(session("employee-1", "EMPLOYEE"))
     expect((await verifyLookup(new Request("https://app.invalid/api/reservations/verify?code=RES-QR"))).status).toBe(200)
+    mocks.auth.mockResolvedValue({ user: { id: "employee-1", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-test", customerType: "NORMAL", allowedModules: ["clientes"] } })
+    expect((await verifyLookup(new Request("https://app.invalid/api/reservations/verify?code=RES-QR"))).status).toBe(200)
+    mocks.auth.mockResolvedValue({ user: { id: "employee-1", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-test", customerType: "NORMAL", allowedModules: ["caja"] } })
+    expect((await verifyLookup(new Request("https://app.invalid/api/reservations/verify?code=RES-QR"))).status).toBe(403)
     mocks.auth.mockResolvedValue(session("c-1", "CUSTOMER"))
     expect((await verifyLookup(new Request("https://app.invalid/api/reservations/verify?code=RES-QR"))).status).toBe(403)
   })

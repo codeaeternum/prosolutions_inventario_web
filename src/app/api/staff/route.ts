@@ -27,6 +27,7 @@ export async function GET() {
       jobTitle: u.jobTitle,
       hasPin: !!u.quickPin,
       homeBranch: u.homeBranch,
-    }))
+    })),
+    { headers: { "Cache-Control": "private, no-store" } }
   )
 }

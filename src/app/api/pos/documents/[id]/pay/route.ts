@@ -17,19 +17,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Primero la barrera del documento: sin acceso a la sucursal del apartado
     // ni siquiera se evalúa el cobro.
     const doc = await prisma.sale.findUnique({ where: { id }, select: { branchId: true, businessId: true } })
-    const denied = assertBranchAllowed(session, doc?.businessId === businessIdOf(session) ? doc.branchId : null)
+    const docBranchId = doc?.businessId === businessIdOf(session) ? doc.branchId : null
+    const denied = assertBranchAllowed(session, docBranchId)
     if (denied) return denied
-    // El efectivo del abono entra a la caja del COBRADOR (cashierBranchId o su
-    // sucursal base), no a la del documento — mismo patrón que el abono de
-    // crédito (/api/credit/payment): la sucursal efectiva del cobro también
-    // debe ser operable por el cajero.
+    // El efectivo del abono entra a la caja del COBRADOR (cashierBranchId →
+    // sucursal base → sucursal del documento), no a la del documento — mismo
+    // patrón que el abono de crédito (/api/credit/payment): la sucursal
+    // efectiva del cobro también debe ser operable por el cajero.
+    const cashierBranchId = body?.cashierBranchId ?? body?.branchId
     const hasCash = Array.isArray(body?.payments) && body.payments.some((p: { method?: string }) => p?.method === "EFECTIVO")
-    if (body?.cashierBranchId || hasCash) {
-      const deniedCashier = await assertOperationBranch(session, body?.cashierBranchId)
+    if (cashierBranchId || hasCash) {
+      const deniedCashier = await assertOperationBranch(session, cashierBranchId, { fallbackBranchId: docBranchId })
       if (deniedCashier) return deniedCashier
     }
     return NextResponse.json(await payDocument(prisma, session.user.id, businessIdOf(session), {
-      ...body, saleId: id, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),
+      ...body,
+      ...(cashierBranchId ? { cashierBranchId } : {}),
+      saleId: id,
+      idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),
     }))
   } catch (error) { return businessFailure(error) }
 }

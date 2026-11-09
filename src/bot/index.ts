@@ -81,8 +81,12 @@ bot.use(async (ctx, next) => {
     if (ctx.chat?.type !== 'private' || !ctx.from) return
     if (!_prisma) return next()
     try {
-        const user = await _prisma.user.findUnique({ where: { telegramId: ctx.from.id.toString() }, select: { status: true } })
+        const user = await _prisma.user.findUnique({
+            where: { telegramId: ctx.from.id.toString() },
+            select: { status: true, business: { select: { isActive: true } } },
+        })
         if (user?.status === 'REJECTED') { await ctx.reply('Tu cuenta no está habilitada. Contacta al administrador.'); return }
+        if (user?.business && !user.business.isActive) { await ctx.reply('Este negocio está suspendido.'); return }
     } catch (e) {
         // Fail-open: si Prisma (o el reply) falla, el update pasa y cada
         // comando aplica sus propios guards. Un throw aquí era unhandled

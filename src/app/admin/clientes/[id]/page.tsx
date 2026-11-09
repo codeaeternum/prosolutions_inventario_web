@@ -37,6 +37,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
+import { hasWhatsAppPhone, openWhatsApp, waLink } from "@/lib/whatsapp"
 
 interface Cliente {
   id: string
@@ -168,10 +169,6 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   DEBT: "destructive", PAYMENT: "success", REVERSAL: "secondary",
 }
 
-function waLink(phone: string) {
-  return `https://wa.me/${phone.replace(/\D/g, "")}`
-}
-
 function saleFolio(number: number) {
   return `V-${String(number).padStart(6, "0")}`
 }
@@ -207,6 +204,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
   const [data, setData] = useState<Cliente360 | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [abonarOpen, setAbonarOpen] = useState(false)
   const [estadoCuentaOpen, setEstadoCuentaOpen] = useState(false)
   const [limiteOpen, setLimiteOpen] = useState(false)
@@ -214,6 +212,8 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
   const [sharingStatement, setSharingStatement] = useState(false)
 
   const fetchData = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true)
+    setLoadError(false)
     try {
       const res = await fetch(`/api/clientes/${id}`, { signal })
       if (res.status === 404) { setNotFound(true); return }
@@ -224,6 +224,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
     } catch (error) {
       if (!signal?.aborted) {
         console.error("Error cargando cliente 360:", error)
+        setLoadError(true)
         toast.error("No se pudo cargar la ficha del cliente")
       }
     } finally {
@@ -255,8 +256,25 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64" role="status" aria-label="Cargando ficha del cliente">
         <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
+  }
+
+  if (loadError && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-12 border border-dashed rounded-lg text-center" role="alert">
+        <p className="text-sm font-medium">No se pudo cargar la ficha del cliente</p>
+        <p className="text-xs text-muted-foreground">Verifica tu conexión o vuelve a intentarlo.</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => void fetchData()}>
+            Reintentar
+          </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/admin/clientes"><ArrowLeft className="mr-1 h-4 w-4" />Volver a clientes</Link>
+          </Button>
+        </div>
       </div>
     )
   }
@@ -295,12 +313,9 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
         return
       }
       const url = `${window.location.origin}${json.url}`
-      const digits = (cliente.phone ?? "").replace(/\D/g, "")
-      if (digits) {
-        // wa.me exige formato internacional; los locales de 10 dígitos son MX (+52).
-        const intl = digits.length === 10 ? `52${digits}` : digits
+      if (hasWhatsAppPhone(cliente.phone)) {
         const text = `Hola ${cliente.name}, aquí puedes consultar tu estado de cuenta${json.businessName ? ` en ${json.businessName}` : ""}: ${url}`
-        window.open(`https://wa.me/${intl}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer")
+        openWhatsApp(cliente.phone, text)
       } else {
         await navigator.clipboard.writeText(url)
         toast.success("Enlace del estado de cuenta copiado")

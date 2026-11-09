@@ -57,6 +57,7 @@ import {
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { csvCell } from "@/lib/csv"
+import { waLink } from "@/lib/whatsapp"
 
 interface Cliente {
   id: string
@@ -100,10 +101,6 @@ const customerTypeLabels: Record<Cliente["customerType"], string> = {
 }
 
 const DEFAULT_LIMIT = 20
-
-function waLink(phone: string) {
-  return `https://wa.me/${phone.replace(/\D/g, "")}`
-}
 
 function TypeBadge({ type }: { type: Cliente["customerType"] }) {
   if (type === "STORE") {
@@ -151,6 +148,7 @@ export function ClientesPanel() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
   // Detail sheet
   const [detailOpen, setDetailOpen] = useState(false)
@@ -161,6 +159,7 @@ export function ClientesPanel() {
 
   const fetchClientes = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
+    setLoadError(false)
     try {
       const params = new URLSearchParams()
       if (search) params.set("search", search)
@@ -179,6 +178,7 @@ export function ClientesPanel() {
     } catch (error) {
       if (!signal?.aborted) {
         console.error("Error fetching clientes:", error)
+        setLoadError(true)
         toast.error("No se pudieron cargar los clientes. Reintenta en un momento.")
       }
     } finally {
@@ -344,6 +344,13 @@ export function ClientesPanel() {
       {loading ? (
         <div className="flex items-center justify-center h-64" role="status" aria-label="Cargando clientes">
           <Loader2 className="h-8 w-8 animate-spin" />
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 border border-dashed rounded-lg text-center" role="alert">
+          <p className="text-sm text-destructive">No se pudieron cargar los clientes.</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void fetchClientes()}>
+            Reintentar
+          </Button>
         </div>
       ) : clientes.length > 0 ? (
         <>

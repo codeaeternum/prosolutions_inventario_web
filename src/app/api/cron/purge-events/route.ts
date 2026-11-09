@@ -6,8 +6,10 @@ import { purgeOldEvents } from "@/lib/event-retention"
 /**
  * GET /api/cron/purge-events — Retención de bitácoras: borra eventos viejos.
  *
- *   - AuditEvent    → AUDIT_RETENTION_DAYS    (default 90,  clamp 30–365)
- *   - PlatformEvent → PLATFORM_RETENTION_DAYS (default 365, clamp 90–730)
+ *   - AuditEvent     → AUDIT_RETENTION_DAYS        (default 90,  clamp 30–365)
+ *   - PlatformEvent  → PLATFORM_RETENTION_DAYS     (default 365, clamp 90–730)
+ *   - Notification   → NOTIFICATION_RETENTION_DAYS (default 90,  clamp 30–365; NotificationRead en cascada)
+ *   - DirectoryEvent → DIRECTORY_RETENTION_DAYS    (default 180, clamp 30–365)
  *
  * Auth: igual que /api/cron/purge-pending-signups — CRON_SECRET por
  * `Authorization: Bearer` o `x-cron-secret` con timingSafeEqual.
@@ -33,6 +35,7 @@ export async function GET(req: Request) {
     const result = await purgeOldEvents(prisma)
     console.log(
       `[cron:purge-events] auditDeleted=${result.auditDeleted} platformDeleted=${result.platformDeleted} ` +
+        `notificationDeleted=${result.notificationDeleted} directoryDeleted=${result.directoryDeleted} ` +
         `auditCutoff=${result.auditCutoff.toISOString()} platformCutoff=${result.platformCutoff.toISOString()}`
     )
     return NextResponse.json({ ok: true, ...result })

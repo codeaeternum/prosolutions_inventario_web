@@ -12,11 +12,15 @@ const TOLERANCE_MS = 60_000
 const mocks = vi.hoisted(() => {
   const auditDeleteMany = vi.fn().mockResolvedValue({ count: 3 })
   const platformDeleteMany = vi.fn().mockResolvedValue({ count: 7 })
+  const notificationDeleteMany = vi.fn().mockResolvedValue({ count: 11 })
+  const directoryDeleteMany = vi.fn().mockResolvedValue({ count: 19 })
   const prisma = {
     auditEvent: { deleteMany: auditDeleteMany },
     platformEvent: { deleteMany: platformDeleteMany },
+    notification: { deleteMany: notificationDeleteMany },
+    directoryEvent: { deleteMany: directoryDeleteMany },
   }
-  return { auditDeleteMany, platformDeleteMany, prisma }
+  return { auditDeleteMany, platformDeleteMany, notificationDeleteMany, directoryDeleteMany, prisma }
 })
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }))
 
@@ -38,6 +42,8 @@ describe("cron purge-events", () => {
     vi.unstubAllEnvs()
     mocks.auditDeleteMany.mockResolvedValue({ count: 3 })
     mocks.platformDeleteMany.mockResolvedValue({ count: 7 })
+    mocks.notificationDeleteMany.mockResolvedValue({ count: 11 })
+    mocks.directoryDeleteMany.mockResolvedValue({ count: 19 })
     vi.stubEnv("CRON_SECRET", "test-secret")
   })
 
@@ -47,6 +53,8 @@ describe("cron purge-events", () => {
     expect(res.status).toBe(503)
     expect(mocks.auditDeleteMany).not.toHaveBeenCalled()
     expect(mocks.platformDeleteMany).not.toHaveBeenCalled()
+    expect(mocks.notificationDeleteMany).not.toHaveBeenCalled()
+    expect(mocks.directoryDeleteMany).not.toHaveBeenCalled()
   })
 
   it("rejects wrong or missing secrets (401) without touching the DB, and accepts x-cron-secret", async () => {
@@ -61,40 +69,64 @@ describe("cron purge-events", () => {
     }
     expect(mocks.auditDeleteMany).not.toHaveBeenCalled()
     expect(mocks.platformDeleteMany).not.toHaveBeenCalled()
+    expect(mocks.notificationDeleteMany).not.toHaveBeenCalled()
+    expect(mocks.directoryDeleteMany).not.toHaveBeenCalled()
 
     const ok = await get({ "x-cron-secret": "test-secret" })
     expect(ok.status).toBe(200)
   })
 
-  it("deletes with the default cutoffs (90d audit, 365d platform) and reports counts", async () => {
+  it("deletes with the default cutoffs (90d audit/notification, 180d directory, 365d platform) and reports counts", async () => {
     const res = await get()
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.ok).toBe(true)
     expect(body.auditDeleted).toBe(3)
     expect(body.platformDeleted).toBe(7)
+    expect(body.notificationDeleted).toBe(11)
+    expect(body.directoryDeleted).toBe(19)
     expect(new Date(body.auditCutoff).getTime()).toBeCloseTo(
       Date.now() - 90 * DAY_MS, -3
     )
     expect(new Date(body.platformCutoff).getTime()).toBeCloseTo(
       Date.now() - 365 * DAY_MS, -3
     )
+    expect(new Date(body.notificationCutoff).getTime()).toBeCloseTo(
+      Date.now() - 90 * DAY_MS, -3
+    )
+    expect(new Date(body.directoryCutoff).getTime()).toBeCloseTo(
+      Date.now() - 180 * DAY_MS, -3
+    )
 
     expect(mocks.auditDeleteMany).toHaveBeenCalledTimes(1)
     expect(mocks.platformDeleteMany).toHaveBeenCalledTimes(1)
+    expect(mocks.notificationDeleteMany).toHaveBeenCalledTimes(1)
+    expect(mocks.directoryDeleteMany).toHaveBeenCalledTimes(1)
     expect(mocks.auditDeleteMany).toHaveBeenCalledWith({
       where: { createdAt: { lt: expect.any(Date) } },
     })
     expect(mocks.platformDeleteMany).toHaveBeenCalledWith({
       where: { createdAt: { lt: expect.any(Date) } },
     })
+    expect(mocks.notificationDeleteMany).toHaveBeenCalledWith({
+      where: { createdAt: { lt: expect.any(Date) } },
+    })
+    expect(mocks.directoryDeleteMany).toHaveBeenCalledWith({
+      where: { createdAt: { lt: expect.any(Date) } },
+    })
 
     const auditDays = cutoffDays(mocks.auditDeleteMany)
     const platformDays = cutoffDays(mocks.platformDeleteMany)
+    const notificationDays = cutoffDays(mocks.notificationDeleteMany)
+    const directoryDays = cutoffDays(mocks.directoryDeleteMany)
     expect(auditDays).toBeGreaterThanOrEqual(90)
     expect(auditDays).toBeLessThan(90 + TOLERANCE_MS / DAY_MS)
     expect(platformDays).toBeGreaterThanOrEqual(365)
     expect(platformDays).toBeLessThan(365 + TOLERANCE_MS / DAY_MS)
+    expect(notificationDays).toBeGreaterThanOrEqual(90)
+    expect(notificationDays).toBeLessThan(90 + TOLERANCE_MS / DAY_MS)
+    expect(directoryDays).toBeGreaterThanOrEqual(180)
+    expect(directoryDays).toBeLessThan(180 + TOLERANCE_MS / DAY_MS)
   })
 
   it("honors AUDIT_RETENTION_DAYS / PLATFORM_RETENTION_DAYS", async () => {

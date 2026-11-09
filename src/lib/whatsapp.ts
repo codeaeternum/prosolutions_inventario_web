@@ -17,14 +17,13 @@ export function hasWhatsAppPhone(phone: string | null | undefined): boolean {
 }
 
 /**
- * URL wa.me con el mensaje precargado. Sin teléfono queda wa.me/?text=…
- * (WhatsApp deja elegir el contacto); los botones de aviso solo se
- * muestran cuando hasWhatsAppPhone(phone) es true.
+ * URL wa.me con mensaje opcional precargado. Sin teléfono queda wa.me/?text=…
+ * (WhatsApp deja elegir el contacto); sin mensaje devuelve https://wa.me/<intl>.
  */
-export function waLink(phone: string | null | undefined, message: string): string {
+export function waLink(phone: string | null | undefined, message?: string): string {
     const intl = waPhoneIntl(phone)
     const base = intl ? `https://wa.me/${intl}` : "https://wa.me/"
-    return `${base}?text=${encodeURIComponent(message)}`
+    return message !== undefined ? `${base}?text=${encodeURIComponent(message)}` : base
 }
 
 /** Abre la conversación en una pestaña nueva (para handlers de clic). */

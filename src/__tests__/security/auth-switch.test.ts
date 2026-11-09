@@ -10,7 +10,9 @@ import { NextRequest } from "next/server"
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   findUnique: vi.fn(),
+  businessFindUnique: vi.fn(),
   auditCreate: vi.fn(),
+  platformEventCreate: vi.fn(),
   encode: vi.fn(),
   decode: vi.fn(),
   bcryptCompare: vi.fn(),
@@ -20,7 +22,9 @@ vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mocks.findUnique },
+    business: { findUnique: mocks.businessFindUnique },
     auditEvent: { create: mocks.auditCreate },
+    platformEvent: { create: mocks.platformEventCreate },
   },
 }))
 vi.mock("next-auth/jwt", () => ({ encode: mocks.encode, decode: mocks.decode }))
@@ -49,6 +53,8 @@ beforeEach(() => {
   mocks.encode.mockResolvedValue("signed-token")
   mocks.decode.mockResolvedValue({ id: "admin-1" }) // sesión propia, sin impersonator
   mocks.auditCreate.mockResolvedValue({})
+  mocks.platformEventCreate.mockResolvedValue({})
+  mocks.businessFindUnique.mockResolvedValue({ name: "Taller Amigo", slug: "taller-amigo" })
   mocks.findUnique.mockResolvedValue(cashier)
 })
 
@@ -134,18 +140,35 @@ describe("restaurar la cuenta original", () => {
 
   it("un superadmin de plataforma puede entrar en modo soporte a un negocio distinto y restaurar su cuenta", async () => {
     mocks.auth.mockResolvedValue({
-      user: { id: "op-1", name: "Operador Reficio", role: "ADMIN", status: "APPROVED", businessId: "biz-reficio-hq", isSuperAdmin: true, customerType: "NORMAL" },
+      user: { id: "op-1", name: "Operador Reficio", email: "op@reficio.app", role: "ADMIN", status: "APPROVED", businessId: "biz-reficio-hq", isSuperAdmin: true, customerType: "NORMAL" },
     })
-    mocks.findUnique.mockResolvedValue({ ...cashier, businessId: "biz-amigo", isSuperAdmin: false })
+    mocks.findUnique.mockResolvedValue({
+      ...cashier,
+      email: "kevin@amigo.mx",
+      businessId: "biz-amigo",
+      isSuperAdmin: false,
+      business: { name: "Taller Amigo", slug: "taller-amigo" },
+    })
     const enterRes = await POST(req({ userId: "emp-2" }))
     expect(enterRes.status).toBe(200)
     expect(mocks.encode).toHaveBeenCalledWith(expect.objectContaining({
       token: expect.objectContaining({ id: "emp-2", businessId: "biz-amigo", impersonator: "op-1" }),
     }))
+    expect(mocks.platformEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: "SUPPORT_ENTERED",
+        businessId: "biz-amigo",
+        businessSlug: "taller-amigo",
+        businessName: "Taller Amigo",
+        actorId: "op-1",
+        actorEmail: "op@reficio.app",
+        detail: { targetUserId: "emp-2", targetEmail: "kevin@amigo.mx" },
+      }),
+    })
 
     // Y al restaurar desde la sesión del negocio del amigo, vuelve a su cuenta superadmin en biz-reficio-hq
     mocks.auth.mockResolvedValue({
-      user: { id: "emp-2", name: "Kevin", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-amigo", isSuperAdmin: false, customerType: "NORMAL" },
+      user: { id: "emp-2", name: "Kevin", email: "kevin@amigo.mx", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-amigo", isSuperAdmin: false, customerType: "NORMAL" },
     })
     mocks.decode.mockResolvedValue({ id: "emp-2", impersonator: "op-1" })
     mocks.findUnique.mockResolvedValue({
@@ -157,5 +180,14 @@ describe("restaurar la cuenta original", () => {
     expect(restoreRes.status).toBe(200)
     const restoreJson = await restoreRes.json()
     expect(restoreJson.user.isSuperAdmin).toBe(true)
+    expect(mocks.platformEventCreate).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({
+        kind: "SUPPORT_EXITED",
+        businessId: "biz-amigo",
+        actorId: "op-1",
+        actorEmail: "op@reficio.app",
+        detail: { targetUserId: "emp-2", targetEmail: "kevin@amigo.mx" },
+      }),
+    })
   })
 })

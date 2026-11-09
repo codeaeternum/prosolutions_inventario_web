@@ -2,13 +2,13 @@ name: CI — Reficio
 
 on:
   push:
-    branches: [main]
+    branches: [main, deploy-secfix2]
   pull_request:
-    branches: [main]
+    branches: [main, deploy-secfix2]
 
 jobs:
   quality:
-    name: Typecheck, Lint & Unit Tests
+    name: Typecheck, Lint, Unit Tests & Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -31,3 +31,10 @@ jobs:
 
       - name: Run unit tests
         run: npx vitest run --project unit
+
+      - name: Production build check
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+          NEXTAUTH_SECRET: "ci-build-secret-not-used-in-production"
+          NEXTAUTH_URL: "http://localhost:3000"
+        run: npm run build

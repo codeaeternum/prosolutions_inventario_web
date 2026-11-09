@@ -27,6 +27,13 @@ import { cn, formatPrice } from "@/lib/utils"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CustomerPicker } from "./customer-picker"
 import {
+    buildParkTicketFingerprint,
+    loadPendingPark,
+    pendingParkMatchesCart,
+    savePendingPark,
+    type PosPendingParkState,
+} from "./ticket-storage"
+import {
     DEPOSIT_METHODS,
     amountToCents,
     cartUnitsOf,
@@ -64,6 +71,8 @@ interface CheckoutDialogProps {
     branchId: string
     cajaOpen: boolean | null
     resumedDoc: { id: string; number: number; kind?: string } | null
+    /** Encargo READY que se liquida y entrega en este cobro: aplica su anticipo y lo cierra atómicamente. */
+    encargo?: { id: string; description: string; priceQuoted: number | null; deposit: number } | null
     onBusyChange: (busy: boolean) => void
     /** Auto-impresión del ticket: abre la pestaña en el gesto del click, antes del await. */
     autoOpenTicket?: boolean
@@ -150,7 +159,7 @@ export function CheckoutDialog(props: CheckoutDialogProps) {
 
 function CheckoutForm({
     onOpenChange, cart, cartTotal, workshopActive, workshopCustomer, onWorkshopSaleChange,
-    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, onBusyChange, autoOpenTicket,
+    customer, onCustomerChange, branchId, cajaOpen, resumedDoc, encargo, onBusyChange, autoOpenTicket,
     initialOperationKey, onOperationKeyChange, onCompleted,
 }: CheckoutDialogProps) {
     // Caja cerrada: el efectivo siempre rebota con 409 REGISTER_REQUIRED.
@@ -166,6 +175,7 @@ function CheckoutForm({
     const [splitPayments, setSplitPayments] = useState<PaymentDraft[]>([{ method: defaultMethod, amount: "" }])
     const [withDeposit, setWithDeposit] = useState(false)
     const [deposit, setDeposit] = useState<PaymentDraft>({ method: defaultMethod, amount: "" })
+    const [layawayDays, setLayawayDays] = useState("30")
     const [validityDays, setValidityDays] = useState("15")
     // Descuento autorizado al cobrar: monto en pesos + motivo obligatorio.
     const [withDiscount, setWithDiscount] = useState(false)
@@ -178,10 +188,20 @@ function CheckoutForm({
     // Semilla con la llave del borrador: si hubo crash a medio cobro, el
     // primer submit del ticket restaurado reusa ESA llave (mismo fingerprint).
     const pendingOperation = useRef<ClientOperationKey | null>(initialOperationKey ?? null)
-    // Llave del paso "suspender" cuando una venta nueva con descuento primero
+    // Estado del paso "suspender" cuando una venta nueva con descuento primero
     // fotografía sus líneas como documento y luego lo cobra (mismo endpoint
-    // de checkout que una suspendida recuperada).
-    const pendingPark = useRef<ClientOperationKey | null>(null)
+    // de checkout que una suspendida recuperada). Se persiste en localStorage
+    // para que un crash/timeout entre el paso 1 y el 2 no cree un segundo DRAFT.
+    const pendingPark = useRef<PosPendingParkState | null>(null)
+    const layawayExpiryRef = useRef<{ days: number; iso: string } | null>(null)
+
+    useEffect(() => {
+        const saved = pendingPark.current ?? loadPendingPark()
+        if (saved && !pendingParkMatchesCart(saved, cart)) {
+            pendingPark.current = null
+            savePendingPark(null)
+        }
+    }, [cart])
     const { data: session } = useSession()
     const isEmployee = session?.user?.role === "EMPLOYEE"
     // La lista de taller la cobra un cliente taller/negocio (automático) o la
@@ -219,29 +239,33 @@ function CheckoutForm({
         return () => clearTimeout(id)
     }, [paymentMethod, isSale, splitMode])
 
-    // Lo que realmente se cobra: catálogo menos el descuento capturado. El
-    // servidor valida contra su propio snapshot — aquí solo se refleja.
+    // Lo que realmente se cobra: catálogo menos el descuento capturado y menos
+    // el anticipo del encargo cuando aplica. El servidor valida contra su
+    // propio snapshot — aquí solo se refleja.
     // Toda comparación de dinero va en CENTAVOS enteros: el dominio cuadra
     // los pagos contra el total sin tolerancia (settleSalePayments), así que
     // el UI debe validar en la misma unidad o habilitaría cobros que el
     // servidor rechaza — y viceversa.
     const cartTotalCents = Math.round(cartTotal * 100)
     const discountCents = withDiscount ? amountToCents(discountAmount) : 0
-    const payableCents = Math.max(0, cartTotalCents - discountCents)
+    const encargoDepositCents = isSale && encargo ? Math.round(Math.max(0, encargo.deposit) * 100) : 0
+    const payableCents = Math.max(0, cartTotalCents - discountCents - encargoDepositCents)
     const payable = payableCents / 100
     const employeeCapCents = Math.floor(cartTotalCents / 10)
 
-    const usesCredit = splitMode
+    const usesCredit = payableCents > 0 && (splitMode
         ? splitPayments.some(p => p.method === "CREDITO" && amountToCents(p.amount) > 0)
-        : paymentMethod === "CREDITO"
+        : paymentMethod === "CREDITO")
     // Listas de métodos con el efectivo bloqueado cuando no hay caja abierta;
     // hasCashPayment/cashSelected son la guardia residual por si el estado
     // quedó con EFECTIVO (el cobro igual se bloquea abajo y en el servidor).
+    // Si payableCents === 0 (el anticipo del encargo ya cubrió el 100%), hoy
+    // no entra efectivo al cajón.
     const saleMethods = paymentMethodsFor(cajaOpen)
     const depositMethods = paymentMethodsFor(cajaOpen, DEPOSIT_METHODS)
-    const hasCashPayment = splitMode
+    const hasCashPayment = payableCents > 0 && (splitMode
         ? splitPayments.some(p => p.method === "EFECTIVO" && amountToCents(p.amount) > 0)
-        : paymentMethod === "EFECTIVO"
+        : paymentMethod === "EFECTIVO")
     const cashSelected = cashBlocked
         && ((isSale && hasCashPayment) || (docType === "LAYAWAY" && withDeposit && deposit.method === "EFECTIVO"))
     // Primer método cobrable sin caja: al dividir desde crédito o agregar
@@ -257,6 +281,9 @@ function CheckoutForm({
     /** Pagos del modo venta → payments[] | paymentMethod (validaciones incluidas).
         Transferencia única va sin monto: el servidor cobra el total del ticket. */
     const buildSalePayments = (): { payments?: { method: string; amount?: number; reference?: string }[]; paymentMethod?: string } | null => {
+        if (payableCents === 0 && encargo) {
+            return {}
+        }
         if (usesCredit) {
             if (!customer) {
                 toast.error("Selecciona un cliente para venta a crédito")
@@ -332,17 +359,18 @@ function CheckoutForm({
                 }
             }
             const discountPart = discountCents > 0 ? { discountCents, discountReason: discountReason.trim() } : {}
+            const encargoPart = encargo ? { encargoId: encargo.id } : {}
             if (resumedDoc) {
                 // Cobro de una suspendida: el documento cobra sus líneas snapshot;
                 // items queda como referencia por si el servidor reconcilia ediciones.
                 url = `/api/pos/documents/${resumedDoc.id}/checkout`
-                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart }
+                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart, ...encargoPart }
             } else if (discountCents > 0) {
                 // Venta nueva con descuento: solo el checkout de documentos lo
                 // admite, así que el ticket se suspende (snapshot de precios)
                 // y se cobra en seguida — misma caja, mismo rastro.
                 parkThenCheckout = true
-                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart }
+                payload = { items, branchId: branchId || undefined, customerId: customer?.id ?? undefined, ...paymentPart, ...discountPart, ...encargoPart }
             } else {
                 payload = {
                     items,
@@ -350,6 +378,7 @@ function CheckoutForm({
                     branchId: branchId || undefined,
                     workshopSale: docType === "WORKSHOP" || undefined,
                     ...paymentPart,
+                    ...encargoPart,
                 }
             }
         } else if (docType === "LAYAWAY") {
@@ -371,12 +400,30 @@ function CheckoutForm({
                     return
                 }
             }
+            let layawayExpiresAt: string | undefined
+            if (layawayDays.trim() !== "") {
+                const days = parseInt(layawayDays, 10)
+                if (!Number.isInteger(days) || days < 1 || days > 365) {
+                    toast.error("La vigencia del apartado debe ser de 1 a 365 días (o déjala vacía)")
+                    return
+                }
+                if (
+                    layawayExpiryRef.current?.days === days &&
+                    new Date(layawayExpiryRef.current.iso).getTime() > Date.now() + 60_000
+                ) {
+                    layawayExpiresAt = layawayExpiryRef.current.iso
+                } else {
+                    layawayExpiresAt = new Date(Date.now() + days * 86_400_000).toISOString()
+                    layawayExpiryRef.current = { days, iso: layawayExpiresAt }
+                }
+            }
             url = "/api/pos/documents"
             payload = {
                 kind: "LAYAWAY",
                 items,
                 customerId: customer.id,
                 branchId: branchId || undefined,
+                ...(layawayExpiresAt ? { expiresAt: layawayExpiresAt } : {}),
                 ...(withDeposit && depositCents > 0 ? { payments: toPaymentsPayload([deposit]) } : {}),
             }
         } else {
@@ -413,23 +460,58 @@ function CheckoutForm({
                     items,
                     customerId: customer?.id ?? undefined,
                     branchId: branchId || undefined,
+                    ...(encargo ? { encargoId: encargo.id } : {}),
                 }
-                pendingPark.current = getClientOperationKey(pendingPark.current, parkPayload)
-                const parkRes = await fetch("/api/pos/documents", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ...parkPayload, idempotencyKey: pendingPark.current.key }),
+                const ticketFingerprint = buildParkTicketFingerprint({
+                    ...parkPayload,
+                    discountCents,
+                    discountReason: discountReason.trim(),
                 })
-                const parkData: SaleResponse | null = await parkRes.json().catch(() => null)
-                if (!parkRes.ok) throw new Error(parkData?.error || "No se pudo preparar la venta con descuento")
-                checkoutDocId = parkData?.document?.sale?.id ?? null
-                if (!checkoutDocId) throw new Error("No se pudo preparar la venta con descuento")
+                const savedPark = pendingPark.current ?? loadPendingPark()
+                if (savedPark && savedPark.ticketFingerprint === ticketFingerprint) {
+                    pendingPark.current = savedPark
+                    if (savedPark.checkoutKey && !pendingOperation.current) {
+                        pendingOperation.current = savedPark.checkoutKey
+                    }
+                } else {
+                    const parkKey = getClientOperationKey(null, parkPayload)
+                    pendingPark.current = { parkKey, parkedDocId: null, ticketFingerprint }
+                    savePendingPark(pendingPark.current)
+                }
+
+                if (pendingPark.current.parkedDocId) {
+                    // El paso 1 ya creó el DRAFT en un intento previo: salta el
+                    // park y reintenta directo el checkout sobre ese documento.
+                    checkoutDocId = pendingPark.current.parkedDocId
+                } else {
+                    const parkRes = await fetch("/api/pos/documents", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ ...parkPayload, idempotencyKey: pendingPark.current.parkKey.key }),
+                    })
+                    const parkData: SaleResponse | null = await parkRes.json().catch(() => null)
+                    if (!parkRes.ok) {
+                        if (parkRes.status >= 400 && parkRes.status < 500) {
+                            pendingPark.current = null
+                            savePendingPark(null)
+                        }
+                        throw new Error(parkData?.error || "No se pudo preparar la venta con descuento")
+                    }
+                    checkoutDocId = parkData?.document?.sale?.id ?? null
+                    if (!checkoutDocId) throw new Error("No se pudo preparar la venta con descuento")
+                    pendingPark.current = { ...pendingPark.current, parkedDocId: checkoutDocId }
+                    savePendingPark(pendingPark.current)
+                }
                 url = `/api/pos/documents/${checkoutDocId}/checkout`
             }
             // La llave del cobro va ligada al folio del documento cuando hay
             // uno: el mismo payload sobre otro documento es otra operación.
             pendingOperation.current = getClientOperationKey(pendingOperation.current,
                 checkoutDocId ? { ...payload, saleId: checkoutDocId } : payload)
+            if (parkThenCheckout && pendingPark.current) {
+                pendingPark.current = { ...pendingPark.current, checkoutKey: pendingOperation.current }
+                savePendingPark(pendingPark.current)
+            }
             // El borrador guarda la llave ANTES de que salga el POST: un
             // crash en vuelo la restaura y el retry reusa la misma.
             onOperationKeyChange?.(pendingOperation.current)
@@ -439,11 +521,18 @@ function CheckoutForm({
                 body: JSON.stringify({ ...payload, idempotencyKey: pendingOperation.current.key }),
             })
             const data: SaleResponse | null = await res.json().catch(() => null)
-            if (!res.ok) throw new Error(data?.error || "No se pudo registrar. El ticket se conserva.")
+            if (!res.ok) {
+                if (parkThenCheckout && (res.status === 404 || res.status === 410)) {
+                    pendingPark.current = null
+                    savePendingPark(null)
+                }
+                throw new Error(data?.error || "No se pudo registrar. El ticket se conserva.")
+            }
             // Recién aquí se sueltan las llaves: si el cobro falló tras
             // suspender, el reintento reusa el MISMO documento (no duplica).
             pendingOperation.current = null
             pendingPark.current = null
+            savePendingPark(null)
             onOperationKeyChange?.(null)
 
             const ticketId = data?.sale?.id ?? data?.document?.sale?.id ?? data?.id ?? null
@@ -484,12 +573,17 @@ function CheckoutForm({
     const cashGivenCents = amountToCents(cashGiven)
     const confirmDisabled = processing
         || cashSelected
-        || (isSale && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && cashGivenCents < payableCents))
+        || (isSale && payableCents > 0 && !splitMode && paymentMethod === "EFECTIVO" && Boolean(cashGiven && cashGivenCents < payableCents))
         || (isSale && usesCredit && (!customer || customer.creditLimit == null || creditPortionCents > (creditAvailableCents ?? 0)))
-        || (isSale && discountCents > 0 && (discountCents >= cartTotalCents || discountReason.trim().length < 3))
+        || (isSale && discountCents > 0 && (discountCents + encargoDepositCents > cartTotalCents || discountCents >= cartTotalCents || discountReason.trim().length < 3))
+        || (isSale && encargoDepositCents > cartTotalCents)
         || (docType === "LAYAWAY" && !customer)
 
-    const docTypes: DocType[] = workshopCustomer ? ["WORKSHOP"] : workshopAllowed ? ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE"]
+    const docTypes: DocType[] = workshopCustomer
+        ? ["WORKSHOP"]
+        : encargo
+            ? (workshopAllowed ? ["VENTA", "WORKSHOP"] : ["VENTA"])
+            : workshopAllowed ? ["VENTA", "LAYAWAY", "QUOTE", "WORKSHOP"] : ["VENTA", "LAYAWAY", "QUOTE"]
 
     return (
             <DialogContent
@@ -509,17 +603,20 @@ function CheckoutForm({
                     <DialogTitle className="flex items-center gap-2">
                         Finalizar
                         {resumedDoc && <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{resumedDoc.kind === "QUOTE" ? "Cotización" : "Suspendida"} #{resumedDoc.number}</Badge>}
+                        {encargo && <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">Encargo</Badge>}
                     </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-2">
                     <div className="bg-primary/10 p-4 rounded-lg space-y-1">
                         <div className="flex justify-between items-center">
-                            <span className="font-medium text-lg">{discountCents > 0 ? "Total a cobrar:" : "Total:"}</span>
+                            <span className="font-medium text-lg">{discountCents > 0 || encargoDepositCents > 0 ? "Resta por cobrar:" : "Total:"}</span>
                             <span className="text-2xl font-bold text-primary">{formatPrice(payable)}</span>
                         </div>
-                        {discountCents > 0 && (
+                        {(discountCents > 0 || encargoDepositCents > 0) && (
                             <p className="text-xs text-muted-foreground text-right">
-                                Subtotal {formatPrice(cartTotal)} · Descuento −{formatPrice(discountCents / 100)}
+                                Subtotal {formatPrice(cartTotal)}
+                                {discountCents > 0 && ` · Descuento −${formatPrice(discountCents / 100)}`}
+                                {encargoDepositCents > 0 && ` · Anticipo encargo −${formatPrice(encargoDepositCents / 100)}`}
                             </p>
                         )}
                     </div>
@@ -641,7 +738,13 @@ function CheckoutForm({
                         </div>
                     )}
 
-                    {isSale && !splitMode && (
+                    {isSale && payableCents === 0 && encargo && (
+                        <p className="rounded-lg border border-green-300 bg-green-50 px-3 py-2 text-xs font-medium text-green-800 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300">
+                            El anticipo del encargo ya cubre el total — confirma para registrar la venta y marcar la entrega.
+                        </p>
+                    )}
+
+                    {isSale && (payableCents > 0 || !encargo) && !splitMode && (
                         <div className="space-y-2">
                             <Label>Método de pago</Label>
                             <div className="flex gap-2">
@@ -848,6 +951,18 @@ function CheckoutForm({
                                     )}
                                 </div>
                             )}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="pos-layaway-days">Vigencia (días, opcional)</Label>
+                                <Input
+                                    id="pos-layaway-days"
+                                    type="number" min="1" max="365"
+                                    placeholder="Sin vencimiento"
+                                    disabled={processing}
+                                    value={layawayDays}
+                                    onChange={e => setLayawayDays(e.target.value)}
+                                    className="w-28"
+                                />
+                            </div>
                         </div>
                     )}
 

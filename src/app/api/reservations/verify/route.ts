@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
-import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireAdminOrEmployee, type AuthResult } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { changeReservation } from "@/lib/domain/reservations"
 import { businessFailure } from "@/lib/domain/http"
 import { reservationInclude } from "../route"
 
-// Verificación de QR y entrega en mostrador: staff con módulo reservas.
+// Verificación de QR y entrega en mostrador: staff con módulo reservas o
+// clientes (la vista /admin/reservas vive dentro de /admin/clientes?tab=pedidos).
+async function requireReservasAccess(): Promise<AuthResult> {
+  const auth = await requireAdminOrEmployee()
+  if (auth.error) return auth
+  if (!hasModule(auth.session.user, "reservas") && !hasModule(auth.session.user, "clientes")) {
+    return { error: NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 }) }
+  }
+  return auth
+}
+
 export async function GET(req: Request) {
   try {
-    const auth = await requireModule("reservas")
+    const auth = await requireReservasAccess()
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const code = z.string().min(1).max(160).parse(new URL(req.url).searchParams.get("code"))
@@ -27,7 +38,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const auth = await requireModule("reservas")
+    const auth = await requireReservasAccess()
     if (auth.error) return auth.error
     const session = getSession(auth)!
     const businessId = businessIdOf(session)

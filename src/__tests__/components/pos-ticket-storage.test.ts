@@ -2,9 +2,17 @@ import { describe, expect, it } from "vitest"
 import type { PosCustomer, PosProduct } from "@/components/pos/types"
 import {
     POS_TICKET_TTL_MS,
+    buildParkTicketFingerprint,
+    loadPendingPark,
     parsePosTicket,
+    pendingParkMatchesCart,
+    savePendingPark,
     serializePosTicket,
 } from "@/components/pos/ticket-storage"
+import {
+    clearLayawayPayKey,
+    resolveLayawayPayKey,
+} from "@/components/pos/layaways-sheet"
 
 const NOW = new Date("2026-03-10T12:00:00Z").getTime()
 
@@ -101,5 +109,84 @@ describe("pos ticket storage", () => {
             expect(restored).not.toBeNull()
             expect(restored!.checkoutKey).toBeNull()
         }
+    })
+
+    it("persiste pendingPark (parkKey, parkedDocId, ticketFingerprint) y lo invalida si cambia el carrito", () => {
+        const items = [{ productId: "p1", quantity: 2 }]
+        const ticketFingerprint = buildParkTicketFingerprint({
+            items,
+            kind: "RETAIL",
+            customerId: "c1",
+            branchId: "b1",
+            discountCents: 5000,
+            discountReason: "Promoción",
+        })
+        const pendingPark = {
+            parkKey: { fingerprint: JSON.stringify({ items }), key: "park-uuid-1" },
+            parkedDocId: "doc-draft-1",
+            ticketFingerprint,
+            checkoutKey: { fingerprint: '{"saleId":"doc-draft-1"}', key: "checkout-uuid-1" },
+        }
+
+        const json = serializePosTicket({ ...state, pendingPark }, "b1", NOW)
+        const restored = parsePosTicket(json, NOW + 5000)
+        expect(restored!.pendingPark).toEqual(pendingPark)
+        expect(pendingParkMatchesCart(restored!.pendingPark, state.cart)).toBe(true)
+
+        // Si el carrito cambia (otra cantidad o producto), pendingPark se descarta.
+        const changedCart = [{ product: product(), quantity: 3 }]
+        const jsonChanged = serializePosTicket({ ...state, cart: changedCart, pendingPark }, "b1", NOW)
+        expect(parsePosTicket(jsonChanged, NOW + 5000)!.pendingPark).toBeNull()
+    })
+
+    it("savePendingPark y loadPendingPark sobreviven a recarga y limpian al completar", () => {
+        const map = new Map<string, string>()
+        const fakeStorage = {
+            getItem: (k: string) => map.get(k) ?? null,
+            setItem: (k: string, v: string) => { map.set(k, v) },
+            removeItem: (k: string) => { map.delete(k) },
+        }
+        const pendingPark = {
+            parkKey: { fingerprint: '{"items":[{"productId":"p1","quantity":2}]}', key: "park-uuid-2" },
+            parkedDocId: "doc-draft-2",
+            ticketFingerprint: buildParkTicketFingerprint({ items: [{ productId: "p1", quantity: 2 }], discountCents: 1000, discountReason: "Taller" }),
+        }
+        savePendingPark(pendingPark, fakeStorage)
+        expect(loadPendingPark(fakeStorage)).toEqual(pendingPark)
+
+        savePendingPark(null, fakeStorage)
+        expect(loadPendingPark(fakeStorage)).toBeNull()
+    })
+})
+
+describe("layaway pay key persistence", () => {
+    function makeMemoryStorage() {
+        const map = new Map<string, string>()
+        return {
+            getItem: (k: string) => map.get(k) ?? null,
+            setItem: (k: string, v: string) => { map.set(k, v) },
+            removeItem: (k: string) => { map.delete(k) },
+            get length() { return map.size },
+            key: (index: number) => Array.from(map.keys())[index] ?? null,
+        }
+    }
+
+    it("reutiliza la misma llave tras reload para el mismo saleId + amount + method", () => {
+        const storage = makeMemoryStorage()
+        const payload = { cashierBranchId: "b1", payments: [{ method: "EFECTIVO", amount: 100 }] }
+
+        const first = resolveLayawayPayKey(null, { saleId: "sale-1", amount: 100, method: "EFECTIVO", payload }, storage)
+        // Simula reload: previous es null, pero storage conserva la llave.
+        const second = resolveLayawayPayKey(null, { saleId: "sale-1", amount: 100, method: "EFECTIVO", payload }, storage)
+        expect(second.key).toBe(first.key)
+
+        // Otro monto o método genera llave distinta.
+        const otherAmount = resolveLayawayPayKey(null, { saleId: "sale-1", amount: 200, method: "EFECTIVO", payload: { ...payload, payments: [{ method: "EFECTIVO", amount: 200 }] } }, storage)
+        expect(otherAmount.key).not.toBe(first.key)
+
+        // Tras limpiar (éxito o 4xx), un nuevo intento genera llave fresca.
+        clearLayawayPayKey("sale-1", 100, "EFECTIVO", storage)
+        const afterClear = resolveLayawayPayKey(null, { saleId: "sale-1", amount: 100, method: "EFECTIVO", payload }, storage)
+        expect(afterClear.key).not.toBe(first.key)
     })
 })

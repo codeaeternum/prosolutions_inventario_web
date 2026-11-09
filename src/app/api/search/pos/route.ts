@@ -4,6 +4,7 @@ import { hasBranchAccess } from "@/lib/access"
 import { NextResponse } from "next/server"
 import { businessIdOf } from "@/lib/tenant"
 import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
+import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { prisma } from "@/lib/prisma"
 import { Prisma } from "@prisma/client"
 
@@ -11,6 +12,9 @@ export async function GET(req: Request) {
     try {
     const viewerSession = await auth()
     const viewer = viewerSession?.user
+    if (!viewerSession && !checkAndRecord("catalog-search", getClientIp(req), 60_000, 60)) {
+        return NextResponse.json({ error: "Demasiadas búsquedas. Intenta en un minuto." }, { status: 429, headers: catalogResponseHeaders })
+    }
     // Anónimo: tenant por ?biz=<slug> (o header x-tenant-slug); slug
     // explícito inválido responde 404, no el default de otro negocio.
     const businessId = viewerSession ? businessIdOf(viewerSession) : await resolvePublicBusinessId(req)

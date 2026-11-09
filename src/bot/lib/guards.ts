@@ -18,8 +18,18 @@ export async function getBotAccount(prisma: PrismaClient, telegramId: string) {
     // allowedModules/allowedBranchIds alimentan hasModule/hasBranchAccess
     // (lib/access): el staff restringido por módulo o sucursal conserva la
     // misma regla que en la web. homeBranchId lo usa /stock para resolver la
-    // sucursal del ajuste.
-    select: { id: true, businessId: true, role: true, status: true, name: true, allowedModules: true, allowedBranchIds: true, homeBranchId: true },
+    // sucursal del ajuste. business.isActive bloquea tenants suspendidos.
+    select: {
+      id: true,
+      businessId: true,
+      role: true,
+      status: true,
+      name: true,
+      allowedModules: true,
+      allowedBranchIds: true,
+      homeBranchId: true,
+      business: { select: { isActive: true } },
+    },
   })
 }
 
@@ -28,6 +38,7 @@ export async function getBotAccount(prisma: PrismaClient, telegramId: string) {
  * Devuelve la cuenta del admin o null tras responder:
  * - sin prisma        → "No disponible temporalmente" (igual que requirePrisma)
  * - sin cuenta        → "Cuenta no disponible."
+ * - negocio inactivo  → "Este negocio está suspendido."
  * - sin rol/aprobación → mensaje de solo-admin (igual que requireAdmin)
  */
 export async function requireAdminAccount(ctx: Context, prisma: PrismaClient | null | undefined) {
@@ -41,6 +52,10 @@ export async function requireAdminAccount(ctx: Context, prisma: PrismaClient | n
   const account = await getBotAccount(prisma, telegramId)
   if (!account) {
     await ctx.reply("Cuenta no disponible.")
+    return null
+  }
+  if (account.business && !account.business.isActive) {
+    await ctx.reply("Este negocio está suspendido.")
     return null
   }
   if (account.role !== "ADMIN" || account.status !== "APPROVED") {

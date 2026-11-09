@@ -59,18 +59,19 @@ export interface NotificationPayload {
   timestamp: string
 }
 
-// Claves de `data` que no se persisten (PII/secretos). El payload SSE en vivo
-// conserva todo — la depuración solo aplica a la copia en BD.
+// Claves de `data` que se depuran (PII/secretos) tanto al persistir en BD
+// como al emitir el frame SSE en vivo.
 const SENSITIVE_DATA_KEYS = /email|phone|token|secret|password|pin|signature/i
 
-function sanitizedData(data?: Record<string, unknown>): Prisma.InputJsonValue | undefined {
+function sanitizedData(data?: Record<string, unknown>): Record<string, unknown> | undefined {
   if (!data) return undefined
   const clean = Object.fromEntries(Object.entries(data).filter(([key]) => !SENSITIVE_DATA_KEYS.test(key)))
-  return (Object.keys(clean).length ? clean : undefined) as Prisma.InputJsonValue | undefined
+  return Object.keys(clean).length ? clean : undefined
 }
 
 // Cada evento pertenece a UNA empresa: solo llega al staff conectado de ese negocio.
 async function broadcast(notification: Omit<NotificationPayload, "id" | "timestamp">, roles: Set<string>, businessId: string) {
+  const cleanData = sanitizedData(notification.data)
   // Persistir ANTES de emitir: el historial del staff vive en BD y el SSE
   // lleva el id de la fila. Un fallo de BD solo se loguea — el broadcast
   // en vivo sigue funcionando como antes (payload sin id).
@@ -85,7 +86,7 @@ async function broadcast(notification: Omit<NotificationPayload, "id" | "timesta
         audience: roles.has("EMPLOYEE") ? "STAFF" : "ADMIN",
         title: notification.title,
         message: notification.message,
-        data: sanitizedData(notification.data),
+        data: cleanData as Prisma.InputJsonValue | undefined,
       },
       select: { id: true },
     })
@@ -93,7 +94,7 @@ async function broadcast(notification: Omit<NotificationPayload, "id" | "timesta
   } catch (error) {
     console.error("[notifications] persistencia falló; el broadcast en vivo sigue:", error)
   }
-  const payload: NotificationPayload = { ...notification, id, timestamp: new Date().toISOString() }
+  const payload: NotificationPayload = { ...notification, data: cleanData, id, timestamp: new Date().toISOString() }
   const bytes = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`)
   // Solo las conexiones del tenant objetivo y del rol destinatario reciben el
   // evento. Las demás NO se cierran (antes cualquier broadcast desconectaba a

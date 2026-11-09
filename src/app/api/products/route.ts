@@ -5,6 +5,7 @@ import { z } from "zod"
 import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
+import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { normalizeProductName } from "@/lib/utils"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
@@ -44,6 +45,9 @@ export async function GET(req: Request) {
   try {
     const viewerSession = await auth()
     const viewer = viewerSession?.user
+    if (!viewerSession && !checkAndRecord("catalog-list", getClientIp(req), 60_000, 60)) {
+      return NextResponse.json({ error: "Demasiadas consultas. Intenta en un minuto." }, { status: 429, headers: catalogResponseHeaders })
+    }
     // Anónimo: la vitrina declara su tenant con ?biz=<slug> (o el header
     // x-tenant-slug); un slug explícito que no resuelve es 404, no el default.
     const businessId = viewerSession ? businessIdOf(viewerSession) : await resolvePublicBusinessId(req)

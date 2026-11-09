@@ -81,6 +81,8 @@ const platformEventLabels: Record<string, string> = {
   SUPERADMIN_REVOKED: "Permiso superadmin revocado",
   USER_CREDENTIALS_UPDATED: "Credenciales de usuario actualizadas",
   USER_CREATED_BY_PLATFORM: "Usuario creado por operador",
+  SUPPORT_ENTERED: "Inicio de sesión de soporte",
+  SUPPORT_EXITED: "Salida de sesión de soporte",
 }
 
 const userStatusVariants: Record<string, "success" | "warning" | "destructive"> = {

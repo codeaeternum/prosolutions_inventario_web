@@ -8,9 +8,9 @@ import { recordAudit } from "../audit"
  * stock. A diferencia de la lista de compras (shopping.ts — "qué debo
  * comprar"), el encargo lleva cliente, anticipo y seguimiento de entrega.
  *
- * Flujo feliz: PENDING → ORDERED → READY → DELIVERED. CANCELLED se alcanza
- * desde cualquier estado (incluso uno ya entregado: el cliente puede
- * arrepentirse o devolver; el anticipo se ajusta a mano en caja).
+ * Flujo feliz: PENDING → ORDERED → READY → DELIVERED (vía venta POS).
+ * CANCELLED solo se alcanza antes de entregar (PENDING, ORDERED, READY);
+ * una pieza ya entregada se devuelve por devolución de venta.
  * ORDERED puede nacer de un proveedor propio o de una solicitud al aliado
  * del mercado (marketplaceRequestId).
  */
@@ -32,11 +32,13 @@ export const encargoStatusLabel = (status: string): string =>
   ENCARGO_STATUS_LABELS[status as EncargoStatus] ?? status.toLowerCase()
 
 // Siguientes estados permitidos por estado actual.
+// DELIVERED y CANCELLED son terminales: una pieza ya entregada se devuelve
+// por devolución de su venta en POS, nunca cancelando el encargo.
 const ENCARGO_NEXT: Record<EncargoStatus, readonly EncargoStatus[]> = {
   PENDING: ["ORDERED", "CANCELLED"],
   ORDERED: ["READY", "CANCELLED"],
   READY: ["DELIVERED", "CANCELLED"],
-  DELIVERED: ["CANCELLED"],
+  DELIVERED: [],
   CANCELLED: [],
 }
 
@@ -234,6 +236,8 @@ const transitionSchema = z.object({
   action: z.enum(["ORDERED", "READY", "DELIVERED", "CANCELLED"]),
   marketplaceRequestId: z.string().min(1).nullish(),
   supplierNote: z.string().trim().max(500).optional(),
+  // Motivo de cancelación o de entrega directa sin cobro autorizada por ADMIN.
+  reason: z.string().trim().max(500).optional(),
   // Medio para devolver el anticipo al cancelar; omitido se usa el método
   // del anticipo registrado (o CASH en encargos anteriores al ledger).
   refundMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
@@ -247,14 +251,41 @@ const transitionSchema = z.object({
 })
 
 /**
+ * Anticipo neto retenido del encargo en centavos (anticipos ADVANCE menos
+ * devoluciones REFUND previas; sin asientos en el ledger cae al `deposit`
+ * de la ficha para encargos históricos).
+ */
+export async function encargoHeldCents(
+  tx: Transaction,
+  encargo: { id: string; deposit: number },
+): Promise<{ heldCents: number; depositMethod: (typeof ENCARGO_MONEY_METHODS)[number] | null }> {
+  if (encargo.deposit <= 0) return { heldCents: 0, depositMethod: null }
+  const [advances, priorRefunds] = await Promise.all([
+    tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "ADVANCE" }, select: { method: true, amount: true } }),
+    tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "REFUND" }, select: { amount: true } }),
+  ])
+  // Los REFUND se guardan con amount negativo: el retenido = anticipos +
+  // devoluciones (ya vienen en negativo). Sin ledger, cae al deposit.
+  // Cada fila se convierte a centavos ANTES de sumar: sumar Float pesos y
+  // redondear al final deja escapar el epsilon acumulado.
+  const rawHeld = advances.length
+    ? advances.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) + priorRefunds.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
+    : Math.round(encargo.deposit * 100)
+  const heldCents = Math.max(0, rawHeld)
+  const depositMethod = heldCents > 0 ? ((advances[0]?.method as (typeof ENCARGO_MONEY_METHODS)[number] | undefined) ?? "CASH") : null
+  return { heldCents, depositMethod }
+}
+
+/**
  * Núcleo de la transición DENTRO de un tx ya abierto: valida que el encargo
  * pertenezca al negocio y que el salto de estado esté permitido, asienta el
  * cambio con guard de concurrencia (updateMany por estado previo) y deja el
  * rastro en la bitácora.
  *
  * Lo comparten transitionEncargo() —que lo envuelve en operation() con
- * recibo propio— y el pedido atómico al aliado de marketplace.ts, donde la
- * solicitud al mercado y el pase a ORDERED confirman o revierten juntos.
+ * recibo propio—, la liquidación de encargo en POS (sales.ts / documents.ts)
+ * y el pedido atómico al aliado de marketplace.ts, donde la solicitud al
+ * mercado y el pase a ORDERED confirman o revierten juntos.
  */
 export async function transitionEncargoTx(
   tx: Transaction,
@@ -265,16 +296,50 @@ export async function transitionEncargoTx(
     action: EncargoAction
     marketplaceRequestId?: string | null
     supplierNote?: string
+    reason?: string
     refundMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
     supplierId?: string | null
     supplierAmountCents?: number
     supplierMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
     cashFromRegister?: boolean
+    saleId?: string | null
   },
 ) {
   const encargo = await tx.encargo.findFirst({ where: { id: input.id, businessId: input.businessId }, include: encargoInclude })
   if (!encargo) throw new BusinessError("Encargo no encontrado.", 404)
   assertEncargoTransition(encargo.status, input.action)
+
+  // READY → DELIVERED directo (sin venta POS): solo procede cuando el anticipo
+  // ya cubrió el 100% del precio cotizado (priceQuoted > 0 y anticipo retenido
+  // >= cotizado) o cuando un ADMIN autoriza entrega sin cobro con motivo
+  // explícito (garantía / cortesía). Con saldo pendiente debe cobrarse en POS.
+  if (input.action === "DELIVERED" && !input.saleId) {
+    const quotedCents = encargo.priceQuoted != null ? Math.round(encargo.priceQuoted * 100) : 0
+    const { heldCents } = quotedCents > 0 ? await encargoHeldCents(tx, encargo) : { heldCents: 0 }
+    const fullyPrepaid = quotedCents > 0 && heldCents >= quotedCents
+    if (!fullyPrepaid) {
+      const me = await tx.user.findUnique({ where: { id: input.actorId }, select: { role: true } })
+      const adminOverride = me?.role === "ADMIN" && Boolean(input.reason && input.reason.trim().length >= 3)
+      if (!adminOverride) {
+        throw new BusinessError(
+          "El encargo debe cobrarse en el punto de venta antes de marcarlo como entregado.",
+          409,
+          "ENCARGO_REQUIRES_SALE",
+        )
+      }
+    }
+  }
+
+  // Cancelar reembolsa anticipos (efectivo del cajón incluido): un EMPLOYEE
+  // solo cancela encargos que él mismo registró (createdById); los ajenos
+  // exigen ADMIN — misma regla que cancelDocument en documents.ts.
+  if (input.action === "CANCELLED") {
+    const me = await tx.user.findUnique({ where: { id: input.actorId }, select: { role: true } })
+    const creatorId = encargo.createdById ?? encargo.createdBy?.id ?? null
+    if (me?.role !== "ADMIN" && creatorId !== input.actorId) {
+      throw new BusinessError("Cancelar el encargo de otra persona requiere un administrador.", 403)
+    }
+  }
 
   const terminal = input.action === "DELIVERED" || input.action === "CANCELLED"
   const changed = await tx.encargo.updateMany({
@@ -335,24 +400,15 @@ export async function transitionEncargoTx(
   // del retenido — nunca se paga dos veces.
   let refundPaymentId: string | null = null
   if (input.action === "CANCELLED" && encargo.deposit > 0) {
-    const [advances, priorRefunds] = await Promise.all([
-      tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "ADVANCE" }, select: { method: true, amount: true } }),
-      tx.payment.findMany({ where: { encargoId: encargo.id, purpose: "REFUND" }, select: { amount: true } }),
-    ])
-    // Los REFUND se guardan con amount negativo: el retenido = anticipos +
-    // devoluciones (ya vienen en negativo). Sin ledger, cae al deposit.
-    // Cada fila se convierte a centavos ANTES de sumar: sumar Float pesos y
-    // redondear al final deja escapar el epsilon acumulado.
-    const heldCents = advances.length
-      ? advances.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) + priorRefunds.reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
-      : Math.round(encargo.deposit * 100)
+    const { heldCents, depositMethod } = await encargoHeldCents(tx, encargo)
     if (heldCents > 0) {
-      const method = input.refundMethod ?? advances[0]?.method ?? "CASH"
+      const method = input.refundMethod ?? depositMethod ?? "CASH"
+      const reasonSuffix = input.reason?.trim() ? ` (${input.reason.trim()})` : ""
       const refund = await tx.payment.create({
         data: {
           businessId: input.businessId, encargoId: encargo.id, purpose: "REFUND", method,
           amount: -heldCents / 100, status: "REFUNDED", createdById: input.actorId,
-          notes: `Devolución de anticipo por cancelación: ${encargo.description}`,
+          notes: `Devolución de anticipo por cancelación: ${encargo.description}${reasonSuffix}`,
         },
         select: { id: true },
       })
@@ -377,6 +433,7 @@ export async function transitionEncargoTx(
     }
   }
 
+  const reasonNote = input.reason?.trim() ? ` · motivo: ${input.reason.trim()}` : ""
   await recordAudit(tx, {
     businessId: input.businessId,
     actorId: input.actorId,
@@ -384,7 +441,7 @@ export async function transitionEncargoTx(
     entity: "encargo",
     entityId: encargo.id,
     entityName: encargo.description,
-    summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}${supplierPaymentId ? " · pago a proveedor registrado" : ""}${refundPaymentId ? " · anticipo devuelto" : ""}`,
+    summary: `Encargo "${encargo.description}": ${encargoStatusLabel(encargo.status)} → ${encargoStatusLabel(input.action)}${supplierPaymentId ? " · pago a proveedor registrado" : ""}${refundPaymentId ? " · anticipo devuelto" : ""}${reasonNote}`,
     changes: { status: { before: encargo.status, after: input.action } },
   })
 
@@ -406,6 +463,66 @@ export async function transitionEncargoTx(
 }
 
 /**
+ * Valida que un encargo pueda liquidarse dentro de una venta POS (pertenece
+ * al negocio y sucursal, y está en estado READY) y calcula el anticipo neto
+ * ya cobrado que se descontará del importe exigible.
+ */
+export async function prepareEncargoForSaleTx(
+  tx: Transaction,
+  input: { encargoId: string; businessId: string; branchId: string },
+) {
+  const encargo = await tx.encargo.findFirst({
+    where: { id: input.encargoId, businessId: input.businessId },
+    include: encargoInclude,
+  })
+  if (!encargo) throw new BusinessError("Encargo no encontrado.", 404)
+  if (encargo.status !== "READY") {
+    throw new BusinessError(
+      `El encargo debe estar listo para entregar antes de cobrarlo (estado actual: ${encargoStatusLabel(encargo.status)}).`,
+      409,
+      "ENCARGO_NOT_READY",
+    )
+  }
+  if (encargo.branchId && encargo.branchId !== input.branchId) {
+    throw new BusinessError("El encargo pertenece a otra sucursal.", 409)
+  }
+  const { heldCents, depositMethod } = await encargoHeldCents(tx, encargo)
+  return { encargo, depositCents: heldCents, depositMethod }
+}
+
+/**
+ * Cierra atómicamente el encargo al confirmar su venta POS: liga los pagos
+ * de anticipo (ADVANCE) al `saleId` para que `Sale.payments` cuadre con el
+ * total sin duplicar asientos en caja (conservan su `createdAt` y su
+ * `CashMovement` del turno en que se recibió el anticipo) y transiciona el
+ * encargo a DELIVERED dentro de la misma transacción.
+ */
+export async function settleEncargoInSaleTx(
+  tx: Transaction,
+  input: {
+    encargoId: string
+    saleId: string
+    actorId: string
+    businessId: string
+    depositCents: number
+  },
+) {
+  if (input.depositCents > 0) {
+    await tx.payment.updateMany({
+      where: { encargoId: input.encargoId, purpose: "ADVANCE", status: "CONFIRMED" },
+      data: { saleId: input.saleId },
+    })
+  }
+  return transitionEncargoTx(tx, {
+    actorId: input.actorId,
+    businessId: input.businessId,
+    id: input.encargoId,
+    action: "DELIVERED",
+    saleId: input.saleId,
+  })
+}
+
+/**
  * Transición de estado del encargo. Devuelve lo necesario para que la ruta
  * avise al staff cuando la pieza llega (READY): descripción, sucursal y folio
  * de la solicitud al aliado si aplica.
@@ -416,7 +533,7 @@ export async function transitionEncargo(db: PrismaClient, actorId: string, busin
     tx => transitionEncargoTx(tx, {
       actorId, businessId, id, action: input.action,
       marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote,
-      refundMethod: input.refundMethod, supplierId: input.supplierId,
+      reason: input.reason, refundMethod: input.refundMethod, supplierId: input.supplierId,
       supplierAmountCents: input.supplierAmountCents, supplierMethod: input.supplierMethod,
       cashFromRegister: input.cashFromRegister,
     }))

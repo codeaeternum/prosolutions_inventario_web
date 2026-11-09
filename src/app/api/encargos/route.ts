@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     const encargos = (await listEncargos(prisma, businessId, { status, branchId }))
       .filter(e => !allowed?.length || (e.branchId != null && allowed.includes(e.branchId)))
     return NextResponse.json(
-      { encargos, viewer: { role: session.user.role, homeBranchId: me?.homeBranchId ?? null } },
+      { encargos, viewer: { id: session.user.id, role: session.user.role, homeBranchId: me?.homeBranchId ?? null } },
       { headers: { "Cache-Control": "private, no-store" } },
     )
   } catch (error) {

@@ -4,7 +4,14 @@ import bcrypt from "bcryptjs"
 import { prisma } from "./prisma"
 import { authConfig } from "./auth.config"
 import { refreshSessionToken } from "./session-policy"
-import { checkAndRecord } from "./rate-limit"
+import { checkOnly, recordFailure } from "./rate-limit"
+import { normalizePhone } from "./utils"
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000
+const LOGIN_MAX_FAILURES = 10
+// Hash bcrypt válido (cost 10) para igualar tiempos cuando la cuenta no existe
+// o no tiene contraseña configurada y evitar enumeración por timing.
+export const DUMMY_BCRYPT_HASH = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 /**
  * Empresa suspendida (Business.isActive=false): las credenciales son válidas
@@ -42,26 +49,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         const identifier = credentials.identifier.trim()
+        const phoneNorm = !identifier.includes("@") ? normalizePhone(identifier) : ""
+        const rateKey = (phoneNorm || identifier).toLowerCase()
+
         // Account limit cannot be bypassed by a forged proxy header or encoded form field.
-        if (!checkAndRecord("login-account", identifier.toLowerCase(), 15 * 60 * 1000, 10)) return null
+        // Solo los fallos incrementan el contador: un login legítimo no quema intentos.
+        if (!checkOnly("login-account", rateKey, LOGIN_MAX_FAILURES)) return null
 
         // Try to find user by email or phone (con su empresa para el chequeo de suspensión)
         const user = await prisma.user.findFirst({
           where: {
             OR: [
               { email: identifier },
-              { phone: identifier }
+              { phone: identifier },
+              ...(phoneNorm && phoneNorm !== identifier ? [{ phone: phoneNorm }] : []),
             ]
           },
           include: { business: { select: { isActive: true } } }
         })
 
-        if (!user) {
-          return null
-        }
-
-        // Bot-registered users may not have a password
-        if (!user.password) {
+        // Cuando la cuenta no existe o no tiene contraseña (alta por bot), se
+        // corre bcrypt contra un hash dummy para no revelar existencia por timing.
+        if (!user || !user.password) {
+          await bcrypt.compare(credentials.password as string, DUMMY_BCRYPT_HASH)
+          recordFailure("login-account", rateKey, LOGIN_WINDOW_MS)
           return null
         }
 
@@ -71,6 +82,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         )
 
         if (!passwordMatch) {
+          recordFailure("login-account", rateKey, LOGIN_WINDOW_MS)
           return null
         }
 

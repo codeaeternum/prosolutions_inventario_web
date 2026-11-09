@@ -70,11 +70,13 @@ describe("requireModule", () => {
     }
   })
 
-  it("lista de módulos vacía = sin restricción", async () => {
+  it("lista de módulos vacía = sin restricción (excepto EMPLOYEE_RESTRICTED como sucursales)", async () => {
     mocks.auth.mockResolvedValue(user("EMPLOYEE", []))
     expect((await requireModule("taller")).error).toBeUndefined()
+    expect((await requireModule("sucursales")).error?.status).toBe(403)
     mocks.auth.mockResolvedValue(user("EMPLOYEE"))
     expect((await requireModule("taller")).error).toBeUndefined()
+    expect((await requireModule("sucursales")).error?.status).toBe(403)
   })
 
   it("sigue exigiendo rol de staff: cliente recibe 403 aunque liste el módulo", async () => {

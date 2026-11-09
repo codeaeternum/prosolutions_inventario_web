@@ -119,6 +119,7 @@ export async function POST(req: NextRequest) {
       quickPin: true,
       allowedModules: true,
       allowedBranchIds: true,
+      business: { select: { name: true, slug: true } },
     },
   })
   // El cambio rápido normal nunca cruza negocios. Excepción exclusiva:
@@ -158,6 +159,55 @@ export async function POST(req: NextRequest) {
       impersonador: { before: previousImpersonator, after: impersonator },
     },
   })
+
+  // Modo soporte de plataforma: cuando un superadmin entra o sale de la
+  // cuenta de un tenant, deja rastro en PlatformEvent para el historial de
+  // plataforma del negocio.
+  if (!body?.restore && caller.isSuperAdmin === true && target.id !== caller.id) {
+    try {
+      await prisma.platformEvent?.create({
+        data: {
+          kind: "SUPPORT_ENTERED",
+          businessId: target.businessId,
+          businessSlug: target.business?.slug ?? "",
+          businessName: target.business?.name ?? "",
+          actorId: caller.id,
+          actorEmail: caller.email ?? null,
+          detail: {
+            targetUserId: target.id,
+            targetEmail: target.email ?? target.phone ?? null,
+          },
+        },
+      })
+    } catch (error) {
+      console.error("[auth/switch] No se pudo registrar SUPPORT_ENTERED:", error)
+    }
+  } else if (body?.restore && target.isSuperAdmin === true) {
+    try {
+      const tenantBiz = await prisma.business
+        ?.findUnique?.({
+          where: { id: caller.businessId },
+          select: { name: true, slug: true },
+        })
+        .catch(() => null)
+      await prisma.platformEvent?.create({
+        data: {
+          kind: "SUPPORT_EXITED",
+          businessId: caller.businessId,
+          businessSlug: tenantBiz?.slug ?? "",
+          businessName: tenantBiz?.name ?? "",
+          actorId: target.id,
+          actorEmail: target.email ?? null,
+          detail: {
+            targetUserId: caller.id,
+            targetEmail: caller.email ?? null,
+          },
+        },
+      })
+    } catch (error) {
+      console.error("[auth/switch] No se pudo registrar SUPPORT_EXITED:", error)
+    }
+  }
 
   const res = NextResponse.json({
     ok: true,

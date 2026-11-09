@@ -14,10 +14,16 @@ export async function POST(req: Request) {
     const session = getSession(auth)!
     const body = await req.json()
     // Un abono en efectivo entra a la caja de la sucursal indicada o la base del cobrador.
-    if (body?.branchId || body?.paymentMethod === "EFECTIVO") {
-      const denied = await assertOperationBranch(session, body?.branchId)
+    // schema.paymentMethod tiene default "EFECTIVO" cuando se omite.
+    const branchId = body?.branchId ?? body?.cashierBranchId
+    const isCash = (body?.paymentMethod ?? "EFECTIVO") === "EFECTIVO"
+    if (branchId || isCash) {
+      const denied = await assertOperationBranch(session, branchId)
       if (denied) return denied
     }
-    return NextResponse.json(await changeCredit(prisma, session.user.id, businessIdOf(session), "PAYMENT", body))
+    return NextResponse.json(await changeCredit(prisma, session.user.id, businessIdOf(session), "PAYMENT", {
+      ...body,
+      ...(branchId ? { branchId } : {}),
+    }))
   } catch (error) { return businessFailure(error) }
 }

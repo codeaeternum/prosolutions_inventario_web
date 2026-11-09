@@ -221,6 +221,28 @@ describe("/ajustes never falls back to the default business", () => {
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Cuenta no disponible"))
     expect(mocks.getDefaultBusinessId).not.toHaveBeenCalled()
   })
+
+  it("requireAdminAccount blocks commands when business.isActive is false", async () => {
+    const { bot, command } = makeBot()
+    const userFindUnique = vi.fn(async () => ({
+      id: "u1",
+      businessId: "biz-suspended",
+      role: "ADMIN",
+      status: "APPROVED",
+      name: "Admin",
+      business: { isActive: false },
+    }))
+    const prisma = { user: { findUnique: userFindUnique }, settings: { findFirst: vi.fn(async () => null) } }
+    const sessions = makeSessions()
+    registerSettings({ bot, prisma, sessions, isDev: false, BOT_TOKEN: "" } as unknown as BotContext)
+    const ctx = textCtx(555, "/ajustes")
+    await command("ajustes")(ctx)
+    expect(userFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ business: { select: { isActive: true } } }),
+    }))
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Este negocio está suspendido"))
+    expect(prisma.settings.findFirst).not.toHaveBeenCalled()
+  })
 })
 
 const adminAccount = { id: "u1", businessId: "biz-own", role: "ADMIN", status: "APPROVED", name: "Admin", allowedModules: [], allowedBranchIds: [], homeBranchId: null }

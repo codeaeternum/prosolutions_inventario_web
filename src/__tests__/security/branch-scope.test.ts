@@ -78,7 +78,7 @@ import { POST as payDocument } from "@/app/api/pos/documents/[id]/pay/route"
 import { GET as posProducts } from "@/app/api/pos/products/route"
 import { GET as caja } from "@/app/api/caja/route"
 import { GET as encargosList } from "@/app/api/encargos/route"
-import { PATCH as transitionEncargoRoute } from "@/app/api/encargos/[id]/route"
+import { GET as getEncargoRoute, PATCH as transitionEncargoRoute } from "@/app/api/encargos/[id]/route"
 import { GET as compras } from "@/app/api/encargos/compras/route"
 import { GET as sucursales } from "@/app/api/reports/sucursales/route"
 
@@ -280,6 +280,24 @@ describe("operaciones: la sucursal efectiva es la del documento/venta/encargo", 
     expect(mocks.transaction).toHaveBeenCalled()
   })
 
+  it("abono en efectivo sin homeBranchId ni cashierBranchId usa la sucursal del documento como fallback", async () => {
+    mocks.auth.mockResolvedValue(restricted())
+    mocks.saleFindUnique.mockResolvedValue(doc("b1"))
+    mocks.userFindUnique.mockResolvedValue({ homeBranchId: null })
+    const res = await payDocument(post("https://app.invalid/api/pos/documents/doc-1/pay", { payments: [{ method: "EFECTIVO", amount: 10 }], idempotencyKey: "op-branch-0014" }), params("doc-1"))
+    expect(res.status).toBe(404)
+    expect(mocks.transaction).toHaveBeenCalled()
+  })
+
+  it("abono con branchId (alias de cashierBranchId) en sucursal ajena es 403", async () => {
+    mocks.auth.mockResolvedValue(restricted())
+    mocks.saleFindUnique.mockResolvedValue(doc("b1"))
+    mocks.branchFindFirst.mockResolvedValue({ id: "b2" })
+    const res = await payDocument(post("https://app.invalid/api/pos/documents/doc-1/pay", { payments: [{ method: "EFECTIVO", amount: 10 }], branchId: "b2", idempotencyKey: "op-branch-0015" }), params("doc-1"))
+    expect(res.status).toBe(403)
+    expect(mocks.transaction).not.toHaveBeenCalled()
+  })
+
   it("DELETE de documento ajeno es 403; el propio llega al dominio", async () => {
     mocks.auth.mockResolvedValue(restricted())
     mocks.saleFindUnique.mockResolvedValue(doc("b2"))
@@ -327,6 +345,30 @@ describe("operaciones: la sucursal efectiva es la del documento/venta/encargo", 
     mocks.encargoFindUnique.mockResolvedValue({ id: "e-1", businessId: "biz-test", branchId: "b1" })
     const ok = await transitionEncargoRoute(nx(patch("https://app.invalid/api/encargos/e-1", { action: "ORDERED", idempotencyKey: "op-branch-0011" })), params("e-1"))
     expect(ok.status).toBe(404)
+  })
+
+  it("GET /api/encargos/[id] acepta módulo ventas (cajero POS) y recorta por sucursal", async () => {
+    mocks.auth.mockResolvedValue(staff("EMPLOYEE", { modules: ["ventas"], branches: ["b1"] }))
+    mocks.encargoFindUnique.mockResolvedValue({
+      ...encargoRow("e-1", "b1"),
+      status: "READY",
+      deposit: 500,
+      priceQuoted: 900,
+      payments: [{ purpose: "ADVANCE", amount: 300, method: "CASH" }],
+    })
+    const ok = await getEncargoRoute(nx(new Request("https://app.invalid/api/encargos/e-1")), params("e-1"))
+    expect(ok.status).toBe(200)
+    const body = await ok.json()
+    expect(body.encargo.id).toBe("e-1")
+    expect(body.encargo.deposit).toBe(300)
+
+    mocks.encargoFindUnique.mockResolvedValue({ ...encargoRow("e-2", "b2"), payments: [] })
+    const forbiddenBranch = await getEncargoRoute(nx(new Request("https://app.invalid/api/encargos/e-2")), params("e-2"))
+    expect(forbiddenBranch.status).toBe(403)
+
+    mocks.auth.mockResolvedValue(staff("EMPLOYEE", { modules: ["taller"], branches: ["b1"] }))
+    const forbiddenModule = await getEncargoRoute(nx(new Request("https://app.invalid/api/encargos/e-1")), params("e-1"))
+    expect(forbiddenModule.status).toBe(403)
   })
 })
 

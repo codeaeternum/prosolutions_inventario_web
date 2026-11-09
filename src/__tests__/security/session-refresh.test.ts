@@ -163,4 +163,41 @@ describe("authorize applies a per-account attempt limit (SEC-07)", () => {
     expect(await authorize({ identifier: "op@test.invalid", password: "secret" }))
       .toMatchObject({ id: adminRow.id, isSuperAdmin: true })
   })
+
+  it("successful logins do not consume the per-account rate-limit bucket", async () => {
+    mocks.findFirst.mockResolvedValue(adminRow)
+    mocks.bcryptCompare.mockResolvedValue(true)
+    // 15 logins legítimos seguidos (>10) pasan todos sin bloquear la cuenta.
+    for (let i = 0; i < 15; i++) {
+      const user = await authorize({ identifier: "legit-repeat@test.invalid", password: "secret" })
+      expect(user).toMatchObject({ id: adminRow.id })
+    }
+    expect(mocks.findFirst).toHaveBeenCalledTimes(15)
+  })
+
+  it("normalizes formatted phone identifiers (+52 / spaces) and shares their rate-limit bucket", async () => {
+    mocks.findFirst.mockResolvedValue({ ...adminRow, email: null, phone: "5512345678" })
+    mocks.bcryptCompare.mockResolvedValue(true)
+    const user = await authorize({ identifier: "+52 55 1234 5678", password: "secret" })
+    expect(user).toMatchObject({ id: adminRow.id })
+    expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        OR: [
+          { email: "+52 55 1234 5678" },
+          { phone: "+52 55 1234 5678" },
+          { phone: "5512345678" },
+        ],
+      },
+    }))
+  })
+
+  it("runs dummy bcrypt compare when user is missing or has no password to prevent timing enumeration", async () => {
+    mocks.findFirst.mockResolvedValueOnce(null)
+    expect(await authorize({ identifier: "ghost@test.invalid", password: "secret" })).toBeNull()
+    expect(mocks.bcryptCompare).toHaveBeenCalledTimes(1)
+
+    mocks.findFirst.mockResolvedValueOnce({ ...adminRow, password: null })
+    expect(await authorize({ identifier: "nopass@test.invalid", password: "secret" })).toBeNull()
+    expect(mocks.bcryptCompare).toHaveBeenCalledTimes(2)
+  })
 })

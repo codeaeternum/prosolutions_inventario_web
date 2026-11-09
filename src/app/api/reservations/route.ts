@@ -13,6 +13,8 @@ import type { Prisma, ReservationStatus } from "@prisma/client"
 const RESERVATION_WINDOW_MS = 60 * 60 * 1000
 const MAX_RESERVATIONS = 10
 
+const NO_STORE = { "Cache-Control": "private, no-store", Vary: "Cookie" } as const
+
 export const reservationInclude = {
   product: { select: { id: true, name: true, images: true, category: { select: { name: true } }, models: { select: { model: { select: { name: true, brand: { select: { name: true } } } } } } } },
   user: { select: { id: true, name: true, phone: true, customerType: true } },
@@ -53,7 +55,7 @@ export async function GET(req: Request) {
       prisma.reservation.findMany({ where, include: reservationInclude, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
       prisma.reservation.count({ where }),
     ])
-    return NextResponse.json({ reservations, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) })
+    return NextResponse.json({ reservations, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) }, { headers: NO_STORE })
   } catch (error) { return businessFailure(error) }
 }
 
@@ -72,6 +74,6 @@ export async function POST(req: Request) {
     }
     const body = await req.json()
     const result = await createReservations(prisma, session.user.id, businessIdOf(session), { ...body, idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key") })
-    return NextResponse.json(body.items ? result : { ...result.reservations[0], operationId: result.operationId }, { status: 201 })
+    return NextResponse.json(body.items ? result : { ...result.reservations[0], operationId: result.operationId }, { status: 201, headers: NO_STORE })
   } catch (error) { return businessFailure(error) }
 }

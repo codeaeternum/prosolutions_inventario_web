@@ -98,14 +98,14 @@ export default function VentasPage() {
     const [showSalesHistory, setShowSalesHistory] = useState(false)
     const [salesInitialQuery, setSalesInitialQuery] = useState("")
     const [showMobileCart, setShowMobileCart] = useState(false)
-    // ?encargo=<id> — "Cobrar" desde Pedidos: prellena cliente + pieza y
-    // muestra la cotización/anticipo del encargo como referencia de cobro.
-    const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number } | null>(null)
+    // ?encargo=<id> — "Cobrar" desde Pedidos o Encargos: prellena cliente + pieza y
+    // aplica el precio cotizado y el anticipo del encargo al liquidar la venta.
+    const [encargoCtx, setEncargoCtx] = useState<{ id: string; description: string; priceQuoted: number | null; deposit: number; productId: string | null } | null>(null)
     // Pieza del encargo pendiente de prellenar: espera a que la sucursal
     // activa esté resuelta para pedir el stock POR SUCURSAL — sin branchId
     // /api/search/pos devuelve el total de catálogo y el badge del ticket
     // mentiría hasta que el servidor topara al cobrar.
-    const [pendingEncargoProduct, setPendingEncargoProduct] = useState<{ productId: string; quantity: number } | null>(null)
+    const [pendingEncargoProduct, setPendingEncargoProduct] = useState<{ productId: string; quantity: number; priceQuoted: number | null } | null>(null)
     const encargoProductFetched = useRef(false)
     const [cajaOpen, setCajaOpen] = useState<boolean | null>(null)
     const [autoTicket, setAutoTicket] = useState(true) // sale_auto_ticket; una falla de lectura no apaga la impresión
@@ -141,29 +141,32 @@ export default function VentasPage() {
             fetch(`/api/users/pos?id=${preselectId}`).then(r => r.ok ? r.json() : null)
                 .then(d => { const u = d?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
         }
-        // ?encargo=<id> — cobrar un encargo que ya llegó: cliente, pieza y
-        // referencia de lo cotizado/anticipado. El encargo se marca DELIVERED
-        // aparte; aquí solo se prellena el ticket.
+        // ?encargo=<id> — cobrar un encargo que ya llegó: cliente, pieza,
+        // precio cotizado y anticipo neto. La venta lo liquida y lo pasa a
+        // DELIVERED en la misma transacción.
         const encargoId = params.get("encargo")
         if (encargoId) {
-            // /api/encargos exige el módulo inventario: un cajero solo-ventas
-            // recibe 403 — se avisa en vez de fallar en silencio.
-            interface EncargoListItem {
-                id: string; description: string; priceQuoted?: number | null
+            interface EncargoDetail {
+                id: string; description: string; status?: string; priceQuoted?: number | null
                 deposit?: number | null; customerId?: string | null
                 productId?: string | null; quantity?: number | null
             }
-            fetch("/api/encargos").then(async r => {
-                const d: { encargos?: EncargoListItem[]; error?: string } | null = await r.json().catch(() => null)
-                if (!r.ok) throw new Error(d?.error || "No se pudieron cargar los encargos")
+            fetch(`/api/encargos/${encodeURIComponent(encargoId)}`).then(async r => {
+                const d: { encargo?: EncargoDetail; error?: string } | null = await r.json().catch(() => null)
+                if (!r.ok) throw new Error(d?.error || "No se pudo cargar el encargo")
                 return d
             }).then(d => {
-                const e = (d?.encargos ?? []).find(x => x.id === encargoId)
+                const e = d?.encargo
                 if (!e) {
                     toast.error("No se encontró el encargo a cobrar — puede ser de otra sucursal")
                     return
                 }
-                setEncargoCtx({ id: e.id, description: e.description, priceQuoted: e.priceQuoted ?? null, deposit: e.deposit ?? 0 })
+                if (e.status && e.status !== "READY") {
+                    toast.error("Este encargo ya no está pendiente de entrega")
+                    return
+                }
+                const priceQuoted = e.priceQuoted ?? null
+                setEncargoCtx({ id: e.id, description: e.description, priceQuoted, deposit: e.deposit ?? 0, productId: e.productId ?? null })
                 if (e.customerId) {
                     fetch(`/api/users/pos?id=${e.customerId}`).then(r => r.ok ? r.json() : null)
                         .then(dd => { const u = dd?.users?.[0]; if (u) setCustomer(u) }).catch(() => {})
@@ -171,7 +174,7 @@ export default function VentasPage() {
                 if (e.productId) {
                     // El fetch sale en el efecto de abajo, ya con sucursal:
                     // dispararlo aquí traería el stock total de catálogo.
-                    setPendingEncargoProduct({ productId: e.productId, quantity: Math.max(1, e.quantity ?? 1) })
+                    setPendingEncargoProduct({ productId: e.productId, quantity: Math.max(1, e.quantity ?? 1), priceQuoted })
                 }
             }).catch(err => {
                 toast.error(err instanceof Error ? err.message : "No se pudo cargar el encargo")
@@ -212,12 +215,23 @@ export default function VentasPage() {
         if (!pendingEncargoProduct || encargoProductFetched.current) return
         if (sessionStatus === "loading" || !branchesLoaded) return
         encargoProductFetched.current = true
-        const { productId, quantity } = pendingEncargoProduct
+        const { productId, quantity, priceQuoted } = pendingEncargoProduct
         fetch(`/api/search/pos?q=${encodeURIComponent(productId)}${activeBranchId ? `&branchId=${encodeURIComponent(activeBranchId)}` : ""}`)
             .then(r => r.ok ? r.json() : null)
             .then(dd => {
                 const p = (dd?.products ?? []).find((x: PosProduct) => x.id === productId)
-                if (p) setCart(prev => prev.length ? prev : [{ product: p, quantity }])
+                if (p) {
+                    const productWithQuote: PosProduct = priceQuoted != null && priceQuoted > 0
+                        ? {
+                            ...p,
+                            retailPrice: priceQuoted,
+                            wholesalePrice: priceQuoted,
+                            catalogRetailPrice: p.retailPrice,
+                            catalogWholesalePrice: p.wholesalePrice,
+                        }
+                        : p
+                    setCart(prev => prev.length ? prev : [{ product: productWithQuote, quantity }])
+                }
             }).catch(() => {})
             .finally(() => setPendingEncargoProduct(null))
     }, [pendingEncargoProduct, sessionStatus, branchesLoaded, activeBranchId])
@@ -272,9 +286,19 @@ export default function VentasPage() {
         detachIfResumed()
         setCart(prev => {
             const found = prev.find(item => item.product.id === product.id)
+            const applyEncargoQuote = !found && prev.length === 0 && encargoCtx && !encargoCtx.productId && encargoCtx.priceQuoted != null && encargoCtx.priceQuoted > 0
+            const effectiveProduct: PosProduct = applyEncargoQuote
+                ? {
+                    ...product,
+                    retailPrice: encargoCtx.priceQuoted!,
+                    wholesalePrice: encargoCtx.priceQuoted!,
+                    catalogRetailPrice: product.retailPrice,
+                    catalogWholesalePrice: product.wholesalePrice,
+                }
+                : product
             const next = found
                 ? prev.map(item => item.product.id === product.id ? { ...item, quantity: Math.min(item.product.stock, item.quantity + addQty) } : item)
-                : [...prev, { product, quantity: addQty }]
+                : [...prev, { product: effectiveProduct, quantity: addQty }]
             // El espejo se actualiza aquí también: otro scan a continuación
             // ya ve esta línea aunque el efecto todavía no corra.
             cartRef.current = next
@@ -341,7 +365,7 @@ export default function VentasPage() {
         // Los códigos que NAVEGAN (folio de ticket, QR de apartado) cierran el
         // diálogo siempre; los de producto lo dejan abierto en modo continuo —
         // el cajero pasa pieza tras pieza y sale con «Listo (N)».
-        if (/^V-\d+$/i.test(clean)) {
+        if (/^(?:V|A|NT|C)-?0*(\d+)$/i.test(clean)) {
             setShowScanner(false)
             setSalesInitialQuery(clean)
             setShowSalesHistory(true)
@@ -374,16 +398,8 @@ export default function VentasPage() {
     })
 
     const handleCompleted = useCallback((result: CheckoutResult, popup?: Window | null) => {
-        // Cobro de encargo: el documento se vendió/entregó → el encargo queda
-        // DELIVERED (el cobro ya quedó registrado por la venta; el PATCH es
-        // solo el cierre del ciclo del encargo).
-        if (encargoCtx && (result.kind === "SALE" || result.kind === "WORKSHOP" || result.kind === "LAYAWAY")) {
-            fetch(`/api/encargos/${encargoCtx.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "DELIVERED" }),
-            }).catch(() => {})
-        }
+        // El encargo ya quedó liquidado y en estado DELIVERED dentro de la
+        // misma transacción de la venta (sell / checkoutDocument).
         const ticketUrl = result.ticketId ? `/admin/tickets/venta/${result.ticketId}${result.paidWithCard ? "?copias=2" : ""}` : undefined
         setLastTicket({ kind: result.kind, description: result.description, quantity: result.quantity, total: result.total, ticketUrl })
         clearTicket()
@@ -411,7 +427,7 @@ export default function VentasPage() {
         } else if (result.kind !== "QUOTE" && autoTicket && ticketUrl) {
             toast.info("El navegador bloqueó la pestaña del ticket; usa «Abrir ticket».")
         }
-    }, [autoTicket, clearTicket, encargoCtx])
+    }, [autoTicket, clearTicket])
 
     // Atajos de mostrador: F2/Ctrl+Enter cobran, / enfoca el buscador, F4 tickets,
     // F9 suspende, ? muestra la ayuda, Esc limpia. +/−/↑/↓/Supr van en cada línea.
@@ -523,9 +539,27 @@ export default function VentasPage() {
                         <p className="text-sm text-amber-800 dark:text-amber-300 flex-1 min-w-0">
                             <span className="font-medium">Encargo:</span> {encargoCtx.description}
                             {encargoCtx.priceQuoted != null && ` · Cotizado ${formatPrice(encargoCtx.priceQuoted)}`}
-                            {encargoCtx.deposit > 0 && ` · Anticipo ${formatPrice(encargoCtx.deposit)}`}
+                            {encargoCtx.deposit > 0 && ` · Anticipo ${formatPrice(encargoCtx.deposit)} (se descuenta al cobrar)`}
                         </p>
-                        <Button variant="ghost" size="sm" onClick={() => setEncargoCtx(null)}>Quitar</Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                                setEncargoCtx(null)
+                                setCart(prev => prev.map(item => item.product.catalogRetailPrice != null
+                                    ? {
+                                        ...item,
+                                        product: {
+                                            ...item.product,
+                                            retailPrice: item.product.catalogRetailPrice,
+                                            wholesalePrice: item.product.catalogWholesalePrice ?? item.product.catalogRetailPrice,
+                                        },
+                                    }
+                                    : item))
+                            }}
+                        >
+                            Quitar
+                        </Button>
                     </CardContent>
                 </Card>
             )}
@@ -579,7 +613,7 @@ export default function VentasPage() {
             <CheckoutDialog open={showCheckout} onOpenChange={setShowCheckout} cart={cart} cartTotal={cartTotal}
                 workshopActive={workshopActive} workshopCustomer={workshopCustomer} onWorkshopSaleChange={setWorkshopSale}
                 customer={customer} onCustomerChange={setCustomer} branchId={activeBranchId} cajaOpen={cajaOpen}
-                resumedDoc={resumedDoc} onBusyChange={setBusy} autoOpenTicket={autoTicket}
+                resumedDoc={resumedDoc} encargo={encargoCtx} onBusyChange={setBusy} autoOpenTicket={autoTicket}
                 initialOperationKey={checkoutKey} onOperationKeyChange={setCheckoutKey}
                 onCompleted={handleCompleted} />
             <SuspendDialog open={showSuspend} onOpenChange={setShowSuspend} onConfirm={suspendSale} />

@@ -114,6 +114,7 @@ const EMPLOYEE_RESTRICTED: ReadonlySet<ModuleKey> = new Set([
   "reportes",
   "notificaciones",
   "configuracion",
+  "sucursales",
 ])
 
 /** ADMIN no se restringe por módulos: solo aplica a EMPLOYEE/WORKSHOP. */

@@ -6,8 +6,12 @@ import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "./slug-utils"
 import { MODULES } from "@/lib/access"
 import { recordAudit } from "@/lib/audit"
+import { checkAndRecord } from "@/lib/rate-limit"
 import bcrypt from "bcryptjs"
 import { UserRole } from "@prisma/client"
+
+const VALID_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const
+const VALID_ROLES = ["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"] as const
 
 // Restricciones de acceso del staff: lista vacía = sin restricción.
 const accessSchema = z.object({
@@ -31,6 +35,12 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get("status")
     const roleParam = searchParams.get("role")
+    if (status && !VALID_STATUSES.includes(status as (typeof VALID_STATUSES)[number])) {
+      return NextResponse.json({ error: "Estatus inválido" }, { status: 400 })
+    }
+    if (roleParam && !VALID_ROLES.includes(roleParam as (typeof VALID_ROLES)[number])) {
+      return NextResponse.json({ error: "Rol inválido" }, { status: 400 })
+    }
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? searchParams.get("pageSize") ?? "20", 10) || 20))
 
@@ -94,13 +104,16 @@ export async function GET(req: Request) {
     ])
 
     const totalPages = Math.ceil(total / limit) || 1
-    return NextResponse.json({
-      users,
-      total,
-      page,
-      limit,
-      totalPages,
-    })
+    return NextResponse.json(
+      {
+        users,
+        total,
+        page,
+        limit,
+        totalPages,
+      },
+      { headers: { "Cache-Control": "private, no-store" } }
+    )
   } catch (error) {
     console.error("Error fetching users:", error)
     return NextResponse.json({ error: "Error al obtener usuarios" }, { status: 500 })
@@ -114,12 +127,33 @@ export async function POST(req: Request) {
     const session = getSession(result)!
     const businessId = businessIdOf(session)
 
+    if (!checkAndRecord("users-create", session.user.id, 15 * 60 * 1000, 30)) {
+      return NextResponse.json(
+        { error: "Demasiadas altas de usuario. Espera unos minutos." },
+        { status: 429, headers: { "Retry-After": "900" } }
+      )
+    }
+
     const body = await req.json()
     const { name, email, password, role, customerType, homeBranchId, jobTitle, quickPin, publicSlug } = body
 
     if (!name || !email || !password || !role) {
       return NextResponse.json(
         { error: "Faltan campos requeridos" },
+        { status: 400 }
+      )
+    }
+
+    if (typeof email !== "string" || !z.email().safeParse(email.trim()).success) {
+      return NextResponse.json(
+        { error: "El correo electrónico no es válido" },
+        { status: 400 }
+      )
+    }
+
+    if (typeof password !== "string" || password.length < 8) {
+      return NextResponse.json(
+        { error: "La contraseña debe tener al menos 8 caracteres" },
         { status: 400 }
       )
     }

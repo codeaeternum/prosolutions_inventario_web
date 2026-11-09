@@ -104,6 +104,7 @@ describe("/orden wizard guard (staff + módulo taller)", () => {
       [staffUser({ role: "CUSTOMER" }), "personal del negocio"],
       [staffUser({ role: "WORKSHOP" }), "personal del negocio"],
       [staffUser({ allowedModules: ["ventas"] }), "módulo de taller"],
+      [staffUser({ business: { isActive: false } }), "Este negocio está suspendido"],
     ] as const) {
       const { bot, command } = makeBot()
       const sessions = makeSessions()

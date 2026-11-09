@@ -4,6 +4,8 @@ import { businessIdOf } from "@/lib/tenant"
 import { creditAgingByUser } from "@/lib/credit-aging"
 import { prisma } from "@/lib/prisma"
 
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const summary = searchParams.get("summary")
@@ -13,6 +15,7 @@ export async function GET(req: NextRequest) {
     const adminResult = await requireModule("credito")
     if (adminResult.error) return adminResult.error
     const businessId = businessIdOf(getSession(adminResult)!)
+    const q = searchParams.get("q")?.trim() ?? ""
 
     const firstDayOfMonth = new Date()
     firstDayOfMonth.setDate(1)
@@ -37,7 +40,16 @@ export async function GET(req: NextRequest) {
           },
         }),
         prisma.user.findMany({
-          where: { businessId, creditBalance: { gt: 0 } },
+          where: {
+            businessId,
+            creditBalance: { gt: 0 },
+            ...(q && {
+              OR: [
+                { name: { contains: q, mode: "insensitive" } },
+                { phone: { contains: q, mode: "insensitive" } },
+              ],
+            }),
+          },
           select: {
             id: true,
             name: true,
@@ -84,7 +96,7 @@ export async function GET(req: NextRequest) {
       businessName: business?.name ?? "",
       debtors: debtorsWithAging,
       movements,
-    })
+    }, { headers: NO_STORE })
   }
 
   // Client mode: returns own movements
@@ -113,5 +125,5 @@ export async function GET(req: NextRequest) {
     page,
     limit,
     totalPages: Math.ceil(total / limit) || 1,
-  })
+  }, { headers: NO_STORE })
 }

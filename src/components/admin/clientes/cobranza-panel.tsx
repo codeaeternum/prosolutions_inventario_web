@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner"
 import { formatDate, formatDay, formatPrice } from "@/lib/utils"
 import { csvCell } from "@/lib/csv"
+import { hasWhatsAppPhone, waLink } from "@/lib/whatsapp"
 import type { CreditAging, CreditAgingBucket } from "@/lib/credit-aging"
 import { AbonarDialog, type AbonarTarget } from "@/components/clientes/abonar-dialog"
 import { EstadoCuentaSheet } from "@/components/clientes/estado-cuenta"
@@ -50,15 +51,13 @@ const agingBucketMeta: Record<CreditAgingBucket, { label: string; className: str
   "30+": { label: "+30 días", className: "bg-destructive/10 text-destructive border-destructive/30" },
 }
 
-// wa.me exige formato internacional; los locales de 10 dígitos se asumen MX (+52).
+// wa.me exige formato internacional; waLink normaliza +52 para 10 dígitos MX.
 function whatsappReminderUrl(user: DebtorUser, businessName: string): string | null {
-  const digits = (user.phone ?? "").replace(/\D/g, "")
-  if (!digits) return null
-  const intl = digits.length === 10 ? `52${digits}` : digits
+  if (!hasWhatsAppPhone(user.phone)) return null
   const text = `Hola ${user.name}, te recordamos tu saldo pendiente de ${formatPrice(
     user.creditBalance ?? 0
   )} en ${businessName}. ¿Te ayudamos a liquidarlo?`
-  return `https://wa.me/${intl}?text=${encodeURIComponent(text)}`
+  return waLink(user.phone, text)
 }
 
 /**
@@ -69,6 +68,7 @@ function whatsappReminderUrl(user: DebtorUser, businessName: string): string | n
  */
 export function CobranzaPanel() {
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [totalDebt, setTotalDebt] = useState(0)
   const [activeClients, setActiveClients] = useState(0)
   const [monthPayments, setMonthPayments] = useState(0)
@@ -77,13 +77,23 @@ export function CobranzaPanel() {
   const [businessName, setBusinessName] = useState("")
 
   const [search, setSearch] = useState("")
+  const [debouncedQuery, setDebouncedQuery] = useState("")
   const [abonarUser, setAbonarUser] = useState<AbonarTarget | null>(null)
   const [estadoCuentaUserId, setEstadoCuentaUserId] = useState<string | null>(null)
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(search.trim()), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
   const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
+    setLoadError(false)
     try {
-      const res = await fetch("/api/credit/movements?summary=true", { signal })
+      const qs = new URLSearchParams({ summary: "true" })
+      if (debouncedQuery) qs.set("q", debouncedQuery)
+      const res = await fetch(`/api/credit/movements?${qs}`, { signal })
+      if (!res.ok) throw new Error("Error al cargar datos de crédito")
       const data = await res.json()
       if (signal?.aborted) return
       setTotalDebt(data.totalDebt ?? 0)
@@ -93,11 +103,14 @@ export function CobranzaPanel() {
       setMovements(data.movements ?? [])
       setBusinessName(data.businessName ?? "")
     } catch {
-      if (!signal?.aborted) toast.error("Error al cargar datos de crédito")
+      if (!signal?.aborted) {
+        setLoadError(true)
+        toast.error("Error al cargar datos de crédito")
+      }
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [])
+  }, [debouncedQuery])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -170,6 +183,17 @@ export function CobranzaPanel() {
     )
   }
 
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-12 border border-dashed rounded-lg text-center" role="alert">
+        <p className="text-sm text-destructive">No se pudo cargar la cartera de cobranza.</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void fetchData()}>
+          Reintentar
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -233,7 +257,11 @@ export function CobranzaPanel() {
         <Card>
           <CardHeader>
             <CardTitle>Cartera Activa</CardTitle>
-            <CardDescription>Clientes que actualmente deben saldo</CardDescription>
+            <CardDescription>
+              {activeClients > debtors.length && !debouncedQuery
+                ? `Mostrando los ${debtors.length} mayores saldos de ${activeClients} clientes con deuda (usa el buscador para encontrar a cualquiera)`
+                : "Clientes que actualmente deben saldo"}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="relative">

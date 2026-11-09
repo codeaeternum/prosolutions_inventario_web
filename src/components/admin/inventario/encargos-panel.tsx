@@ -6,6 +6,15 @@ import { useRouter } from "next/navigation"
 import { csvCell } from "@/lib/csv"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { EmptyState } from "@/components/admin/empty-state"
+import {
+    AlertDialog,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -204,9 +213,16 @@ export function EncargosPanel() {
     const [encargos, setEncargos] = useState<EncargoRow[]>([])
     const [encFilter, setEncFilter] = useState("")
     const [encargoSearch, setEncargoSearch] = useState("")
-    const [viewer, setViewer] = useState<{ role: string; homeBranchId: string | null }>({ role: "ADMIN", homeBranchId: null })
+    const [viewer, setViewer] = useState<{ id?: string; role: string; homeBranchId: string | null }>({ role: "ADMIN", homeBranchId: null })
     const isEmployee = viewer.role === "EMPLOYEE"
     const employeeBranch = branches.find(b => b.id === viewer.homeBranchId) ?? null
+
+    // Confirmaciones de cancelación (con motivo + método de reembolso) y de
+    // entrega directa cuando el anticipo ya cubrió el 100% de lo cotizado.
+    const [cancelTarget, setCancelTarget] = useState<EncargoRow | null>(null)
+    const [cancelReason, setCancelReason] = useState("")
+    const [cancelRefundMethod, setCancelRefundMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH")
+    const [deliverTarget, setDeliverTarget] = useState<EncargoRow | null>(null)
 
     // Formulario de nuevo encargo
     const [encDescription, setEncDescription] = useState("")
@@ -1174,18 +1190,34 @@ export function EncargosPanel() {
                                                             <MessageCircle className="w-4 h-4 mr-1" aria-hidden /> Avisar
                                                         </Button>
                                                     )}
-                                                    <Button size="sm" disabled={busy} onClick={() => void markEncargo(item, "DELIVERED")}>
-                                                        {pendingIcon(`${item.id}:DELIVERED`, Check)} Entregada
+                                                    <Button size="sm" asChild>
+                                                        <Link href={`/admin/ventas?encargo=${item.id}`}>
+                                                            <ShoppingCart className="w-4 h-4 mr-1" aria-hidden /> Cobrar y entregar
+                                                        </Link>
                                                     </Button>
+                                                    {item.priceQuoted != null && item.priceQuoted > 0 && cents(item.priceQuoted) <= cents(item.deposit) && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            disabled={busy}
+                                                            onClick={() => setDeliverTarget(item)}
+                                                        >
+                                                            {pendingIcon(`${item.id}:DELIVERED`, Check)} Entregar (liquidado)
+                                                        </Button>
+                                                    )}
                                                 </>
                                             )}
-                                            {["PENDING", "ORDERED", "READY", "DELIVERED"].includes(item.status) && (
+                                            {["PENDING", "ORDERED", "READY"].includes(item.status) && (!isEmployee || !viewer.id || item.createdBy?.id === viewer.id) && (
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"
                                                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                                                     disabled={busy}
-                                                    onClick={() => void markEncargo(item, "CANCELLED")}
+                                                    onClick={() => {
+                                                        setCancelTarget(item)
+                                                        setCancelReason("")
+                                                        setCancelRefundMethod("CASH")
+                                                    }}
                                                 >
                                                     {pendingIcon(`${item.id}:CANCELLED`, X)} Cancelar
                                                 </Button>
@@ -1404,6 +1436,111 @@ export function EncargosPanel() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Confirmación para cancelar encargo */}
+            <AlertDialog open={Boolean(cancelTarget)} onOpenChange={open => { if (!open && !busy) setCancelTarget(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Cancelar encargo?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {cancelTarget && (
+                                <>
+                                    Se cancelará <span className="font-medium text-foreground">«{cancelTarget.description}»</span>
+                                    {cancelTarget.customer ? ` de ${cancelTarget.customer.name}` : ""}.
+                                    {cancelTarget.deposit > 0
+                                        ? ` Se reembolsará el anticipo de ${formatPrice(cancelTarget.deposit)} al cliente.`
+                                        : " Este encargo no tiene anticipo registrado."}
+                                </>
+                            )}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    {cancelTarget && (
+                        <div className="space-y-3 py-1">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="encargo-cancel-reason">Motivo de cancelación *</Label>
+                                <Input
+                                    id="encargo-cancel-reason"
+                                    placeholder="Ej. El proveedor ya no surte la pieza / cliente desistió"
+                                    maxLength={500}
+                                    disabled={busy}
+                                    value={cancelReason}
+                                    onChange={e => setCancelReason(e.target.value)}
+                                />
+                            </div>
+                            {cancelTarget.deposit > 0 && (
+                                <div className="space-y-1.5">
+                                    <Label id="encargo-refund-method-label">Método de reembolso ({formatPrice(cancelTarget.deposit)})</Label>
+                                    <Select
+                                        value={cancelRefundMethod}
+                                        onValueChange={v => setCancelRefundMethod(v as "CASH" | "CARD" | "TRANSFER")}
+                                    >
+                                        <SelectTrigger aria-labelledby="encargo-refund-method-label" disabled={busy}>
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="CASH">Efectivo (sale de caja)</SelectItem>
+                                            <SelectItem value="CARD">Tarjeta</SelectItem>
+                                            <SelectItem value="TRANSFER">Transferencia</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={busy}>Volver</AlertDialogCancel>
+                        <Button
+                            variant="destructive"
+                            disabled={busy || cancelReason.trim().length < 3}
+                            onClick={async () => {
+                                if (!cancelTarget || cancelReason.trim().length < 3) return
+                                const target = cancelTarget
+                                const extra: Record<string, unknown> = {
+                                    reason: cancelReason.trim(),
+                                    ...(target.deposit > 0 ? { refundMethod: cancelRefundMethod } : {}),
+                                }
+                                setCancelTarget(null)
+                                await markEncargo(target, "CANCELLED", extra)
+                            }}
+                        >
+                            {cancelTarget && pendingKey === `${cancelTarget.id}:CANCELLED` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" aria-hidden /> : null}
+                            Confirmar cancelación
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Confirmación para entregar encargo ya liquidado con anticipo */}
+            <AlertDialog open={Boolean(deliverTarget)} onOpenChange={open => { if (!open && !busy) setDeliverTarget(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Confirmar entrega de encargo</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {deliverTarget && (
+                                <>
+                                    El encargo <span className="font-medium text-foreground">«{deliverTarget.description}»</span> ya está cubierto por el anticipo de{" "}
+                                    <span className="font-medium text-foreground">{formatPrice(deliverTarget.deposit)}</span> (cotizado {formatPrice(deliverTarget.priceQuoted ?? 0)}).
+                                    ¿Confirmas que la pieza fue entregada al cliente?
+                                </>
+                            )}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={busy}>Cancelar</AlertDialogCancel>
+                        <Button
+                            disabled={busy}
+                            onClick={async () => {
+                                if (!deliverTarget) return
+                                const target = deliverTarget
+                                setDeliverTarget(null)
+                                await markEncargo(target, "DELIVERED")
+                            }}
+                        >
+                            Confirmar entrega
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

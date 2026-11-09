@@ -37,6 +37,7 @@ type StaffAccount = NonNullable<Awaited<ReturnType<typeof getBotAccount>>>
 /** null = sin acceso; string = motivo legible para el usuario. */
 function workshopGate(user: StaffAccount | null): string | null {
     if (!user) return '⚠️ No tienes cuenta registrada. Usa /start primero.'
+    if (user.business && !user.business.isActive) return '🚫 Este negocio está suspendido.'
     if (user.status !== 'APPROVED') return '⏳ Tu cuenta está pendiente de aprobación.'
     if (user.role !== 'ADMIN' && user.role !== 'EMPLOYEE') {
         return '🚫 /orden es solo para el personal del negocio. Si buscas tus equipos o productos, usa /ayuda.'

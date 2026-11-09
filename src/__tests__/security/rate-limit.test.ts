@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { checkAndRecord, getClientIp, getRateLimitStats } from "@/lib/rate-limit"
+import { checkAndRecord, checkOnly, getClientIp, getRateLimitStats, recordFailure } from "@/lib/rate-limit"
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs() })
 describe("login throttling", () => {
   it("does not trust user supplied forwarding headers on desktop/direct access", () => {
@@ -69,5 +69,17 @@ describe("login throttling", () => {
     // Fuera de la ventana de 24 h el scope desaparece del desglose.
     vi.advanceTimersByTime(25 * 60 * 60 * 1000)
     expect(getRateLimitStats().byRoute[key]).toBeUndefined()
+  })
+  it("checkOnly does not consume attempts until recordFailure reaches maxAttempts", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    for (let i = 0; i < 5; i++) {
+      expect(checkOnly("login-account", "u@test.mx", 2)).toBe(true)
+    }
+    recordFailure("login-account", "u@test.mx", 1000)
+    expect(checkOnly("login-account", "u@test.mx", 2)).toBe(true)
+    recordFailure("login-account", "u@test.mx", 1000)
+    expect(checkOnly("login-account", "u@test.mx", 2)).toBe(false)
+    vi.advanceTimersByTime(1001)
+    expect(checkOnly("login-account", "u@test.mx", 2)).toBe(true)
   })
 })

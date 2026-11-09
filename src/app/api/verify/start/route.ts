@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { requireAuth } from "@/lib/api-auth"
+import { auth } from "@/lib/auth"
 import { checkAndRecord } from "@/lib/rate-limit"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendVerificationEmail } from "@/lib/mailer"
@@ -13,6 +13,10 @@ import { buildTelegramVerifyUrl } from "@/lib/telegram"
  *   - EMAIL  → sale por Resend (si está configurado).
  *   - PHONE  → sale dentro del deep-link de Telegram (telegramUrl), que es el
  *              canal de entrega; el bot lo consume al hacer /start.
+ *
+ * Admite cuentas PENDING (p. ej. dueños recién registrados cuyo primer código
+ * expiró antes de verificar): solo rechaza no autenticados, cuentas REJECTED
+ * o negocios suspendidos.
  */
 
 const START_WINDOW_MS = 15 * 60 * 1000
@@ -23,8 +27,13 @@ const startSchema = z.object({
 })
 
 export async function POST(req: Request) {
-  const auth = await requireAuth()
-  if (auth.error) return auth.error
+  const session = await auth()
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 })
+  }
+  if (session.user.status === "REJECTED") {
+    return NextResponse.json({ error: "Cuenta suspendida" }, { status: 403 })
+  }
 
   try {
     const body = await req.json().catch(() => null)
@@ -34,7 +43,7 @@ export async function POST(req: Request) {
     }
     const { channel } = parsed.data
 
-    if (!checkAndRecord("verify-start", auth.session.user.id, START_WINDOW_MS, START_MAX_ISSUES)) {
+    if (!checkAndRecord("verify-start", session.user.id, START_WINDOW_MS, START_MAX_ISSUES)) {
       return NextResponse.json(
         { error: "Pediste demasiados códigos. Espera unos minutos." },
         { status: 429 }
@@ -42,19 +51,23 @@ export async function POST(req: Request) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: auth.session.user.id },
+      where: { id: session.user.id },
       select: {
         id: true,
+        status: true,
         businessId: true,
         email: true,
         phone: true,
         emailVerifiedAt: true,
         phoneVerifiedAt: true,
-        business: { select: { name: true } },
+        business: { select: { name: true, isActive: true } },
       },
     })
     if (!user) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 })
+    }
+    if (user.status === "REJECTED" || user.business?.isActive === false) {
+      return NextResponse.json({ error: "Cuenta o negocio suspendido" }, { status: 403 })
     }
 
     if (channel === "EMAIL") {

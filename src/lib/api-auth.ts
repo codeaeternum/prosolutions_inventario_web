@@ -61,7 +61,7 @@ export function assertBranchAllowed(session: ApiSession, branchId: string | null
 export async function assertOperationBranch(
   session: ApiSession,
   requestedBranchId: string | null | undefined,
-  opts: { homeFallback?: boolean } = {},
+  opts: { homeFallback?: boolean; fallbackBranchId?: string | null } = {},
 ): Promise<NextResponse | null> {
   const businessId = session.user.businessId
   let branchId = requestedBranchId ?? null
@@ -84,6 +84,9 @@ export async function assertOperationBranch(
   if (!branchId && opts.homeFallback !== false) {
     const me = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
     branchId = me?.homeBranchId ?? null
+  }
+  if (!branchId && opts.fallbackBranchId) {
+    branchId = opts.fallbackBranchId
   }
   if (!branchId) {
     // Igual que resolveBranch: la principal inactiva no es respaldo válido —

@@ -7,7 +7,11 @@ import { getPrisma } from "./prisma"
 export async function isAdmin(telegramId: string): Promise<boolean> {
   const prisma = getPrisma()
   if (!prisma) return false
-  const user = await prisma.user.findUnique({ where: { telegramId } })
+  const user = await prisma.user.findUnique({
+    where: { telegramId },
+    select: { role: true, status: true, business: { select: { isActive: true } } },
+  })
+  if (user?.business && !user.business.isActive) return false
   return user?.role === "ADMIN" && user.status === "APPROVED"
 }
 

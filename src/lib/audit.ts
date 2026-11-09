@@ -24,6 +24,8 @@ import { ALERTED_ACTIONS, alertSensitiveAudit } from "./audit-alerts"
 export type AuditChange = { before: Prisma.InputJsonValue; after: Prisma.InputJsonValue }
 export type AuditChanges = Record<string, AuditChange>
 
+export type ImpersonatorInput = string | { id?: string | null; email?: string | null } | null | undefined
+
 export type AuditEntry = {
   businessId: string
   actorId: string
@@ -33,19 +35,69 @@ export type AuditEntry = {
   entityName?: string | null
   summary: string
   changes?: AuditChanges | Prisma.InputJsonValue | null
+  /** Impersonador explícito (opcional); si no se pasa, se lee de la sesión activa (`auth()`). */
+  impersonator?: ImpersonatorInput
 }
 
 // Cliente mínimo: el prisma global o el tx de una transacción interactiva.
 type AuditWriter = Pick<PrismaClient, "auditEvent"> | Prisma.TransactionClient
+
+function normalizeImpersonator(raw: ImpersonatorInput): string | null {
+  if (!raw) return null
+  if (typeof raw === "string") return raw.trim() || null
+  if (typeof raw === "object") {
+    const val = raw.email ?? raw.id
+    return typeof val === "string" && val.trim() ? val.trim() : null
+  }
+  return null
+}
+
+async function resolveImpersonator(explicit?: ImpersonatorInput): Promise<string | null> {
+  if (explicit !== undefined) return normalizeImpersonator(explicit)
+  try {
+    // Import perezoso para que tests unitarios de audit sin DATABASE_URL no carguen prisma.
+    const { auth } = await import("./auth")
+    const session = await auth()
+    return normalizeImpersonator(session?.user?.impersonator as ImpersonatorInput)
+  } catch {
+    return null
+  }
+}
 
 /**
  * Graba un evento de auditoría. Nunca lanza: si la bitácora falla, el
  * negocio ya quedó escrito y un throw aquí convertiría una operación exitosa
  * en un 500 confuso; preferimos perder el rastro (logueado) que romper la
  * operación.
+ *
+ * Si la sesión activa viene de cambio rápido o modo soporte (`impersonator`),
+ * propaga automáticamente `operadorSoporte` dentro de `changes` para que
+ * ninguna ruta tenga que acordarse de pasarlo.
  */
 export async function recordAudit(db: AuditWriter, entry: AuditEntry): Promise<void> {
   try {
+    const rawChanges = entry.changes ?? undefined
+    const hasExplicitImpersonationField =
+      rawChanges !== undefined &&
+      typeof rawChanges === "object" &&
+      rawChanges !== null &&
+      !Array.isArray(rawChanges) &&
+      ("impersonador" in (rawChanges as Record<string, unknown>) ||
+        "operadorSoporte" in (rawChanges as Record<string, unknown>))
+
+    const operadorSoporte = hasExplicitImpersonationField
+      ? null
+      : await resolveImpersonator(entry.impersonator)
+
+    let changes: Prisma.InputJsonValue | undefined = rawChanges
+    if (operadorSoporte) {
+      if (changes && typeof changes === "object" && !Array.isArray(changes)) {
+        changes = { ...(changes as Record<string, unknown>), operadorSoporte } as Prisma.InputJsonValue
+      } else if (changes === undefined) {
+        changes = { operadorSoporte } as Prisma.InputJsonValue
+      }
+    }
+
     await db.auditEvent.create({
       data: {
         businessId: entry.businessId,
@@ -55,7 +107,7 @@ export async function recordAudit(db: AuditWriter, entry: AuditEntry): Promise<v
         entityId: entry.entityId ?? null,
         entityName: entry.entityName ?? null,
         summary: entry.summary,
-        changes: entry.changes ?? undefined,
+        changes,
       },
     })
   } catch (error) {

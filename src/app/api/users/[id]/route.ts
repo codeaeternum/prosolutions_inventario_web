@@ -174,6 +174,14 @@ export async function PATCH(
       )
     }
 
+    // Prevent admin from suspending or deactivating their own account
+    if (statusUpdate && statusUpdate !== "APPROVED" && session.user.id === id) {
+      return NextResponse.json(
+        { error: "No puedes suspender tu propia cuenta" },
+        { status: 400 }
+      )
+    }
+
     // Validate role if provided
     if (role && !["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"].includes(role)) {
       return NextResponse.json(
@@ -324,6 +332,13 @@ export async function DELETE(
     }
 
     const { id } = await params
+
+    if (session.user.id === id) {
+      return NextResponse.json(
+        { error: "No puedes eliminar tu propia cuenta" },
+        { status: 400 }
+      )
+    }
 
     const businessId = businessIdOf(session)
     const target = await prisma.user.findUnique({ where: { id, businessId }, select: { role: true, name: true } })

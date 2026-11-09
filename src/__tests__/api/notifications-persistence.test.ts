@@ -112,20 +112,46 @@ describe("broadcast — persistencia", () => {
     expect(mocks.notifCreate.mock.calls[0][0].data.audience).toBe("ADMIN")
   })
 
-  it("depura PII de data al persistir (email/phone/token no van a la BD)", async () => {
-    await sendNotificationToAdmins(
-      {
-        type: "user_registered",
-        title: "Nueva cuenta",
-        message: "Ana solicita cuenta",
-        data: { userId: "u-1", name: "Ana", email: "ana@x.com", phone: "5512345678", requestedType: "NORMAL" },
-      },
-      "biz-test",
-    )
-    const data = mocks.notifCreate.mock.calls[0][0].data.data
-    expect(data).toMatchObject({ userId: "u-1", name: "Ana", requestedType: "NORMAL" })
-    expect(data.email).toBeUndefined()
-    expect(data.phone).toBeUndefined()
+  it("depura PII de data tanto al persistir en BD como en el frame SSE en vivo", async () => {
+    mocks.auth.mockResolvedValue(session("admin-1"))
+    const res = await openStream(new NextRequest("https://app.invalid/api/notifications/stream"))
+    const reader = res.body!.getReader()
+    try {
+      await reader.read() // evento "connected"
+      await sendNotificationToAdmins(
+        {
+          type: "user_registered",
+          title: "Nueva cuenta",
+          message: "Ana solicita cuenta",
+          data: {
+            userId: "u-1",
+            name: "Ana",
+            email: "ana@x.com",
+            phone: "5512345678",
+            resetToken: "tok-123",
+            quickPin: "1234",
+            requestedType: "NORMAL",
+          },
+        },
+        "biz-test",
+      )
+      const data = mocks.notifCreate.mock.calls[0][0].data.data
+      expect(data).toMatchObject({ userId: "u-1", name: "Ana", requestedType: "NORMAL" })
+      expect(data.email).toBeUndefined()
+      expect(data.phone).toBeUndefined()
+      expect(data.resetToken).toBeUndefined()
+      expect(data.quickPin).toBeUndefined()
+
+      const chunk = new TextDecoder().decode((await reader.read()).value)
+      const payload = JSON.parse(chunk.replace(/^data: /, "").trim())
+      expect(payload.data).toEqual({ userId: "u-1", name: "Ana", requestedType: "NORMAL" })
+      expect(payload.data.email).toBeUndefined()
+      expect(payload.data.phone).toBeUndefined()
+      expect(payload.data.resetToken).toBeUndefined()
+      expect(payload.data.quickPin).toBeUndefined()
+    } finally {
+      await reader.cancel()
+    }
   })
 
   it("un fallo de BD NO rompe el broadcast ni propaga excepción", async () => {

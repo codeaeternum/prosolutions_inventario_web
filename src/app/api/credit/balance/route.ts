@@ -15,8 +15,11 @@ export async function GET() {
   })
   if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
 
-  return NextResponse.json({
-    creditLimit: user.creditLimit,
-    creditBalance: user.creditBalance,
-  })
+  return NextResponse.json(
+    {
+      creditLimit: user.creditLimit,
+      creditBalance: user.creditBalance,
+    },
+    { headers: { "Cache-Control": "private, no-store" } }
+  )
 }

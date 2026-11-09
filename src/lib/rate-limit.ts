@@ -77,6 +77,43 @@ export function checkAndRecord(prefix: string, identifier: string, windowMs = WI
 }
 
 /**
+ * Consulta si la llave sigue dentro del límite sin incrementar intentos.
+ * Úsalo junto con `recordFailure` cuando un intento exitoso no debe quemar
+ * presupuesto del usuario (p. ej. login-account).
+ */
+export function checkOnly(prefix: string, identifier: string, maxAttempts = 10): boolean {
+  const now = Date.now()
+  for (const [key, value] of store) if (value.expires <= now) store.delete(key)
+  const current = store.get(`${prefix}:${identifier}`)
+  if (current && current.attempts >= maxAttempts) {
+    recordDenied(prefix, now)
+    return false
+  }
+  return true
+}
+
+/** Registra un intento fallido en el bucket de rate-limit. */
+export function recordFailure(prefix: string, identifier: string, windowMs = WINDOW_MS): void {
+  const now = Date.now()
+  for (const [key, value] of store) if (value.expires <= now) store.delete(key)
+  const key = `${prefix}:${identifier}`
+  const current = store.get(key)
+  if (current) {
+    current.attempts++
+    return
+  }
+  if (store.size >= MAX_KEYS) {
+    let evicted = 0
+    for (const oldest of store.keys()) {
+      if (evicted >= EVICTION_BATCH || store.size < MAX_KEYS) break
+      store.delete(oldest)
+      evicted++
+    }
+  }
+  store.set(key, { attempts: 1, expires: now + windowMs })
+}
+
+/**
  * IP del cliente para rate limiting. Solo confía en headers de proxy cuando
  * TRUST_PROXY_HEADERS === "true" — actívalo únicamente detrás de un proxy
  * exclusivo que los sobrescribe y bloquea el acceso directo.

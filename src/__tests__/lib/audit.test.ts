@@ -117,6 +117,21 @@ describe("recordAudit", () => {
     expect(spy).toHaveBeenCalled()
     spy.mockRestore()
   })
+
+  it("propaga operadorSoporte dentro de changes cuando hay impersonator activo", async () => {
+    await recordAudit(db() as never, {
+      ...entry,
+      impersonator: { id: "op-1", email: "op@reficio.app" },
+    })
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        changes: {
+          precio: { before: 500, after: 450 },
+          operadorSoporte: "op@reficio.app",
+        },
+      }),
+    })
+  })
 })
 
 describe("money y listText", () => {

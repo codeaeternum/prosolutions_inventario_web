@@ -1,11 +1,62 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
+import { assertBranchAllowed, getSession, requireAdminOrEmployee, requireModule } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { transitionEncargo } from "@/lib/domain/encargos"
 import { businessFailure } from "@/lib/domain/http"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 import { escapeTelegramHtml, sendTelegramToCustomer } from "@/lib/telegram"
+
+/**
+ * Detalle de un encargo para cobro en POS (/admin/ventas?encargo=<id>):
+ * acepta módulo "ventas" además de "inventario" para que un cajero solo-ventas
+ * pueda cargar el cliente, pieza, precio cotizado y anticipo neto del encargo.
+ */
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = await requireAdminOrEmployee()
+    if (auth.error) return auth.error
+    const session = getSession(auth)!
+    if (!hasModule(session.user, "inventario") && !hasModule(session.user, "ventas")) {
+      return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
+    }
+    const businessId = businessIdOf(session)
+    const { id } = await params
+    const encargo = await prisma.encargo.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { id: true, name: true, phone: true } },
+        product: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
+        payments: {
+          where: { purpose: { in: ["ADVANCE", "REFUND"] }, status: { in: ["CONFIRMED", "REFUNDED"] } },
+          select: { purpose: true, amount: true, method: true },
+        },
+      },
+    })
+    const denied = assertBranchAllowed(session, encargo?.businessId === businessId ? encargo.branchId : null)
+    if (denied) return denied
+    if (!encargo || encargo.businessId !== businessId) {
+      return NextResponse.json({ error: "Encargo no encontrado." }, { status: 404 })
+    }
+    const advances = (encargo.payments ?? []).filter(p => p.purpose === "ADVANCE")
+    const refunds = (encargo.payments ?? []).filter(p => p.purpose === "REFUND")
+    const heldCents = advances.length
+      ? Math.max(
+          0,
+          advances.reduce((sum, p) => sum + Math.round(p.amount * 100), 0) +
+            refunds.reduce((sum, p) => sum + Math.round(p.amount * 100), 0),
+        )
+      : Math.round(encargo.deposit * 100)
+    return NextResponse.json(
+      { encargo: { ...encargo, deposit: heldCents / 100 } },
+      { headers: { "Cache-Control": "private, no-store" } },
+    )
+  } catch (error) {
+    return businessFailure(error)
+  }
+}
 
 /**
  * Aviso directo al cliente por Telegram cuando su pieza llega (encargo →

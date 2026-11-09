@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
+import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Medios del mostrador. El enum de BD es en inglés; el contrato público conserva español.
@@ -112,11 +113,14 @@ export async function commitSale(tx: Transaction, input: {
   payments: SettledPayment[]
   // Motivo del movimiento OUT y descripción del cobro ("Venta V-7", "Apartado V-9").
   reason: string
+  // Medio de respaldo cuando el cobro del día es $0 porque un anticipo previo
+  // (p. ej. encargo 100% prepagado) ya cubrió el total.
+  fallbackMethod?: MethodInput | null
 }) {
   // Medio dominante (el de mayor monto): clasifica el OUT como venta en el
   // historial (paymentMethod != null) y fija el canal de devolución simple.
   // Sin pagos queda null — un apartado sin anticipo no declara medio aún.
-  let dominantMethod: MethodInput | null = input.payments[0]?.method ?? null
+  let dominantMethod: MethodInput | null = input.payments[0]?.method ?? input.fallbackMethod ?? null
   let topCents = -1
   for (const payment of input.payments) {
     if (payment.cents > topCents) { topCents = payment.cents; dominantMethod = payment.method }
@@ -153,6 +157,8 @@ const saleSchema = z.object({
   paymentMethod: METHODS.optional(),
   customerId: z.string().min(1).optional(),
   branchId: z.string().min(1).optional(),
+  // Encargo READY que se liquida y entrega en la misma transacción.
+  encargoId: z.string().min(1).optional(),
   // Lista de precios: "auto" (default) cobra precio de taller solo si el cliente
   // es STORE; "wholesale"/"retail" fuerzan la lista sin importar el tipo de
   // cliente (p. ej. el surtido de una solicitud del mercado B2B siempre va a taller).
@@ -161,17 +167,27 @@ const saleSchema = z.object({
   // aunque el comprador sea walk-in sin cuenta STORE/TECHNICIAN. El servidor
   // siempre resuelve el kind final; el flag solo puede elevar a WORKSHOP.
   workshopSale: z.boolean().optional(),
-}).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
+}).refine(
+  v => Boolean(v.encargoId) ? !(Boolean(v.payments) && Boolean(v.paymentMethod)) : Boolean(v.payments) !== Boolean(v.paymentMethod),
+  "Envía payments o paymentMethod.",
+)
 
 export async function sell(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = saleSchema.parse(raw)
   const items = mergeItems(input.items)
-  const payments = input.payments ?? [{ method: input.paymentMethod! }]
-  checkSalePayments(payments, input.customerId)
+  const hasPayments = Boolean(input.payments) || Boolean(input.paymentMethod)
+  const payments = hasPayments ? (input.payments ?? [{ method: input.paymentMethod! }]) : []
+  if (!input.encargoId) {
+    checkSalePayments(payments, input.customerId)
+  }
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE", permission: "staff", payload: { ...input, items } }, async tx => {
     const seller = await actor(tx, actorId, "staff", businessId)
     const branch = await resolveBranch(tx, input.branchId ?? seller.homeBranchId, businessId)
-    const customer = input.customerId ? await actor(tx, input.customerId, "customer", businessId) : null
+    const encargoInfo = input.encargoId
+      ? await prepareEncargoForSaleTx(tx, { encargoId: input.encargoId, businessId, branchId: branch.id })
+      : null
+    const effectiveCustomerId = input.customerId ?? encargoInfo?.encargo.customerId ?? undefined
+    const customer = effectiveCustomerId ? await actor(tx, effectiveCustomerId, "customer", businessId) : null
 
     // Documento contable: RETAIL es mostrador al público; WORKSHOP ("nota de
     // venta a taller") separa la refacción vendida a talleres/negocios. Lo
@@ -197,33 +213,64 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
     }
     const lines = []
     let totalCents = 0
+    const quotedPrice = encargoInfo?.encargo.priceQuoted
     for (const item of items) {
       const { product } = await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id, businessId })
-      const unitCents = cents(
-        tier === "wholesale" ? product.wholesalePrice
-          : tier === "retail" ? product.retailPrice
-            : (customer?.customerType === "STORE" ? product.wholesalePrice : product.retailPrice)
+      // Si el encargo tiene priceQuoted, ese precio unitario prometido prevalece
+      // sobre el precio de catálogo para la pieza encargada.
+      const useQuoted = quotedPrice != null && quotedPrice > 0 && (
+        encargoInfo?.encargo.productId === item.productId ||
+        (!encargoInfo?.encargo.productId && items.length === 1)
       )
+      const unitCents = useQuoted
+        ? cents(quotedPrice, true)
+        : cents(
+            tier === "wholesale" ? product.wholesalePrice
+              : tier === "retail" ? product.retailPrice
+                : (customer?.customerType === "STORE" ? product.wholesalePrice : product.retailPrice)
+          )
       const lineCents = unitCents * item.quantity
       cents(amount(lineCents))
       lines.push({ item, product, unitCents, lineCents })
       totalCents += lineCents
     }
     const total = amount(totalCents)
-    const settled = settleSalePayments(payments, totalCents)
+    const depositCents = encargoInfo?.depositCents ?? 0
+    if (depositCents > totalCents) {
+      throw new BusinessError("El anticipo del encargo supera el total de la venta.", 409)
+    }
+    const payableCents = totalCents - depositCents
+    let settled: SettledPayment[] = []
+    if (payableCents > 0) {
+      if (!hasPayments) throw new BusinessError("Envía payments o paymentMethod.", 400)
+      checkSalePayments(payments, customer?.id ?? input.customerId)
+      settled = settleSalePayments(payments, payableCents)
+    }
 
     const sale = await tx.sale.create({ data: { businessId, total, kind, branchId: branch.id, sellerId: actorId, customerId: customer?.id ?? null } })
     const committed = await commitSale(tx, {
       sale, businessId, actorId, branchId: branch.id, customerId: customer?.id ?? null,
       lines: lines.map(line => ({ productId: line.product.id, quantity: line.item.quantity, unitCents: line.unitCents, lineCents: line.lineCents })),
-      payments: settled, reason: `Venta V-${sale.number}`,
+      payments: settled,
+      reason: `Venta V-${sale.number}`,
+      fallbackMethod: encargoInfo ? channelOfPaymentMethod(encargoInfo.depositMethod) : null,
     })
+    if (encargoInfo) {
+      await settleEncargoInSaleTx(tx, {
+        encargoId: encargoInfo.encargo.id,
+        saleId: sale.id,
+        actorId,
+        businessId,
+        depositCents,
+      })
+    }
     return {
       sale, items: committed.items, payments: committed.payments, movements: committed.movements,
       quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind,
       // Recibo de la operación: folio y lista efectivamente cobrada ("retail" |
       // "wholesale") — operation-alerts avisa al dueño de toda venta a taller.
       number: sale.number, priceTier: wholesaleCharged ? "wholesale" : "retail",
+      ...(encargoInfo ? { encargoId: encargoInfo.encargo.id, depositCents, payableCents } : {}),
     }
   })
   // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.

@@ -20,7 +20,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // El detalle también se acota a las sucursales asignadas del empleado.
     const deniedBranch = assertBranchAllowed(session, reservation.branchId)
     if (deniedBranch) return deniedBranch
-    return NextResponse.json(reservation)
+    return NextResponse.json(reservation, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } })
   } catch (error) { return businessFailure(error) }
 }
 

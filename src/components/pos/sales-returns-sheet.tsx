@@ -102,8 +102,15 @@ const METHOD_LABEL: Record<string, string> = {
     CREDITO: "Crédito",
 }
 
-function formatSaleFolio(number: number): string {
-    return `V-${String(number).padStart(6, "0")}`
+export function formatSaleFolio(number: number, kind?: string | null): string {
+    const prefix = kind === "LAYAWAY"
+        ? "A"
+        : kind === "WORKSHOP" || kind === "WORKSHOP_NOTE"
+            ? "NT"
+            : kind === "QUOTE"
+                ? "C"
+                : "V"
+    return `${prefix}-${String(number).padStart(6, "0")}`
 }
 
 function defaultRefundMethod(sale: SaleRecord): PosPaymentMethod {
@@ -222,10 +229,10 @@ export function SalesReturnsSheet({
     const filteredSales = useMemo(() => {
         const q = searchQuery.trim().toLowerCase()
         if (!q) return sales
-        const numericQuery = q.replace(/^v-?0*/i, "")
+        const numericQuery = q.replace(/^(?:v|a|nt|c)-?0*/i, "")
         return sales.filter(sale => {
             if (sale.id.toLowerCase().includes(q)) return true
-            const folio = formatSaleFolio(sale.number).toLowerCase()
+            const folio = formatSaleFolio(sale.number, sale.kind).toLowerCase()
             if (folio.includes(q)) return true
             if (numericQuery && String(sale.number).includes(numericQuery)) return true
             const customerName = (sale.customer?.name ?? "mostrador").toLowerCase()
@@ -301,7 +308,7 @@ export function SalesReturnsSheet({
             if (!res.ok) throw new Error(data?.error || "No se pudo procesar la devolución")
 
             const refundedLabel = data?.refunded != null ? ` (${formatPrice(data.refunded)})` : ""
-            toast.success(`Devolución registrada en ${formatSaleFolio(sale.number)}${refundedLabel}`)
+            toast.success(`Devolución registrada en ${formatSaleFolio(sale.number, sale.kind)}${refundedLabel}`)
             setActiveAction(null)
             setReturnQuantities({})
             setReason("")
@@ -334,7 +341,7 @@ export function SalesReturnsSheet({
             const data: { error?: string } | null = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudo anular el ticket")
 
-            toast.success(`Ticket ${formatSaleFolio(sale.number)} anulado`)
+            toast.success(`Ticket ${formatSaleFolio(sale.number, sale.kind)} anulado`)
             setActiveAction(null)
             setReason("")
             void load(page)
@@ -393,7 +400,7 @@ export function SalesReturnsSheet({
                     ) : (
                         <div className="space-y-2.5">
                             {filteredSales.map(sale => {
-                                const folio = formatSaleFolio(sale.number)
+                                const folio = formatSaleFolio(sale.number, sale.kind)
                                 const discount = (sale.discountCents ?? 0) / 100
                                 // Neto en centavos: sale.total es Float en pesos.
                                 const netTotal = Math.max(0, Math.round(sale.total * 100) - (sale.discountCents ?? 0)) / 100

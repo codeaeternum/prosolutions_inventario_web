@@ -16,6 +16,8 @@ const patchSchema = z.object({
     .nullable(),
 })
 
+const NO_STORE = { "Cache-Control": "private, no-store" } as const
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -26,7 +28,7 @@ export async function GET(
 
   const { id } = await params
   const user = await prisma.user.findUnique({
-    where: { id, businessId },
+    where: { id, businessId, role: "CUSTOMER" },
     select: {
       id: true,
       name: true,
@@ -41,7 +43,7 @@ export async function GET(
   })
   if (!user) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
 
-  return NextResponse.json(user)
+  return NextResponse.json(user, { headers: NO_STORE })
 }
 
 export async function PATCH(

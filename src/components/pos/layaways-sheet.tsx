@@ -1,6 +1,16 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,11 +30,98 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { BookMarked, Loader2, RefreshCw, Wallet } from "lucide-react"
+import { BookMarked, Loader2, RefreshCw, Trash2, Wallet } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { DEPOSIT_METHODS, type PosDocumentSummary, type PosPaymentMethod } from "./types"
+
+export const LAYAWAY_PAY_KEY_PREFIX = "pos:layaway-pay:"
+
+type KeyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem"> & Partial<Pick<Storage, "key" | "length">>
+
+function defaultPayStorage(): KeyStorage | null {
+    if (typeof window === "undefined") return null
+    try {
+        return window.sessionStorage ?? window.localStorage ?? null
+    } catch {
+        return null
+    }
+}
+
+export function layawayPayStorageKey(saleId: string, amount: number, method: string): string {
+    return `${LAYAWAY_PAY_KEY_PREFIX}${saleId}:${Math.round(amount * 100)}:${method}`
+}
+
+function parseStoredOperationKey(raw: string | null): ClientOperationKey | null {
+    if (!raw) return null
+    try {
+        const parsed = JSON.parse(raw) as Partial<ClientOperationKey>
+        if (typeof parsed?.key !== "string" || !parsed.key || typeof parsed?.fingerprint !== "string") return null
+        return { key: parsed.key, fingerprint: parsed.fingerprint }
+    } catch {
+        return null
+    }
+}
+
+/**
+ * Resuelve y persiste en sessionStorage/localStorage la llave idempotente de un
+ * abono de apartado por `saleId + amount + method`. Si el navegador recarga o
+ * la red falla en vuelo, el reintento con los mismos datos reutiliza la llave.
+ */
+export function resolveLayawayPayKey(
+    previous: ClientOperationKey | null,
+    input: { saleId: string; amount: number; method: string; payload: unknown },
+    storage: KeyStorage | null = defaultPayStorage(),
+): ClientOperationKey {
+    const storageKey = layawayPayStorageKey(input.saleId, input.amount, input.method)
+    const targetPayload = { saleId: input.saleId, ...(input.payload as object) }
+    let stored: ClientOperationKey | null = null
+    if (storage) {
+        try {
+            stored = parseStoredOperationKey(storage.getItem(storageKey))
+        } catch {
+            stored = null
+        }
+    }
+    const seed = previous?.fingerprint === JSON.stringify(targetPayload) ? previous : (stored ?? previous)
+    const next = getClientOperationKey(seed, targetPayload)
+    if (storage) {
+        try {
+            storage.setItem(storageKey, JSON.stringify(next))
+        } catch {
+            // Storage lleno o restringido: la llave sigue viva en memoria.
+        }
+    }
+    return next
+}
+
+/** Limpia la llave persistida del abono (en éxito o error 4xx definitivo). */
+export function clearLayawayPayKey(
+    saleId: string,
+    amount?: number,
+    method?: string,
+    storage: KeyStorage | null = defaultPayStorage(),
+): void {
+    if (!storage) return
+    try {
+        if (amount !== undefined && method !== undefined) {
+            storage.removeItem(layawayPayStorageKey(saleId, amount, method))
+            return
+        }
+        const prefix = `${LAYAWAY_PAY_KEY_PREFIX}${saleId}:`
+        if (typeof storage.length === "number" && typeof storage.key === "function") {
+            const toRemove: string[] = []
+            for (let i = 0; i < storage.length; i++) {
+                const k = storage.key(i)
+                if (k?.startsWith(prefix)) toRemove.push(k)
+            }
+            for (const k of toRemove) storage.removeItem(k)
+        }
+    } catch {
+        // Ignorar errores de acceso a storage.
+    }
+}
 
 interface LayawaysSheetProps {
     open: boolean
@@ -79,6 +176,12 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
     const [paying, setPaying] = useState(false)
     const pendingPay = useRef<ClientOperationKey | null>(null)
 
+    const [cancelTarget, setCancelTarget] = useState<PosDocumentSummary | null>(null)
+    const [cancelReason, setCancelReason] = useState("")
+    const [cancelling, setCancelling] = useState(false)
+    const cancelRequestKey = useRef(0)
+    const pendingCancel = useRef<ClientOperationKey | null>(null)
+
     const load = useCallback(async () => {
         setLoading(true)
         try {
@@ -112,6 +215,50 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
         pendingPay.current = null
     }
 
+    const openCancel = (doc: PosDocumentSummary) => {
+        setCancelTarget(doc)
+        setCancelReason("")
+        pendingCancel.current = null
+    }
+
+    const submitCancel = async () => {
+        const target = cancelTarget
+        if (!target || cancelling) return
+        const reason = cancelReason.trim()
+        if (!reason) {
+            toast.error("Captura el motivo de la cancelación")
+            return
+        }
+        const requestId = ++cancelRequestKey.current
+        pendingCancel.current = getClientOperationKey(pendingCancel.current, { saleId: target.id, reason })
+        setCancelling(true)
+        try {
+            const res = await fetch(`/api/pos/documents/${target.id}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reason, idempotencyKey: pendingCancel.current.key }),
+            })
+            const data: { error?: string } | null = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(data?.error || "No se pudo cancelar el apartado")
+            if (cancelRequestKey.current !== requestId) return
+            pendingCancel.current = null
+            clearLayawayPayKey(target.id)
+            const refundAmount = docPaid(target)
+            toast.success(
+                refundAmount > 0
+                    ? `Apartado #${target.number} cancelado — reembolso de ${formatPrice(refundAmount)}`
+                    : `Apartado #${target.number} cancelado`,
+            )
+            setCancelTarget(null)
+            setCancelReason("")
+            void load()
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "No se pudo cancelar el apartado")
+        } finally {
+            setCancelling(false)
+        }
+    }
+
     const submitPay = async () => {
         const doc = payTarget
         if (!doc || paying) return
@@ -131,10 +278,15 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             return
         }
         const payload = {
-            branchId: branchId || undefined,
+            cashierBranchId: branchId || undefined,
             payments: [{ method: payMethod, amount, ...(payMethod === "TRANSFERENCIA" ? { reference: payRef.trim() } : {}) }],
         }
-        pendingPay.current = getClientOperationKey(pendingPay.current, { saleId: doc.id, ...payload })
+        pendingPay.current = resolveLayawayPayKey(pendingPay.current, {
+            saleId: doc.id,
+            amount,
+            method: payMethod,
+            payload,
+        })
         // La pestaña del ticket se abre dentro del click; esperar al await la bloquea.
         const ticketPopup = autoOpenTicket ? window.open("", "_blank") : null
         setPaying(true)
@@ -145,8 +297,16 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                 body: JSON.stringify({ ...payload, idempotencyKey: pendingPay.current.key }),
             })
             const data: PayResponse | null = await res.json().catch(() => null)
-            if (!res.ok) throw new Error(data?.error || "No se pudo registrar el abono")
+            if (!res.ok) {
+                if (res.status >= 400 && res.status < 500) {
+                    pendingPay.current = null
+                    clearLayawayPayKey(doc.id, amount, payMethod)
+                }
+                throw new Error(data?.error || "No se pudo registrar el abono")
+            }
             pendingPay.current = null
+            clearLayawayPayKey(doc.id, amount, payMethod)
+            clearLayawayPayKey(doc.id)
 
             const remainingCents = data?.balance != null
                 ? Math.round(data.balance * 100)
@@ -212,14 +372,27 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                                             {doc.customer?.name ?? "Mostrador"} · {formatDate(doc.createdAt)}
                                             {doc.note ? ` · “${doc.note}”` : ""}
                                         </p>
-                                        <div className="flex items-center justify-between text-xs">
+                                        <div className="flex items-center justify-between gap-2 text-xs">
                                             <span className="text-muted-foreground">
                                                 Anticipado {formatPrice(paid)} · <span className="font-medium text-amber-600">resta {formatPrice(balance)}</span>
                                             </span>
-                                            <Button type="button" size="sm" onClick={() => openPay(doc)} disabled={balance <= 0}>
-                                                <Wallet className="h-3.5 w-3.5" />
-                                                Liquidar
-                                            </Button>
+                                            <div className="flex items-center gap-1.5">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-destructive hover:text-destructive"
+                                                    disabled={cancelling || paying}
+                                                    onClick={() => openCancel(doc)}
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                    Cancelar apartado
+                                                </Button>
+                                                <Button type="button" size="sm" onClick={() => openPay(doc)} disabled={balance <= 0 || cancelling}>
+                                                    <Wallet className="h-3.5 w-3.5" />
+                                                    Liquidar
+                                                </Button>
+                                            </div>
                                         </div>
                                     </div>
                                 )
@@ -310,6 +483,44 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={cancelTarget !== null} onOpenChange={o => { if (!o && !cancelling) { setCancelTarget(null); setCancelReason("") } }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Cancelar apartado #{cancelTarget?.number}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {cancelTarget && docPaid(cancelTarget) > 0
+                                ? `Se repondrá la mercancía al inventario y se reembolsará el anticipo abonado de ${formatPrice(docPaid(cancelTarget))}. Esta acción no se puede deshacer.`
+                                : "Se repondrá la mercancía al inventario (sin anticipo por reembolsar). Esta acción no se puede deshacer."}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="space-y-1.5 py-2">
+                        <Label htmlFor="layaway-cancel-reason">Motivo de la cancelación *</Label>
+                        <Input
+                            id="layaway-cancel-reason"
+                            placeholder="Ej: Cliente desistió de la compra"
+                            maxLength={500}
+                            disabled={cancelling}
+                            value={cancelReason}
+                            onChange={e => setCancelReason(e.target.value)}
+                        />
+                    </div>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={cancelling}>Volver</AlertDialogCancel>
+                        <AlertDialogAction
+                            variant="destructive"
+                            disabled={cancelling || !cancelReason.trim()}
+                            onClick={e => {
+                                e.preventDefault()
+                                void submitCancel()
+                            }}
+                        >
+                            {cancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Cancelar apartado
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </>
     )
 }

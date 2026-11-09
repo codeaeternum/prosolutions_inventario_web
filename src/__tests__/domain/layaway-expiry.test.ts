@@ -124,6 +124,14 @@ describe("abono de apartado — caja del cobrador (cross-branch)", () => {
     expect(created.payments[0]).toMatchObject({ saleId: "doc-1", method: "CASH", amount: 50 })
   })
 
+  it("acepta branchId como alias de cashierBranchId en el payload del abono", async () => {
+    const { db, tx } = fakeDb(layaway({ expiresAt: null }), [])
+    await payDocument(db, "emp-1", BIZ, { saleId: "doc-1", idempotencyKey: key(), branchId: "branch-2", ...efectivo })
+    expect(tx.cashRegister.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ branchId: "branch-2" }),
+    }))
+  })
+
   it("sin cashierBranchId el efectivo cae a la sucursal del documento (regresión)", async () => {
     const { db, tx } = fakeDb(layaway({ expiresAt: null }), [])
     // emp-1 no tiene homeBranchId → último respaldo: la sucursal del apartado.

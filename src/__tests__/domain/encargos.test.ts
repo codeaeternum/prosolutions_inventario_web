@@ -9,6 +9,8 @@ import {
   resolveEncargoBranch,
   transitionEncargo,
 } from "@/lib/domain/encargos"
+import { sell } from "@/lib/domain/sales"
+import { checkoutDocument } from "@/lib/domain/documents"
 
 /**
  * Encargos de clientes: guard de transiciones de estado, restricción de
@@ -29,9 +31,13 @@ const tx = {
   user: { findUnique: vi.fn(), findFirst: vi.fn() },
   businessOperation: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   branch: { findFirst: vi.fn() },
-  product: { findFirst: vi.fn() },
+  product: { findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  branchStock: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn() },
+  sale: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  saleItem: { create: vi.fn(), findMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+  inventoryMovement: { create: vi.fn() },
   encargo: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  payment: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
+  payment: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
   supplier: { findFirst: vi.fn() },
   supplierPayment: { create: vi.fn() },
   cashRegister: { findMany: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
@@ -48,11 +54,13 @@ beforeEach(() => {
   tx.businessOperation.update.mockResolvedValue({})
   tx.branch.findFirst.mockResolvedValue(branch)
   tx.product.findFirst.mockResolvedValue(null)
+  tx.product.findMany.mockResolvedValue([])
   tx.encargo.findMany.mockResolvedValue([])
   tx.auditEvent.create.mockResolvedValue({})
   // Ledger: caja abierta por defecto, sin asientos previos de pagos.
   tx.payment.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "pay-1", ...args.data }))
   tx.payment.update.mockResolvedValue({})
+  tx.payment.updateMany.mockResolvedValue({ count: 1 })
   tx.payment.findMany.mockResolvedValue([])
   tx.supplier.findFirst.mockResolvedValue(null)
   tx.supplierPayment.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "sp-1", ...args.data }))
@@ -64,21 +72,24 @@ beforeEach(() => {
 })
 
 describe("guard de transiciones", () => {
-  it("acepta el flujo feliz y la cancelación desde cualquier estado", () => {
+  it("acepta el flujo feliz y la cancelación solo antes de entregar", () => {
     expect(canTransitionEncargo("PENDING", "ORDERED")).toBe(true)
     expect(canTransitionEncargo("ORDERED", "READY")).toBe(true)
     expect(canTransitionEncargo("READY", "DELIVERED")).toBe(true)
-    for (const from of ["PENDING", "ORDERED", "READY", "DELIVERED"]) {
+    for (const from of ["PENDING", "ORDERED", "READY"]) {
       expect(canTransitionEncargo(from, "CANCELLED")).toBe(true)
     }
+    // Una pieza ya entregada no se cancela como encargo (se devuelve por venta).
+    expect(canTransitionEncargo("DELIVERED", "CANCELLED")).toBe(false)
   })
 
   it("rechaza saltos hacia atrás y estados terminales", () => {
     expect(canTransitionEncargo("PENDING", "READY")).toBe(false)
     expect(canTransitionEncargo("ORDERED", "PENDING")).toBe(false)
     expect(canTransitionEncargo("DELIVERED", "READY")).toBe(false)
-    // Cancelado es terminal: nada sale de ahí.
+    // DELIVERED y CANCELLED son terminales: nada sale de ahí.
     for (const to of ["PENDING", "ORDERED", "READY", "DELIVERED", "CANCELLED"]) {
+      expect(canTransitionEncargo("DELIVERED", to)).toBe(false)
       expect(canTransitionEncargo("CANCELLED", to)).toBe(false)
     }
     // Transición al mismo estado tampoco es un avance.
@@ -88,6 +99,7 @@ describe("guard de transiciones", () => {
   it("assertEncargoTransition explica el salto inválido", async () => {
     expect(() => assertEncargoTransition("ORDERED", "PENDING")).toThrowError(/pedida.*pendiente/)
     expect(() => assertEncargoTransition("READY", "INVENTARIO")).toThrowError()
+    expect(() => assertEncargoTransition("DELIVERED", "CANCELLED")).toThrowError(/entregada.*cancelada/)
     expect(() => assertEncargoTransition("READY", "DELIVERED")).not.toThrow()
   })
 })
@@ -266,12 +278,37 @@ describe("transición de encargo", () => {
     expect(tx.encargo.updateMany).not.toHaveBeenCalled()
   })
 
-  it("entregar marca quién lo resolvió", async () => {
-    tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY" })
+  it("bloquea READY → DELIVERED directo cuando hay saldo por cobrar o sin cotización", async () => {
+    tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY", priceQuoted: 500, deposit: 200 })
+    await expect(transitionEncargo(db, "emp-1", BIZ, "e1", { idempotencyKey: key(), action: "DELIVERED" }))
+      .rejects.toMatchObject({ status: 409, code: "ENCARGO_REQUIRES_SALE" })
+    expect(tx.encargo.updateMany).not.toHaveBeenCalled()
+
+    tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY", priceQuoted: null, deposit: 0 })
+    await expect(transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "DELIVERED" }))
+      .rejects.toMatchObject({ status: 409, code: "ENCARGO_REQUIRES_SALE" })
+    expect(tx.encargo.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("permite READY → DELIVERED directo si el anticipo ya cubrió el 100% del precio cotizado", async () => {
+    tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY", priceQuoted: 500, deposit: 500 })
+    tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
+      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 500 }] : [])
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     await transitionEncargo(db, "emp-1", BIZ, "e1", { idempotencyKey: key(), action: "DELIVERED" })
     expect(tx.encargo.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DELIVERED", resolvedById: "emp-1" }),
+    }))
+  })
+
+  it("permite a ADMIN entregar sin cobro cuando declara motivo explícito (garantía/cortesía)", async () => {
+    tx.encargo.findFirst.mockResolvedValue({ ...pending, status: "READY", priceQuoted: 500, deposit: 0 })
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    await transitionEncargo(db, "admin-1", BIZ, "e1", {
+      idempotencyKey: key(), action: "DELIVERED", reason: "Reposición por garantía sin costo",
+    })
+    expect(tx.encargo.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "DELIVERED", resolvedById: "admin-1" }),
     }))
   })
 
@@ -441,7 +478,7 @@ describe("reembolso del anticipo al cancelar", () => {
   })
 
   it("un anticipo ya devuelto no se paga dos veces", async () => {
-    tx.encargo.findFirst.mockResolvedValue({ ...withDeposit, status: "DELIVERED" })
+    tx.encargo.findFirst.mockResolvedValue({ ...withDeposit, status: "READY" })
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })
     // Ledger: anticipo de 500 y una devolución previa (-500): retenido 0.
     tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
@@ -450,6 +487,29 @@ describe("reembolso del anticipo al cancelar", () => {
     expect(result.refundPaymentId).toBeNull()
     expect(tx.payment.create).not.toHaveBeenCalled()
     expect(tx.cashMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("prohíbe cancelar un encargo ya DELIVERED (409)", async () => {
+    tx.encargo.findFirst.mockResolvedValue({ ...withDeposit, status: "DELIVERED" })
+    await expect(transitionEncargo(db, "admin-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED" }))
+      .rejects.toMatchObject({ status: 409, code: "ENCARGO_BAD_TRANSITION" })
+    expect(tx.encargo.updateMany).not.toHaveBeenCalled()
+    expect(tx.payment.create).not.toHaveBeenCalled()
+  })
+
+  it("EMPLOYEE no puede cancelar un encargo registrado por otra persona (403), pero sí el propio", async () => {
+    tx.user.findUnique.mockResolvedValue(employee)
+    tx.encargo.findFirst.mockResolvedValue({ ...withDeposit, createdById: "admin-1", createdBy: { id: "admin-1", name: "Admin" } })
+    await expect(transitionEncargo(db, "emp-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED", reason: "Cliente canceló" }))
+      .rejects.toMatchObject({ status: 403 })
+    expect(tx.encargo.updateMany).not.toHaveBeenCalled()
+    expect(tx.payment.create).not.toHaveBeenCalled()
+
+    // El mismo empleado sí puede cancelar un encargo que él mismo registró.
+    tx.encargo.findFirst.mockResolvedValue({ ...withDeposit, deposit: 0, createdById: "emp-1", createdBy: { id: "emp-1", name: "Emp" } })
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    const own = await transitionEncargo(db, "emp-1", BIZ, "e1", { idempotencyKey: key(), action: "CANCELLED", reason: "Cliente ya no la quiso" })
+    expect(own.status).toBe("CANCELLED")
   })
 
   it("cancelar sin anticipo no toca el ledger", async () => {
@@ -497,5 +557,165 @@ describe("lista de encargos", () => {
     expect(tx.encargo.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.not.objectContaining({ status: "INVENTADO" }),
     }))
+  })
+})
+
+describe("cobro de encargo en POS (sell / checkoutDocument)", () => {
+  const catalogProduct = {
+    id: "prod-1",
+    businessId: BIZ,
+    name: "Pantalla iPhone 13",
+    isActive: true,
+    stock: 2,
+    minStock: 0,
+    retailPrice: 1200,
+    wholesalePrice: 1000,
+    lowStockAlertAt: null,
+  }
+  const readyEncargo = {
+    id: "enc-1",
+    businessId: BIZ,
+    branchId: "b1",
+    branch,
+    status: "READY",
+    description: "Pantalla iPhone 13",
+    quantity: 1,
+    deposit: 300,
+    priceQuoted: 1000,
+    productId: "prod-1",
+    product: { id: "prod-1", name: "Pantalla iPhone 13" },
+    customerId: "cust-1",
+    customer: { id: "cust-1", name: "Cliente", phone: "5512345678" },
+    createdById: "emp-1",
+    createdBy: { id: "emp-1", name: "Emp" },
+    resolvedBy: null,
+    marketplaceRequestId: null,
+  }
+
+  beforeEach(() => {
+    tx.user.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      if (args.where.id === "cust-1") return { id: "cust-1", name: "Cliente", role: "CUSTOMER", customerType: "NORMAL", status: "APPROVED", businessId: BIZ }
+      if (args.where.id === "emp-1") return { ...employee, homeBranchId: "b1" }
+      return admin
+    })
+    tx.product.findFirst.mockResolvedValue(catalogProduct)
+    tx.product.findUnique.mockResolvedValue(catalogProduct)
+    tx.product.findUniqueOrThrow.mockResolvedValue({ ...catalogProduct, stock: 1 })
+    tx.branchStock.upsert.mockResolvedValue({})
+    tx.branchStock.updateMany.mockResolvedValue({ count: 1 })
+    tx.product.updateMany.mockResolvedValue({ count: 1 })
+    tx.sale.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "sale-1", number: 42, ...args.data }))
+    tx.saleItem.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "si-1", ...args.data }))
+    tx.inventoryMovement.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "im-1", ...args.data, product: { id: "prod-1", name: "Pantalla iPhone 13" } }))
+    tx.encargo.findFirst.mockResolvedValue(readyEncargo)
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    tx.payment.findMany.mockImplementation(async (args: { where: { purpose?: string } }) =>
+      args.where.purpose === "ADVANCE" ? [{ method: "CASH", amount: 300 }] : [])
+  })
+
+  it("sell con encargoId usa priceQuoted, descuenta el anticipo del cobro, liga el Payment ADVANCE y cierra a DELIVERED en la misma tx", async () => {
+    const result = await sell(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      encargoId: "enc-1",
+      items: [{ productId: "prod-1", quantity: 1 }],
+      paymentMethod: "TARJETA",
+    })
+
+    // Sale.total refleja el precio cotizado ($1,000), no el de catálogo ($1,200).
+    expect(result.total).toBe(1000)
+    expect(result.depositCents).toBe(30000)
+    expect(result.payableCents).toBe(70000)
+
+    // Solo se crea Payment por el resto ($700), sin duplicar el anticipo de $300.
+    expect(tx.payment.create).toHaveBeenCalledTimes(1)
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        saleId: "sale-1",
+        method: "CARD",
+        amount: 700,
+        status: "CONFIRMED",
+      }),
+    }))
+
+    // El Payment ADVANCE original se liga a saleId para cuadrar Sale.payments sin tocar su createdAt.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { encargoId: "enc-1", purpose: "ADVANCE", status: "CONFIRMED" },
+      data: { saleId: "sale-1" },
+    })
+
+    // El encargo pasa a DELIVERED dentro de la misma transacción.
+    expect(tx.encargo.updateMany).toHaveBeenCalledWith({
+      where: { id: "enc-1", status: "READY" },
+      data: expect.objectContaining({ status: "DELIVERED", resolvedById: "emp-1" }),
+    })
+  })
+
+  it("rechaza en sell un pago dividido que intente cobrar el total sin descontar el anticipo", async () => {
+    await expect(sell(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      encargoId: "enc-1",
+      items: [{ productId: "prod-1", quantity: 1 }],
+      payments: [{ method: "EFECTIVO", amount: 500 }, { method: "TARJETA", amount: 500 }],
+    })).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("rechaza cobrar un encargo que no está en estado READY o pertenece a otra sucursal", async () => {
+    tx.encargo.findFirst.mockResolvedValue({ ...readyEncargo, status: "DELIVERED" })
+    await expect(sell(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      encargoId: "enc-1",
+      items: [{ productId: "prod-1", quantity: 1 }],
+      paymentMethod: "EFECTIVO",
+    })).rejects.toMatchObject({ status: 409, code: "ENCARGO_NOT_READY" })
+
+    tx.encargo.findFirst.mockResolvedValue({ ...readyEncargo, branchId: "b-otra" })
+    await expect(sell(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      encargoId: "enc-1",
+      items: [{ productId: "prod-1", quantity: 1 }],
+      paymentMethod: "EFECTIVO",
+    })).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("checkoutDocument con encargoId aplica descuento + anticipo y cierra el encargo a DELIVERED", async () => {
+    tx.sale.findUnique.mockResolvedValue({
+      id: "sale-draft-1",
+      businessId: BIZ,
+      number: 55,
+      status: "DRAFT",
+      kind: "RETAIL",
+      total: 1000,
+      branchId: "b1",
+      sellerId: "emp-1",
+      customerId: "cust-1",
+    })
+    tx.saleItem.findMany.mockResolvedValue([
+      { id: "si-1", saleId: "sale-draft-1", productId: "prod-1", quantity: 1, unitPrice: 1000, totalPrice: 1000 },
+    ])
+    tx.saleItem.findUniqueOrThrow.mockResolvedValue(
+      { id: "si-1", saleId: "sale-draft-1", productId: "prod-1", quantity: 1, unitPrice: 1000, totalPrice: 1000 },
+    )
+    tx.sale.updateMany.mockResolvedValue({ count: 1 })
+
+    const result = await checkoutDocument(db, "emp-1", BIZ, {
+      idempotencyKey: key(),
+      saleId: "sale-draft-1",
+      encargoId: "enc-1",
+      discountCents: 10000, // $100 de descuento
+      discountReason: "Cliente frecuente",
+      paymentMethod: "EFECTIVO",
+    })
+
+    // Total $1,000 − $100 dto − $300 anticipo = $600 por cobrar hoy.
+    expect(result.payableCents).toBe(60000)
+    expect(result.depositCents).toBe(30000)
+    expect(tx.payment.create).toHaveBeenCalledTimes(1)
+    expect(tx.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ saleId: "sale-draft-1", method: "CASH", amount: 600 }),
+    }))
+    expect(tx.encargo.updateMany).toHaveBeenCalledWith({
+      where: { id: "enc-1", status: "READY" },
+      data: expect.objectContaining({ status: "DELIVERED", resolvedById: "emp-1" }),
+    })
   })
 })

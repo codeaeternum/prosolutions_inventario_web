@@ -165,7 +165,7 @@ export default async function TicketPage({
         discountReason: saleDoc.discountReason ?? undefined,
         paymentMethod: isLive
           ? (isLayaway && paid > 0 ? `Anticipos: ${formatPrice(paid)}` : "")
-          : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method} ${formatPrice(p.amount)}`).join("\n"),
+          : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method}${p.purpose === "ADVANCE" ? " (anticipo)" : ""} ${formatPrice(p.amount)}`).join("\n"),
         notes: [saleDoc.note, saleDoc.branch.name].filter(Boolean).join("\n"),
         cashier: saleDoc.seller.name,
         qrCode: `${folioPrefix}-${String(saleDoc.number).padStart(6, "0")}`,

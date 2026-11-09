@@ -1,7 +1,8 @@
 import type { PrismaClient } from "@prisma/client"
 import { z } from "zod"
 import { actor, amount, BusinessError, cents, itemsSchema, mergeItems, operation, operationKeySchema, releaseStock, resolveBranch, takeStock } from "./operations"
-import { checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
+import { channelOfPaymentMethod, checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
+import { prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Documentos vivos del mostrador sobre el mismo modelo Sale:
@@ -17,6 +18,7 @@ const parkSchema = z.object({
   kind: z.enum(["RETAIL", "WORKSHOP", "LAYAWAY", "QUOTE"]),
   customerId: z.string().min(1).optional(),
   branchId: z.string().min(1).optional(),
+  encargoId: z.string().min(1).optional(),
   note: z.string().trim().max(500).optional(),
   expiresAt: z.iso.datetime().optional(),
   payments: z.array(paymentInput).min(1).max(6).optional(),
@@ -28,13 +30,18 @@ const checkoutSchema = z.object({
   // El cliente puede asignarse o corregirse al cobrar (walk-in que se
   // identifica, o crédito que necesita titular). El documento lo adopta.
   customerId: z.string().min(1).optional(),
+  // Encargo READY que se liquida y entrega dentro de este checkout.
+  encargoId: z.string().min(1).optional(),
   payments: z.array(paymentInput).min(1).max(6).optional(),
   paymentMethod: METHODS.optional(),
   // Descuento autorizado al cobrar, en centavos sobre el total de catálogo.
   // El motivo es obligatorio cuando el descuento es > 0 (rastro forense).
   discountCents: z.number().int().min(0).max(100000000).optional(),
   discountReason: z.string().trim().min(3).max(200).optional(),
-}).refine(v => Boolean(v.payments) !== Boolean(v.paymentMethod), "Envía payments o paymentMethod.")
+}).refine(
+  v => Boolean(v.encargoId) ? !(Boolean(v.payments) && Boolean(v.paymentMethod)) : Boolean(v.payments) !== Boolean(v.paymentMethod),
+  "Envía payments o paymentMethod.",
+)
   .refine(v => !v.discountCents || Boolean(v.discountReason), "Captura el motivo del descuento.")
 
 // El abono de apartado nunca es CREDITO: fiar sobre un apartado sería deuda
@@ -53,6 +60,7 @@ const paySchema = z.object({
   // dominio cae a la sucursal base del cobrador y luego a la del documento.
   // La ruta la valida con assertOperationBranch, igual que el abono de crédito.
   cashierBranchId: z.string().min(1).optional(),
+  branchId: z.string().min(1).optional(),
 })
 
 const cancelSchema = z.object({
@@ -101,6 +109,10 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
       throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
     }
     const wholesale = input.kind === "WORKSHOP" || qualifiedCustomer
+    const encargo = input.encargoId
+      ? await tx.encargo.findFirst({ where: { id: input.encargoId, businessId } })
+      : null
+    const quotedPrice = encargo?.priceQuoted
     const lines = []
     let totalCents = 0
     for (const item of items) {
@@ -110,7 +122,13 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
         ? (await takeStock(tx, { productId: item.productId, quantity: item.quantity, branchId: branch.id, businessId })).product
         : await tx.product.findFirst({ where: { id: item.productId, businessId } })
       if (!product || !product.isActive) throw new BusinessError("El producto ya no está disponible.", 409)
-      const unitCents = cents(wholesale ? product.wholesalePrice : product.retailPrice)
+      const useQuoted = quotedPrice != null && quotedPrice > 0 && (
+        encargo?.productId === item.productId ||
+        (!encargo?.productId && items.length === 1)
+      )
+      const unitCents = useQuoted
+        ? cents(quotedPrice, true)
+        : cents(wholesale ? product.wholesalePrice : product.retailPrice)
       const lineCents = unitCents * item.quantity
       cents(amount(lineCents))
       lines.push({ item, product, unitCents, lineCents })
@@ -162,7 +180,8 @@ export async function parkDocument(db: PrismaClient, actorId: string, businessId
 /** Convierte un DRAFT (suspensión o cotización) en venta COMPLETED cobrando con los precios snapshot. */
 export async function checkoutDocument(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
   const input = checkoutSchema.parse(raw)
-  const payments = input.payments ?? [{ method: input.paymentMethod! }]
+  const hasPayments = Boolean(input.payments) || Boolean(input.paymentMethod)
+  const payments = hasPayments ? (input.payments ?? [{ method: input.paymentMethod! }]) : []
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_DOCUMENT_CHECKOUT", permission: "staff", payload: input }, async tx => {
     const sale = await tx.sale.findUnique({ where: { id: input.saleId } })
     if (!sale || sale.businessId !== businessId) throw new BusinessError("Documento no encontrado.", 404)
@@ -171,14 +190,18 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
     // dato inconsistente se cobre por la caja de venta en vez de por abonos.
     if (sale.kind === "LAYAWAY") throw new BusinessError("Los apartados se liquidan por abonos, no por este cobro.", 409)
     if (sale.kind === "QUOTE" && sale.expiresAt && sale.expiresAt.getTime() < Date.now()) throw new BusinessError("La cotización venció.", 410)
+    const encargoInfo = input.encargoId
+      ? await prepareEncargoForSaleTx(tx, { encargoId: input.encargoId, businessId, branchId: sale.branchId })
+      : null
     // El cliente del documento puede reasignarse al cobrar (walk-in que se
     // identifica al pagar, o el titular del crédito elegido en el diálogo).
     // El rol del actor también se resuelve aquí porque sirve para el tier.
     const me = await tx.user.findUnique({ where: { id: actorId }, select: { role: true } })
     let customerId = sale.customerId
-    if (input.customerId && input.customerId !== sale.customerId) {
-      await actor(tx, input.customerId, "customer", businessId)
-      customerId = input.customerId
+    const requestedCustomerId = input.customerId ?? encargoInfo?.encargo.customerId ?? undefined
+    if (requestedCustomerId && requestedCustomerId !== sale.customerId) {
+      await actor(tx, requestedCustomerId, "customer", businessId)
+      customerId = requestedCustomerId
     }
     // Defensa en profundidad: un DRAFT WORKSHOP viejo o manipulado se
     // rechequea contra el cliente FINAL — el gate vive también en parkDocument.
@@ -191,12 +214,10 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
         throw new BusinessError("El precio de taller requiere un cliente tipo taller/negocio; pide autorización al administrador.", 403)
       }
     }
-    // El cliente del documento (si lo tiene) es quien autoriza el CREDITO.
-    checkSalePayments(payments, customerId)
     const totalCents = cents(sale.total)
     // Descuento autorizado al cobrar: sale.total conserva el precio de
-    // catálogo y los pagos cuadran contra total − descuento. El cobro nunca
-    // queda en $0 — eso sería cortesía/cancelación, otro flujo.
+    // catálogo y los pagos cuadran contra total − descuento − anticipo. El
+    // descuento por sí solo nunca cubre el total — eso sería cortesía.
     const discountCents = input.discountCents ?? 0
     if (discountCents >= totalCents) throw new BusinessError("El descuento no puede cubrir el total del cobro.", 409)
     if (discountCents > 0) {
@@ -207,9 +228,19 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
         throw new BusinessError("Los empleados pueden descontar hasta 10%; pide autorización al administrador.", 403)
       }
     }
+    const depositCents = encargoInfo?.depositCents ?? 0
+    if (discountCents + depositCents > totalCents) {
+      throw new BusinessError("El anticipo y el descuento superan el total de la venta.", 409)
+    }
     const discountReason = discountCents > 0 ? input.discountReason ?? null : null
-    const payableCents = totalCents - discountCents
-    const settled = settleSalePayments(payments, payableCents)
+    const payableCents = totalCents - discountCents - depositCents
+    let settled: SettledPayment[] = []
+    if (payableCents > 0) {
+      if (!hasPayments) throw new BusinessError("Envía payments o paymentMethod.", 400)
+      // El cliente del documento (si lo tiene) es quien autoriza el CREDITO.
+      checkSalePayments(payments, customerId)
+      settled = settleSalePayments(payments, payableCents)
+    }
     const saleItems = await tx.saleItem.findMany({ where: { saleId: sale.id } })
     // El precio prometido es el snapshot del renglón; aquí solo se compromete
     // el stock que el DRAFT nunca apartó.
@@ -219,7 +250,9 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
     const committed = await commitSale(tx, {
       sale, businessId, actorId, branchId: sale.branchId, customerId,
       lines: saleItems.map(item => ({ saleItemId: item.id, productId: item.productId, quantity: item.quantity, unitCents: cents(item.unitPrice), lineCents: cents(item.totalPrice) })),
-      payments: settled, reason: `Venta V-${sale.number}`,
+      payments: settled,
+      reason: `Venta V-${sale.number}`,
+      fallbackMethod: encargoInfo ? channelOfPaymentMethod(encargoInfo.depositMethod) : null,
     })
     // Guardia de concurrencia: solo un checkout puede sellar el DRAFT — el
     // descuento autorizado queda persistido en el mismo flip atómico.
@@ -228,6 +261,15 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       data: { status: "COMPLETED", discountCents, discountReason, ...(customerId !== sale.customerId ? { customerId } : {}) },
     })
     if (changed.count !== 1) throw new BusinessError("El documento cambió durante la operación; reintenta.", 409)
+    if (encargoInfo) {
+      await settleEncargoInSaleTx(tx, {
+        encargoId: encargoInfo.encargo.id,
+        saleId: sale.id,
+        actorId,
+        businessId,
+        depositCents,
+      })
+    }
     return {
       sale: { ...sale, status: "COMPLETED" as const, discountCents, discountReason },
       items: committed.items, payments: committed.payments, movements: committed.movements,
@@ -235,6 +277,7 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
       // Folio y desglose del descuento en el recibo: la bitácora y la alerta
       // de operación sensible (operation-alerts) los leen de aquí.
       number: sale.number, discountCents, discountReason, payableCents,
+      ...(encargoInfo ? { encargoId: encargoInfo.encargo.id, depositCents } : {}),
     }
   })
   await syncLowStockAlerts(db, businessId, collectLowStockIds(result.items))
@@ -247,7 +290,9 @@ export async function checkoutDocument(db: PrismaClient, actorId: string, busine
  *  apartado: un abono cobrado en otra sucursal cuadra contra el corte de quien
  *  lo recibió. */
 export async function payDocument(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
-  const input = paySchema.parse(raw)
+  const { branchId: legacyBranchId, ...parsed } = paySchema.parse(raw)
+  const cashierBranchId = parsed.cashierBranchId ?? legacyBranchId
+  const input = { ...parsed, ...(cashierBranchId ? { cashierBranchId } : {}) }
   if (input.payments.length > 1 && input.payments.some(p => p.amount === undefined)) throw new BusinessError("En un pago dividido cada medio debe traer su monto.")
   if (input.payments.some(p => p.method === "TRANSFERENCIA" && !p.reference)) throw new BusinessError("Captura la referencia de cada transferencia.")
   return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SALE_DOCUMENT_PAYMENT", permission: "staff", payload: input }, async tx => {

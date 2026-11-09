@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   recordAudit: vi.fn(),
   userFindUnique: vi.fn(),
   userFindFirst: vi.fn(),
+  userFindMany: vi.fn(),
+  userCount: vi.fn(),
   userCreate: vi.fn(),
   userUpdate: vi.fn(),
   userDelete: vi.fn(),
@@ -33,6 +35,8 @@ vi.mock("@/lib/prisma", () => ({
     user: {
       findUnique: mocks.userFindUnique,
       findFirst: mocks.userFindFirst,
+      findMany: mocks.userFindMany,
+      count: mocks.userCount,
       create: mocks.userCreate,
       update: mocks.userUpdate,
       delete: mocks.userDelete,
@@ -51,7 +55,8 @@ vi.mock("@/lib/audit", async (importActual) => {
   return { ...actual, recordAudit: mocks.recordAudit }
 })
 
-import { POST as createUser } from "@/app/api/users/route"
+import { GET as listUsers, POST as createUser } from "@/app/api/users/route"
+import { GET as listStaff } from "@/app/api/staff/route"
 import { PATCH as patchUser, DELETE as deleteUser } from "@/app/api/users/[id]/route"
 
 const BIZ = "biz-test"
@@ -88,6 +93,8 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue(null)
   mocks.userFindUnique.mockResolvedValue(existing())
   mocks.userFindFirst.mockResolvedValue(null)
+  mocks.userFindMany.mockResolvedValue([])
+  mocks.userCount.mockResolvedValue(0)
   mocks.businessFindFirst.mockResolvedValue(null)
   mocks.branchCount.mockResolvedValue(0)
   mocks.branchFindUnique.mockResolvedValue({ id: "b1", isActive: true })
@@ -215,6 +222,17 @@ describe("PATCH /api/users/[id] — admin conserva control total", () => {
     expect(mocks.userUpdate).not.toHaveBeenCalled()
   })
 
+  it("no puede auto-suspenderse ni pasarse a PENDING", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue(existing({ id: "admin-1", role: "ADMIN" }))
+    for (const status of ["REJECTED", "PENDING"]) {
+      const res = await patchUser(patchReq({ status }), params("admin-1"))
+      expect(res.status).toBe(400)
+      expect((await res.json()).error).toMatch(/suspender tu propia cuenta/)
+    }
+    expect(mocks.userUpdate).not.toHaveBeenCalled()
+  })
+
   it("estatus o tipo de cliente inválidos son 400, no un 500 de Prisma", async () => {
     mocks.auth.mockResolvedValue(admin())
     for (const body of [{ status: "FUBAR" }, { customerType: "VIP" }]) {
@@ -288,6 +306,63 @@ describe("POST /api/users — empleado con módulo usuarios", () => {
     expect(res.status).toBe(400)
     expect(mocks.userCreate).not.toHaveBeenCalled()
   })
+
+  it("valida formato de email y contraseña de al menos 8 caracteres", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    const badEmail = await createUser(postReq(newUserPayload({ email: "no-es-correo" })))
+    expect(badEmail.status).toBe(400)
+    expect((await badEmail.json()).error).toMatch(/correo/i)
+
+    const shortPw = await createUser(postReq(newUserPayload({ password: "1234567" })))
+    expect(shortPw.status).toBe(400)
+    expect((await shortPw.json()).error).toMatch(/8 caracteres/)
+    expect(mocks.userCreate).not.toHaveBeenCalled()
+  })
+
+  it("aplica rate-limit por actor (30 altas cada 15 min)", async () => {
+    mocks.auth.mockResolvedValue({
+      user: { id: "admin-rl", role: "ADMIN", status: "APPROVED", businessId: BIZ, customerType: "NORMAL" },
+    })
+    for (let i = 0; i < 30; i++) {
+      const r = await createUser(postReq(newUserPayload({ role: "SUPERUSER" })))
+      expect(r.status).toBe(400)
+    }
+    const limited = await createUser(postReq(newUserPayload()))
+    expect(limited.status).toBe(429)
+    expect(mocks.userCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe("GET /api/users y GET /api/staff — validación de filtros y no-store", () => {
+  it("GET /api/users rechaza status o role inválidos con 400 sin tocar la BD", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    for (const q of ["status=FUBAR", "role=SUPERUSER", "status=APPROVED&role=ROOT"]) {
+      const res = await listUsers(new Request(`https://app.invalid/api/users?${q}`))
+      expect(res.status).toBe(400)
+    }
+    expect(mocks.userFindMany).not.toHaveBeenCalled()
+  })
+
+  it("GET /api/users responde con Cache-Control: private, no-store", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    const res = await listUsers(new Request("https://app.invalid/api/users?status=APPROVED&role=EMPLOYEE"))
+    expect(res.status).toBe(200)
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+  })
+
+  it("GET /api/staff conserva hasPin para cambio rápido y responde con Cache-Control: private, no-store", async () => {
+    mocks.auth.mockResolvedValue(manager())
+    mocks.userFindMany.mockResolvedValue([
+      { id: "u-1", name: "Ana", role: "EMPLOYEE", jobTitle: "Cajera", quickPin: "$2a$12$hash", homeBranch: null },
+    ])
+    const res = await listStaff()
+    expect(res.status).toBe(200)
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+    const body = await res.json()
+    expect(body).toEqual([
+      { id: "u-1", name: "Ana", role: "EMPLOYEE", jobTitle: "Cajera", hasPin: true, homeBranch: null },
+    ])
+  })
 })
 
 describe("DELETE /api/users/[id]", () => {
@@ -305,5 +380,13 @@ describe("DELETE /api/users/[id]", () => {
     const res = await deleteUser(delReq(), params("u-2"))
     expect(res.status).toBe(200)
     expect(mocks.userDelete).toHaveBeenCalledWith({ where: { id: "u-2", businessId: BIZ } })
+  })
+
+  it("admin no puede auto-eliminarse", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    const res = await deleteUser(delReq(), params("admin-1"))
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(/eliminar tu propia cuenta/)
+    expect(mocks.userDelete).not.toHaveBeenCalled()
   })
 })

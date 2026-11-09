@@ -8,7 +8,9 @@ import { prisma } from "./prisma"
  * cliente Prisma extendido que inyecta el filtro `businessId` en lecturas,
  * actualizaciones y borrados, y lo estampa en creates de primer nivel.
  *
- * Modelos globales (sin businessId, NO se filtran): Business, DeviceModel.
+ * Modelos globales o cross-tenant (NO se filtran aquí): Business, DeviceModel,
+ * PartRequest, PlatformEvent, DirectoryEvent, VerificationCode,
+ * WorkshopServicePrice, NotificationRead.
  *
  * Fase 2 migra las rutas a este cliente; hasta entonces las rutas siguen
  * usando `prisma` global y el aislamiento se aplica de forma explícita.
@@ -17,13 +19,13 @@ const TENANT_MODELS = new Set([
   "User", "Brand", "Model", "Category", "Product", "PriceHistory",
   "ProductModel", "Reservation", "CreditMovement", "Settings",
   "PushSubscription", "CashRegister", "CashMovement", "SystemSettings",
-  "BusinessOperation", "Branch", "BranchStock", "Sale", "SaleItem",
+  "BusinessOperation", "BusinessCounter", "Branch", "BranchStock", "Sale", "SaleItem",
   "Payment", "RepairOrder", "RepairPart", "RepairEvent", "CashRequest",
   "RepairPhoto", "WorkshopService", "MarketplaceRequest",
   "InventoryMovement",
   "Supplier", "Purchase", "PurchaseItem", "SupplierPayment",
   "InventoryCount", "InventoryCountItem",
-  "Encargo",
+  "ShoppingItem", "Encargo",
   "AuditEvent",
   "Notification",
   "ClockEvent",
