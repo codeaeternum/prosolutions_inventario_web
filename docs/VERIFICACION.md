@@ -53,3 +53,52 @@ docker compose -f docker-compose.yml config
 # La migración en producción la ejecuta el servicio/imagen "migrate"
 # (docker compose --profile migrate run --rm migrate), nunca db push ni el arranque de la app.
 ```
+
+---
+
+## Pruebas E2E
+
+Suite de regresión con Playwright (`e2e/`, config en `playwright.config.ts`). Corre contra un servidor YA levantado — nunca arranca `next dev` sola (puede no haber BD local).
+
+### Comandos
+
+```bash
+# Suite pública contra producción (segura: solo lectura — GET, render,
+# validación client-side y localStorage; ningún POST que persista datos).
+E2E_BASE_URL=https://reficio.app npm run test:e2e
+
+# Contra un dev server local ya levantado en :3000
+npm run test:e2e
+
+# Que Playwright arroque el dev server por ti (opt-in)
+E2E_START_DEV=1 npm run test:e2e
+
+# UI interactiva de Playwright
+npm run test:e2e:ui
+```
+
+### Variables de entorno
+
+| Variable | Efecto |
+|----------|--------|
+| `E2E_BASE_URL` | URL base (default `http://localhost:3000`). Usa `https://reficio.app` para la suite pública contra producción. |
+| `E2E_START_DEV=1` | Arranca `npm run dev` como webServer (reusa uno ya levantado). |
+| `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` | Habilita los specs con sesión (`admin-smoke`, bloque "requiere sesión" de `tenant-isolation`). La cuenta debe ser rol **ADMIN** aprobado en la BD del ambiente. Sin ellas esos specs se auto-skipean. |
+| `E2E_ALLOW_WRITES=1` | Desbloquea specs que ESCRIBEN en el servidor (ventas, reservas). **Solo con ambiente desechable — nunca contra reficio.app.** |
+
+### Cobertura
+
+| Archivo | Qué cubre | ¿Sesión? |
+|---------|-----------|----------|
+| `public-pages.spec.ts` | Smoke de `/`, `/login`, `/catalogo`, `/seguimiento` (folio inexistente → error amable), `/registro`, `/mercado`, `/recuperar`, `/verificar` y `/verificar/<qr basura>`: HTTP 200, landmarks reales, sin `pageerror` ni artefactos (`[object Object]`, `undefined`, `NaN`). | No |
+| `auth-flow.spec.ts` | Login inválido → error inline sin redirect; `/admin*` sin sesión → `/login`; rutas legacy (`/carrito`, `/mis-reservas`, `/perfil`) → `/?redirect=bot`; `/recuperar` con respuesta uniforme anti-enumeración. | No |
+| `cart-flow.spec.ts` | Carrito anónimo: `cart:public` en localStorage hidrata el badge del header; "Agregar" sin sesión → `/login?callbackUrl=/catalogo`; `/carrito` anónimo rebota a `/?redirect=bot`. | No |
+| `tenant-isolation.spec.ts` | Fugas cross-tenant vía localStorage (caché legacy de notificaciones, `cart:{businessId}`, preferencia `reficio-branch`). | No / gated |
+| `admin-smoke.spec.ts` | Login admin → dashboard + sidebar, POS (`/admin/ventas`), `/admin/reportes`, `/carrito` con sesión (quitar item, sync localStorage). | Sí — `E2E_ADMIN_*` |
+
+### Proyectos y seguridad
+
+- **chromium** (Desktop Chrome): toda la suite. **mobile-chrome** (Pixel 7): solo los specs públicos — responsive smoke barato.
+- Contra **producción** solo es segura la suite pública + los specs con sesión de solo-lectura. Cualquier spec futuro que persista datos debe vivir en el describe `escritura — ambiente desechable` de `admin-smoke.spec.ts`, gated por `E2E_ALLOW_WRITES=1`.
+
+Verificado: `E2E_BASE_URL=https://reficio.app npx playwright test` → **46 passed, 11 skipped** (los de sesión, sin credenciales).

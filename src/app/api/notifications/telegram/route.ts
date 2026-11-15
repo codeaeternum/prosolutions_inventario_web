@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Prisma } from '@prisma/client'
+import { Prisma } from '@/generated/prisma/client'
 import { z } from 'zod'
 import { getSession, requireModule } from '@/lib/api-auth'
 import { businessIdOf } from '@/lib/tenant'

@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client"
+import type { Prisma, PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, transaction, type Transaction } from "./operations"
 

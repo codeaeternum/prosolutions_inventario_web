@@ -4,7 +4,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { fillDays, fillMonths, lastDayKeys, lastMonthKeys } from "@/lib/chart-utils"
 import { BUSINESS_TIME_ZONE, parseBusinessDateParam } from "@/lib/business-time"
-import { Prisma } from "@prisma/client"
+import { Prisma } from "@/generated/prisma/client"
 
 // Tipo para status de reserva (del schema)
 type ReservationStatusType = "PENDING" | "PENDING_PAYMENT" | "DEPOSIT_VERIFIED" | "APPROVED" | "REJECTED" | "COMPLETED" | "CANCELLED" | "EXPIRED"

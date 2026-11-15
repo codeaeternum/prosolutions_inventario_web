@@ -45,6 +45,9 @@ interface EncargoRow {
     product: { id: string; name: string } | null
     createdBy: { id: string; name: string } | null
     resolvedBy: { id: string; name: string } | null
+    /** Reembolsos del anticipo (purpose=REFUND, amount negativo): el folio
+     *  bancario persiste en `reference` y se muestra en la tarjeta. */
+    payments?: { id: string; amount: number; method: string; reference: string | null }[]
 }
 interface CustomerHit { id: string; name: string; phone: string | null }
 interface ProductHit { id: string; name: string; retailPrice: number; stock: number }
@@ -222,6 +225,9 @@ export function EncargosPanel() {
     const [cancelTarget, setCancelTarget] = useState<EncargoRow | null>(null)
     const [cancelReason, setCancelReason] = useState("")
     const [cancelRefundMethod, setCancelRefundMethod] = useState<"CASH" | "CARD" | "TRANSFER">("CASH")
+    // Folio de la devolución bancaria del anticipo: solo se pide con
+    // CARD/TRANSFER y viaja como `refundReference` en la transición.
+    const [cancelRefundReference, setCancelRefundReference] = useState("")
     const [deliverTarget, setDeliverTarget] = useState<EncargoRow | null>(null)
 
     // Formulario de nuevo encargo
@@ -1067,6 +1073,16 @@ export function EncargosPanel() {
                                                     </p>
                                                 )}
                                                 {trail && <p className="text-xs text-muted-foreground break-words">{trail}</p>}
+                                                {/* Reembolso(s) del anticipo al cancelar: el folio bancario
+                                                    persistido (Payment.reference) queda visible para
+                                                    conciliar contra el estado de cuenta. */}
+                                                {(item.payments ?? []).map(p => (
+                                                    <p key={p.id} className="text-xs text-muted-foreground">
+                                                        Reembolso {p.method === "CARD" ? "por tarjeta" : p.method === "TRANSFER" ? "por transferencia" : "en efectivo"}
+                                                        {" "}<span className="tabular-nums">{formatPrice(Math.abs(p.amount))}</span>
+                                                        {p.reference ? ` · Ref: ${p.reference}` : ""}
+                                                    </p>
+                                                ))}
                                             </div>
                                             <Badge variant={chip.variant} className="shrink-0">{chip.label}</Badge>
                                         </div>
@@ -1222,6 +1238,7 @@ export function EncargosPanel() {
                                                         setCancelTarget(item)
                                                         setCancelReason("")
                                                         setCancelRefundMethod("CASH")
+                                                        setCancelRefundReference("")
                                                     }}
                                                 >
                                                     {pendingIcon(`${item.id}:CANCELLED`, X)} Cancelar
@@ -1443,7 +1460,7 @@ export function EncargosPanel() {
             </div>
 
             {/* Confirmación para cancelar encargo */}
-            <AlertDialog open={Boolean(cancelTarget)} onOpenChange={open => { if (!open && !busy) setCancelTarget(null) }}>
+            <AlertDialog open={Boolean(cancelTarget)} onOpenChange={open => { if (!open && !busy) { setCancelTarget(null); setCancelRefundReference("") } }}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>¿Cancelar encargo?</AlertDialogTitle>
@@ -1459,6 +1476,14 @@ export function EncargosPanel() {
                             )}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
+                    {/* Vista previa del reembolso bancario: confirma el canal y
+                        el folio que quedará asentado en el pago REFUND. */}
+                    {cancelTarget && cancelTarget.deposit > 0 && cancelRefundMethod !== "CASH" && (
+                        <p className="text-xs text-muted-foreground">
+                            Se registrará devolución por {formatPrice(cancelTarget.deposit)} a {cancelRefundMethod === "CARD" ? "tarjeta" : "transferencia"}
+                            {cancelRefundReference.trim() ? ` (ref: ${cancelRefundReference.trim()})` : ""}.
+                        </p>
+                    )}
                     {cancelTarget && (
                         <div className="space-y-3 py-1">
                             <div className="space-y-1.5">
@@ -1490,21 +1515,46 @@ export function EncargosPanel() {
                                     </Select>
                                 </div>
                             )}
+                            {/* Folio de la devolución cuando el reembolso sale
+                                por canal bancario — obligatorio (4+ caracteres)
+                                para conciliar contra el estado de cuenta. */}
+                            {cancelTarget.deposit > 0 && cancelRefundMethod !== "CASH" && (
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="encargo-refund-ref">Referencia bancaria *</Label>
+                                    <Input
+                                        id="encargo-refund-ref"
+                                        placeholder="Folio de la transferencia / últimos 4 dígitos"
+                                        maxLength={50}
+                                        disabled={busy}
+                                        value={cancelRefundReference}
+                                        onChange={e => setCancelRefundReference(e.target.value)}
+                                    />
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Aparece en el estado de cuenta del cliente.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     )}
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={busy}>Volver</AlertDialogCancel>
                         <Button
                             variant="destructive"
-                            disabled={busy || cancelReason.trim().length < 3}
+                            disabled={
+                                busy
+                                || cancelReason.trim().length < 3
+                                || (cancelTarget != null && cancelTarget.deposit > 0 && cancelRefundMethod !== "CASH" && cancelRefundReference.trim().length < 4)
+                            }
                             onClick={async () => {
                                 if (!cancelTarget || cancelReason.trim().length < 3) return
                                 const target = cancelTarget
                                 const extra: Record<string, unknown> = {
                                     reason: cancelReason.trim(),
                                     ...(target.deposit > 0 ? { refundMethod: cancelRefundMethod } : {}),
+                                    ...(target.deposit > 0 && cancelRefundMethod !== "CASH" ? { refundReference: cancelRefundReference.trim() } : {}),
                                 }
                                 setCancelTarget(null)
+                                setCancelRefundReference("")
                                 await markEncargo(target, "CANCELLED", extra)
                             }}
                         >

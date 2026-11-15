@@ -1,5 +1,5 @@
 import { createHash, randomInt } from "node:crypto"
-import type { PrismaClient, VerificationChannel, VerificationCode } from "@prisma/client"
+import type { PrismaClient, VerificationChannel, VerificationCode } from "@/generated/prisma/client"
 import { normalizePhone } from "./utils"
 
 /**

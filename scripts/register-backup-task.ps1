@@ -22,11 +22,7 @@ param(
     [string]$At = "03:30",
     [switch]$UseSystem,
     # Parámetros extra opcionales que se reenvían al backup (rutas distintas, etc.)
-    [string]$BackupRoot = "D:\Backups\prosolutions",
-    # URL del monitor Push de Uptime Kuma (http://localhost:3001/api/push/<TOKEN>).
-    # Se reenvía tal cual a backup-n5.ps1, que hace GET <url>?status=up|down al
-    # terminar. Ver docs/BACKUP.md → "Monitoreo" para crear el monitor.
-    [string]$KumaPushUrl = ""
+    [string]$BackupRoot = "D:\Backups\prosolutions"
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,11 +49,6 @@ if (-not $isAdmin) {
 New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
 $logFile = Join-Path $BackupRoot "backup-task.log"
 $actionArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"& '$backupScript' -BackupRoot '$BackupRoot'"
-# La URL de Kuma viaja como argumento de la acción programada: el push del
-# backup también corre cuando nadie edita la tarea a mano (taskschd.msc).
-if ($KumaPushUrl) {
-    $actionArgs += " -KumaPushUrl '$KumaPushUrl'"
-}
 $actionArgs += " *> '$logFile'`""
 $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArgs -WorkingDirectory $projectRoot
 $trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]$At)

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import type { Prisma, RepairStatus } from "@prisma/client"
+import type { Prisma, RepairStatus } from "@/generated/prisma/client"
 import { z, ZodError } from "zod"
 import { prisma } from "@/lib/prisma"
 import { transaction, BusinessError } from "@/lib/domain/operations"

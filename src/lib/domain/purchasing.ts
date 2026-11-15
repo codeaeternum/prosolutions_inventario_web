@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { PrismaClient, PurchaseStatus } from "@prisma/client"
+import type { PrismaClient, PurchaseStatus } from "@/generated/prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, operation, operationKeySchema, releaseStock, resolveBranch } from "./operations"
 import { nextPurchaseNumber } from "./tenant-sequence"

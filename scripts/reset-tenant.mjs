@@ -15,7 +15,9 @@
  *
  * Siempre hacer respaldo ANTES (pg_dump). Este script no lo hace por ti.
  */
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from "../src/generated/prisma/client.ts"
+import { PrismaPg } from "@prisma/adapter-pg"
+import { Pool } from "pg"
 
 const arg = (name) => {
   const i = process.argv.indexOf(name)
@@ -31,7 +33,10 @@ if (!businessRef || !keepEmail || confirm !== "BORRAR TODO") {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+// Prisma 7 usa driver adapters: PrismaClient necesita PrismaPg + pg.Pool.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const adapter = new PrismaPg(pool)
+const prisma = new PrismaClient({ adapter })
 
 const business = await prisma.business.findFirst({
   where: { OR: [{ id: businessRef }, { slug: businessRef }] },

@@ -219,6 +219,9 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
     const [returnTarget, setReturnTarget] = useState<Movement | null>(null)
     const [returnQty, setReturnQty] = useState("1")
     const [returnReason, setReturnReason] = useState("")
+    // Folio de la devolución bancaria: solo se pide cuando la venta original
+    // se cobró por tarjeta/transferencia — viaja como `reference` al POST.
+    const [returnReference, setReturnReference] = useState("")
     const [returningInProgress, setReturningInProgress] = useState(false)
 
     // Actions menu (mobile-friendly popover alternative)
@@ -359,12 +362,21 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
             toast.error(`Cantidad inválida (máx: ${returnTarget.returnableQuantity})`)
             return
         }
+        // El reembolso sale por el medio original del cobro: tarjeta/
+        // transferencia exigen folio para conciliar contra el estado de cuenta.
+        const bankRefund = returnTarget.paymentMethod === "CARD" || returnTarget.paymentMethod === "TRANSFER"
+            || returnTarget.paymentMethod === "TARJETA" || returnTarget.paymentMethod === "TRANSFERENCIA"
+        if (bankRefund && returnReference.trim().length < 4) {
+            toast.error("Captura el folio de la devolución bancaria (mínimo 4 caracteres)")
+            return
+        }
 
         setReturningInProgress(true)
         try {
             const payload = {
                 productId: returnTarget.product.id, type: "RETURN", quantity: qty,
                 reason: returnReason || `Devolución de venta ${returnTarget.id.substring(0, 8)}`,
+                ...(bankRefund ? { reference: returnReference.trim() } : {}),
                 ...(returnTarget.source === "RESERVATION" ? { reservationId: returnTarget.id } : { relatedId: returnTarget.id }),
             }
             returnOperation.current = getClientOperationKey(returnOperation.current, payload)
@@ -380,6 +392,7 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                 setReturnTarget(null)
                 setReturnQty("1")
                 setReturnReason("")
+                setReturnReference("")
                 fetchMovements()
             } else {
                 const data = await res.json().catch(() => null)
@@ -476,6 +489,8 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                                     onClick={() => {
                                         setReturnTarget(mov)
                                         setReturnQty(String(Math.min(mov.quantity, mov.returnableQuantity)))
+                                        setReturnReason("")
+                                        setReturnReference("")
                                         setReturnDialogOpen(true)
                                         close()
                                     }}
@@ -833,6 +848,24 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                                     placeholder="Ej: Producto defectuoso, error en la venta..."
                                 />
                             </div>
+
+                            {/* La devolución reembolsa por el medio original del
+                                cobro: tarjeta/transferencia exigen el folio. */}
+                            {["CARD", "TRANSFER", "TARJETA", "TRANSFERENCIA"].includes(returnTarget.paymentMethod ?? "") && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="returnReference">Referencia bancaria *</Label>
+                                    <Input
+                                        id="returnReference"
+                                        value={returnReference}
+                                        onChange={(e) => setReturnReference(e.target.value)}
+                                        placeholder="Folio de la transferencia / últimos 4 dígitos"
+                                        maxLength={50}
+                                    />
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Aparece en el estado de cuenta del cliente.
+                                    </p>
+                                </div>
+                            )}
 
                             {returnTarget.unitPrice && (
                                 <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">

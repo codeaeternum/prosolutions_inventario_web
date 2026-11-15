@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS, createReservations } from "@/lib/domain/reservations"
 import { businessFailure } from "@/lib/domain/http"
 import { checkAndRecord } from "@/lib/rate-limit"
-import type { Prisma, ReservationStatus } from "@prisma/client"
+import type { Prisma, ReservationStatus } from "@/generated/prisma/client"
 
 // Crear una reserva descuenta existencias reales (takeStock): sin tope, un
 // cliente podía inmovilizar el inventario creando reservas en ráfaga. El

@@ -1,4 +1,4 @@
-import type { CountStatus, PrismaClient } from "@prisma/client"
+import type { CountStatus, PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
 import { nextCountNumber } from "./tenant-sequence"

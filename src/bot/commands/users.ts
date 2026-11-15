@@ -1,7 +1,7 @@
 import { submitRegistration } from "../lib/registration"
 import { Markup } from 'telegraf'
 import type { Context } from 'telegraf'
-import type { PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@/generated/prisma/client'
 import type { BotContext } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
 import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'

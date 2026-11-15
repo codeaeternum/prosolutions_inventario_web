@@ -51,7 +51,7 @@ export interface WorkshopSheetData {
     decidedBy?: string
     decisionNote?: string
   }[]
-  payments: { label: string; amount: number; method: string; date: string }[]
+  payments: { label: string; amount: number; method: string; date: string; reference?: string }[]
   paidTotal: number
   // Totales de la orden (workshop-money): refacciones autorizadas a precio,
   // cargo por diagnóstico en cierres sin reparación y total a cobrar.
@@ -303,6 +303,7 @@ function FullSheet({ data, evidenceQr, evidenceDisabled }: { data: WorkshopSheet
               data.payments.map((p, idx) => (
                 <p key={idx}>
                   {p.label}: {formatPrice(p.amount)} ({p.method})
+                  {p.reference ? ` · Ref: ${p.reference}` : ""}
                   <span className="text-gray-500"> — {formatDate(p.date)}</span>
                 </p>
               ))

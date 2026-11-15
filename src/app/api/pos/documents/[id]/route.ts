@@ -61,6 +61,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     }
     return NextResponse.json(await cancelDocument(prisma, session.user.id, businessId, {
       saleId: id, reason: body.reason ?? "Cancelado desde el mostrador",
+      references: body.references,
       idempotencyKey: body.idempotencyKey ?? req.headers.get("idempotency-key"),
     }))
   } catch (error) { return businessFailure(error) }

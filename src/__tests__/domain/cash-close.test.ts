@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { changeCash, countsAsCash, denominationsTotalCents, expectedCashCents, registerPaymentWhere } from "@/lib/domain/cash"
 import { registerCashCents } from "@/lib/domain/operations"
 

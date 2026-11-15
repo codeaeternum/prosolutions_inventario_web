@@ -27,7 +27,7 @@ import {
   UsersRound,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import type { BusinessKind } from "@prisma/client"
+import type { BusinessKind } from "@/generated/prisma/client"
 
 interface NavItem {
   name: string

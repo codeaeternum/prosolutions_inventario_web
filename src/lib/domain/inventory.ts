@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { amount, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, takeStock, resolveBranch } from "./operations"
 import { channelOfPaymentMethod, returnSaleItemsTx } from "./sales"
@@ -8,6 +8,10 @@ const movementSchema = z.object({
   productId: z.string().min(1), type: z.enum(["IN", "OUT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "DAMAGED", "LOST", "RETURN", "TRANSFER"]),
   quantity: z.number().int().min(1).max(100000), reason: z.string().trim().min(1).max(500), notes: z.string().max(1000).optional(),
   relatedId: z.string().min(1).optional(), reservationId: z.string().min(1).optional(),
+  // Folio del reembolso bancario en RETURN de venta (el reembolso sale por el
+  // medio original del cobro): opcional — sin él refund() deja advertencia
+  // de conciliación en bitácora en vez de bloquear la devolución.
+  reference: z.string().trim().max(200).optional(),
   branchId: z.string().min(1).optional(), toBranchId: z.string().min(1).optional(),
 })
 const schema = z.object({ idempotencyKey: operationKeySchema, branchId: z.string().min(1).optional(), items: z.array(movementSchema).min(1).max(100) })
@@ -76,7 +80,7 @@ export async function moveInventory(db: PrismaClient, actorId: string, businessI
           const legacyReturned = await tx.inventoryMovement.aggregate({ where: { businessId, type: "RETURN", relatedId: row.relatedId }, _sum: { quantity: true } })
           const outcome = await returnSaleItemsTx(tx, {
             saleId: source.saleId, items: [{ productId: row.productId, quantity: row.quantity }],
-            actorId, businessId, refundMethod: channel, reason: row.reason,
+            actorId, businessId, refundMethod: channel, reason: row.reason, reference: row.reference,
             relatedAlreadyReturned: legacyReturned._sum.quantity ?? 0,
           })
           movements.push(...outcome.movements)

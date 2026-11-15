@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { RepairStatus } from "@prisma/client"
+import { RepairStatus } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma"
 import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Cliente Prisma generado (provider "prisma-client", output src/generated).
+    "src/generated/**",
   ]),
   {
     // Test doubles (mock ctx/prisma/bot) intentionally use loose typing.

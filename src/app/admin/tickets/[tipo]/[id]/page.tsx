@@ -165,7 +165,14 @@ export default async function TicketPage({
         discountReason: saleDoc.discountReason ?? undefined,
         paymentMethod: isLive
           ? (isLayaway && paid > 0 ? `Anticipos: ${formatPrice(paid)}` : "")
-          : saleDoc.payments.filter(p => p.amount > 0).map(p => `${METHOD_LABEL[p.method] ?? p.method}${p.purpose === "ADVANCE" ? " (anticipo)" : ""} ${formatPrice(p.amount)}`).join("\n"),
+          : [
+            // Folio de cada cobro/reembolso bancario: sale impreso junto al
+            // medio para conciliar contra el estado de cuenta del cliente.
+            ...saleDoc.payments.filter(p => p.amount > 0).map(p =>
+              `${METHOD_LABEL[p.method] ?? p.method}${p.purpose === "ADVANCE" ? " (anticipo)" : ""} ${formatPrice(p.amount)}${p.reference ? ` · Ref: ${p.reference}` : ""}`),
+            ...saleDoc.payments.filter(p => p.amount < 0).map(p =>
+              `Devolución (${METHOD_LABEL[p.method] ?? p.method}) -${formatPrice(Math.abs(p.amount))}${p.reference ? ` · Ref: ${p.reference}` : ""}`),
+          ].join("\n"),
         notes: [saleDoc.note, saleDoc.branch.name].filter(Boolean).join("\n"),
         cashier: saleDoc.seller.name,
         qrCode: `${folioPrefix}-${String(saleDoc.number).padStart(6, "0")}`,
@@ -379,6 +386,7 @@ export default async function TicketPage({
             label: PURPOSE_LABELS[p.purpose ?? ""] ?? "Pago",
             amount: p.amount,
             method: METHOD_LABELS[p.method] ?? p.method,
+            reference: p.reference ?? undefined,
           })),
           // Si una mano de obra autorizada distinta ya reemplazó al estimado,
           // el estimado original aún se imprime aparte para aclarar el total.
@@ -513,6 +521,7 @@ export default async function TicketPage({
             amount: p.amount,
             method: METHOD_LABELS[p.method] ?? p.method,
             date: p.createdAt.toISOString(),
+            reference: p.reference ?? undefined,
           })),
           paidTotal: paidCents / 100,
           partsTotal: !isTerminalNoRepair && partsPriceCents > 0 ? partsPriceCents / 100 : undefined,

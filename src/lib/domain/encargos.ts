@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, BusinessError, cents, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
 import { recordAudit } from "../audit"
@@ -90,6 +90,12 @@ const encargoInclude = {
   branch: { select: { id: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   resolvedBy: { select: { id: true, name: true } },
+  // Reembolsos del anticipo al cancelar: el panel muestra el folio bancario
+  // persistido (reference) junto al anticipo devuelto. Solo lectura.
+  payments: {
+    where: { purpose: "REFUND" },
+    select: { id: true, amount: true, method: true, reference: true },
+  },
 } as const
 
 // Activos primero (pendiente → por entregar → en camino), cerrados al final.

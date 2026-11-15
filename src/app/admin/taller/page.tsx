@@ -65,7 +65,7 @@ const EvidenceSection = dynamic(
 
 const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "", reference: "" }
 const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "", deliveredToParty: "CUSTOMER" }
-const emptyRefundForm: RefundForm = { amount: "", method: "", note: "" }
+const emptyRefundForm: RefundForm = { amount: "", method: "", note: "", reference: "" }
 const orderBalanceCents = (order: Order) => balanceOf(order, order.parts ?? [], order.payments ?? [])
 const toLocalInput = (iso: string | null) => {
   if (!iso) return ""
@@ -399,7 +399,7 @@ export default function WorkshopPage() {
     openWhatsApp(order.customerPhone, message)
   }
   const paymentFormDirty = paymentForm.amount !== "" || paymentForm.method !== "" || paymentForm.note !== "" || paymentForm.reference !== ""
-  const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== ""
+  const refundFormDirty = refundForm.amount !== "" || refundForm.method !== "" || refundForm.note !== "" || refundForm.reference !== ""
   const feeDraftDirty = selected !== null && feeDraft !== (selected.diagnosticFeeCents === null ? "" : String(selected.diagnosticFeeCents / 100))
   // El nombre de quien recoge se prellena con el titular al abrir el panel:
   // solo cuenta como cambio si difiere del prellenado.
@@ -734,7 +734,12 @@ export default function WorkshopPage() {
     try {
       if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) throw new Error("La devolución debe ser mayor a cero y admite hasta dos decimales")
       if (!["CASH", "CARD", "TRANSFER"].includes(refundForm.method)) throw new Error("Selecciona el método de devolución.")
-      await post(`/api/workshop/${selected.id}`, { action: "REFUND", expectedVersion: selected.version, paymentCents: Math.round(amount * 100), paymentMethod: refundForm.method, detail: refundForm.note.trim() || "Devolución de excedente" })
+      // Tarjeta/transferencia: el folio de la devolución es obligatorio en UI
+      // (mínimo 4 caracteres) — sin él el reembolso no concilia contra el
+      // estado de cuenta del cliente y solo quedaría la advertencia en
+      // bitácora (REFUND_NO_REFERENCE).
+      if ((refundForm.method === "CARD" || refundForm.method === "TRANSFER") && refundForm.reference.trim().length < 4) throw new Error("Captura el folio de la devolución bancaria (mínimo 4 caracteres).")
+      await post(`/api/workshop/${selected.id}`, { action: "REFUND", expectedVersion: selected.version, paymentCents: Math.round(amount * 100), paymentMethod: refundForm.method, paymentReference: refundForm.reference.trim() || undefined, detail: refundForm.note.trim() || "Devolución de excedente" })
       setRefundForm(emptyRefundForm)
       await openOrder(selected.id, true); await load()
       toast.success("Reembolso registrado")

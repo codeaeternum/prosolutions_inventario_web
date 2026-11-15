@@ -19,7 +19,9 @@ export interface RepairTicketData {
   equipment: { label: string; value: string }[]
   issue: string
   // Cobros confirmados (anticipo/abonos/liquidación) y presupuesto en pesos.
-  payments?: { label: string; amount: number; method: string }[]
+  // `reference`: folio SPEI/autorización persistido — se imprime junto al
+  // método para conciliar contra el estado de cuenta.
+  payments?: { label: string; amount: number; method: string; reference?: string }[]
   // Mano de obra estimada original: solo llega cuando una mano de obra
   // autorizada distinta ya la reemplazó en la línea "Mano de obra".
   estimatedQuote?: number
@@ -197,7 +199,7 @@ export function RepairTicketView({ data }: { data: RepairTicketData }) {
             <h3 className="text-[10px] uppercase text-gray-500 mb-1">Cobros</h3>
             <div className="text-xs space-y-0.5">
               {data.payments?.map((p, idx) => (
-                <p key={idx}>{p.label}: {formatPrice(p.amount)} ({p.method})</p>
+                <p key={idx}>{p.label}: {formatPrice(p.amount)} ({p.method}){p.reference ? ` — Ref: ${p.reference}` : ""}</p>
               ))}
               {data.estimatedQuote !== undefined && <p>Mano de obra estimada: {formatPrice(data.estimatedQuote)}</p>}
               {data.laborQuote !== undefined && <p>{data.estimatedQuote !== undefined ? "Mano de obra autorizada" : "Mano de obra"}: {formatPrice(data.laborQuote)}</p>}

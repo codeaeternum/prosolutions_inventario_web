@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client"
+import type { Prisma } from "@/generated/prisma/client"
 import { catalogVisibilityLevels } from "../../lib/product-dto"
 import type { MarketVisibility } from "../../lib/market-visibility"
 

@@ -1,4 +1,4 @@
-import type { PrismaClient, Product } from "@prisma/client"
+import type { PrismaClient, Product } from "@/generated/prisma/client"
 import { z } from "zod"
 import { BusinessError, releaseStock, transaction } from "./operations"
 import { syncLowStockAlerts } from "../low-stock"

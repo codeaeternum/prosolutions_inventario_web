@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@prisma/client"
+import { Prisma, type PrismaClient } from "@/generated/prisma/client"
 
 /** Anti-spam: un producto bajo mínimo no vuelve a avisar hasta pasado este tiempo. */
 const ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000

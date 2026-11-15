@@ -28,7 +28,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
-import { PAYMENT_METHODS, type PosPaymentMethod } from "./types"
+import { isBankRefundMethod, PAYMENT_METHODS, refundReferenceOk, type PosPaymentMethod } from "./types"
 
 interface SalesReturnsSheetProps {
     open: boolean
@@ -159,6 +159,12 @@ export function SalesReturnsSheet({
     const [activeAction, setActiveAction] = useState<{ saleId: string; mode: "return" | "void" } | null>(null)
     const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({})
     const [refundMethod, setRefundMethod] = useState<PosPaymentMethod>("EFECTIVO")
+    // Folio bancario del reembolso (devolución simple); solo se pide cuando
+    // el medio elegido es TARJETA/TRANSFERENCIA — viaja como `reference`.
+    const [refundReference, setRefundReference] = useState("")
+    // Folios por medio bancario en la anulación: el servidor reembolsa cada
+    // medio cobrado y espera `references.TARJETA` / `references.TRANSFERENCIA`.
+    const [voidReferences, setVoidReferences] = useState<Record<"TARJETA" | "TRANSFERENCIA", string>>({ TARJETA: "", TRANSFERENCIA: "" })
     const [reason, setReason] = useState("")
     const [submitting, setSubmitting] = useState(false)
 
@@ -250,12 +256,14 @@ export function SalesReturnsSheet({
         }
         setReturnQuantities(initial)
         setRefundMethod(defaultRefundMethod(sale))
+        setRefundReference("")
         setReason("")
         setActiveAction({ saleId: sale.id, mode: "return" })
     }
 
     const openVoidForm = (sale: SaleRecord) => {
         setReason("")
+        setVoidReferences({ TARJETA: "", TRANSFERENCIA: "" })
         setActiveAction({ saleId: sale.id, mode: "void" })
     }
 
@@ -263,8 +271,20 @@ export function SalesReturnsSheet({
         if (submitting) return
         setActiveAction(null)
         setReturnQuantities({})
+        setRefundReference("")
+        setVoidReferences({ TARJETA: "", TRANSFERENCIA: "" })
         setReason("")
     }
+
+    /** Medios bancarios con neto cobrado que la anulación va a reembolsar:
+     *  por cada uno hay que capturar el folio de la devolución. */
+    const voidBankChannels = (sale: SaleRecord): ("TARJETA" | "TRANSFERENCIA")[] =>
+        [...new Set(
+            sale.payments
+                .filter(p => p.status === "CONFIRMED" && p.amount > 0)
+                .map(p => DB_TO_POS_METHOD[p.method])
+                .filter((m): m is "TARJETA" | "TRANSFERENCIA" => m === "TARJETA" || m === "TRANSFERENCIA"),
+        )]
 
     const setItemReturnQty = (saleItemId: string, maxQty: number, nextValue: number) => {
         const clamped = Math.max(0, Math.min(maxQty, Math.floor(Number.isFinite(nextValue) ? nextValue : 0)))
@@ -291,6 +311,12 @@ export function SalesReturnsSheet({
             toast.error("Escribe el motivo de la devolución")
             return
         }
+        // Tarjeta/transferencia: sin folio el asiento no concilia contra el
+        // estado de cuenta — el servidor solo advertiría en bitácora.
+        if (isBankRefundMethod(refundMethod) && !refundReferenceOk(refundReference)) {
+            toast.error("Captura el folio de la devolución bancaria (mínimo 4 caracteres)")
+            return
+        }
 
         setSubmitting(true)
         try {
@@ -301,6 +327,7 @@ export function SalesReturnsSheet({
                     items,
                     refundMethod,
                     reason: reason.trim(),
+                    ...(isBankRefundMethod(refundMethod) ? { reference: refundReference.trim() } : {}),
                     idempotencyKey: crypto.randomUUID(),
                 }),
             })
@@ -311,6 +338,7 @@ export function SalesReturnsSheet({
             toast.success(`Devolución registrada en ${formatSaleFolio(sale.number, sale.kind)}${refundedLabel}`)
             setActiveAction(null)
             setReturnQuantities({})
+            setRefundReference("")
             setReason("")
             void load(page)
             onReturned()
@@ -327,6 +355,15 @@ export function SalesReturnsSheet({
             toast.error("Escribe el motivo de la anulación")
             return
         }
+        // La anulación reembolsa cada medio cobrado: por tarjeta/transferencia
+        // el folio de la devolución es obligatorio (mínimo 4 caracteres).
+        const bankChannels = voidBankChannels(sale)
+        for (const channel of bankChannels) {
+            if (!refundReferenceOk(voidReferences[channel])) {
+                toast.error(`Captura el folio de la devolución por ${channel === "TARJETA" ? "tarjeta" : "transferencia"} (mínimo 4 caracteres)`)
+                return
+            }
+        }
 
         setSubmitting(true)
         try {
@@ -335,6 +372,9 @@ export function SalesReturnsSheet({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     reason: reason.trim(),
+                    ...(bankChannels.length
+                        ? { references: Object.fromEntries(bankChannels.map(c => [c, voidReferences[c].trim()])) }
+                        : {}),
                     idempotencyKey: crypto.randomUUID(),
                 }),
             })
@@ -343,6 +383,7 @@ export function SalesReturnsSheet({
 
             toast.success(`Ticket ${formatSaleFolio(sale.number, sale.kind)} anulado`)
             setActiveAction(null)
+            setVoidReferences({ TARJETA: "", TRANSFERENCIA: "" })
             setReason("")
             void load(page)
             onReturned()
@@ -412,6 +453,7 @@ export function SalesReturnsSheet({
                                 const isVoidOpen =
                                     activeAction?.saleId === sale.id && activeAction.mode === "void"
                                 const positivePayments = sale.payments.filter(p => p.amount > 0)
+                                const refundPayments = sale.payments.filter(p => p.amount < 0)
 
                                 return (
                                     <div key={sale.id} className="rounded-lg border p-3 space-y-2">
@@ -470,6 +512,7 @@ export function SalesReturnsSheet({
                                                 {positivePayments.map(p => (
                                                     <Badge key={p.id} variant="outline" className="text-[10px] font-normal">
                                                         {METHOD_LABEL[p.method] ?? p.method}: {formatPrice(p.amount)}
+                                                        {p.reference ? ` · Ref: ${p.reference}` : ""}
                                                     </Badge>
                                                 ))}
                                                 {discount > 0 && (
@@ -477,6 +520,21 @@ export function SalesReturnsSheet({
                                                         · Desc. {formatPrice(discount)}
                                                     </span>
                                                 )}
+                                            </div>
+                                        )}
+
+                                        {/* Reembolsos persistidos (payment.amount negativo): el folio
+                                            bancario quedó guardado en `reference` — se muestra para
+                                            conciliar contra el estado de cuenta. */}
+                                        {refundPayments.length > 0 && (
+                                            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                                                <span>Devolución:</span>
+                                                {refundPayments.map(p => (
+                                                    <Badge key={p.id} variant="outline" className="text-[10px] font-normal text-amber-600 border-amber-300">
+                                                        {METHOD_LABEL[p.method] ?? p.method}: {formatPrice(Math.abs(p.amount))}
+                                                        {p.reference ? ` · Ref: ${p.reference}` : ""}
+                                                    </Badge>
+                                                ))}
                                             </div>
                                         )}
 
@@ -611,6 +669,26 @@ export function SalesReturnsSheet({
                                                     </Select>
                                                 </div>
 
+                                                {isBankRefundMethod(refundMethod) && (
+                                                    <div className="space-y-1.5">
+                                                        <Label htmlFor={`return-ref-${sale.id}`} className="text-xs">
+                                                            Referencia bancaria *
+                                                        </Label>
+                                                        <Input
+                                                            id={`return-ref-${sale.id}`}
+                                                            value={refundReference}
+                                                            disabled={submitting}
+                                                            onChange={e => setRefundReference(e.target.value)}
+                                                            placeholder="Folio de la transferencia / últimos 4 dígitos"
+                                                            maxLength={50}
+                                                            className="h-8 text-xs"
+                                                        />
+                                                        <p className="text-[11px] text-muted-foreground">
+                                                            Aparece en el estado de cuenta del cliente.
+                                                        </p>
+                                                    </div>
+                                                )}
+
                                                 <div className="space-y-1.5">
                                                     <Label htmlFor={`return-reason-${sale.id}`} className="text-xs">
                                                         Motivo de la devolución *
@@ -657,6 +735,20 @@ export function SalesReturnsSheet({
                                                 <p className="text-xs text-muted-foreground">
                                                     Se repondrán las unidades restantes al inventario y se revertirá el cobro registrado.
                                                 </p>
+                                                {/* Vista previa del reembolso por medio bancario: confirma
+                                                    al cajero el canal y el folio que se registrará. */}
+                                                {voidBankChannels(sale).map(channel => {
+                                                    const channelTotal = sale.payments
+                                                        .filter(p => p.status === "CONFIRMED" && p.amount > 0 && DB_TO_POS_METHOD[p.method] === channel)
+                                                        .reduce((s, p) => s + p.amount, 0)
+                                                    const ref = voidReferences[channel].trim()
+                                                    return (
+                                                        <p key={channel} className="text-xs text-muted-foreground">
+                                                            Se registrará devolución por {formatPrice(channelTotal)} a {channel === "TARJETA" ? "tarjeta" : "transferencia"}
+                                                            {ref ? ` (ref: ${ref})` : ""}.
+                                                        </p>
+                                                    )
+                                                })}
                                                 <div className="space-y-1.5">
                                                     <Label htmlFor={`void-reason-${sale.id}`} className="text-xs">
                                                         Motivo de la anulación *
@@ -671,6 +763,27 @@ export function SalesReturnsSheet({
                                                         className="h-8 text-xs"
                                                     />
                                                 </div>
+                                                {/* Un folio por cada medio bancario cobrado: la anulación
+                                                    reembolsa tarjeta/transferencia por canal. */}
+                                                {voidBankChannels(sale).map(channel => (
+                                                    <div key={channel} className="space-y-1.5">
+                                                        <Label htmlFor={`void-ref-${channel}-${sale.id}`} className="text-xs">
+                                                            Referencia bancaria ({channel === "TARJETA" ? "tarjeta" : "transferencia"}) *
+                                                        </Label>
+                                                        <Input
+                                                            id={`void-ref-${channel}-${sale.id}`}
+                                                            value={voidReferences[channel]}
+                                                            disabled={submitting}
+                                                            onChange={e => setVoidReferences(prev => ({ ...prev, [channel]: e.target.value }))}
+                                                            placeholder="Folio de la transferencia / últimos 4 dígitos"
+                                                            maxLength={50}
+                                                            className="h-8 text-xs"
+                                                        />
+                                                        <p className="text-[11px] text-muted-foreground">
+                                                            Aparece en el estado de cuenta del cliente.
+                                                        </p>
+                                                    </div>
+                                                ))}
                                                 <div className="flex justify-end gap-2">
                                                     <Button
                                                         type="button"

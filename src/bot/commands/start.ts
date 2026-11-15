@@ -1,6 +1,6 @@
 import { Markup } from "telegraf"
 import type { Context, Telegraf } from "telegraf"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import type { PendingTelegramLink, WizardState } from "../lib/types"
 import { consumeVerificationCode, markVerified, VerificationError } from "../../lib/verification"
 import { checkAndRecord } from "../../lib/rate-limit"

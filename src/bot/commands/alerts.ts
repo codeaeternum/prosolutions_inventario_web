@@ -1,6 +1,6 @@
 import * as cron from 'node-cron'
 import type { Telegraf } from 'telegraf'
-import type { PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@/generated/prisma/client'
 import type { BotContext } from '../lib/types'
 import { notifyAdmins } from '../lib/notify'
 import { clipMessage, errorText, escapeHtml } from '../lib/format'

@@ -11,7 +11,7 @@ import "dotenv/config"
 import { readFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from "../src/generated/prisma/client.ts"
 import { PrismaPg } from "@prisma/adapter-pg"
 import { Pool } from "pg"
 

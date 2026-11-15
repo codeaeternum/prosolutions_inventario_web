@@ -7,7 +7,7 @@ import { DialogOverlay } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { hasModule } from "@/lib/access"
 import type { ModuleKey } from "@/lib/access"
-import type { BusinessKind, UserRole } from "@prisma/client"
+import type { BusinessKind, UserRole } from "@/generated/prisma/client"
 import {
   BarChart3,
   Boxes,

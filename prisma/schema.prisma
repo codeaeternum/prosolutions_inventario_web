@@ -6,7 +6,13 @@
 // `prisma migrate dev` puede proponer borrarlos: revisa el SQL generado antes
 // de aplicar (usa --create-only).
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  // Los imports internos del cliente generado llevan extensión ".ts" explícita
+  // (estilo Deno): permite que los scripts .mjs lo carguen con el type-stripping
+  // nativo de Node 22.18+/24 (node scripts/x.mjs) además de tsx/Next/esbuild.
+  importFileExtension = "ts"
+  moduleFormat        = "cjs"
 }
 
 datasource db {

@@ -8,7 +8,7 @@ import { MODULES } from "@/lib/access"
 import { recordAudit } from "@/lib/audit"
 import { checkAndRecord } from "@/lib/rate-limit"
 import bcrypt from "bcryptjs"
-import { UserRole } from "@prisma/client"
+import { UserRole } from "@/generated/prisma/client"
 
 const VALID_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const
 const VALID_ROLES = ["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"] as const

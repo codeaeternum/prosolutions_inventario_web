@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest"
 import {
+    BANK_REFUND_METHODS,
     DEPOSIT_METHODS,
+    isBankRefundMethod,
     PAYMENT_METHODS,
     amountToCents,
     docAgeLabel,
@@ -9,6 +11,7 @@ import {
     paymentDraftsCents,
     paymentMethodsFor,
     parseQuantityCode,
+    refundReferenceOk,
     toPaymentsPayload,
     type PaymentDraft,
     type PosDocumentDetail,
@@ -191,6 +194,42 @@ describe("toPaymentsPayload", () => {
             { method: "TRANSFERENCIA", amount: 60, reference: "SPEI-123" },
             { method: "TARJETA", amount: 40.5 },
         ])
+    })
+})
+
+// Devoluciones bancarias: solo tarjeta/transferencia piden folio — efectivo y
+// crédito salen por el cajón o el saldo, sin asiento externo que conciliar.
+describe("isBankRefundMethod", () => {
+    it("reconoce los canales bancarios del contrato POS", () => {
+        expect(BANK_REFUND_METHODS).toEqual(["TARJETA", "TRANSFERENCIA"])
+        expect(isBankRefundMethod("TARJETA")).toBe(true)
+        expect(isBankRefundMethod("TRANSFERENCIA")).toBe(true)
+    })
+
+    it("rechaza efectivo, crédito y valores ausentes", () => {
+        expect(isBankRefundMethod("EFECTIVO")).toBe(false)
+        expect(isBankRefundMethod("CREDITO")).toBe(false)
+        expect(isBankRefundMethod(null)).toBe(false)
+        expect(isBankRefundMethod(undefined)).toBe(false)
+        expect(isBankRefundMethod("")).toBe(false)
+    })
+})
+
+// El folio se valida en la UI con mínimo 4 caracteres útiles: capturas de un
+// dígito o espacios no conciliarían nada en el estado de cuenta.
+describe("refundReferenceOk", () => {
+    it("acepta folios de 4+ caracteres tras recortar espacios", () => {
+        expect(refundReferenceOk("SPEI-123")).toBe(true)
+        expect(refundReferenceOk("  4521  ")).toBe(true)
+        expect(refundReferenceOk("abcd")).toBe(true)
+    })
+
+    it("rechaza vacíos, espacios y capturas de 1-3 caracteres", () => {
+        expect(refundReferenceOk("")).toBe(false)
+        expect(refundReferenceOk("   ")).toBe(false)
+        expect(refundReferenceOk("5")).toBe(false)
+        expect(refundReferenceOk("abc")).toBe(false)
+        expect(refundReferenceOk("  ab ")).toBe(false)
     })
 })
 

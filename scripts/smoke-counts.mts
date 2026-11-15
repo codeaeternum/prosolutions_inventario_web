@@ -1,6 +1,6 @@
 // Smoke test del dominio de conteo físico contra una base scratch.
 // Uso: DATABASE_URL=... npx tsx scripts/smoke-counts.mts
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from "@/generated/prisma/client"
 import { PrismaPg } from "@prisma/adapter-pg"
 import { Pool } from "pg"
 import { randomUUID } from "node:crypto"

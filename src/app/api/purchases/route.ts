@@ -4,7 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { createPurchase, listPurchases } from "@/lib/domain/purchasing"
 import { businessFailure } from "@/lib/domain/http"
-import type { PurchaseStatus } from "@prisma/client"
+import type { PurchaseStatus } from "@/generated/prisma/client"
 
 const STATUSES: PurchaseStatus[] = ["DRAFT", "ORDERED", "RECEIVED", "CANCELLED"]
 

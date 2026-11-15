@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import type { Prisma } from "@prisma/client"
+import type { Prisma } from "@/generated/prisma/client"
 import { z } from "zod"
 import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { hasBranchAccess } from "@/lib/access"

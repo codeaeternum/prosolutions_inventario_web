@@ -1,4 +1,4 @@
-import type { PrismaClient, Prisma } from "@prisma/client"
+import type { PrismaClient, Prisma } from "@/generated/prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema } from "./operations"
 import { transitionEncargoTx } from "./encargos"

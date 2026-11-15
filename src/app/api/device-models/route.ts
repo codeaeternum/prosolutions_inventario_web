@@ -5,7 +5,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operation, operationKeySchema, type Transaction } from "@/lib/domain/operations"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 
 const upsertSchema = z.object({
   brand: z.string().trim().min(1).max(60),

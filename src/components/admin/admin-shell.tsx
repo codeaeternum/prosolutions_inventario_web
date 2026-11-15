@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Undo2, Loader2 } from "lucide-react"
 import { toast } from "sonner"
-import type { UserRole, CustomerType, UserStatus, BusinessKind } from "@prisma/client"
+import type { UserRole, CustomerType, UserStatus, BusinessKind } from "@/generated/prisma/client"
 
 const SIDEBAR_STORAGE_KEY = "reficio-sidebar-collapsed"
 // Evento propio porque "storage" no se dispara en la pestaña que modifica localStorage.

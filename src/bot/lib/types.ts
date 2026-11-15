@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf'
-import type { PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@/generated/prisma/client'
 
 // ========== SESSION TYPES ==========
 

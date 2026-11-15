@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { agingBuckets, paySupplier, supplierAging, supplierBalances, voidSupplierPayment, SUPPLIER_PAYMENT_VOIDED_PREFIX } from "@/lib/domain/supplier-payments"
 
 const NOW = new Date("2025-06-15T12:00:00Z")

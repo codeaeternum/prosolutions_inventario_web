@@ -1,4 +1,4 @@
-import type { PrismaClient, Prisma } from "@prisma/client"
+import type { PrismaClient, Prisma } from "@/generated/prisma/client"
 import { ALLY_CATALOG_LEVELS } from "../market-visibility"
 
 /**

@@ -48,7 +48,7 @@ export async function GET() {
   const timestamp = new Date().toISOString()
   const headers = { "Cache-Control": "no-store" }
   const disk = await checkProofsDisk()
-  // El healthcheck es público (Docker/Uptime-Kuma solo miran el status) y los
+  // El healthcheck es público (Docker/monitoring solo miran el status) y los
   // bytes exactos del volumen son telemetría interna: anónimos reciben los GB
   // redondeados; con sesión se conserva el valor exacto para diagnóstico.
   // auth() fuera de contexto de request (tests, healthcheck sin cookies)

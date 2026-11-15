@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { PrismaClient, RepairStatus } from "@prisma/client"
+import type { PrismaClient, RepairStatus } from "@/generated/prisma/client"
 import { reconcileDelegations } from "@/lib/domain/delegation-reconcile"
 
 /**

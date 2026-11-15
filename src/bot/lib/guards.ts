@@ -1,5 +1,5 @@
 import type { Context } from "telegraf"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { isAdmin } from "./notify"
 import { getPrisma } from "./prisma"
 

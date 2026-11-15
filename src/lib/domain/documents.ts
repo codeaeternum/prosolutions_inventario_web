@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, amount, BusinessError, cents, itemsSchema, mergeItems, operation, operationKeySchema, releaseStock, resolveBranch, takeStock } from "./operations"
 import { channelOfPaymentMethod, checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
@@ -67,6 +67,13 @@ const paySchema = z.object({
 const cancelSchema = z.object({
   saleId: z.string().min(1),
   reason: z.string().trim().min(1).max(500),
+  // Folios del reembolso bancario por medio (la cancelación devuelve el neto
+  // por cada medio cobrado): opcional — sin folio refund() deja advertencia
+  // de conciliación en bitácora en vez de bloquear la cancelación.
+  references: z.object({
+    TARJETA: z.string().trim().min(1).max(200),
+    TRANSFERENCIA: z.string().trim().min(1).max(200),
+  }).partial().optional(),
   idempotencyKey: operationKeySchema,
 })
 
@@ -423,7 +430,8 @@ export async function cancelDocument(db: PrismaClient, actorId: string, business
     for (const method of paidMethods) {
       const channel = (Object.keys(METHOD_MAP) as MethodInput[]).find(k => METHOD_MAP[k] === method)!
       const netCents = sale.payments.filter(p => p.method === method).reduce((sum, p) => sum + Math.round(p.amount * 100), 0)
-      if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Cancelación apartado V-${sale.number}: ${input.reason}` })
+      const channelReference = channel === "TARJETA" || channel === "TRANSFERENCIA" ? input.references?.[channel] : undefined
+      if (netCents > 0) await refund(tx, { saleId: sale.id, actorId, businessId, branchId: sale.branchId, customerId: sale.customerId, refundCents: netCents, channel, note: `Cancelación apartado V-${sale.number}: ${input.reason}`, reference: channelReference })
       await tx.payment.updateMany({ where: { saleId: sale.id, method, status: "CONFIRMED" }, data: { status: "VOIDED" } })
     }
     const changed = await tx.sale.updateMany({ where: { id: sale.id, status: "OPEN" }, data: { status: "VOIDED" } })

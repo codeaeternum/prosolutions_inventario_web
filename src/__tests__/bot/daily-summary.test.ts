@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import type { BotContext } from "@/bot/lib/types"
 
 // El cron queda doblado: se verifica expresión/timezone y se dispara el tick

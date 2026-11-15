@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { Prisma } from "@prisma/client"
+import { Prisma } from "@/generated/prisma/client"
 import { assertModuleAllowed, requireAdminOrEmployee, getSession } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"

@@ -49,6 +49,10 @@ next-env.d.ts
 # builds
 /dist/
 
+# cliente Prisma generado (provider "prisma-client"); se regenera con
+# `prisma generate` — npm postinstall, npm run build y los Dockerfiles ya lo corren.
+/src/generated/
+
 # datos de ejecución y respaldos (no versionar)
 /storage/
 /data/

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { convenioReport, convenioTotals, isConvenioChargeable, settleConvenio, settleConvenioBatch } from "@/lib/domain/convenio"
 import { updateRepair } from "@/lib/domain/workshop"
 

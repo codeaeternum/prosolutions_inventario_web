@@ -33,11 +33,7 @@ param(
     [string]$DbContainer = "prosolutions-db",
     # Imagen ligera usada para tar de volúmenes (se descarga sola la 1ª vez)
     [string]$TarImage = "alpine",
-    [int]$RetentionDays = 14,
-    # Opcional: URL "push" de un monitor Push de Uptime Kuma (p. ej.
-    # http://localhost:3001/api/push/<TOKEN>). Si se pasa, al final se hace
-    # GET <url>?status=up|down&msg=backup&ping= segun el resultado.
-    [string]$KumaPushUrl = ""
+    [int]$RetentionDays = 14
 )
 
 $ErrorActionPreference = "Stop"
@@ -321,20 +317,6 @@ try {
         } catch {
             Write-Log "Copia del estado al volumen FALLO (no afecta el backup): $_"
         }
-    }
-}
-
-# ---------- Push opcional a Uptime Kuma ----------
-# Monitor tipo "Push" en Kuma: se le pega a <url>?status=up|down&msg=backup.
-# Best-effort: un fallo aqui no cambia el exit code del backup.
-if ($KumaPushUrl) {
-    try {
-        $kumaStatus = "up"
-        if ($script:hadFailure) { $kumaStatus = "down" }
-        Invoke-RestMethod -Uri ("{0}?status={1}&msg=backup&ping=" -f $KumaPushUrl, $kumaStatus) -TimeoutSec 15 | Out-Null
-        Write-Log "Push a Uptime Kuma: $kumaStatus"
-    } catch {
-        Write-Log "Push a Uptime Kuma FALLO (no afecta el backup): $_"
     }
 }
 

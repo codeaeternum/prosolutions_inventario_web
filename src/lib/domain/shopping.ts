@@ -1,9 +1,9 @@
-import type { PrismaClient, RepairStatus } from "@prisma/client"
+import type { PrismaClient, RepairStatus } from "@/generated/prisma/client"
 import { z } from "zod"
 import { BusinessError, operation, operationKeySchema, resolveBranch } from "./operations"
 import { nextPurchaseNumber } from "./tenant-sequence"
 import { DEFAULT_FOLIO_DIGITS, repairFolio } from "../workshop-labels"
-// low-stock.ts solo importa tipos + @prisma/client: seguro en el dominio (la
+// low-stock.ts solo importa tipos + el cliente generado: seguro en el dominio (la
 // cadena prohibida es purchasing.ts → ../low-stock → SSE, que sigue evitada).
 import { lowStockProducts } from "../low-stock"
 

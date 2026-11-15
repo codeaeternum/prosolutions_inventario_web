@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, registerCashCents, releaseStock, resolveBranch, takeStock, type Transaction } from "./operations"
 import { encargoQuotedLineCents, prepareEncargoForSaleTx, releaseEncargoFromVoidedSaleTx, settleEncargoInSaleTx } from "./encargos"

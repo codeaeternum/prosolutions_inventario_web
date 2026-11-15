@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma"
-import type { Prisma } from "@prisma/client"
+import type { Prisma } from "@/generated/prisma/client"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits } from "@/lib/workshop-labels"
 
 export const DEFAULT_SETTINGS = {

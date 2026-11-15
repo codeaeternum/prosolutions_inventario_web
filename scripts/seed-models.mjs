@@ -4,7 +4,9 @@
  *
  * Uso: DATABASE_URL=... node scripts/seed-models.mjs --business <slug-o-id>
  */
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from "../src/generated/prisma/client.ts"
+import { PrismaPg } from "@prisma/adapter-pg"
+import { Pool } from "pg"
 
 const businessRef = process.argv[process.argv.indexOf("--business") + 1] || null
 if (!businessRef || process.argv.indexOf("--business") < 0) {
@@ -12,7 +14,10 @@ if (!businessRef || process.argv.indexOf("--business") < 0) {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+// Prisma 7 usa driver adapters: PrismaClient necesita PrismaPg + pg.Pool.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const adapter = new PrismaPg(pool)
+const prisma = new PrismaClient({ adapter })
 const business = await prisma.business.findFirst({
   where: { OR: [{ id: businessRef }, { slug: businessRef }] },
   select: { id: true },

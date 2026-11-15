@@ -4,7 +4,7 @@ import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { normalizePhone } from "@/lib/utils"
-import { CustomerType } from "@prisma/client"
+import { CustomerType } from "@/generated/prisma/client"
 
 /**
  * Directorio de clientes (role=CUSTOMER, status=APPROVED) con agregados de

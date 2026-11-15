@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 
 // low-stock cuelga de la cadena next-auth/notificaciones: la alerta post-commit
 // es ajena al contrato probado aquí, se sustituye por un no-op.
@@ -10,6 +10,7 @@ vi.mock("@/lib/low-stock", () => ({
 
 import { sell, returnSaleItems, voidSale } from "@/lib/domain/sales"
 import { moveInventory } from "@/lib/domain/inventory"
+import { cancelDocument } from "@/lib/domain/documents"
 import { changeCredit } from "@/lib/domain/credit"
 
 /**
@@ -341,6 +342,42 @@ describe("folio bancario del reembolso (TARJETA/TRANSFERENCIA)", () => {
     await voidSale(conFolio.db, "admin-1", BIZ, voidInput({ references: { TARJETA: "AUTH-VOID-1" } }))
     expect(conFolio.created.payments[0]).toMatchObject({ method: "CARD", status: "REFUNDED", reference: "AUTH-VOID-1" })
     expect(conFolio.created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
+  })
+
+  it("el RETURN del historial de una venta bancaria guarda el folio del reembolso", async () => {
+    // La devolución sale por el medio ORIGINAL del cobro (TRANSFERENCIA) y la
+    // UI del historial manda `reference` en el mismo renglón del movimiento.
+    const { db, created } = fakeDb({
+      sale: saleFixture({ status: "COMPLETED" }),
+      sourceMovement: { id: "mv-out", businessId: BIZ, type: "OUT", paymentMethod: "TRANSFERENCIA", saleId: "sale-1", productId: "prod-1", quantity: 2, businessVersion: 1, branchId: "branch-1" },
+    })
+    await moveInventory(db, "admin-1", BIZ, {
+      idempotencyKey: key(),
+      items: [{ productId: "prod-1", type: "RETURN", quantity: 1, reason: "Pieza equivocada", relatedId: "mv-out", reference: "SPEI-5544" }],
+    })
+    expect(created.payments[0]).toMatchObject({ method: "TRANSFER", amount: -100, status: "REFUNDED", reference: "SPEI-5544" })
+    expect(created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
+  })
+
+  it("cancelación de apartado con anticipo TRANSFERENCIA: el folio viaja al reembolso por canal", async () => {
+    // cancelDocument reembolsa el neto por cada medio cobrado — igual que la
+    // anulación de venta, `references.TRANSFERENCIA` alimenta refund().
+    const sale = { ...saleFixture({ status: "OPEN" }), kind: "LAYAWAY", payments: [{ method: "TRANSFER", amount: 100, status: "CONFIRMED" }] }
+    const conFolio = fakeDb({ sale })
+    await cancelDocument(conFolio.db, "admin-1", BIZ, {
+      saleId: "sale-1", reason: "Cliente desistió",
+      references: { TRANSFERENCIA: "SPEI-9001" }, idempotencyKey: key(),
+    })
+    expect(conFolio.created.payments[0]).toMatchObject({ method: "TRANSFER", amount: -100, status: "REFUNDED", reference: "SPEI-9001" })
+    expect(conFolio.created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(false)
+
+    // Sin folio: no se bloquea la cancelación, pero queda la advertencia.
+    const sinFolio = fakeDb({ sale })
+    await cancelDocument(sinFolio.db, "admin-1", BIZ, {
+      saleId: "sale-1", reason: "Cliente desistió", idempotencyKey: key(),
+    })
+    expect(sinFolio.created.payments[0]).toMatchObject({ method: "TRANSFER", status: "REFUNDED", reference: null })
+    expect(sinFolio.created.audits.some(a => a.action === "REFUND_NO_REFERENCE")).toBe(true)
   })
 })
 

@@ -34,7 +34,7 @@ import { BookMarked, Loader2, RefreshCw, Trash2, Wallet } from "lucide-react"
 import { toast } from "sonner"
 import { formatDate, formatPrice } from "@/lib/utils"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import { DEPOSIT_METHODS, type PosDocumentSummary, type PosPaymentMethod } from "./types"
+import { DEPOSIT_METHODS, refundReferenceOk, type PosDocumentSummary, type PosPaymentMethod } from "./types"
 
 export const LAYAWAY_PAY_KEY_PREFIX = "pos:layaway-pay:"
 
@@ -163,6 +163,29 @@ function docPaid(doc: PosDocumentSummary): number {
     return docPaidCents(doc) / 100
 }
 
+// El enum de BD de los cobros del apartado (Payment.method) al canal del
+// contrato POS: cancelar reembolsa por canal y `references` viaja con esas
+// llaves (igual que la anulación de venta en sales.ts).
+const DB_TO_POS_METHOD: Record<string, PosPaymentMethod> = {
+    CASH: "EFECTIVO",
+    CARD: "TARJETA",
+    TRANSFER: "TRANSFERENCIA",
+    CREDIT: "CREDITO",
+}
+
+/** Medios bancarios con neto confirmado que la cancelación va a reembolsar:
+ *  por cada uno el diálogo pide el folio de la devolución. */
+function layawayBankChannels(doc: PosDocumentSummary | null): ("TARJETA" | "TRANSFERENCIA")[] {
+    if (!doc?.payments) return []
+    const net = new Map<PosPaymentMethod, number>()
+    for (const p of doc.payments) {
+        const m = DB_TO_POS_METHOD[p.method]
+        if (!m) continue
+        net.set(m, (net.get(m) ?? 0) + p.amount)
+    }
+    return (["TARJETA", "TRANSFERENCIA"] as const).filter(m => (net.get(m) ?? 0) > 0)
+}
+
 /** Apartados vigentes (documentos OPEN/LAYAWAY) y cobro de saldo «Liquidar». */
 export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOpenTicket }: LayawaysSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
@@ -178,6 +201,9 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
 
     const [cancelTarget, setCancelTarget] = useState<PosDocumentSummary | null>(null)
     const [cancelReason, setCancelReason] = useState("")
+    // Folio por medio bancario que la cancelación reembolsa: viaja como
+    // `references.TARJETA` / `references.TRANSFERENCIA`.
+    const [cancelReferences, setCancelReferences] = useState<Record<"TARJETA" | "TRANSFERENCIA", string>>({ TARJETA: "", TRANSFERENCIA: "" })
     const [cancelling, setCancelling] = useState(false)
     const cancelRequestKey = useRef(0)
     const pendingCancel = useRef<ClientOperationKey | null>(null)
@@ -218,6 +244,7 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
     const openCancel = (doc: PosDocumentSummary) => {
         setCancelTarget(doc)
         setCancelReason("")
+        setCancelReferences({ TARJETA: "", TRANSFERENCIA: "" })
         pendingCancel.current = null
     }
 
@@ -229,6 +256,15 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             toast.error("Captura el motivo de la cancelación")
             return
         }
+        // La cancelación reembolsa cada medio cobrado: tarjeta/transferencia
+        // exigen folio para conciliar la salida contra el estado de cuenta.
+        const bankChannels = layawayBankChannels(target)
+        for (const channel of bankChannels) {
+            if (!refundReferenceOk(cancelReferences[channel])) {
+                toast.error(`Captura el folio de la devolución por ${channel === "TARJETA" ? "tarjeta" : "transferencia"} (mínimo 4 caracteres)`)
+                return
+            }
+        }
         const requestId = ++cancelRequestKey.current
         pendingCancel.current = getClientOperationKey(pendingCancel.current, { saleId: target.id, reason })
         setCancelling(true)
@@ -236,7 +272,13 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             const res = await fetch(`/api/pos/documents/${target.id}`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ reason, idempotencyKey: pendingCancel.current.key }),
+                body: JSON.stringify({
+                    reason,
+                    ...(bankChannels.length
+                        ? { references: Object.fromEntries(bankChannels.map(c => [c, cancelReferences[c].trim()])) }
+                        : {}),
+                    idempotencyKey: pendingCancel.current.key,
+                }),
             })
             const data: { error?: string } | null = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudo cancelar el apartado")
@@ -251,6 +293,7 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             )
             setCancelTarget(null)
             setCancelReason("")
+            setCancelReferences({ TARJETA: "", TRANSFERENCIA: "" })
             void load()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "No se pudo cancelar el apartado")
@@ -484,7 +527,7 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                 </DialogContent>
             </Dialog>
 
-            <AlertDialog open={cancelTarget !== null} onOpenChange={o => { if (!o && !cancelling) { setCancelTarget(null); setCancelReason("") } }}>
+            <AlertDialog open={cancelTarget !== null} onOpenChange={o => { if (!o && !cancelling) { setCancelTarget(null); setCancelReason(""); setCancelReferences({ TARJETA: "", TRANSFERENCIA: "" }) } }}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>¿Cancelar apartado #{cancelTarget?.number}?</AlertDialogTitle>
@@ -494,6 +537,20 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                                 : "Se repondrá la mercancía al inventario (sin anticipo por reembolsar). Esta acción no se puede deshacer."}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
+                    {/* Vista previa del reembolso por canal bancario: muestra
+                        el folio capturado tal como quedará en la devolución. */}
+                    {cancelTarget && layawayBankChannels(cancelTarget).map(channel => {
+                        const channelTotal = (cancelTarget.payments ?? [])
+                            .filter(p => DB_TO_POS_METHOD[p.method] === channel)
+                            .reduce((s, p) => s + p.amount, 0)
+                        const ref = cancelReferences[channel].trim()
+                        return (
+                            <p key={channel} className="text-xs text-muted-foreground">
+                                Se registrará devolución por {formatPrice(channelTotal)} a {channel === "TARJETA" ? "tarjeta" : "transferencia"}
+                                {ref ? ` (ref: ${ref})` : ""}.
+                            </p>
+                        )
+                    })}
                     <div className="space-y-1.5 py-2">
                         <Label htmlFor="layaway-cancel-reason">Motivo de la cancelación *</Label>
                         <Input
@@ -505,6 +562,26 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                             onChange={e => setCancelReason(e.target.value)}
                         />
                     </div>
+                    {/* Un folio por cada medio bancario cobrado: la cancelación
+                        reembolsa tarjeta/transferencia por canal. */}
+                    {cancelTarget && layawayBankChannels(cancelTarget).map(channel => (
+                        <div key={channel} className="space-y-1.5">
+                            <Label htmlFor={`layaway-cancel-ref-${channel}`}>
+                                Referencia bancaria ({channel === "TARJETA" ? "tarjeta" : "transferencia"}) *
+                            </Label>
+                            <Input
+                                id={`layaway-cancel-ref-${channel}`}
+                                value={cancelReferences[channel]}
+                                disabled={cancelling}
+                                onChange={e => setCancelReferences(prev => ({ ...prev, [channel]: e.target.value }))}
+                                placeholder="Folio de la transferencia / últimos 4 dígitos"
+                                maxLength={50}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Aparece en el estado de cuenta del cliente.
+                            </p>
+                        </div>
+                    ))}
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={cancelling}>Volver</AlertDialogCancel>
                         <AlertDialogAction

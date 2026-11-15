@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import type { Prisma } from "@prisma/client"
+import type { Prisma } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, formatFolio, parseFolioDigits } from "@/lib/workshop-labels"

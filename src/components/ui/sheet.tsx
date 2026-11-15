@@ -1,178 +1,81 @@
 "use client"
 
 import * as React from "react"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-interface SheetContextValue {
-    open: boolean
-    setOpen: (open: boolean) => void
-    titleId: string
+// Sheet sobre Radix Dialog (mismo patrón que dialog.tsx): foco atrapado
+// dentro del panel, foco inicial en el primer control, Escape, scroll lock
+// (RemoveScroll, modal por defecto), aria-hidden del resto de la página y
+// restauración del foco al elemento que lo abrió — todo nativo de Radix.
+// Como Sheet, Dialog y AlertDialog son todos Radix, la pila de capas de
+// DismissableLayer resuelve Escape/dismiss solo en la capa superior: un
+// diálogo abierto encima del sheet ya no lo cierra por accidente.
+
+function Sheet({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+    return <DialogPrimitive.Root data-slot="sheet" {...props} />
 }
 
-const SheetContext = React.createContext<SheetContextValue | null>(null)
-
-function useSheetContext() {
-    const context = React.useContext(SheetContext)
-    if (!context) {
-        throw new Error("Sheet components must be used within a Sheet")
-    }
-    return context
-}
-
-interface SheetProps {
-    open?: boolean
-    onOpenChange?: (open: boolean) => void
-    children: React.ReactNode
-}
-
-function Sheet({ open: controlledOpen, onOpenChange, children }: SheetProps) {
-    const [internalOpen, setInternalOpen] = React.useState(false)
-    const titleId = React.useId()
-
-    const open = controlledOpen !== undefined ? controlledOpen : internalOpen
-
-    const setOpen = React.useCallback((value: boolean) => {
-        if (controlledOpen === undefined) {
-            setInternalOpen(value)
-        }
-        onOpenChange?.(value)
-    }, [controlledOpen, onOpenChange])
-
-    return (
-        <SheetContext.Provider value={{ open, setOpen, titleId }}>
-            {children}
-        </SheetContext.Provider>
-    )
-}
-
-interface SheetTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-    asChild?: boolean
-}
-
-const SheetTrigger = React.forwardRef<HTMLButtonElement, SheetTriggerProps>(
-    ({ children, asChild, ...props }, ref) => {
-        const { setOpen } = useSheetContext()
-
-        if (asChild && React.isValidElement(children)) {
-            return React.cloneElement(children as React.ReactElement<{ onClick?: () => void }>, {
-                onClick: () => setOpen(true),
-            })
-        }
-
-        return (
-            <button ref={ref} onClick={() => setOpen(true)} {...props}>
-                {children}
-            </button>
-        )
-    }
-)
+const SheetTrigger = React.forwardRef<
+    React.ElementRef<typeof DialogPrimitive.Trigger>,
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Trigger>
+>((props, ref) => (
+    <DialogPrimitive.Trigger ref={ref} data-slot="sheet-trigger" {...props} />
+))
 SheetTrigger.displayName = "SheetTrigger"
 
-interface SheetContentProps extends React.HTMLAttributes<HTMLDivElement> {
+function SheetClose({ ...props }: React.ComponentProps<typeof DialogPrimitive.Close>) {
+    return <DialogPrimitive.Close data-slot="sheet-close" {...props} />
+}
+
+interface SheetContentProps
+    extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
     side?: "top" | "bottom" | "left" | "right"
 }
 
-const FOCUSABLE_SELECTOR =
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const sideClasses = {
+    top: "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
+    bottom: "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+    left: "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+    right: "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+} as const
 
-const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
-    ({ className, children, side = "right", ...props }, ref) => {
-        const { open, setOpen, titleId } = useSheetContext()
-        const contentRef = React.useRef<HTMLDivElement | null>(null)
-
-        React.useEffect(() => {
-            if (!open) return
-
-            const previousFocus = document.activeElement as HTMLElement | null
-            const handleKeyDown = (e: KeyboardEvent) => {
-                if (e.key === "Escape") {
-                    setOpen(false)
-                    return
-                }
-                if (e.key !== "Tab" || !contentRef.current) return
-                const focusables = Array.from(
-                    contentRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-                ).filter((el) => el.offsetParent !== null)
-                if (focusables.length === 0) {
-                    e.preventDefault()
-                    contentRef.current.focus()
-                    return
-                }
-                const first = focusables[0]
-                const last = focusables[focusables.length - 1]
-                const active = document.activeElement
-                if (e.shiftKey && (active === first || !contentRef.current.contains(active))) {
-                    e.preventDefault()
-                    last.focus()
-                } else if (!e.shiftKey && (active === last || !contentRef.current.contains(active))) {
-                    e.preventDefault()
-                    first.focus()
-                }
-            }
-
-            document.addEventListener("keydown", handleKeyDown)
-            document.body.style.overflow = "hidden"
-            const node = contentRef.current
-            const focusTarget =
-                node?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? node
-            focusTarget?.focus()
-            return () => {
-                document.removeEventListener("keydown", handleKeyDown)
-                document.body.style.overflow = ""
-                previousFocus?.focus?.()
-            }
-        }, [open, setOpen])
-
-        if (!open) return null
-
-        const sideClasses = {
-            top: "inset-x-0 top-0 border-b",
-            bottom: "inset-x-0 bottom-0 border-t",
-            left: "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm",
-            right: "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm",
-        }
-
-        return (
-            <div className="fixed inset-0 z-50 flex justify-end">
-                {/* Overlay */}
-                <div
-                    className="fixed inset-0 bg-black/80 animate-in fade-in-0"
-                    onClick={() => setOpen(false)}
-                />
-
-                {/* Content: scroll interno en móvil cuando el contenido es largo */}
-                <div
-                    ref={(node) => {
-                        contentRef.current = node
-                        if (typeof ref === "function") ref(node)
-                        else if (ref) ref.current = node
-                    }}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby={titleId}
-                    tabIndex={-1}
-                    className={cn(
-                        "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 animate-in overflow-y-auto max-h-[90dvh]",
-                        sideClasses[side],
-                        (side === "bottom" || side === "top") && "touch-pan-y",
-                        className
-                    )}
-                    {...props}
-                >
-                    {children}
-                    <button
-                        className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none"
-                        onClick={() => setOpen(false)}
-                    >
-                        <X className="h-4 w-4" />
-                        <span className="sr-only">Cerrar</span>
-                    </button>
-                </div>
-            </div>
-        )
-    }
-)
+// Content: scroll interno en móvil cuando el contenido es largo
+// (overflow-y-auto + max-h-[90dvh], igual que antes). `aria-describedby={undefined}`
+// explícito evita el warning de Radix cuando el sheet no lleva SheetDescription;
+// si el caller pasa el suyo vía props, gana por el spread posterior.
+const SheetContent = React.forwardRef<
+    React.ElementRef<typeof DialogPrimitive.Content>,
+    SheetContentProps
+>(({ className, children, side = "right", ...props }, ref) => (
+    <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+            data-slot="sheet-overlay"
+            className="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        />
+        <DialogPrimitive.Content
+            ref={ref}
+            data-slot="sheet-content"
+            aria-describedby={undefined}
+            className={cn(
+                "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 overflow-y-auto max-h-[90dvh] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+                sideClasses[side],
+                (side === "bottom" || side === "top") && "touch-pan-y",
+                className
+            )}
+            {...props}
+        >
+            {children}
+            <DialogPrimitive.Close
+                className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none"
+            >
+                <X className="h-4 w-4" />
+                <span className="sr-only">Cerrar</span>
+            </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+    </DialogPrimitive.Portal>
+))
 SheetContent.displayName = "SheetContent"
 
 const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
@@ -185,26 +88,28 @@ const SheetFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 )
 SheetFooter.displayName = "SheetFooter"
 
-const SheetTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
-    ({ className, id, ...props }, ref) => {
-        const { titleId } = useSheetContext()
-        return (
-            <h2
-                ref={ref}
-                id={id ?? titleId}
-                className={cn("text-lg font-semibold text-foreground", className)}
-                {...props}
-            />
-        )
-    }
-)
+const SheetTitle = React.forwardRef<
+    React.ElementRef<typeof DialogPrimitive.Title>,
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
+>(({ className, ...props }, ref) => (
+    <DialogPrimitive.Title
+        ref={ref}
+        className={cn("text-lg font-semibold text-foreground", className)}
+        {...props}
+    />
+))
 SheetTitle.displayName = "SheetTitle"
 
-const SheetDescription = React.forwardRef<HTMLParagraphElement, React.HTMLAttributes<HTMLParagraphElement>>(
-    ({ className, ...props }, ref) => (
-        <p ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
-    )
-)
+const SheetDescription = React.forwardRef<
+    React.ElementRef<typeof DialogPrimitive.Description>,
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
+>(({ className, ...props }, ref) => (
+    <DialogPrimitive.Description
+        ref={ref}
+        className={cn("text-sm text-muted-foreground", className)}
+        {...props}
+    />
+))
 SheetDescription.displayName = "SheetDescription"
 
-export { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetFooter, SheetTitle, SheetDescription }
+export { Sheet, SheetTrigger, SheetClose, SheetContent, SheetHeader, SheetFooter, SheetTitle, SheetDescription }

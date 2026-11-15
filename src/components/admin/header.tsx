@@ -19,7 +19,7 @@ import { BranchSwitcher } from "@/components/admin/branch-switcher"
 import { UserSwitcher } from "@/components/admin/user-switcher"
 import { hasModule } from "@/lib/access"
 import { LogOut, Home, Search, PanelLeft, PanelLeftClose, UserCog } from "lucide-react"
-import type { UserRole, CustomerType, UserStatus } from "@prisma/client"
+import type { UserRole, CustomerType, UserStatus } from "@/generated/prisma/client"
 
 interface AdminHeaderProps {
   user: {

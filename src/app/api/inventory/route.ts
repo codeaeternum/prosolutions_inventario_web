@@ -5,7 +5,7 @@ import { assertBranchAllowed, assertOperationBranch, getSession, requireAdmin, r
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { parseBusinessDateParam } from "@/lib/business-time"
-import { MovementType } from "@prisma/client"
+import { MovementType } from "@/generated/prisma/client"
 
 /** Mapea tipo de la UI al enum de Prisma (solo para movimientos de inventario). */
 function toPrismaMovementType(uiType: string | null): MovementType | null {

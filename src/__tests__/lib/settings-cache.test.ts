@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { Prisma } from "@prisma/client"
+import type { Prisma } from "@/generated/prisma/client"
 
 /**
  * Caché de lecturas de ajustes (src/lib/settings.ts): TTL 30 s SOLO fuera de

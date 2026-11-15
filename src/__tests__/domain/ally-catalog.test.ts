@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@/generated/prisma/client"
 import { findAllyOffers, normalizeProductName } from "@/lib/domain/ally-catalog"
 
 /**

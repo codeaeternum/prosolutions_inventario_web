@@ -18,6 +18,8 @@ import { CollapsibleSection } from "@/components/admin/taller/collapsible-sectio
 export type WorkshopPayment = {
   id: string; amount: number; method: string; purpose: string | null
   status?: string | null; notes: string | null; createdAt: string; createdBy: { name: string }
+  /** Folio SPEI/autorización del cobro — o del reembolso cuando purpose=REFUND. */
+  reference?: string | null
 }
 export type PaymentForm = { amount: string; method: string; note: string; reference: string }
 // Entrega estructurada: nombre de quien recoge (obligatorio, puede no ser el
@@ -27,10 +29,13 @@ export type PaymentForm = { amount: string; method: string; note: string; refere
 // ALIADO captador (él se lo entrega a su cliente) en vez del cliente final.
 // Default CUSTOMER — marcar PARTNER es una decisión explícita del staff.
 export type SettleForm = { method: string; deliveredTo: string; deliveredToDoc: string; deliverySignatureData: string | null; reference: string; deliveredToParty: "CUSTOMER" | "PARTNER" }
-export type RefundForm = { amount: string; method: string; note: string }
+// `reference` en RefundForm: folio de la devolución bancaria (CARD/TRANSFER)
+// — viaja como `paymentReference` en la acción REFUND; sin él el asiento no
+// concilia contra el estado de cuenta del cliente.
+export type RefundForm = { amount: string; method: string; note: string; reference: string }
 export const emptyPaymentForm: PaymentForm = { amount: "", method: "", note: "", reference: "" }
 export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", deliveredToDoc: "", deliverySignatureData: null, reference: "", deliveredToParty: "CUSTOMER" }
-export const emptyRefundForm: RefundForm = { amount: "", method: "", note: "" }
+export const emptyRefundForm: RefundForm = { amount: "", method: "", note: "", reference: "" }
 
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
@@ -108,6 +113,7 @@ export function PaymentsPanel(props: {
           <span className="text-xs text-muted-foreground">{methodLabels[payment.method] ?? payment.method}</span>
         </p>
         <p className="mt-1 text-xs text-muted-foreground">{payment.createdBy.name} · {date(payment.createdAt)}</p>
+        {payment.reference && <p className="mt-1 text-xs text-muted-foreground">Ref: {payment.reference}</p>}
         {payment.notes && <p className="mt-1 text-xs">{payment.notes}</p>}
       </li>)}</ul>}
     {feeEditable && <form onSubmit={props.onFeeSubmit} className="space-y-3 rounded-lg border border-dashed p-3">
@@ -135,9 +141,13 @@ export function PaymentsPanel(props: {
       <fieldset disabled={props.disabled} className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs">Monto MXN<Input type="number" min={0} max={overpaid / 100} step="0.01" required value={props.refundForm.amount} onChange={e => props.onRefundChange({ ...props.refundForm, amount: e.target.value })} placeholder="0.00" className="mt-1" /></label>
         <label className="text-xs">Método de devolución<select required value={props.refundForm.method} onChange={e => props.onRefundChange({ ...props.refundForm, method: e.target.value })} className={`${inputClass} mt-1`}><option value="">Selecciona</option><option value="CASH">Efectivo</option><option value="CARD">Tarjeta</option><option value="TRANSFER">Transferencia</option></select></label>
+        {(props.refundForm.method === "CARD" || props.refundForm.method === "TRANSFER") && (
+          <label className="text-xs sm:col-span-2">Referencia bancaria<Input required maxLength={50} value={props.refundForm.reference} onChange={e => props.onRefundChange({ ...props.refundForm, reference: e.target.value })} placeholder="Folio de la transferencia / últimos 4 dígitos" className="mt-1" />
+            <span className="mt-1 block text-[11px] text-muted-foreground">Aparece en el estado de cuenta del cliente.</span></label>
+        )}
         <label className="text-xs sm:col-span-2">Nota (opcional)<Input maxLength={500} value={props.refundForm.note} onChange={e => props.onRefundChange({ ...props.refundForm, note: e.target.value })} placeholder="Motivo de la devolución…" className="mt-1" /></label>
       </fieldset>
-      <Button size="sm" variant="outline" disabled={props.disabled || !props.refundForm.amount || !props.refundForm.method}>{props.disabled ? "Guardando…" : `Devolver ${props.refundForm.amount ? money(Math.round(Number(props.refundForm.amount) * 100)) : ""}`}</Button>
+      <Button size="sm" variant="outline" disabled={props.disabled || !props.refundForm.amount || !props.refundForm.method || ((props.refundForm.method === "CARD" || props.refundForm.method === "TRANSFER") && props.refundForm.reference.trim().length < 4)}>{props.disabled ? "Guardando…" : `Devolver ${props.refundForm.amount ? money(Math.round(Number(props.refundForm.amount) * 100)) : ""}`}</Button>
     </form>}
     {props.canDeliver && (props.settleOpen
       ? <form onSubmit={props.onSettleSubmit} className="space-y-3 rounded-lg border border-emerald-300/70 bg-emerald-50/60 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">

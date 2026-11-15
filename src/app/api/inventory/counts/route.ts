@@ -4,7 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { countFolio, createCount, listCounts } from "@/lib/domain/counts"
 import { businessFailure } from "@/lib/domain/http"
-import type { CountStatus } from "@prisma/client"
+import type { CountStatus } from "@/generated/prisma/client"
 
 const STATUSES: CountStatus[] = ["OPEN", "APPLIED", "CANCELLED"]
 

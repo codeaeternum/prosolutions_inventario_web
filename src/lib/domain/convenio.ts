@@ -1,4 +1,4 @@
-import type { PrismaClient, RepairStatus } from "@prisma/client"
+import type { PrismaClient, RepairStatus } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
 import { formatFolio, parseFolioDigits } from "../workshop-labels"

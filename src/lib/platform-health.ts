@@ -1,4 +1,4 @@
-import type { RepairStatus } from "@prisma/client"
+import type { RepairStatus } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma"
 import { getRateLimitStats, type RateLimitStats } from "@/lib/rate-limit"
 import {

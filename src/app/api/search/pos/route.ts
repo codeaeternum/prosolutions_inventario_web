@@ -6,7 +6,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { prisma } from "@/lib/prisma"
-import { Prisma } from "@prisma/client"
+import { Prisma } from "@/generated/prisma/client"
 
 export async function GET(req: Request) {
     try {

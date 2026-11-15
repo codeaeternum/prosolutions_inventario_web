@@ -52,6 +52,10 @@ export interface PosDocumentSummary {
     itemCount?: number
     expiresAt?: string | null
     customer?: { id?: string; name: string; phone?: string | null } | null
+    /** Cobros CONFIRMED del documento (method en enum de BD): la cancelación
+     *  del apartado los reembolsa por medio — con ellos la UI sabe qué
+     *  folios bancarios pedir. */
+    payments?: { method: string; amount: number }[]
     createdAt: string
 }
 
@@ -92,6 +96,26 @@ export function paymentMethodsFor(cajaOpen: boolean | null, methods: PosPaymentM
 
 /** Anticipos de apartado: un depósito a crédito no tiene sentido en caja. */
 export const DEPOSIT_METHODS = PAYMENT_METHODS.filter(m => m.value !== "CREDITO")
+
+/**
+ * Medios del mostrador cuyo reembolso sale por un canal bancario (terminal o
+ * SPEI): el folio externo es lo que concilia la salida contra el estado de
+ * cuenta del cliente — espejo de BANK_REFUND_CHANNELS en domain/sales.
+ */
+export const BANK_REFUND_METHODS: readonly PosPaymentMethod[] = ["TARJETA", "TRANSFERENCIA"]
+
+export function isBankRefundMethod(method: string | null | undefined): method is PosPaymentMethod {
+    return method === "TARJETA" || method === "TRANSFERENCIA"
+}
+
+/**
+ * El folio de una devolución bancaria se pide con contenido mínimo: 4+
+ * caracteres útiles descarta capturas vacías o de un solo dígito, que de
+ * todos modos no conciliarían nada (el servidor además exige no-vacío).
+ */
+export function refundReferenceOk(raw: string): boolean {
+    return raw.trim().length >= 4
+}
 
 export interface PaymentDraft {
     method: PosPaymentMethod

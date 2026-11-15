@@ -4,7 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { paginated } from "@/lib/api-pagination"
 import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
-import type { ReservationStatus, SaleStatus } from "@prisma/client"
+import type { ReservationStatus, SaleStatus } from "@/generated/prisma/client"
 
 /**
  * Pedidos del cliente: feed unificado de la demanda registrada.

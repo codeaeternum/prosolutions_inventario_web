@@ -1,4 +1,4 @@
-import type { PrismaClient, RepairStatus } from "@prisma/client"
+import type { PrismaClient, RepairStatus } from "@/generated/prisma/client"
 import { DELEGATION_CLOSED_STATUSES } from "./delegation"
 import { repairLabels } from "../workshop-labels"
 

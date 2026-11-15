@@ -1,4 +1,4 @@
-import type { PaymentMethod, PrismaClient, Reservation } from "@prisma/client"
+import type { PaymentMethod, PrismaClient, Reservation } from "@/generated/prisma/client"
 import { z } from "zod"
 import { isOwnedPaymentProof } from "../payment-proofs"
 import { actor, addDebt, amount, BusinessError, cents, itemsSchema, mergeItems, openRegister, operation, operationKeySchema, releaseStock, resolveBranch, takeStock, transaction, type Transaction } from "./operations"
