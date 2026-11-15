@@ -367,6 +367,28 @@ describe("pago al proveedor al pedir", () => {
     }))
   })
 
+  it("branchId explícito lleva la salida a la caja de ESA sucursal, no a la base del cobrador", async () => {
+    tx.encargo.findFirst.mockResolvedValue(pending)
+    tx.encargo.updateMany.mockResolvedValue({ count: 1 })
+    tx.supplier.findFirst.mockResolvedValue({ id: "sup-1", name: "Repuestos MX" })
+    // Cada sucursal pedida resuelve su propia caja OPEN.
+    tx.branch.findFirst.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+      ({ ...branch, id: where.id ?? "b1" }))
+    tx.cashRegister.findMany.mockImplementation(async ({ where }: { where: { branchId?: string } }) =>
+      [{ id: `reg-${where.branchId}` }])
+    tx.cashRegister.findUniqueOrThrow.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      ({ id: where.id, initialAmount: 0 }))
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 1000 }])
+    await transitionEncargo(db, "admin-1", BIZ, "e1", {
+      idempotencyKey: key(), action: "ORDERED",
+      supplierId: "sup-1", supplierAmountCents: 30000, supplierMethod: "CASH", cashFromRegister: true,
+      branchId: "b2",
+    })
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", amount: 300, registerId: "reg-b2" }),
+    }))
+  })
+
   it("CASH sin cashFromRegister solo documenta la salida (como paySupplier)", async () => {
     tx.encargo.findFirst.mockResolvedValue(pending)
     tx.encargo.updateMany.mockResolvedValue({ count: 1 })

@@ -13,16 +13,17 @@ export interface StockDriftRow {
 }
 
 async function computeStockDrift(businessId: string): Promise<{ totalChecked: number; drifted: StockDriftRow[] }> {
-  // El desfase se compara en BD (stock vs Σ BranchStock): el INNER JOIN
-  // replica la regla "solo productos con al menos una fila en BranchStock"
-  // —los legacy sin fila no se marcan— y el HAVING deja solo los que
+  // El desfase se compara en BD (stock vs Σ BranchStock): el LEFT JOIN cubre
+  // TODO producto activo — los legacy sin fila en BranchStock traen Σ=0 por
+  // el COALESCE y cuando su stock cacheado es > 0 quedan reportados como
+  // desfase (antes el INNER JOIN los escondía). El HAVING deja solo los que
   // difieren, en vez de materializar el catálogo activo completo.
   const [driftRows, totalChecked] = await Promise.all([
     prisma.$queryRaw<Omit<StockDriftRow, "diff">[]>`
       SELECT p."id" AS "productId", p."name" AS "name", p."stock" AS "cachedStock",
              COALESCE(SUM(bs."quantity"), 0)::int AS "branchesStock"
       FROM "Product" p
-      JOIN "BranchStock" bs ON bs."productId" = p."id" AND bs."businessId" = p."businessId"
+      LEFT JOIN "BranchStock" bs ON bs."productId" = p."id" AND bs."businessId" = p."businessId"
       WHERE p."businessId" = ${businessId} AND p."isActive" = true
       GROUP BY p."id", p."name", p."stock"
       HAVING COALESCE(SUM(bs."quantity"), 0) <> p."stock"
@@ -55,7 +56,9 @@ const CHARGED_PARTS_LIMIT = 100
  * igual — intencional cuando la pieza se montó antes de catalogarse, pero
  * sin esta conciliación el faltante era invisible. El descuento aplicado se
  * reconstruye igual que el RETURN de syncPartStock: Σ OUT − Σ RETURN de los
- * movimientos cuyo notes ancla al patrón "Refacción OT <partId> ·".
+ * movimientos cuyo notes ancla al patrón "Refacción OT <partId> ·", siempre
+ * del MISMO producto (im.productId = rp.productId) — movimientos de otra
+ * pieza que reutilicen el prefijo ya no inflan el "deducted".
  * COUNT(*) OVER () da el total real aunque la lista venga acotada.
  */
 async function computeChargedWithoutStock(businessId: string): Promise<{ count: number; parts: ChargedWithoutStockRow[] }> {
@@ -68,6 +71,7 @@ async function computeChargedWithoutStock(businessId: string): Promise<{ count: 
     JOIN "RepairOrder" ro ON ro."id" = rp."orderId"
     LEFT JOIN "InventoryMovement" im
       ON im."businessId" = rp."businessId"
+      AND im."productId" = rp."productId"
       AND im."type" IN ('OUT', 'RETURN')
       AND im."notes" LIKE 'Refacción OT ' || rp."id" || ' ·%'
     WHERE rp."businessId" = ${businessId}

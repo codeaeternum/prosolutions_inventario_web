@@ -258,7 +258,7 @@ describe("cart cap: the wizard cannot grow the cart past CART_MAX_ITEMS", () => 
   it("addtocart_ refuses a NEW item when the cart is full", async () => {
     const { bot, action } = makeBot()
     const product = { id: "pNew", name: "Nuevo", stock: 5, retailPrice: 10 }
-    const prisma = { product: { findUnique: vi.fn(async () => product) } }
+    const prisma = { product: { findUnique: vi.fn(async () => product), findFirst: vi.fn(async () => product) } }
     const sessions = makeSessions()
     sessions.cart["555"] = fullCart()
     registerCart({ bot, prisma, sessions, isDev: false, BOT_TOKEN: "" } as unknown as BotContext)
@@ -276,7 +276,7 @@ describe("cart cap: the wizard cannot grow the cart past CART_MAX_ITEMS", () => 
   it("addtocart_ still increments quantity of an item already in a full cart", async () => {
     const { bot, action } = makeBot()
     const product = { id: "p0", name: "Producto p0", stock: 5, retailPrice: 10 }
-    const prisma = { product: { findUnique: vi.fn(async () => product) } }
+    const prisma = { product: { findUnique: vi.fn(async () => product), findFirst: vi.fn(async () => product) } }
     const sessions = makeSessions()
     sessions.cart["555"] = fullCart()
     registerCart({ bot, prisma, sessions, isDev: false, BOT_TOKEN: "" } as unknown as BotContext)

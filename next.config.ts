@@ -85,6 +85,11 @@ const nextConfig: NextConfig = {
       // Comprobantes de pago son objetos privados: nunca permitir caché pública, sea cual sea el handler.
       { source: "/api/payment-proofs/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       { source: "/uploads/payments/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
+      // Fotos de catálogo: nombres con timestamp+aleatorio (contenido
+      // direccionable), las sirve app/uploads/[[...path]] — caché inmutable
+      // segura. SOLO este prefijo: el resto de /uploads (logos raíz, proofs
+      // legacy) conserva el control del handler.
+      { source: "/uploads/products/:path*", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
       {
         source: "/:path*",
         headers: securityHeaders,

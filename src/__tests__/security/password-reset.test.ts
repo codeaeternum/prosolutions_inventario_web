@@ -61,6 +61,16 @@ vi.mock("@/lib/audit", async (importActual) => {
   }
 })
 
+// El piso de latencia anti-enumeración (500-800 ms reales por request)
+// haría esta suite de ~20 llamadas insoportablemente lenta; el contrato
+// del piso se prueba aparte en password-reset-timing.test.ts. Aquí se
+// deja passthrough para ejercitar que la ruta lo invoca.
+vi.mock("@/lib/timing", () => ({
+  withLatencyFloor: <T>(work: () => Promise<T>) => work(),
+  jitterMs: () => 0,
+  sleep: () => Promise.resolve(),
+}))
+
 import { POST as requestReset } from "@/app/api/auth/password-reset/request/route"
 import { POST as confirmReset } from "@/app/api/auth/password-reset/confirm/route"
 import { PATCH as patchUser } from "@/app/api/users/[id]/route"

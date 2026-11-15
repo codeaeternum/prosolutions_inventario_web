@@ -31,6 +31,7 @@ import {
   getBusinessSettingsMap,
   getOrderFolioDigits,
   getSettings,
+  getSettingsFor,
   setBusinessSetting,
   resetSettingsCacheForTests,
 } from "@/lib/settings"
@@ -219,5 +220,40 @@ describe("getSettings", () => {
     await setBusinessSetting("biz-1", "bank_transfer_info", "CLABE 999")
     await getSettings("biz-1")
     expect(mocks.settingsFindFirst).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("getSettingsFor", () => {
+  it("lee el tenant dado sin tocar getDefaultBusinessId y comparte el caché", async () => {
+    mocks.settingsFindFirst.mockResolvedValue(settingsRow())
+    mocks.sysFindMany.mockResolvedValue([{ key: "bank_cash_info", value: "Ventanilla 5" }])
+    const s = await getSettingsFor("biz-1")
+    expect(s.bankCashInfo).toBe("Ventanilla 5")
+    expect(mocks.businessFindFirst).not.toHaveBeenCalled()
+    // Misma lectura vía getSettingsFor y getSettings comparten la caché
+    // por negocio: dos llamadas, una sola pareja de queries.
+    await getSettings("biz-1")
+    expect(mocks.settingsFindFirst).toHaveBeenCalledTimes(1)
+  })
+
+  it("con tx lee siempre fresco y no contamina el caché", async () => {
+    const tx = makeTx()
+    tx.settings.findFirst.mockResolvedValue(settingsRow())
+    tx.systemSettings.findMany.mockResolvedValue([])
+    const a = await getSettingsFor("biz-1", tx as unknown as SettingsTx)
+    const b = await getSettingsFor("biz-1", tx as unknown as SettingsTx)
+    expect(a.exchangeRate).toBe(18.1)
+    expect(b.exchangeRate).toBe(18.1)
+    expect(tx.settings.findFirst).toHaveBeenCalledTimes(2)
+    expect(mocks.settingsFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("el tenant nunca cae al default: cada negocio consulta el suyo", async () => {
+    mocks.settingsFindFirst.mockResolvedValue(settingsRow())
+    await getSettingsFor("biz-1")
+    await getSettingsFor("biz-2")
+    expect(mocks.businessFindFirst).not.toHaveBeenCalled()
+    const whereBiz = mocks.settingsFindFirst.mock.calls.map(c => c[0].where.businessId)
+    expect(whereBiz).toEqual(["biz-1", "biz-2"])
   })
 })

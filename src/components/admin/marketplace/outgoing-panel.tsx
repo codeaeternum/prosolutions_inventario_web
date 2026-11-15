@@ -49,7 +49,9 @@ interface OutgoingRequest {
     name: string
     barcode: string | null
     wholesalePrice: number
-    retailPrice: number
+    // El listado saliente no proyecta el retail del proveedor (es interno
+    // suyo) — la API ya no lo envía en direction=out.
+    retailPrice?: number
   }
   business: { id: string; name: string; slug: string }
   requestedBy: { id: string; name: string; role: string } | null
@@ -324,7 +326,11 @@ export function MarketplaceOutgoingPanel({
                     </TableCell>
                     {!isWorkshop && (
                       <TableCell className="whitespace-nowrap">
-                        {request.requestedBy?.name ?? "—"}
+                        {/* requestedBy es SetNull: cuenta borrada → el pedido
+                            sobrevive con el nombre del taller. */}
+                        {request.requestedBy
+                          ? request.requestedBy.name
+                          : <span className="text-muted-foreground italic">cuenta eliminada</span>}
                       </TableCell>
                     )}
                     <TableCell>

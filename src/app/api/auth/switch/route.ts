@@ -35,7 +35,7 @@ async function mintSession(req: NextRequest, user: {
   isSuperAdmin?: boolean | null;
   allowedModules?: string[] | null;
   allowedBranchIds?: string[] | null;
-}, impersonator: string | null) {
+}, impersonator: string | null, impersonatedAt: number | null) {
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET
   if (!secret) throw new Error("AUTH_SECRET no configurado")
   const cookieName = sessionCookieName(req)
@@ -54,6 +54,9 @@ async function mintSession(req: NextRequest, user: {
       allowedBranchIds: user.allowedBranchIds ?? [],
       passwordVersion: passwordVersion(user.password),
       impersonator,
+      // El JWT vive 30 días pero la impersonación caduca a las 8 h
+      // (lib/session-policy) — el timestamp viaja firmado en la cookie.
+      impersonatedAt,
     },
     secret,
     salt: cookieName,
@@ -74,13 +77,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Demasiados intentos, espera un momento" }, { status: 429 })
   }
 
-  const body = await req.json().catch(() => null) as { userId?: string; pin?: string; restore?: boolean } | null
+  const body = await req.json().catch(() => null) as { userId?: string; pin?: string; restore?: boolean; reason?: string } | null
+  // Motivo opcional del modo soporte (consola /platform): queda en el
+  // PlatformEvent y en la bitácora del tenant — acotado a 200 chars.
+  const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 200) : ""
   const cookieName = sessionCookieName(req)
   const rawCookie = req.cookies.get(cookieName)?.value
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? ""
 
   let targetId = body?.userId
-  let impersonator: string | null = caller.id
 
   // Claim impersonator vigente (si la sesión actual YA era impersonada): se
   // necesita para el restore y queda en la bitácora como estado anterior.
@@ -88,6 +93,12 @@ export async function POST(req: NextRequest) {
     ? await decode({ token: rawCookie, secret, salt: cookieName }).catch(() => null)
     : null
   const previousImpersonator = typeof decoded?.impersonator === "string" ? decoded.impersonator : null
+  const previousImpersonatedAt = typeof decoded?.impersonatedAt === "number" ? decoded.impersonatedAt : null
+
+  // Impersonación encadenada: si esta sesión YA era impersonada, "Volver a mi
+  // cuenta" debe regresar al impersonador RAÍZ (el operador), no a la cuenta
+  // intermedia — así el TTL también se mide desde la entrada original.
+  let impersonator: string | null = previousImpersonator ?? caller.id
 
   // Restaurar: vuelve a la cuenta que originó el cambio, sin PIN.
   if (body?.restore) {
@@ -119,7 +130,7 @@ export async function POST(req: NextRequest) {
       quickPin: true,
       allowedModules: true,
       allowedBranchIds: true,
-      business: { select: { name: true, slug: true } },
+      business: { select: { name: true, slug: true, isActive: true } },
     },
   })
   // El cambio rápido normal nunca cruza negocios. Excepción exclusiva:
@@ -128,6 +139,14 @@ export async function POST(req: NextRequest) {
   const canCrossTenant = caller.isSuperAdmin === true || Boolean(body?.restore && target?.isSuperAdmin === true)
   if (!target || (!canCrossTenant && target.businessId !== caller.businessId) || target.status !== "APPROVED" || (target.role !== "ADMIN" && target.role !== "EMPLOYEE")) {
     return NextResponse.json({ error: "Usuario no disponible" }, { status: 404 })
+  }
+
+  // Negocio suspendido: mintear la sesión impersonada serviría de nada — el
+  // siguiente request la revocaría (refreshSessionToken) y el OPERADOR
+  // quedaría fuera, con su cookie original ya reemplazada. Los superadmins
+  // sí sobreviven la suspensión de su propio tenant (restore a la consola).
+  if (target.business?.isActive === false && target.isSuperAdmin !== true) {
+    return NextResponse.json({ error: "El negocio está suspendido" }, { status: 409 })
   }
 
   // Reglas: ADMIN o Superadmin entran sin PIN; staff necesita el PIN del destino.
@@ -163,7 +182,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { token } = await mintSession(req, target, impersonator)
+  // El TTL corre desde la entrada original: en una cadena de cambios
+  // (op → caja → otra caja) se conserva el impersonatedAt vigente.
+  const impersonatedAt = impersonator ? (previousImpersonatedAt ?? Date.now()) : null
+  const { token } = await mintSession(req, target, impersonator, impersonatedAt)
 
   // Bitácora: el cambio de cuenta es un evento de acceso — quién operó como
   // quién. En el restore el actor real es la cuenta impersonadora (target):
@@ -182,6 +204,9 @@ export async function POST(req: NextRequest) {
     changes: {
       cuenta: { before: caller.id, after: target.id },
       impersonador: { before: previousImpersonator, after: impersonator },
+      // El motivo declarado al entrar en modo soporte queda en el diff del
+      // tenant (solo en AUTH_SWITCH; el restore no lleva reason).
+      ...(reason && !body?.restore ? { motivo: { before: null, after: reason } } : {}),
     },
   })
 
@@ -201,11 +226,32 @@ export async function POST(req: NextRequest) {
           detail: {
             targetUserId: target.id,
             targetEmail: target.email ?? target.phone ?? null,
+            ...(reason ? { reason } : {}),
           },
         },
       })
     } catch (error) {
       console.error("[auth/switch] No se pudo registrar SUPPORT_ENTERED:", error)
+    }
+    // Aviso visible al tenant: el dueño ve en su campana que un operador de
+    // plataforma entró a su panel (y con qué motivo, si se declaró).
+    // Notification.type es string libre — "support_access" se muestra con el
+    // icono por defecto y sin navegación (solo marca leída).
+    try {
+      await prisma.notification?.create({
+        data: {
+          businessId: target.businessId,
+          type: "support_access",
+          audience: "ADMIN",
+          title: "Acceso de soporte",
+          message: reason
+            ? `Un operador de soporte entró a tu panel. Motivo: ${reason}`
+            : "Un operador de soporte entró a tu panel.",
+          data: reason ? { reason } : undefined,
+        },
+      })
+    } catch (error) {
+      console.error("[auth/switch] No se pudo crear la notificación de acceso de soporte:", error)
     }
   } else if (body?.restore && target.isSuperAdmin === true) {
     try {

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   businessFindUnique: vi.fn(),
   auditCreate: vi.fn(),
   platformEventCreate: vi.fn(),
+  notificationCreate: vi.fn(),
   encode: vi.fn(),
   decode: vi.fn(),
   bcryptCompare: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
     business: { findUnique: mocks.businessFindUnique },
     auditEvent: { create: mocks.auditCreate },
     platformEvent: { create: mocks.platformEventCreate },
+    notification: { create: mocks.notificationCreate },
   },
 }))
 // recordAudit es real; solo se sustituye el grito Telegram/alerta para que el
@@ -66,6 +68,7 @@ beforeEach(() => {
   mocks.decode.mockResolvedValue({ id: "admin-1" }) // sesión propia, sin impersonator
   mocks.auditCreate.mockResolvedValue({})
   mocks.platformEventCreate.mockResolvedValue({})
+  mocks.notificationCreate.mockResolvedValue({ id: "n-1" })
   mocks.businessFindUnique.mockResolvedValue({ name: "Taller Amigo", slug: "taller-amigo" })
   mocks.findUnique.mockResolvedValue(cashier)
 })
@@ -291,5 +294,79 @@ describe("restaurar la cuenta original", () => {
         detail: { targetUserId: "emp-2", targetEmail: "kevin@amigo.mx" },
       }),
     })
+  })
+})
+
+describe("modo soporte con motivo y negocio suspendido", () => {
+  const operador = {
+    id: "op-1", name: "Operador Reficio", email: "op@reficio.app", role: "ADMIN",
+    status: "APPROVED", businessId: "biz-reficio-hq", isSuperAdmin: true, customerType: "NORMAL",
+  }
+  const cuentaTenant = {
+    ...cashier, email: "kevin@amigo.mx", businessId: "biz-amigo", isSuperAdmin: false,
+    business: { name: "Taller Amigo", slug: "taller-amigo", isActive: true },
+  }
+
+  it("guarda el motivo en el PlatformEvent, en la bitácora del tenant y avisa por Notification", async () => {
+    mocks.auth.mockResolvedValue({ user: operador })
+    mocks.findUnique.mockResolvedValue(cuentaTenant)
+    const res = await POST(req({ userId: "emp-2", reason: "El dueño reportó un ticket roto" }))
+    expect(res.status).toBe(200)
+
+    expect(mocks.platformEventCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        kind: "SUPPORT_ENTERED",
+        detail: { targetUserId: "emp-2", targetEmail: "kevin@amigo.mx", reason: "El dueño reportó un ticket roto" },
+      }),
+    })
+    expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: "AUTH_SWITCH",
+        changes: expect.objectContaining({
+          motivo: { before: null, after: "El dueño reportó un ticket roto" },
+        }),
+      }),
+    }))
+    expect(mocks.notificationCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        businessId: "biz-amigo",
+        type: "support_access",
+        audience: "ADMIN",
+      }),
+    })
+    const notice = mocks.notificationCreate.mock.calls[0][0].data
+    expect(notice.message).toContain("El dueño reportó un ticket roto")
+  })
+
+  it("rechaza 409 entrar a un negocio suspendido y no mintea sesión", async () => {
+    mocks.auth.mockResolvedValue({ user: operador })
+    mocks.findUnique.mockResolvedValue({
+      ...cuentaTenant,
+      business: { name: "Taller Amigo", slug: "taller-amigo", isActive: false },
+    })
+    const res = await POST(req({ userId: "emp-2" }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toContain("suspendido")
+    expect(mocks.encode).not.toHaveBeenCalled()
+    expect(mocks.platformEventCreate).not.toHaveBeenCalled()
+  })
+
+  it("una cadena de cambios conserva el impersonator raíz y el timestamp original", async () => {
+    // La sesión activa YA era del operador impersonando a emp-2; al saltar a
+    // emp-3 "Volver" debe regresar a op-1 (raíz), no a emp-2.
+    mocks.auth.mockResolvedValue({
+      user: { id: "emp-2", name: "Kevin", email: "kevin@amigo.mx", role: "EMPLOYEE", status: "APPROVED", businessId: "biz-amigo", isSuperAdmin: false, customerType: "NORMAL" },
+    })
+    mocks.decode.mockResolvedValue({ id: "emp-2", impersonator: "op-1", impersonatedAt: 111 })
+    mocks.findUnique.mockResolvedValue({
+      ...cashier, id: "emp-3", name: "Caja Dos", businessId: "biz-amigo", isSuperAdmin: false,
+      business: { name: "Taller Amigo", slug: "taller-amigo", isActive: true },
+    })
+    mocks.bcryptCompare.mockResolvedValue(true)
+    const res = await POST(req({ userId: "emp-3", pin: "1234" }))
+    expect(res.status).toBe(200)
+    expect(mocks.encode).toHaveBeenCalledWith(expect.objectContaining({
+      token: expect.objectContaining({ id: "emp-3", impersonator: "op-1", impersonatedAt: 111 }),
+    }))
   })
 })

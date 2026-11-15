@@ -26,6 +26,7 @@ import { registerDailySummary } from './commands/daily-summary'
 import { registerLongShiftAlerts } from './commands/long-shift-alerts'
 import { registerOrden } from './commands/orden'
 import type { SessionStores, BotContext } from './lib/types'
+import { errorText } from './lib/format'
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const isDev = process.env.NODE_ENV !== 'production'
@@ -108,7 +109,7 @@ bot.use(async (ctx, next) => {
         // Fail-open: si Prisma (o el reply) falla, el update pasa y cada
         // comando aplica sus propios guards. Un throw aquí era unhandled
         // rejection y abortaba el proceso (Node ≥22).
-        console.error('Error en gate de cuenta:', e)
+        console.error('Error en gate de cuenta:', errorText(e))
     }
     return next()
 })
@@ -191,6 +192,8 @@ const sessions: SessionStores = {
     qr: createBoundedStore(),
     settings: createBoundedStore(),
     orden: createBoundedStore(),
+    stockAdjust: createBoundedStore(),
+    linkVerify: createBoundedStore(),
 }
 
 // Shared context for all modules
@@ -199,7 +202,7 @@ const ctx: BotContext = { bot, prisma, sessions, isDev, BOT_TOKEN }
 // ======= REGISTER ALL MODULES =======
 // ORDER MATTERS: settings text handler must be before the main text handler
 
-registerStart(bot, prisma, sessions.registration)
+registerStart(bot, prisma, sessions.registration, sessions.linkVerify)
 registerHelp(bot)
 registerMiid(bot)
 registerCancelar(bot, {
@@ -212,6 +215,8 @@ registerCancelar(bot, {
     qr: sessions.qr,
     settings: sessions.settings,
     orden: sessions.orden,
+    stockAdjust: sessions.stockAdjust,
+    linkVerify: sessions.linkVerify,
 })
 
 registerSettings(ctx)
@@ -247,23 +252,30 @@ function touchHeartbeat() {
     try {
         fs.writeFileSync(HEARTBEAT_FILE, new Date().toISOString())
     } catch (e) {
-        console.error('Error escribiendo heartbeat:', e)
+        console.error('Error escribiendo heartbeat:', errorText(e))
     }
 }
 touchHeartbeat()
 scheduledTasks.push(cron.schedule('* * * * *', touchHeartbeat))
 
-// Cancel expired reservations and prune abandoned sessions every 30 min
+// Cancel expired reservations and prune abandoned sessions every 30 min.
+// Overlap guard: node-cron dispara aunque la corrida anterior siga viva —
+// un barrido lento (BD saturada) no puede apilarse consigo mismo.
+let expirationRunning = false
 scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {
-    pruneStaleSessions(sessions)
-    if (!_prisma) return
-    if (isDev) console.log('⏳ Checking for expired reservations...')
-
+    if (expirationRunning) { console.warn('[Cron] Expiración de reservas: corrida anterior sigue viva; se salta este tick.') ; return }
+    expirationRunning = true
     try {
+        pruneStaleSessions(sessions)
+        if (!_prisma) return
+        if (isDev) console.log('⏳ Checking for expired reservations...')
+
         const result = await expireReservations(_prisma)
         if (isDev) console.log('Reservation expiration', result)
     } catch (e) {
-        console.error('Error in expiration job:', e)
+        console.error('Error in expiration job:', errorText(e))
+    } finally {
+        expirationRunning = false
     }
 }))
 
@@ -271,15 +283,20 @@ scheduledTasks.push(cron.schedule('*/30 * * * *', async () => {
 // PENDING — nunca verificaron su contacto. El endpoint
 // /api/cron/purge-pending-signups usa la misma lógica para forzarla a mano o
 // desde schedulers externos.
+let signupPurgeRunning = false
 scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
-    if (!_prisma) return
+    if (signupPurgeRunning) { console.warn('[Cron] Purga de altas: corrida anterior sigue viva; se salta este tick.'); return }
+    signupPurgeRunning = true
     try {
+        if (!_prisma) return
         const result = await purgePendingSignups(_prisma)
         if (result.purged > 0 || result.purgedPendingCustomers > 0 || result.skipped.length > 0) {
             console.log('Pending signup purge:', result)
         }
     } catch (e) {
-        console.error('Error in pending signup purge job:', e)
+        console.error('Error in pending signup purge job:', errorText(e))
+    } finally {
+        signupPurgeRunning = false
     }
     // Los jobs a hora fija corren en la zona del negocio (no en UTC del
     // contenedor): 04:17 es de madrugada local, igual que el resumen de las
@@ -290,15 +307,20 @@ scheduledTasks.push(cron.schedule('17 4 * * *', async () => {
 // >AUDIT_RETENTION_DAYS (default 90d) y PlatformEvent
 // >PLATFORM_RETENTION_DAYS (default 365d).
 // El endpoint /api/cron/purge-events usa la misma lógica para disparo manual.
+let eventsPurgeRunning = false
 scheduledTasks.push(cron.schedule('25 4 * * *', async () => {
-    if (!_prisma) return
+    if (eventsPurgeRunning) { console.warn('[Cron] Retención de eventos: corrida anterior sigue viva; se salta este tick.'); return }
+    eventsPurgeRunning = true
     try {
+        if (!_prisma) return
         const result = await purgeOldEvents(_prisma)
         if (result.auditDeleted > 0 || result.platformDeleted > 0) {
             console.log('Event retention purge:', result)
         }
     } catch (e) {
-        console.error('Error in event retention job:', e)
+        console.error('Error in event retention job:', errorText(e))
+    } finally {
+        eventsPurgeRunning = false
     }
 }, { timezone: BUSINESS_TIME_ZONE }))
 
@@ -307,9 +329,12 @@ scheduledTasks.push(cron.schedule('25 4 * * *', async () => {
 // operación deja vínculos divergentes. El barrido solo DETECTA (issue en la
 // respuesta + RepairEvent privado de alerta en la orden); la corrección es
 // manual. El endpoint /api/cron/reconcile-delegations la dispara a mano.
+let reconcileRunning = false
 scheduledTasks.push(cron.schedule('35 4 * * *', async () => {
-    if (!_prisma) return
+    if (reconcileRunning) { console.warn('[Cron] Reconciliación de delegaciones: corrida anterior sigue viva; se salta este tick.'); return }
+    reconcileRunning = true
     try {
+        if (!_prisma) return
         const result = await reconcileDelegations(_prisma)
         if (result.issues.length > 0) {
             console.warn(`Delegation reconcile: ${result.issues.length} issue(s) en ${result.checked} vínculos (${result.annotated} alertas nuevas)`, result.issues)
@@ -317,7 +342,9 @@ scheduledTasks.push(cron.schedule('35 4 * * *', async () => {
             console.log('Delegation reconcile: OK', result.checked)
         }
     } catch (e) {
-        console.error('Error in delegation reconcile job:', e)
+        console.error('Error in delegation reconcile job:', errorText(e))
+    } finally {
+        reconcileRunning = false
     }
 }, { timezone: BUSINESS_TIME_ZONE }))
 
@@ -363,7 +390,7 @@ bot.launch(async () => {
         ])
         console.log('✅ Menú de comandos configurado')
     } catch (e) {
-        console.error('Error configurando menú:', e)
+        console.error('Error configurando menú:', errorText(e))
     }
 }).catch(err => {
     console.error('❌ Error fatal al iniciar el bot:', err)
@@ -384,14 +411,14 @@ function shutdown(signal: string) {
     shuttingDown = true
     console.log(`🛑 ${signal} recibido: deteniendo bot…`)
     setTimeout(() => process.exit(0), 4_000).unref()
-    try { bot.stop(signal) } catch (e) { console.error('Error deteniendo el bot:', e) }
+    try { bot.stop(signal) } catch (e) { console.error('Error deteniendo el bot:', errorText(e)) }
     // Un bot parado no debe seguir pasando el healthcheck.
     try { fs.rmSync(HEARTBEAT_FILE, { force: true }) } catch { /* best-effort */ }
     for (const task of scheduledTasks) {
         try { task.stop() } catch { /* task ya detenido */ }
     }
     void Promise.resolve(_prisma?.$disconnect())
-        .catch(e => console.error('Error cerrando Prisma:', e))
+        .catch(e => console.error('Error cerrando Prisma:', errorText(e)))
         .finally(() => process.exit(0))
 }
 process.once('SIGINT', () => shutdown('SIGINT'))

@@ -3,7 +3,7 @@ import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { notifyAdmins } from '../lib/notify'
-import { clipMessage, escapeHtml } from '../lib/format'
+import { clipMessage, errorText, escapeHtml } from '../lib/format'
 
 /**
  * Stock Alert Module
@@ -60,7 +60,10 @@ export async function runStockAlerts(
 
     const [outOfStock, persistedRows] = await Promise.all([
         prisma.product.findMany({
-            where: { isActive: true, stock: { lte: 0 } },
+            // Negocio activo solamente (mismo patrón que daily-summary): un
+            // tenant suspendido no recibe alertas de stock — sus admins
+            // tampoco pueden entrar, avisarles sería ruido.
+            where: { isActive: true, stock: { lte: 0 }, business: { isActive: true } },
             select: { id: true, name: true, stock: true, businessId: true },
             orderBy: { name: 'asc' }
         }),
@@ -93,7 +96,7 @@ export async function runStockAlerts(
             await prisma.systemSettings.deleteMany({ where: { key: { in: staleKeys } } })
         } catch (e) {
             // Best-effort: una llave zombie solo alarga un cooldown viejo.
-            console.error('[Alerts] Error limpiando llaves de alerta viejas:', e)
+            console.error('[Alerts] Error limpiando llaves de alerta viejas:', errorText(e))
         }
     }
 
@@ -158,7 +161,7 @@ export async function runStockAlerts(
             }),
         ))
     } catch (e) {
-        console.error('[Alerts] Error persistiendo marcas de alerta:', e)
+        console.error('[Alerts] Error persistiendo marcas de alerta:', errorText(e))
     }
 
     // Cleanup de la fast-path en RAM (productos que volvieron a tener stock).
@@ -177,14 +180,20 @@ export async function runStockAlerts(
 }
 
 export function registerAlerts({ bot, prisma, isDev }: BotContext): cron.ScheduledTask {
-    // Check stock every hour
+    // Check stock every hour. Overlap guard: node-cron dispara aunque la
+    // corrida anterior siga viva (BD lenta, muchos tenants) — un barrido
+    // horario no puede apilarse consigo mismo. Guard por job, no compartido.
+    let running = false
     const task = cron.schedule('0 * * * *', async () => {
-        if (isDev) console.log('🔔 [Alerts] Checking for out-of-stock products...')
-
+        if (running) { console.warn('🔔 [Alerts] Corrida anterior sigue viva; se salta este tick.'); return }
+        running = true
         try {
+            if (isDev) console.log('🔔 [Alerts] Checking for out-of-stock products...')
             await runStockAlerts(bot, prisma, isDev)
         } catch (e) {
-            console.error('[Alerts] Error checking stock:', e)
+            console.error('[Alerts] Error checking stock:', errorText(e))
+        } finally {
+            running = false
         }
     })
 

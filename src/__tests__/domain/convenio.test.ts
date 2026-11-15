@@ -80,8 +80,12 @@ const tx = {
   payment: { findMany: vi.fn() },
   // openRegister: findMany para el conteo por sucursal y updateMany para el
   // lock de fila — el ingreso ya no cae en "cualquier caja del negocio".
-  cashRegister: { findMany: vi.fn(), updateMany: vi.fn() },
-  cashMovement: { create: vi.fn() },
+  // findUniqueOrThrow lo usa registerCashCents al revertir (monto esperado).
+  cashRegister: { findMany: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+  // findMany discrimina por `where`: con `referenceId` son los asientos
+  // CONVENIO ligados a la orden (para decidir el reverso); con `registerId`
+  // son los movimientos del cajón (registerCashCents).
+  cashMovement: { create: vi.fn(), findMany: vi.fn() },
   branch: { findFirst: vi.fn() },
   systemSettings: { findMany: vi.fn(), findUnique: vi.fn() },
 }
@@ -90,6 +94,9 @@ const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(
 const convenioOrder = (over: Record<string, unknown> = {}) => ({
   id: "o1", businessId: BIZ, number: 7, convenioSettledAt: null, convenioSettledAmountCents: null,
   partnerPriceCents: null,
+  // READY = exigible: solo se puede saldar una cuenta de convenio cuando el
+  // trabajo llegó a un estado entregable o de cierre.
+  status: "READY",
   delegatedOrderId: "m1", originBusinessId: null, delegatedFromOrderId: null, originBusinessName: null,
   ...over,
 })
@@ -102,8 +109,9 @@ beforeEach(() => {
   tx.businessOperation.create.mockResolvedValue({ id: "op-1" })
   tx.businessOperation.update.mockResolvedValue({})
   tx.repairOrder.findFirst.mockResolvedValue(convenioOrder())
-  // La espejo del lado "pagar": el precio convenio se lee de ella por id.
-  tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000 })
+  // La espejo del lado "pagar": el precio convenio Y el status de
+  // exigibilidad se leen de ella por id (DELIVERED = exigible).
+  tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000, status: "DELIVERED" })
   tx.repairOrder.findMany.mockResolvedValue([])
   tx.repairOrder.update.mockResolvedValue({})
   tx.repairOrder.updateMany.mockResolvedValue({ count: 1 })
@@ -115,10 +123,14 @@ beforeEach(() => {
   // Sin caja abierta por defecto: los tests de recordCashIn la habilitan.
   tx.cashRegister.findMany.mockResolvedValue([])
   tx.cashRegister.updateMany.mockResolvedValue({ count: 1 })
+  // Cajón con $500 de fondo: alcanza para revertir los IN de las pruebas.
+  tx.cashRegister.findUniqueOrThrow.mockResolvedValue({ initialAmount: 500 })
   // resolveBranch devuelve la sucursal pedida por id (o la default "b1").
   tx.branch.findFirst.mockImplementation(({ where }: { where: { id?: string } }) =>
     Promise.resolve({ id: where?.id ?? "b1", name: "Sucursal", isActive: true, businessId: BIZ }))
   tx.cashMovement.create.mockResolvedValue({})
+  // Sin asientos ligados por defecto: los tests de reverso los configuran.
+  tx.cashMovement.findMany.mockResolvedValue([])
   tx.systemSettings.findMany.mockResolvedValue([])
   tx.systemSettings.findUnique.mockResolvedValue(null)
 })
@@ -139,7 +151,7 @@ describe("settleConvenio", () => {
   })
 
   it("al saldar congela el monto: lado pagar toma el precio de la espejo", async () => {
-    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000 })
+    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000, status: "DELIVERED" })
     const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
     expect(result.convenioSettledAmountCents).toBe(35000)
     // La espejo se lee solo por id (cross-tenant acotado, como convenioReport).
@@ -224,7 +236,7 @@ describe("settleConvenio", () => {
   })
 
   it("saldar una cuenta sin precio convenio congela null", async () => {
-    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: null })
+    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: null, status: "DELIVERED" })
     const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: true })
     expect(result.convenioSettledAmountCents).toBeNull()
     expect(tx.repairOrder.update).toHaveBeenCalledWith(expect.objectContaining({
@@ -246,6 +258,64 @@ describe("settleConvenio", () => {
     expect(result.convenioSettledAt).toBeNull()
     expect(tx.repairOrder.update).not.toHaveBeenCalled()
     expect(tx.repairEvent.create).not.toHaveBeenCalled()
+  })
+
+  it("no salda una cuenta que aún no es exigible (trabajo en proceso)", async () => {
+    // Lado cobrar con la orden en IN_REPAIR: saldarla marcaba pagado un
+    // trabajo que el taller aún no termina.
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ delegatedOrderId: null, originBusinessName: "Telcel Centro", status: "IN_REPAIR" }))
+    await expect(settleConvenio(db, admin.id, BIZ, { ...payload, settled: true }))
+      .rejects.toMatchObject({ status: 409 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+  })
+
+  it("lado pagar decide la exigibilidad con el status de la espejo", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue({ partnerPriceCents: 35000, status: "DIAGNOSIS" })
+    await expect(settleConvenio(db, admin.id, BIZ, { ...payload, settled: true }))
+      .rejects.toMatchObject({ status: 409 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+  })
+
+  it("reabrir con ingreso en ventanilla revierte con UN CashMovement OUT ligado", async () => {
+    // La orden se saldó cobrando $250 en ventanilla (IN ligado por
+    // referenceId) y ahora se reabre: la caja debe regresar el dinero.
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ convenioSettledAt: new Date(), convenioSettledAmountCents: 25000 }))
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-1" }])
+    tx.cashMovement.findMany.mockImplementation(({ where }: { where: { registerId?: string; referenceId?: unknown } }) =>
+      Promise.resolve(where?.registerId
+        ? [{ type: "IN", amount: 500 }] // cajón con fondo + el IN previo
+        : [{ type: "IN", referenceId: "o1" }]))
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: false })
+    expect(result.cashReversalCents).toBe(25000)
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        type: "OUT", amount: 250, registerId: "reg-1",
+        referenceType: "CONVENIO", referenceId: "o1",
+      }),
+    }))
+    // El evento privado documenta el reverso en la bitácora de la orden.
+    const event = tx.repairEvent.create.mock.calls[0][0] as { data: { detail: string } }
+    expect(event.data.detail).toContain("revirtió")
+  })
+
+  it("reabrir sin ingreso previo ligado no crea OUT", async () => {
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ convenioSettledAt: new Date(), convenioSettledAmountCents: 25000 }))
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: false })
+    expect(result.cashReversalCents).toBe(0)
+    expect(tx.cashMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("reabrir cuando el IN ya fue revertido no crea una segunda OUT", async () => {
+    // Settle → reabrir → settle → reabrir: el neto IN−OUT decide — tras el
+    // primer reverso el neto es 0 y no hay nada más que regresar.
+    tx.repairOrder.findFirst.mockResolvedValue(convenioOrder({ convenioSettledAt: new Date(), convenioSettledAmountCents: 25000 }))
+    tx.cashMovement.findMany.mockImplementation(({ where }: { where: { referenceId?: unknown } }) =>
+      Promise.resolve(where?.referenceId
+        ? [{ type: "IN", referenceId: "o1" }, { type: "OUT", referenceId: "o1" }]
+        : []))
+    const result = await settleConvenio(db, admin.id, BIZ, { ...payload, settled: false })
+    expect(result.cashReversalCents).toBe(0)
+    expect(tx.cashMovement.create).not.toHaveBeenCalled()
   })
 
   it("una orden sin convenio se rechaza (409)", async () => {
@@ -508,7 +578,7 @@ describe("settleConvenioBatch", () => {
   it("del lado pagar toma el snapshot de la espejo por id", async () => {
     batchOrders(
       [convenioOrder({ id: "o1" })],           // delegatedOrderId "m1" → pagar
-      [{ id: "m1", partnerPriceCents: 35000 }],
+      [{ id: "m1", partnerPriceCents: 35000, status: "DELIVERED" }],
     )
     const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ orderIds: ["o1"] }))
     expect(result.side).toBe("pagar")
@@ -609,6 +679,46 @@ describe("settleConvenioBatch", () => {
     expect(tx.repairOrder.update).not.toHaveBeenCalled()
     expect(tx.repairEvent.create).not.toHaveBeenCalled()
     expect(tx.cashMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("rechaza el lote si alguna orden aún no es exigible", async () => {
+    batchOrders([
+      cobrar("o1", { partnerPriceCents: 20000 }),
+      cobrar("o2", { partnerPriceCents: 30000, status: "IN_REPAIR" }),
+    ])
+    await expect(settleConvenioBatch(db, admin.id, BIZ, batchPayload()))
+      .rejects.toMatchObject({ status: 409 })
+    expect(tx.repairOrder.update).not.toHaveBeenCalled()
+    expect(tx.repairEvent.create).not.toHaveBeenCalled()
+  })
+
+  it("reabrir el lote revierte con UNA OUT el total de los IN ligados aún vigentes", async () => {
+    // o1 y o2 se saldaron con ingreso en ventanilla; o3 también pero su IN
+    // ya fue revertido — el lote solo regresa lo de o1+o2.
+    batchOrders([
+      cobrar("o1", { convenioSettledAt: new Date(), convenioSettledAmountCents: 20000 }),
+      cobrar("o2", { convenioSettledAt: new Date(), convenioSettledAmountCents: 30000 }),
+      cobrar("o3", { convenioSettledAt: new Date(), convenioSettledAmountCents: 10000 }),
+    ])
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-1" }])
+    tx.cashMovement.findMany.mockImplementation(({ where }: { where: { registerId?: string; OR?: unknown } }) =>
+      Promise.resolve(where?.registerId
+        ? [{ type: "IN", amount: 1000 }]
+        : [
+            { type: "IN", referenceId: "o1,o2,o3" }, // el IN agregado del lote
+            { type: "OUT", referenceId: "o3" },      // o3 ya revertida antes
+          ]))
+    const result = await settleConvenioBatch(db, admin.id, BIZ, batchPayload({ orderIds: ["o1", "o2", "o3"], settled: false }))
+    expect(result.cashReversalCents).toBe(50000)
+    expect(tx.cashMovement.create).toHaveBeenCalledTimes(1)
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        type: "OUT", amount: 500, registerId: "reg-1",
+        referenceType: "CONVENIO", referenceId: "o1,o2",
+      }),
+    }))
+    // Las tres órdenes quedaron reabiertas.
+    expect(tx.repairOrder.update).toHaveBeenCalledTimes(3)
   })
 })
 

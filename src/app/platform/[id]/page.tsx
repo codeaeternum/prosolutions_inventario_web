@@ -358,13 +358,25 @@ export default async function PlatformBusinessPage({ params, searchParams }: Pag
                       <div className="inline-flex items-center justify-end gap-2">
                         {u.status === "APPROVED" && (u.role === "ADMIN" || u.role === "EMPLOYEE") && (
                           <>
-                            {/* Auto-impersonación no aporta: solo otros usuarios. */}
+                            {/* Auto-impersonación no aporta: solo otros usuarios.
+                                Con el negocio suspendido el modo soporte queda
+                                deshabilitado (la sesión minteada moriría al
+                                instante) — primero hay que reactivarla. */}
                             {u.id !== currentUserId && (
-                              <SupportAccessButton
-                                userId={u.id}
-                                userName={u.name}
-                                businessName={business.name}
-                              />
+                              business.isActive ? (
+                                <SupportAccessButton
+                                  userId={u.id}
+                                  userName={u.name}
+                                  businessName={business.name}
+                                />
+                              ) : (
+                                <span
+                                  className="text-xs text-muted-foreground whitespace-nowrap"
+                                  title="El negocio está suspendido: reactívalo para usar el modo soporte."
+                                >
+                                  Soporte no disponible
+                                </span>
+                              )
                             )}
                             <SuperAdminToggleButton
                               userId={u.id}

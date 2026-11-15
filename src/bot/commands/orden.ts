@@ -3,7 +3,7 @@ import { message } from 'telegraf/filters'
 import type { BotContext, OrdenSession } from '../lib/types'
 import { getBotAccount, requirePrisma } from '../lib/guards'
 import { notifyAdmins } from '../lib/notify'
-import { escapeHtml } from '../lib/format'
+import { escapeHtml, errorText } from '../lib/format'
 import { normalizePhone } from '../lib/utils'
 import { createRepair } from '../../lib/domain/workshop'
 import { delegateRepairToPartner, resolveRepairPartner } from '../../lib/domain/delegation'
@@ -249,7 +249,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.reply('🔧 <b>Nueva orden de reparación</b>\n\n<i>Usa /cancelar para salir en cualquier momento.</i>', { parse_mode: 'HTML' })
             await askNext(ctx, telegramId, sessions.orden[telegramId])
         } catch (e) {
-            if (isDev) console.error('Error in /orden:', e)
+            if (isDev) console.error('Error in /orden:', errorText(e))
             delete sessions.orden[telegramId]
             await ctx.reply('❌ No se pudo iniciar la orden. Intenta de nuevo.')
         }
@@ -278,7 +278,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery(type)
             await askNext(ctx, telegramId, session)
         } catch (e) {
-            console.error('[Orden] Error en orden_type_:', e)
+            console.error('[Orden] Error en orden_type_:', errorText(e))
             await ctx.answerCbQuery('Error').catch(() => { })
             await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
         }
@@ -303,7 +303,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery(brand)
             await askNext(ctx, telegramId, session)
         } catch (e) {
-            console.error('[Orden] Error en orden_brand_:', e)
+            console.error('[Orden] Error en orden_brand_:', errorText(e))
             await ctx.answerCbQuery('Error').catch(() => { })
             await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
         }
@@ -356,7 +356,7 @@ export function registerOrden({ bot, prisma, sessions, isDev }: BotContext) {
             await ctx.answerCbQuery(branch.name)
             await askNext(ctx, telegramId, session)
         } catch (e) {
-            console.error('[Orden] Error en orden_branch_:', e)
+            console.error('[Orden] Error en orden_branch_:', errorText(e))
             await ctx.answerCbQuery('Error').catch(() => { })
             await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
         }
@@ -458,7 +458,7 @@ ${track}`
             // en CONFIRM para reintentar con el mismo botón — la llave de
             // idempotencia hace seguro el reintento.
             const msg = e instanceof BusinessError ? e.message : 'No se pudo crear la orden. Reintenta o usa /cancelar.'
-            if (!(e instanceof BusinessError) && isDev) console.error('Error creating repair order:', e)
+            if (!(e instanceof BusinessError) && isDev) console.error('Error creating repair order:', errorText(e))
             await ctx.answerCbQuery('No se pudo crear')
             await ctx.reply(`⚠️ ${escapeHtml(msg)}\n\nPuedes volver a intentarlo con el botón ✅ Crear, o salir con /cancelar.`, { parse_mode: 'HTML' })
         }
@@ -503,7 +503,7 @@ Destino: ${partner}${mirror}
 Por: ${escapeHtml(user.name)}`).catch(() => {})
         } catch (e) {
             const msg = e instanceof BusinessError ? e.message : 'No se pudo enviar al taller. Reintenta.'
-            if (!(e instanceof BusinessError)) console.error('Error delegating repair order:', e)
+            if (!(e instanceof BusinessError)) console.error('Error delegating repair order:', errorText(e))
             await ctx.answerCbQuery('Error')
             await ctx.reply(`⚠️ ${escapeHtml(msg)}`, { parse_mode: 'HTML' })
         }
@@ -600,7 +600,7 @@ Por: ${escapeHtml(user.name)}`).catch(() => {})
             }
         } catch (e) {
             // La sesión se conserva: el usuario puede reintentar el mismo paso.
-            console.error('[Orden] Error en el wizard de texto:', e)
+            console.error('[Orden] Error en el wizard de texto:', errorText(e))
             await ctx.reply('❌ Algo falló. Reintenta o usa /cancelar.').catch(() => { })
         }
     })

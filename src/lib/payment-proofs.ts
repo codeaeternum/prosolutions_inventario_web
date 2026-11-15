@@ -112,6 +112,66 @@ export async function deleteOrphanedPaymentProofs(db: ProofReferenceCounter, url
     }
   }
 }
+/**
+ * Barrido ligero de comprobantes huérfanos (lo llama el cron de
+ * /api/reservations/check-expiring): archivos de imagen del dir privado con
+ * mtime >24 h que ninguna reserva ni pago referencia → se borran junto a su
+ * sidecar .json.
+ *
+ * Seguro por construcción:
+ * - La gracia de 24 h cubre la ventana upload→attach: el usuario sube el
+ *   comprobante y minutos después envía la reserva que lo referencia —
+ *   nunca se borra un archivo recién subido a medio flujo.
+ * - La decisión final es el conteo en BD (mismas variantes de URL que
+ *   deleteOrphanedPaymentProofs): un archivo referenciado jamás se borra
+ *   por viejo que sea.
+ * - Acotado con `limit` para no pagar un barrido gigante dentro del cron;
+ *   lo que quede se barre en la siguiente corrida.
+ * El dir legacy public/uploads/payments queda fuera del barrido: sus
+ * archivos no llevan sidecar y se borran vía deletePaymentProof cuando
+ * muere la fila que los referencia.
+ * Best-effort: nunca lanza — un sweep fallido no tumba el cron. Devuelve
+ * cuántos archivos se borraron en esta corrida.
+ */
+export async function sweepOrphanedPaymentProofs(
+  db: ProofReferenceCounter,
+  opts: { olderThanMs?: number; limit?: number } = {},
+): Promise<number> {
+  const olderThanMs = opts.olderThanMs ?? 24 * 60 * 60 * 1000
+  const limit = opts.limit ?? 200
+  const directory = paymentProofDirectory()
+  let names: string[]
+  try {
+    names = await fs.readdir(directory)
+  } catch {
+    return 0 // dir inexistente o ilegible: nada que barrer
+  }
+  const cutoff = Date.now() - olderThanMs
+  let swept = 0
+  for (const name of names) {
+    if (swept >= limit) break
+    // validProofFilename solo acepta imágenes: salta los sidecars .json (se
+    // borran con su imagen) y cualquier archivo ajeno al pipeline.
+    if (!validProofFilename(name)) continue
+    try {
+      const stat = await fs.stat(path.join(directory, name))
+      if (!stat.isFile() || stat.mtimeMs > cutoff) continue
+      const variants = [paymentProofUrl(name), `/uploads/payments/${name}`]
+      const [reservations, payments] = await Promise.all([
+        db.reservation.count({ where: { paymentProofUrl: { in: variants } } }),
+        db.payment.count({ where: { proofUrl: { in: variants } } }),
+      ])
+      if (reservations + payments === 0) {
+        await deletePaymentProof(paymentProofUrl(name))
+        swept++
+      }
+    } catch {
+      // El archivo queda para la próxima corrida — un error aquí no aborta
+      // el resto del barrido.
+    }
+  }
+  return swept
+}
 export async function readPaymentProof(filename: string): Promise<{ bytes: Buffer; mime: string } | null> {
   if (!validProofFilename(filename)) return null
   const roots = [paymentProofDirectory(), path.join(process.cwd(), "public", "uploads", "payments")]

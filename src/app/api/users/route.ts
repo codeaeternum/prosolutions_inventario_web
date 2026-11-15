@@ -168,9 +168,14 @@ export async function POST(req: Request) {
     if (!isAdmin && role !== "CUSTOMER") {
       return NextResponse.json({ error: "Solo un administrador puede crear empleados o talleres aliados" }, { status: 403 })
     }
-    if (!["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"].includes(role)) {
+    // Rol por enum real: el cast `as UserRole` sobre input crudo quedaba
+    // respaldado por un includes suelto; el enum de zod es la validación
+    // canónica y además estrecha el tipo para el create.
+    const roleParsed = z.enum(VALID_ROLES).safeParse(role)
+    if (!roleParsed.success) {
       return NextResponse.json({ error: "Rol inválido" }, { status: 400 })
     }
+    const cleanRole = roleParsed.data
     if (customerType && !["NORMAL", "TECHNICIAN", "STORE"].includes(customerType)) {
       return NextResponse.json({ error: "Tipo de cliente inválido" }, { status: 400 })
     }
@@ -239,7 +244,7 @@ export async function POST(req: Request) {
         name,
         email,
         password: hashedPassword,
-        role: role as UserRole,
+        role: cleanRole,
         // El tipo de cliente lo decide un ADMIN (TECHNICIAN/STORE abren
         // precios de mayoreo): un empleado siempre crea clientes NORMAL.
         customerType: (isAdmin ? customerType : null) || "NORMAL",

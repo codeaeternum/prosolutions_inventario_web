@@ -70,7 +70,7 @@ const saleFixture = (over: SaleFixture) => ({
 })
 
 /** Réplica mínima del tx que usan sell/moveInventory/returnSaleItems/changeCredit. */
-function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMovement?: Record<string, unknown> | null; reservation?: Record<string, unknown> | null; creditBalance?: number } = {}) {
+function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMovement?: Record<string, unknown> | null; reservation?: Record<string, unknown> | null; creditBalance?: number; cashSourcePayment?: Record<string, unknown> | null } = {}) {
   const created = { inventory: [] as Record<string, unknown>[], payments: [] as Record<string, unknown>[], cash: [] as Record<string, unknown>[], credit: [] as Record<string, unknown>[], audits: [] as Record<string, unknown>[] }
   const tx = {
     user: {
@@ -88,7 +88,11 @@ function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMove
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     reservation: { findUnique: vi.fn(async () => opts.reservation ?? null) },
-    branch: { findFirst: vi.fn(async () => BRANCH) },
+    // La sucursal se resuelve por id (resolveBranch de openRegister): cada
+    // branchId devuelve su propia fila — el reembolso cross-branch la usa
+    // para ubicar la caja del cobro original.
+    branch: { findFirst: vi.fn(async ({ where }: { where: { id?: string; businessId?: string; isActive?: boolean } }) =>
+      ({ ...BRANCH, id: where?.id ?? BRANCH.id, businessId: where?.businessId ?? BIZ })) },
     product: {
       findFirst: vi.fn(async () => PRODUCT),
       findUniqueOrThrow: vi.fn(async () => ({ ...PRODUCT, stock: 9 })),
@@ -114,13 +118,19 @@ function fakeDb(opts: { sale?: ReturnType<typeof saleFixture> | null; sourceMove
     payment: {
       // paid sum para refund(): $100 cobrados en el medio consultado.
       aggregate: vi.fn(async ({ where }: { where: { amount?: { gt?: number } } }) => ({ _sum: { amount: where.amount?.gt != null ? 100 : null } })),
+      // El cobro original con su cashMovement.register.branchId: refund()
+      // lo sigue para ubicar la caja de la devolución (cross-branch).
+      findFirst: vi.fn(async () => opts.cashSourcePayment ?? null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.payments.push(data); return { id: "pay-1", ...data } }),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     creditMovement: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.credit.push(data); return { id: "cm-1", ...data } }) },
     cashRegister: {
-      findMany: vi.fn(async () => [{ id: "reg-1" }]),
-      findUniqueOrThrow: vi.fn(async () => ({ id: "reg-1", initialAmount: 0 })),
+      // Una caja OPEN por sucursal pedida: reg-<branchId>. El OUT del
+      // reembolso asienta el registerId — el assert mira QUÉ caja se usó.
+      findMany: vi.fn(async ({ where }: { where: { status?: string; branchId?: string | null } }) =>
+        [{ id: `reg-${where?.branchId ?? "x"}` }]),
+      findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id, initialAmount: 0 })),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     cashMovement: {
@@ -534,5 +544,40 @@ describe("mermas y salidas de inventario — solo admin", () => {
       items: [{ productId: "prod-1", type: "IN", quantity: 2, reason: "Recepción de mercancía" }],
     })
     expect(created.inventory[0]).toMatchObject({ type: "IN", quantity: 2 })
+  })
+})
+
+describe("reembolso entre sucursales — el OUT cae en la caja del cobro", () => {
+  // payDocument puede cobrar en la sucursal del CAJERO (cashierBranchId):
+  // una venta de A pagada en la caja de B debe devolver el efectivo desde
+  // B — sacarlo por la sucursal de la venta cortaría A e inflaría B.
+  it("venta de A cobrada en caja de B: la devolución crea el OUT en B, no en A", async () => {
+    const { db, tx, created } = fakeDb({
+      sale: saleFixture({ status: "COMPLETED" }), // branchId: "branch-1" (A)
+      cashSourcePayment: {
+        id: "pay-in", status: "CONFIRMED", amount: 100,
+        cashMovementId: "cm-in",
+        cashMovement: { register: { branchId: "branch-b" } },
+      },
+    })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ refundMethod: "EFECTIVO" }))
+    expect(created.cash[0]).toMatchObject({ type: "OUT", amount: 100, registerId: "reg-branch-b" })
+    // La caja abierta para la devolución fue la de B — la de A jamás se tocó.
+    const openedBranches = tx.cashRegister.findMany.mock.calls.map(c => c[0].where.branchId)
+    expect(openedBranches).toContain("branch-b")
+    expect(openedBranches).not.toContain("branch-1")
+  })
+
+  it("cobro EFECTIVO legado sin cashMovementId: conserva la sucursal de la venta", async () => {
+    const { db, created } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    // findFirst devuelve null (pago anterior al vínculo cashMovementId).
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ refundMethod: "EFECTIVO" }))
+    expect(created.cash[0]).toMatchObject({ type: "OUT", registerId: "reg-branch-1" })
+  })
+
+  it("devolución TARJETA nunca abre caja: el pago no tocó el cajón", async () => {
+    const { db, tx } = fakeDb({ sale: saleFixture({ status: "COMPLETED" }) })
+    await returnSaleItems(db, "admin-1", BIZ, returnInput({ refundMethod: "TARJETA" }))
+    expect(tx.cashRegister.findMany).not.toHaveBeenCalled()
   })
 })

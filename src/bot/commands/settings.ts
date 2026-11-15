@@ -3,7 +3,7 @@ import { message } from 'telegraf/filters'
 import type { BotContext } from '../lib/types'
 import { getBotAccount, requireAdminAccount } from '../lib/guards'
 import { DEFAULT_SETTINGS, getBusinessSetting, setBusinessSetting } from '../../lib/settings'
-import { clipMessage, escapeMarkdownV1 } from '../lib/format'
+import { clipMessage, errorText, escapeMarkdownV1 } from '../lib/format'
 
 // Llave pseudo-interna: las horas de expiración NO viven en SystemSettings
 // sino en la tabla Settings — la misma fila que lee domain/reservations.ts
@@ -68,7 +68,7 @@ export function registerSettings({ bot, prisma, sessions }: BotContext) {
                 delete sessions.settings[telegramId]
                 await ctx.reply(`✅ *Ajuste guardado correctamente.*`, { parse_mode: 'Markdown' })
             } catch (e) {
-                console.error(e)
+                console.error('[Settings] Error al guardar:', errorText(e))
                 await ctx.reply('❌ Error al guardar ajuste.')
             }
             return
@@ -137,7 +137,7 @@ _Selecciona qué deseas modificar:_`), {
             }
             sessions.settings[telegramId] = { key, businessId: actor.businessId }
         } catch (e) {
-            console.error('Error en ajustes (set_*):', e)
+            console.error('Error en ajustes (set_*):', errorText(e))
             return ctx.answerCbQuery('❌ Error').catch(() => { })
         }
 

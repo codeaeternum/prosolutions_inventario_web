@@ -170,16 +170,13 @@ export async function getDefaultBusinessId(): Promise<string> {
 }
 
 /**
- * Obtiene la configuración desde la BD. Si la tabla Settings no existe (P2021)
- * o hay error, devuelve valores por defecto.
- *
- * Con businessId de sesión hace solo 2 queries (settings.findFirst +
- * systemSettings.findMany) y NO toca getDefaultBusinessId; sin él resuelve el
- * tenant primero. Fuera de tx el resultado se cachea 30 s por negocio.
+ * Lee la configuración de un negocio CONCRETO. Hace 2 queries
+ * (settings.findFirst + systemSettings.findMany) y fuera de tx cachea 30 s
+ * por negocio. Si la tabla Settings no existe (P2021) o hay error, devuelve
+ * valores por defecto.
  */
-export async function getSettings(businessId?: string, tx?: SettingsReader): Promise<AppSettings> {
+async function readSettings(biz: string, tx?: SettingsReader): Promise<AppSettings> {
   try {
-    const biz = businessId ?? (await getDefaultBusinessId())
     const cacheKey = appSettingsCacheKey(biz)
     if (!tx) {
       const hit = cachedGet<AppSettings>(cacheKey)
@@ -222,4 +219,25 @@ export async function getSettings(businessId?: string, tx?: SettingsReader): Pro
     }
     return DEFAULT_SETTINGS
   }
+}
+
+/**
+ * Variante interna de lectura con tenant OBLIGATORIO: todo código del
+ * negocio (rutas autenticadas, dominio, bot) debe llamarla con el
+ * businessId de la sesión/tenant resuelto — jamás caer en el default de
+ * otro negocio por olvido. Fuera de tx comparte el mismo caché por negocio.
+ */
+export async function getSettingsFor(businessId: string, tx?: SettingsReader): Promise<AppSettings> {
+  return readSettings(businessId, tx)
+}
+
+/**
+ * Wrapper de compatibilidad para callers públicos que aún no resuelven el
+ * tenant (p. ej. contextos sin negocio en el request): sin businessId cae
+ * al getDefaultBusinessId. El resto del código usa getSettingsFor — pasar un
+ * businessId aquí equivale a llamarla.
+ */
+export async function getSettings(businessId?: string, tx?: SettingsReader): Promise<AppSettings> {
+  const biz = businessId ?? (await getDefaultBusinessId().catch(() => DEFAULT_BUSINESS_ID))
+  return readSettings(biz, tx)
 }

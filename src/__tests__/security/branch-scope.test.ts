@@ -47,6 +47,10 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST: vi.fn() } }))
+// El barrido de cajas olvidadas es fire-and-forget dentro de GET /api/caja:
+// se stub el módulo para que su findMany no desplace los índices de llamada
+// que esta suite verifica sobre cashRegister.findMany.
+vi.mock("@/lib/caja-stale", () => ({ checkStaleRegisters: vi.fn(async () => ({ scanned: 0, notified: 0, deduped: 0 })) }))
 vi.mock("@/lib/prisma", () => {
   const client = {
     sale: { findMany: mocks.saleFindMany, count: mocks.saleCount, findUnique: mocks.saleFindUnique, groupBy: mocks.saleGroupBy },

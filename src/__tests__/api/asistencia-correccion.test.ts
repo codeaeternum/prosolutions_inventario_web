@@ -23,11 +23,15 @@ const mocks = vi.hoisted(() => ({
   clockUpdate: vi.fn(),
   userFindFirst: vi.fn(),
   auditCreate: vi.fn(),
+  transaction: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  // transaction() del dominio llama prisma.$transaction(work, opts): el tx
+  // que recibe el callback tiene los mismos delegates mockeados — el
+  // findMany del candidato y el create del OUT corren "dentro".
+  const client = {
     clockEvent: {
       findFirst: mocks.clockFindFirst,
       findMany: mocks.clockFindMany,
@@ -36,8 +40,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     user: { findFirst: mocks.userFindFirst },
     auditEvent: { create: mocks.auditCreate },
-  },
-}))
+    $transaction: (work: (tx: unknown) => unknown) => mocks.transaction(work),
+  }
+  return { prisma: client }
+})
 
 import { PATCH } from "@/app/api/asistencia/[eventId]/route"
 import { POST as cerrarPOST } from "@/app/api/asistencia/cerrar/route"
@@ -94,6 +100,20 @@ beforeEach(() => {
   mocks.clockCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) =>
     clockEvent({ id: "ck-new", ...data })
   )
+  // La tx corre el trabajo contra el cliente mockeado (los delegates del tx
+  // son los mismos que los del prisma global en la ruta).
+  mocks.transaction.mockImplementation((work: (tx: unknown) => unknown) => work(client()))
+})
+
+const client = () => ({
+  clockEvent: {
+    findFirst: mocks.clockFindFirst,
+    findMany: mocks.clockFindMany,
+    create: mocks.clockCreate,
+    update: mocks.clockUpdate,
+  },
+  user: { findFirst: mocks.userFindFirst },
+  auditEvent: { create: mocks.auditCreate },
 })
 
 afterEach(() => {
@@ -365,5 +385,45 @@ describe("POST /api/asistencia/cerrar — candidato y creación", () => {
     expect(auditCall()?.data.changes).toMatchObject({
       entradaEvento: { before: null, after: "ck-in1" },
     })
+  })
+
+  it("cierre concurrente: el reintento serializable relee la serie y responde 409, nunca OUT doble", async () => {
+    // Primer intento: la serie muestra el IN sin pareja pero el commit choca
+    // con el OUT que otra sesión acaba de crear (P2034). transaction()
+    // reintenta y el findMany ya ve ese OUT commiteado — sin candidato, 409.
+    // toFake: ["Date"] — el backoff del retry usa setTimeout real (10 ms).
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-06-10T22:00:00Z"))
+    const entrada = clockEvent({ id: "ck-in", at: new Date("2026-06-10T15:00:00Z") })
+    const otroCierre = clockEvent({ id: "ck-out", type: "OUT", at: new Date("2026-06-10T21:00:00Z") })
+    mocks.clockFindMany
+      .mockResolvedValueOnce([entrada])
+      .mockResolvedValueOnce([entrada, otroCierre])
+    mocks.clockCreate.mockRejectedValueOnce(Object.assign(new Error("serialization"), { code: "P2034" }))
+
+    const res = await cerrar({ userId: "u-emp", outAt: "2026-06-10T21:30:00Z" })
+    expect(res.status).toBe(409)
+    expect(mocks.clockFindMany).toHaveBeenCalledTimes(2)
+    // El create solo corrió en el intento abortado: jamás queda OUT doble.
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(1)
+    expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+
+  it("cierre concurrente sin choque ajeno: el reintento resuelve el mismo candidato", async () => {
+    // P2034 en el primer commit por otra escritura de la serie; en el
+    // reintento la serie sigue teniendo el IN abierto y se cierra normal.
+    // toFake: ["Date"] — el backoff del retry usa setTimeout real (10 ms).
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-06-10T22:00:00Z"))
+    const entrada = clockEvent({ id: "ck-in", branchId: "b1", at: new Date("2026-06-10T15:00:00Z") })
+    mocks.clockFindMany.mockResolvedValue([entrada])
+    mocks.clockCreate
+      .mockRejectedValueOnce(Object.assign(new Error("serialization"), { code: "P2034" }))
+      .mockImplementationOnce(async ({ data }: { data: Record<string, unknown> }) => clockEvent({ id: "ck-new", ...data }))
+
+    const res = await cerrar({ userId: "u-emp", outAt: "2026-06-10T21:30:00Z" })
+    expect(res.status).toBe(201)
+    expect(mocks.clockFindMany).toHaveBeenCalledTimes(2)
+    expect(mocks.clockCreate).toHaveBeenCalledTimes(2)
   })
 })

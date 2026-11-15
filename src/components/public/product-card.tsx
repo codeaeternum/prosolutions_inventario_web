@@ -10,7 +10,11 @@ export interface PublicProduct {
   name: string
   barcode: string | null
   retailPrice: number
-  stock: number
+  /**
+   * Disponibilidad BINARIA: la vitrina nunca recibe la existencia exacta
+   * (igual que productDto para anónimos — el stock exacto es dato interno).
+   */
+  inStock: boolean
   images: string[]
   category: { name: string } | null
   /**
@@ -35,7 +39,7 @@ interface PublicProductCardProps {
  * escritos en el mensaje; sin teléfono público cae a un enlace a la vitrina.
  */
 export function PublicProductCard({ product, slug, phone }: PublicProductCardProps) {
-  const inStock = product.stock > 0
+  const inStock = product.inStock
   const waText = `Hola, me interesa ${product.name}${product.barcode ? ` (${product.barcode})` : ""}`
   const waUrl = waMeHref(phone, waText)
 

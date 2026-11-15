@@ -38,6 +38,9 @@ import { cn } from "@/lib/utils"
 
 export interface MarketplaceRequest {
   id: string
+  // Tenant del proveedor dueño de la fila: requestedBy.businessId distinto
+  // marca un solicitante de OTRO negocio (su cuenta no existe aquí).
+  businessId?: string
   qty: number
   tallerName: string
   contactName: string | null
@@ -50,11 +53,11 @@ export interface MarketplaceRequest {
     name: string
     barcode: string | null
     wholesalePrice: number
-    retailPrice: number
+    retailPrice?: number
   }
-  requestedBy: { id: string; name: string; role: string } | null
-  decidedBy: { name: string } | null
-  sale: { id: string; number: number } | null
+  requestedBy: { id: string; name: string; role: string; businessId?: string } | null
+  decidedBy?: { name: string } | null
+  sale: { id: string; number: number; status?: string } | null
 }
 
 type BadgeVariant = "warning" | "success" | "destructive" | "secondary"
@@ -115,6 +118,9 @@ export function MarketplaceRequestsPanel({
   const [decidingId, setDecidingId] = useState<string | null>(null)
   const [fulfillTarget, setFulfillTarget] = useState<MarketplaceRequest | null>(null)
   const [fulfillOpen, setFulfillOpen] = useState(false)
+  // Motivo opcional del rechazo: se captura en el AlertDialog y viaja como
+  // decisionNote — el taller la ve como explicación del rechazo.
+  const [rejectNote, setRejectNote] = useState("")
 
   const fetchRequests = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -156,14 +162,15 @@ export function MarketplaceRequestsPanel({
 
   const decide = async (
     request: MarketplaceRequest,
-    action: "APPROVE" | "REJECT"
+    action: "APPROVE" | "REJECT",
+    decisionNote?: string
   ) => {
     setDecidingId(request.id)
     try {
       const res = await fetch(`/api/marketplace/requests/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, decisionNote: decisionNote?.trim() || undefined }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "No se pudo actualizar")
@@ -177,6 +184,7 @@ export function MarketplaceRequestsPanel({
       toast.error(error instanceof Error ? error.message : "No se pudo actualizar")
     } finally {
       setDecidingId(null)
+      setRejectNote("")
     }
   }
 
@@ -238,6 +246,59 @@ export function MarketplaceRequestsPanel({
     )
   }
 
+  // Diálogo de rechazo compartido por PENDING y APPROVED (una aprobada sin
+  // venta ligada también puede cancelarse — la API lo permite con saleId nulo).
+  const rejectDialog = (request: MarketplaceRequest, busy: boolean) => (
+    <AlertDialog onOpenChange={(open) => { if (!open) setRejectNote("") }}>
+      <AlertDialogTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+          disabled={busy}
+        >
+          <X className="mr-1 h-3.5 w-3.5" />
+          Rechazar
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent size="sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>¿Rechazar solicitud?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Se rechazará la solicitud de {request.qty}{" "}
+            {request.qty === 1 ? "pieza" : "piezas"} de{" "}
+            <span className="font-medium">{request.product.name}</span>{" "}
+            para {request.tallerName}. Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-1.5">
+          <label htmlFor={`reject-note-${request.id}`} className="text-xs font-medium">
+            Motivo del rechazo (opcional)
+          </label>
+          <textarea
+            id={`reject-note-${request.id}`}
+            value={rejectNote}
+            onChange={(e) => setRejectNote(e.target.value)}
+            placeholder="Sin existencias, precio no vigente, etc. — el taller lo verá."
+            maxLength={500}
+            rows={2}
+            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => void decide(request, "REJECT", rejectNote)}
+          >
+            Rechazar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
   const actions = (request: MarketplaceRequest) => {
     if (!isAdmin) return null
     const busy = decidingId === request.id
@@ -260,60 +321,53 @@ export function MarketplaceRequestsPanel({
             )}
             Aprobar
           </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
-                disabled={busy}
-              >
-                <X className="mr-1 h-3.5 w-3.5" />
-                Rechazar
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent size="sm">
-              <AlertDialogHeader>
-                <AlertDialogTitle>¿Rechazar solicitud?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Se rechazará la solicitud de {request.qty}{" "}
-                  {request.qty === 1 ? "pieza" : "piezas"} de{" "}
-                  <span className="font-medium">{request.product.name}</span>{" "}
-                  para {request.tallerName}. Esta acción no se puede deshacer.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction
-                  variant="destructive"
-                  onClick={() => void decide(request, "REJECT")}
-                >
-                  Rechazar
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {rejectDialog(request, busy)}
         </div>
       )
     }
 
     if (request.status === "APPROVED") {
       return (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 text-violet-600 border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-300"
+            disabled={busy}
+            onClick={() => openFulfill(request)}
+          >
+            {busy ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <PackageCheck className="mr-1 h-3.5 w-3.5" />
+            )}
+            Marcar surtida
+          </Button>
+          {/* Aprobada sin venta: puede cancelarse sin dejarla wedge. */}
+          {!request.sale && rejectDialog(request, busy)}
+        </div>
+      )
+    }
+
+    // Surtida cuya venta quedó VOIDED en POS: se reactiva a APPROVED para
+    // surtirla de nuevo con una venta nueva (la API lo permite en APPROVE).
+    if (request.status === "FULFILLED" && request.sale?.status === "VOIDED") {
+      return (
         <Button
           type="button"
           size="sm"
           variant="outline"
-          className="h-8 text-violet-600 border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-600 dark:text-violet-400 dark:hover:text-violet-300"
+          className="h-8"
           disabled={busy}
-          onClick={() => openFulfill(request)}
+          onClick={() => void decide(request, "APPROVE")}
         >
           {busy ? (
             <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
           ) : (
-            <PackageCheck className="mr-1 h-3.5 w-3.5" />
+            <Check className="mr-1 h-3.5 w-3.5" />
           )}
-          Marcar surtida
+          Reactivar (venta anulada)
         </Button>
       )
     }
@@ -438,7 +492,11 @@ export function MarketplaceRequestsPanel({
                   </TableCell>
                   {!isWorkshop && (
                     <TableCell className="whitespace-nowrap">
-                      {request.requestedBy?.name ?? "—"}
+                      {/* requestedBy es SetNull: si la cuenta se eliminó la
+                          solicitud sobrevive con el nombre del taller. */}
+                      {request.requestedBy
+                        ? request.requestedBy.name
+                        : <span className="text-muted-foreground italic">cuenta eliminada</span>}
                     </TableCell>
                   )}
                   <TableCell>{statusBadge(request)}</TableCell>

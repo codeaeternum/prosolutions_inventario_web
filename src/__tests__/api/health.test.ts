@@ -19,8 +19,10 @@ const mocks = vi.hoisted(() => ({
   mkdir: vi.fn(),
   statfs: vi.fn(),
   access: vi.fn(),
+  auth: vi.fn(),
 }))
 
+vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
 vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: mocks.transaction, $queryRaw: mocks.queryRaw },
 }))
@@ -49,6 +51,7 @@ const MIN_FREE = 500 * 1024 * 1024
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.auth.mockResolvedValue(null) // llamada anónima (Docker healthcheck)
   mocks.transaction.mockResolvedValue([[]]) // _prisma_migrations sin fallos
   mocks.mkdir.mockResolvedValue(undefined)
   mocks.statfs.mockResolvedValue(PLENTY)
@@ -56,23 +59,40 @@ beforeEach(() => {
 })
 
 describe("GET /api/health", () => {
-  it("responde 200 con schema ready y métricas de disco cuando todo está sano", async () => {
+  it("responde 200 con schema ready y métricas de disco REDONDEADAS al anónimo", async () => {
     const res = await GET()
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.status).toBe("ok")
     expect(body.ok).toBe(true)
     expect(body.schema).toBe("ready")
+    // El anónimo recibe GB redondeados: los bytes exactos del volumen son
+    // telemetría interna (revelan carga/rotación del storage).
+    expect(body.disk).toEqual({
+      ok: true,
+      writable: true,
+      freeGb: Math.round((PLENTY.bavail * PLENTY.bsize) / (1024 ** 3)),
+    })
+    expect("freeBytes" in body.disk).toBe(false)
+    expect("minFreeBytes" in body.disk).toBe(false)
+    expect(JSON.stringify(body)).not.toContain(String(PLENTY.bavail * PLENTY.bsize))
+    // El path del volumen no se expone en un endpoint público.
+    expect(JSON.stringify(body)).not.toContain("payment-proofs")
+    expect(mocks.statfs).toHaveBeenCalledWith("/app/storage/payment-proofs")
+    expect(mocks.access).toHaveBeenCalledWith("/app/storage/payment-proofs", 2) // W_OK
+  })
+
+  it("con sesión conserva freeBytes/minFreeBytes exactos para diagnóstico interno", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "u1", role: "ADMIN", status: "APPROVED" } })
+    const res = await GET()
+    expect(res.status).toBe(200)
+    const body = await res.json()
     expect(body.disk).toMatchObject({
       ok: true,
       writable: true,
       freeBytes: PLENTY.bavail * PLENTY.bsize,
       minFreeBytes: MIN_FREE,
     })
-    // El path del volumen no se expone en un endpoint público.
-    expect(JSON.stringify(body)).not.toContain("payment-proofs")
-    expect(mocks.statfs).toHaveBeenCalledWith("/app/storage/payment-proofs")
-    expect(mocks.access).toHaveBeenCalledWith("/app/storage/payment-proofs", 2) // W_OK
   })
 
   it("una migración fallida sigue respondiendo 503 migration_failed (e incluye el disco)", async () => {
@@ -100,7 +120,8 @@ describe("GET /api/health", () => {
     expect(body.status).toBe("degraded")
     expect(body.schema).toBe("ready")
     expect(body.disk).toMatchObject({ ok: false, writable: true })
-    expect(body.disk.freeBytes).toBeLessThan(MIN_FREE)
+    expect(body.disk.freeGb).toBe(0)
+    expect("freeBytes" in body.disk).toBe(false)
   })
 
   it("un directorio no escribible (access W_OK falla) degrada a 503", async () => {
@@ -108,7 +129,7 @@ describe("GET /api/health", () => {
     const res = await GET()
     expect(res.status).toBe(503)
     const body = await res.json()
-    expect(body.disk).toMatchObject({ ok: false, writable: false, freeBytes: null })
+    expect(body.disk).toMatchObject({ ok: false, writable: false, freeGb: null })
   })
 
   it("un statfs que falla (volumen desaparecido) degrada sin exponer el error", async () => {
@@ -116,7 +137,7 @@ describe("GET /api/health", () => {
     const res = await GET()
     expect(res.status).toBe(503)
     const body = await res.json()
-    expect(body.disk).toMatchObject({ ok: false, writable: false, freeBytes: null })
+    expect(body.disk).toMatchObject({ ok: false, writable: false, freeGb: null })
     expect(JSON.stringify(body)).not.toContain("EROFS")
   })
 

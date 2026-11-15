@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { getPlatformHealth } from "@/lib/platform-health"
+import { checkAndRecord } from "@/lib/rate-limit"
 
 /**
  * GET /api/platform/health — Consola Reficio (solo superadmin).
@@ -16,6 +17,14 @@ import { getPlatformHealth } from "@/lib/platform-health"
 export async function GET() {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
+
+  // Freno suave por operador: 120 lecturas por minuto.
+  if (!checkAndRecord("platform-read", auth.session.user.id, 60 * 1000, 120)) {
+    return NextResponse.json(
+      { error: "Demasiadas consultas, espera un momento" },
+      { status: 429, headers: { "Retry-After": "60" } }
+    )
+  }
 
   try {
     const health = await getPlatformHealth()

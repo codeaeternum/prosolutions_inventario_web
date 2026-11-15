@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { promises as fs } from "node:fs"
+import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { paymentProofDirectory } from "@/lib/payment-proofs"
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic"
 // Mínimo de espacio libre en el volumen de comprobantes: por debajo de esto
 // las subidas de evidencia/comprobantes empiezan a fallar a mitad de operación.
 const MIN_FREE_BYTES = 500 * 1024 * 1024
+const GIGABYTE = 1024 * 1024 * 1024
 
 interface DiskHealth {
   ok: boolean
@@ -46,6 +48,19 @@ export async function GET() {
   const timestamp = new Date().toISOString()
   const headers = { "Cache-Control": "no-store" }
   const disk = await checkProofsDisk()
+  // El healthcheck es público (Docker/Uptime-Kuma solo miran el status) y los
+  // bytes exactos del volumen son telemetría interna: anónimos reciben los GB
+  // redondeados; con sesión se conserva el valor exacto para diagnóstico.
+  // auth() fuera de contexto de request (tests, healthcheck sin cookies)
+  // simplemente no encuentra sesión.
+  const session = await auth().catch(() => null)
+  const diskOut = session?.user
+    ? disk
+    : {
+        ok: disk.ok,
+        writable: disk.writable,
+        freeGb: disk.freeBytes === null ? null : Math.round(disk.freeBytes / GIGABYTE),
+      }
   try {
     // Validate critical tables and the required migration, without exposing records.
     const [failedMigrations] = await prisma.$transaction([
@@ -64,7 +79,7 @@ export async function GET() {
     ])
     if (Array.isArray(failedMigrations) && failedMigrations.length > 0) {
       return NextResponse.json(
-        { status: "degraded", ok: false, schema: "migration_failed", disk, timestamp },
+        { status: "degraded", ok: false, schema: "migration_failed", disk: diskOut, timestamp },
         { status: 503, headers },
       )
     }
@@ -72,14 +87,14 @@ export async function GET() {
       // Disco lleno o no escribible: el schema puede estar listo pero las
       // subidas de comprobantes/evidencias fallarían — el servicio no está sano.
       return NextResponse.json(
-        { status: "degraded", ok: false, schema: "ready", disk, timestamp },
+        { status: "degraded", ok: false, schema: "ready", disk: diskOut, timestamp },
         { status: 503, headers },
       )
     }
-    return NextResponse.json({ status: "ok", ok: true, schema: "ready", disk, timestamp }, { headers })
+    return NextResponse.json({ status: "ok", ok: true, schema: "ready", disk: diskOut, timestamp }, { headers })
   } catch {
     return NextResponse.json(
-      { status: "degraded", ok: false, schema: "unavailable", disk, timestamp },
+      { status: "degraded", ok: false, schema: "unavailable", disk: diskOut, timestamp },
       { status: 503, headers },
     )
   }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireModule } from "@/lib/api-auth"
+import { getSession, requireModule } from "@/lib/api-auth"
+import { checkAndRecord } from "@/lib/rate-limit"
+import { readBoundedBody, requestWithBody } from "@/lib/bounded-body"
 import * as fs from "fs"
 import * as path from "path"
 import { randomBytes } from "crypto"
@@ -11,6 +13,8 @@ const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
 // Margen para el framing multipart (boundary, headers de parte): el
 // Content-Length declara archivo + empaque, no solo la imagen.
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024
+const UPLOAD_WINDOW_MS = 60 * 60 * 1000
+const MAX_UPLOADS_PER_HOUR = 30 // imágenes de catálogo por usuario staff
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,8 +31,31 @@ export async function POST(request: NextRequest) {
 
     const result = await requireModule("inventario")
     if (result.error) return result.error
+    const session = getSession(result)!
 
-    const formData = await request.formData()
+    // Tope por usuario: el endpoint no tenía freno y cada subida escribe
+    // disco público — 30/hora cubre capturas masivas reales sin abrir
+    // la puerta a un llenado del volumen.
+    if (!checkAndRecord("upload-product", session.user.id, UPLOAD_WINDOW_MS, MAX_UPLOADS_PER_HOUR)) {
+      return NextResponse.json(
+        { error: "Demasiadas subidas. Intenta de nuevo en una hora." },
+        { status: 429 }
+      )
+    }
+
+    // Cota real del cuerpo: Content-Length lo declara el cliente (y falta
+    // con chunked), así que se cuentan los bytes del stream y se aborta al
+    // pasar el tope — el guard de header de arriba solo es el rechazo
+    // temprano barato.
+    const bounded = await readBoundedBody(request, MAX_SIZE + MULTIPART_OVERHEAD_BYTES)
+    if (!bounded.ok) {
+      return NextResponse.json(
+        { error: bounded.reason === "too_large" ? `La imagen no debe superar ${MAX_SIZE_MB} MB` : "No se envió ningún archivo" },
+        { status: bounded.reason === "too_large" ? 413 : 400 }
+      )
+    }
+
+    const formData = await requestWithBody(request, bounded.bytes).formData()
     const file = formData.get("file") as File | null
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "No se envió ningún archivo" }, { status: 400 })

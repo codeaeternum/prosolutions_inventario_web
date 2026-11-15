@@ -155,8 +155,9 @@ export async function GET(req: NextRequest) {
   if (result.error) return result.error
 
   const session = getSession(result)!
-  // El stream lleva el feed completo en vivo (data sin depurar): mismo gate
-  // que el historial — el módulo notificaciones.
+  // El stream lleva el feed en vivo con `data` ya depurada (sanitizedData
+  // filtra claves sensibles al persistir y al emitir): mismo gate que el
+  // historial — el módulo notificaciones.
   const denied = assertModuleAllowed(session, "notificaciones")
   if (denied) return denied
   const userId = session.user.id

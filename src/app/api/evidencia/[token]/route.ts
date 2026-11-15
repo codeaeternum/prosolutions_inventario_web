@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { operationKeySchema } from "@/lib/domain/operations"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { readBoundedBody, requestWithBody } from "@/lib/bounded-body"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { formatFolio } from "@/lib/workshop-labels"
 import { deleteRepairPhotoFile, evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
@@ -100,7 +101,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       return NextResponse.json(INVALID, { status: 404, headers: NO_STORE })
     }
 
-    const form = await req.formData()
+    // Cota real del cuerpo: el chequeo de Content-Length de arriba solo es
+    // el rechazo temprano — con chunked no hay header y formData() buferaría
+    // todo. Se cuentan los bytes del stream y se aborta al pasar el tope
+    // (patrón de /api/payment-proofs, ver lib/bounded-body).
+    const bounded = await readBoundedBody(req, MAX_EVIDENCE_BYTES + MULTIPART_OVERHEAD_BYTES)
+    if (!bounded.ok) {
+      return NextResponse.json(
+        { error: bounded.reason === "too_large" ? "La imagen debe pesar máximo 5 MB." : "Adjunta una imagen en el campo file." },
+        { status: bounded.reason === "too_large" ? 413 : 400, headers: NO_STORE },
+      )
+    }
+    const form = await requestWithBody(req, bounded.bytes).formData()
     const file = form.get("file")
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Adjunta una imagen en el campo file." }, { status: 400, headers: NO_STORE })

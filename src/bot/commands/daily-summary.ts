@@ -3,7 +3,7 @@ import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { clipMessage, errorText, escapeHtml } from '../lib/format'
-import { TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
+import { retryOnTelegramLimit, TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey, parseBusinessDateParam } from '../../lib/business-time'
 
@@ -180,11 +180,11 @@ export async function sendDailySummaryToAdmins(
     for (const admin of admins) {
         if (!admin.telegramId) continue
         try {
-            await withTimeout(
-                bot.telegram.sendMessage(admin.telegramId, message, { parse_mode: 'HTML' }),
+            await retryOnTelegramLimit(() => withTimeout(
+                bot.telegram.sendMessage(admin.telegramId!, message, { parse_mode: 'HTML' }),
                 TELEGRAM_API_TIMEOUT_MS,
                 'sendMessage de resumen diario',
-            )
+            ))
             sent++
         } catch (e) {
             // Sin nombre/telegramId ni el error crudo de Telegraf: el id del
@@ -217,12 +217,20 @@ export function registerDailySummary({ bot, prisma, isDev }: BotContext): cron.S
     // 20:00 hora del negocio. Business no tiene timezone propio: la zona es
     // constante de producto (BUSINESS_TIME_ZONE), así que una sola
     // programación horaria cubre a todos los tenants.
+    // Overlap guard por job: si el resumen de las 20:00 sigue corriendo
+    // cuando node-cron vuelve a disparar (proceso lento), se salta el tick
+    // en vez de apilar barridos.
+    let running = false
     const task = cron.schedule('0 20 * * *', async () => {
-        if (isDev) console.log('📊 [DailySummary] Generando resúmenes diarios…')
+        if (running) { console.warn('📊 [DailySummary] Corrida anterior sigue viva; se salta este tick.'); return }
+        running = true
         try {
+            if (isDev) console.log('📊 [DailySummary] Generando resúmenes diarios…')
             await runDailySummary(bot, prisma, isDev)
         } catch (e) {
-            console.error('[DailySummary] Error en el barrido diario:', e)
+            console.error('[DailySummary] Error en el barrido diario:', errorText(e))
+        } finally {
+            running = false
         }
     }, { timezone: BUSINESS_TIME_ZONE })
 

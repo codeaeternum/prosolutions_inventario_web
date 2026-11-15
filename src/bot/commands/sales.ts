@@ -6,7 +6,8 @@ import { CART_MAX_ITEMS } from '../lib/types'
 import type { BotContext, CartItem } from '../lib/types'
 import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
 import { notifyAdmins } from '../lib/notify'
-import { clipMessage, escapeHtml, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
+import { visibilityWhere } from '../lib/visibility'
+import { clipMessage, errorText, escapeHtml, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
 
 export function registerSales({ bot, prisma, sessions, isDev }: BotContext) {
     // /vender
@@ -41,7 +42,8 @@ _O usa /agregarc para vender varios en el carrito._`, { parse_mode: 'Markdown' }
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
                     ],
-                    stock: { gt: 0 }
+                    stock: { gt: 0 },
+                    ...visibilityWhere(actor)
                 },
                 take: 5,
                 select: { id: true, name: true, stock: true, retailPrice: true }
@@ -79,7 +81,7 @@ ${productList}
 Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { parse_mode: 'Markdown' })
 
         } catch (e) {
-            if (isDev) console.error('Error in /vender:', e)
+            if (isDev) console.error('Error in /vender:', errorText(e))
             await ctx.reply('❌ Error al buscar productos. Usa /cancelar si estabas en otro proceso.')
         }
     })
@@ -116,8 +118,8 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
                 return
             }
 
-            const product = await prisma.product.findUnique({
-                where: { id: productId, businessId: adminUser.businessId },
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId: adminUser.businessId, ...visibilityWhere(adminUser) },
                 select: { id: true, name: true, stock: true, retailPrice: true }
             })
 
@@ -159,7 +161,7 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
 📊 Stock restante: ${product.stock - number}`).catch(() => {})
 
         } catch (e) {
-            console.error('Error processing sale:', e)
+            console.error('Error processing sale:', errorText(e))
             delete sessions.sale[telegramId]
             await ctx.answerCbQuery('Error').catch(() => { })
             await ctx.editMessageText(`❌ Error al procesar la venta.`).catch(() => { })
@@ -182,8 +184,8 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
                 return ctx.answerCbQuery('⛔ Solo administradores.').catch(() => { })
             }
             await ctx.answerCbQuery().catch(() => { })
-            const product = await prisma.product.findUnique({
-                where: { id: productId, businessId: actor.businessId },
+            const product = await prisma.product.findFirst({
+                where: { id: productId, businessId: actor.businessId, ...visibilityWhere(actor) },
                 select: { id: true, name: true, stock: true, retailPrice: true }
             })
             if (!product || product.stock < 1) return ctx.reply('❌ Sin stock.')
@@ -193,14 +195,23 @@ Responde con el número (1-${products.length}) para seleccionar o /cancelar`, { 
                 quantity: 1
             }
 
+            // La confirmación real es el botón confirm_sale_ (el hears "SI"
+            // solo procesa borrados de producto — pedir "SI" aquí era un
+            // callejón sin salida: el texto no confirmaba nada).
             await ctx.reply(`📦 *Venta Rápida: ${escapeMarkdownV1(product.name)}*
 
 Precio: $${product.retailPrice}
 Cantidad: 1
 
-¿Confirmar venta? (Escribe SI)`, { parse_mode: 'Markdown' })
+¿Confirmar venta?`, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('✅ Confirmar', `confirm_sale_${product.id}_1`)],
+                    [Markup.button.callback('❌ Cancelar', 'cancel_sale')]
+                ])
+            })
         } catch (e) {
-            console.error('Error in fastsell_:', e)
+            console.error('Error in fastsell_:', errorText(e))
             await ctx.reply('❌ Error al preparar la venta. Intenta de nuevo.').catch(() => { })
         }
     })
@@ -365,7 +376,7 @@ Confirma la venta con /confirmarc o vacía con /vaciarc antes de agregar más.`)
         } catch (e) {
             // Un fallo a mitad del reparto (QR, carrito, venta, borrado) no
             // puede quedar mudo: el usuario vería "nada" tras mandar un número.
-            console.error('[Digits] Error:', e)
+            console.error('[Digits] Error:', errorText(e))
             try { await ctx.reply('❌ Algo falló. Usa /cancelar e intenta de nuevo.') } catch { }
         }
     })
@@ -389,7 +400,7 @@ Confirma la venta con /confirmarc o vacía con /vaciarc antes de agregar más.`)
                 delete sessions.deleteProduct[telegramId]
                 return ctx.reply(`✅ *Producto archivado*\n\n📦 ${escapeMarkdownV1(productName)}\n\nSus existencias, reservas y movimientos se conservaron.`, { parse_mode: 'Markdown' })
             } catch (e) {
-                if (isDev) console.error('Error archiving product:', e)
+                if (isDev) console.error('Error archiving product:', errorText(e))
                 delete sessions.deleteProduct[telegramId]
                 return ctx.reply('❌ No se pudo archivar el producto. Revisa tus permisos e inténtalo de nuevo.')
             }

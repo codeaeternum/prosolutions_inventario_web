@@ -43,6 +43,14 @@ export async function GET(req: Request, { params }: Params) {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
 
+  // Freno suave por operador: 120 lecturas por minuto.
+  if (!checkAndRecord("platform-read", auth.session.user.id, 60 * 1000, 120)) {
+    return NextResponse.json(
+      { error: "Demasiadas consultas, espera un momento" },
+      { status: 429, headers: { "Retry-After": "60" } }
+    )
+  }
+
   const { id } = await params
   const sp = new URL(req.url).searchParams
   const usersPage = sp.has("usersPage") ? Number(sp.get("usersPage")) : undefined
@@ -97,6 +105,16 @@ export async function PATCH(req: Request, { params }: Params) {
   const parsed = patchSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: "Datos inválidos" }, { status: 400 })
+  }
+
+  // Anti-lockout: suspender el tenant donde vive la cuenta del operador lo
+  // expulsaría de la consola en el siguiente request (su sesión se revoca
+  // igual que la de cualquier usuario del negocio suspendido).
+  if (parsed.data.isActive === false && id === auth.session.user.businessId) {
+    return NextResponse.json(
+      { error: "No puedes suspender el negocio donde vive tu cuenta de operador." },
+      { status: 409 }
+    )
   }
 
   try {
@@ -162,28 +180,38 @@ export async function PATCH(req: Request, { params }: Params) {
       ? (parsed.data.isActive ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED")
       : "TENANT_UPDATED"
 
-    const [business] = await prisma.$transaction([
-      prisma.business.update({
-        where: { id },
-        data: updateData,
-        select: { id: true, name: true, slug: true, isActive: true, updatedAt: true },
-      }),
-      // Bitácora de plataforma: qué operador suspendió/reactivó/editó qué empresa.
-      prisma.platformEvent.create({
-        data: {
-          businessId: existing.id,
-          businessSlug: cleanSlug ?? existing.slug,
-          businessName: parsed.data.name ?? existing.name,
-          kind: eventKind,
-          actorId: actor.id,
-          actorEmail: actor.email ?? null,
-          detail: { changes },
-        },
-      }),
-    ])
+    const updateOp = prisma.business.update({
+      where: { id },
+      data: updateData,
+      select: { id: true, name: true, slug: true, isActive: true, updatedAt: true },
+    })
+    // Bitácora de plataforma solo cuando hay cambio real: un PATCH con los
+    // mismos valores (p. ej. suspender un negocio ya suspendido) no debe
+    // inventar un evento TENANT_SUSPENDED/TENANT_UPDATED falso.
+    const eventOp = Object.keys(changes).length > 0
+      ? prisma.platformEvent.create({
+          data: {
+            businessId: existing.id,
+            businessSlug: cleanSlug ?? existing.slug,
+            businessName: parsed.data.name ?? existing.name,
+            kind: eventKind,
+            actorId: actor.id,
+            actorEmail: actor.email ?? null,
+            detail: { changes },
+          },
+        })
+      : null
+
+    const [business] = eventOp
+      ? await prisma.$transaction([updateOp, eventOp])
+      : await prisma.$transaction([updateOp])
 
     return NextResponse.json({ business })
   } catch (error) {
+    // Slug duplicado (unique Business.slug): conflicto de datos, no fallo interno.
+    if ((error as { code?: unknown })?.code === "P2002") {
+      return NextResponse.json({ error: "Ese slug ya está en uso" }, { status: 409 })
+    }
     console.error("[platform] Error actualizando empresa:", error)
     return NextResponse.json(
       { error: "Error al actualizar la empresa" },
@@ -230,6 +258,10 @@ const BLOCKING_MODELS: ReadonlyArray<{ accessor: string; label: string }> = [
   { accessor: "supplierPayment", label: "pagos a proveedor" },
   { accessor: "shoppingItem", label: "lista de compras" },
   { accessor: "directoryEvent", label: "actividad del directorio" },
+  // Asistencia y notificaciones: un negocio que solo checó entradas/salidas o
+  // recibió avisos ya operó — no es "vacío" aunque no tenga ventas ni órdenes.
+  { accessor: "clockEvent", label: "eventos de asistencia" },
+  { accessor: "notification", label: "notificaciones" },
 ]
 
 type CountDelegate = { count: (args: { where: { businessId: string } }) => Promise<number> }
@@ -260,12 +292,35 @@ export async function DELETE(_req: Request, { params }: Params) {
   }
 
   const { id } = await params
+
+  // Anti-lockout: borrar el tenant donde vive la cuenta del operador destruye
+  // su propio usuario — se expulsaría de la consola sin forma de volver.
+  if (id === auth.session.user.businessId) {
+    return NextResponse.json(
+      { error: "No puedes eliminar el negocio donde vive tu cuenta de operador." },
+      { status: 409 }
+    )
+  }
+
   const business = await prisma.business.findUnique({
     where: { id },
     select: { id: true, name: true, slug: true },
   })
   if (!business) {
     return NextResponse.json({ error: "Empresa no encontrada" }, { status: 404 })
+  }
+
+  // Un tenant con cuentas de operador (isSuperAdmin) tampoco se borra:
+  // destruiría la cuenta de otro operador de la consola.
+  const operatorAccount = await prisma.user.findFirst({
+    where: { businessId: id, isSuperAdmin: true },
+    select: { id: true },
+  })
+  if (operatorAccount) {
+    return NextResponse.json(
+      { error: "No se puede eliminar: contiene cuentas de operador de plataforma." },
+      { status: 409 }
+    )
   }
 
   const db = prisma as unknown as Record<string, CountDelegate>

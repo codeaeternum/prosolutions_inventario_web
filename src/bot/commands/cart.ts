@@ -3,7 +3,8 @@ import { Markup } from 'telegraf'
 import { CART_MAX_ITEMS } from '../lib/types'
 import type { BotContext, CartItem } from '../lib/types'
 import { getBotAccount, requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
-import { clipMessage, escapeMarkdownV1 } from '../lib/format'
+import { visibilityWhere } from '../lib/visibility'
+import { clipMessage, errorText, escapeMarkdownV1 } from '../lib/format'
 
 export function registerCart({ bot, prisma, sessions }: BotContext) {
     // /carrito
@@ -82,7 +83,8 @@ Después indica la cantidad.`, { parse_mode: 'Markdown' })
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
                     ],
-                    stock: { gt: 0 }
+                    stock: { gt: 0 },
+                    ...visibilityWhere(actor)
                 },
                 take: 5,
                 select: { id: true, name: true, stock: true, retailPrice: true }
@@ -126,7 +128,7 @@ ${productList}
 Responde con el número (1-${products.length}) para seleccionar`, { parse_mode: 'Markdown' })
 
         } catch (e) {
-            console.error('Error in /agregarc:', e)
+            console.error('Error in /agregarc:', errorText(e))
             await ctx.reply('❌ Error al buscar productos.')
         }
     })
@@ -203,7 +205,7 @@ Vas a registrar la venta de:
 El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
 
         } catch (e) {
-            console.error('Error confirming cart:', e)
+            console.error('Error confirming cart:', errorText(e))
             await ctx.answerCbQuery('Error').catch(() => { })
             await ctx.editMessageText(`❌ Error: ${e instanceof Error ? e.message : 'Error al procesar venta'}`).catch(() => { })
         }
@@ -235,7 +237,7 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
             if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
                 return ctx.answerCbQuery('⛔ Solo administradores.')
             }
-            const product = await prisma.product.findUnique({ where: { id: productId, businessId: actor.businessId } })
+            const product = await prisma.product.findFirst({ where: { id: productId, businessId: actor.businessId, ...visibilityWhere(actor) } })
             if (!product) return ctx.answerCbQuery('❌ Error')
 
             if (!sessions.cart[telegramId]) {
@@ -267,7 +269,7 @@ El inventario ha sido actualizado.`, { parse_mode: 'Markdown' })
             await ctx.answerCbQuery('✅ Agregado al carrito')
             await ctx.reply(`🛒 ${product.name} agregado al carrito.\nUsa /carrito para ver.`)
         } catch (e) {
-            console.error('Error in addtocart_:', e)
+            console.error('Error in addtocart_:', errorText(e))
             await ctx.answerCbQuery('❌ Error al agregar al carrito').catch(() => { })
         }
     })

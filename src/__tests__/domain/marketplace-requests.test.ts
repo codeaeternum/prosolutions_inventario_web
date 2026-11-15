@@ -119,16 +119,33 @@ describe("idempotencia por llave", () => {
 })
 
 describe("dedupe para clientes sin llave propia", () => {
-  it("devuelve la solicitud PENDING ya abierta del mismo solicitante+producto", async () => {
+  it("devuelve la solicitud PENDING ya abierta del mismo solicitante+producto+taller", async () => {
     const existing = { id: "mr-previa", status: "PENDING", productId: "p1" }
     tx.marketplaceRequest.findFirst.mockResolvedValue(existing)
     const result = await createMarketplaceRequest(db, "u-staff", BUYER_BIZ, { ...baseInput, idempotencyKey: key() })
     expect(tx.marketplaceRequest.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ requestedById: "u-staff", productId: "p1", status: "PENDING" }),
+      where: expect.objectContaining({
+        requestedById: "u-staff", productId: "p1", status: "PENDING",
+        tallerName: { equals: "Refacciones Galindo", mode: "insensitive" },
+      }),
     }))
     expect(tx.marketplaceRequest.create).not.toHaveBeenCalled()
     expect(result).toMatchObject({ deduplicated: true })
     expect(result.request.id).toBe("mr-previa")
+  })
+
+  it("una solicitud de OTRO taller sobre la misma pieza NO se fusiona", async () => {
+    // La cuenta de mostrador registra pedidos de varios talleres: el taller
+    // forma parte de la llave de dedupe — "Taller B" abre su propia solicitud
+    // aunque "Taller A" ya tenga una pendiente de la misma pieza.
+    const result = await createMarketplaceRequest(db, "u-staff", BUYER_BIZ, {
+      ...baseInput, tallerName: "Taller B", idempotencyKey: key(),
+    })
+    expect(tx.marketplaceRequest.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tallerName: { equals: "Taller B", mode: "insensitive" } }),
+    }))
+    expect(result.deduplicated).toBe(false)
+    expect(tx.marketplaceRequest.create).toHaveBeenCalledOnce()
   })
 })
 

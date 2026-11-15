@@ -101,9 +101,18 @@ interface FulfillFormProps {
 function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillFormProps) {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("EFECTIVO")
   const [reference, setReference] = useState("") // folio SPEI/autorización; requerido en transferencia
-  // Si la pidió una cuenta WORKSHOP, esa es la cuenta del taller por defecto.
+  // Si la pidió una cuenta WORKSHOP DE ESTE negocio, esa es la cuenta del
+  // taller por defecto. Un WORKSHOP de OTRO tenant (requestedBy.businessId
+  // distinto) no existe como cliente aquí: su id no aparece en el select y
+  // la API lo rechazaría — se arranca vacío y el proveedor elige la cuenta
+  // local a la que cargar la venta.
+  const requesterIsLocalWorkshop =
+    request.requestedBy?.role === "WORKSHOP" &&
+    (!request.businessId || request.requestedBy.businessId === request.businessId)
+  const requesterIsForeignWorkshop =
+    request.requestedBy?.role === "WORKSHOP" && !requesterIsLocalWorkshop
   const [customerId, setCustomerId] = useState(
-    request.requestedBy?.role === "WORKSHOP" ? request.requestedBy.id : ""
+    requesterIsLocalWorkshop ? request.requestedBy!.id : ""
   )
   const [note, setNote] = useState("")
   const [accounts, setAccounts] = useState<WorkshopAccount[]>([])
@@ -117,7 +126,9 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
   }, [])
 
   const total = request.product.wholesalePrice * request.qty
-  const needsAccount = paymentMethod === "CREDITO"
+  // Con solicitante externo la cuenta es obligatoria en cualquier método (la
+  // API exige una cuenta local del negocio); además el crédito siempre la pide.
+  const needsAccount = paymentMethod === "CREDITO" || requesterIsForeignWorkshop
   const needsReference = paymentMethod === "TRANSFERENCIA"
   const canSubmit = (!needsAccount || customerId !== "") && (!needsReference || reference.trim() !== "") && !sending
 
@@ -214,7 +225,13 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
             ))}
           </SelectContent>
         </Select>
-        {needsAccount && (
+        {requesterIsForeignWorkshop && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            La cuenta del taller que pidió no existe en tu negocio; elige a qué
+            cuenta local se cargará la venta.
+          </p>
+        )}
+        {needsAccount && !requesterIsForeignWorkshop && (
           <p className="text-[11px] text-muted-foreground">
             El crédito se cargará a la cuenta seleccionada.
           </p>

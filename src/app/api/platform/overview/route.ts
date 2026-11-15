@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
+import { checkAndRecord } from "@/lib/rate-limit"
 
 /**
  * GET /api/platform/overview — Consola Reficio (solo superadmin).
@@ -36,6 +37,14 @@ interface HealthRow {
 export async function GET() {
   const auth = await requireSuperAdmin()
   if (auth.error) return auth.error
+
+  // Freno suave por operador: 120 lecturas por minuto.
+  if (!checkAndRecord("platform-read", auth.session.user.id, 60 * 1000, 120)) {
+    return NextResponse.json(
+      { error: "Demasiadas consultas, espera un momento" },
+      { status: 429, headers: { "Retry-After": "60" } }
+    )
+  }
 
   try {
     const now = Date.now()

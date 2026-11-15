@@ -32,6 +32,16 @@ export function productDto<T extends object>(product: T, viewer: Viewer): Record
   if (isCatalogStaff(viewer)) keys.push("internalPrice", "minStock", "isActive", "createdAt", "updatedAt", "_count", "stocks", "marketVisibility")
   // El costo revela el margen real: solo el dueño (ADMIN) lo ve.
   if (isCatalogStaff(viewer) && viewer!.role === "ADMIN") keys.push("costPrice")
-  return Object.fromEntries(keys.filter(key => key in input).map(key => [key, input[key]]))
+  const dto = Object.fromEntries(keys.filter(key => key in input).map(key => [key, input[key]]))
+  // La existencia exacta es dato interno del negocio (inventario
+  // reconstruible por scraping de la vitrina): cuentas sin aprobar y
+  // anónimos reciben solo disponibilidad binaria. El storefront consume
+  // `inStock` para el badge/botón — el conteo lo necesita el carrito, que
+  // exige sesión APPROVED de todos modos.
+  if (viewer?.status !== "APPROVED" && "stock" in dto) {
+    dto.inStock = Number(dto.stock) > 0
+    delete dto.stock
+  }
+  return dto
 }
 export const catalogResponseHeaders = { "Cache-Control": "private, no-store", Vary: "Cookie" }

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { getBusinessSetting } from "@/lib/settings"
 import { ORDER_FOLIO_DIGITS_KEY, formatFolio, parseFolioDigits } from "@/lib/workshop-labels"
 import { orderTotalCents, orderHeldCents } from "@/lib/workshop-money"
-import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
+import { checkAndRecord, checkOnly, getClientIp, recordFailure } from "@/lib/rate-limit"
 
 // Rastreo público de órdenes de reparación. Sin sesión. Dos credenciales:
 //
@@ -13,14 +13,24 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 //   2. ?folio=<folio>&phone=<4 dígitos> — LEGACY para tickets ya impresos:
 //      credencial débil (folio secuencial × 10⁴ terminaciones) con rate limit
 //      más estricto. Ambas responden el MISMO 404 genérico para no revelar
-//      si el folio existe ni qué parte falló.
+//      si el folio existe ni qué parte falló. Este path queda solo por
+//      compatibilidad con tickets impresos antes del token; la
+//      recomendación es el trackingToken UUID (~122 bits) — el folio se
+//      mantiene mientras circulen tickets viejos.
 //
-// Rate limit en memoria por IP (20 req/min token, 10 req/min legacy). Es un
-// proceso único: si el despliegue escala a multi-instancia hace falta un
-// limiter compartido.
+// Rate limit en memoria por IP (20 req/min token, 10 req/min legacy) MÁS un
+// bucket POR FOLIO (20 intentos/hora): el espacio phone4 es ~10⁴ por folio y
+// rotando IPs el bucket de IP no bastaba — ahora cada folio individual se
+// agota con pocos intentos fallidos. El bucket del folio SOLO se cobra
+// cuando el folio existe y el phone4 falla (recordFailure tras el lookup):
+// acertar no gasta presupuesto y un folio inexistente ni siquiera revela el
+// bucket — sigue contando únicamente en el de IP. Es un proceso único: si
+// el despliegue escala a multi-instancia hace falta un limiter compartido.
 const WINDOW_MS = 60_000
 const MAX_ATTEMPTS = 20
 const LEGACY_MAX_ATTEMPTS = 10
+const LEGACY_FOLIO_WINDOW_MS = 60 * 60 * 1000
+const LEGACY_FOLIO_MAX_ATTEMPTS = 20
 
 const NOT_FOUND = { error: "No encontramos una orden con esos datos." }
 const NO_STORE = { "Cache-Control": "no-store" } as const
@@ -126,6 +136,16 @@ export async function GET(req: Request) {
         return NextResponse.json(NOT_FOUND, { status: 404, headers: NO_STORE })
       }
 
+      // Bucket por folio — consulta sin cobrar (checkOnly): el cargo se hace
+      // abajo, solo cuando el folio existe y el phone4 no coincide. Un folio
+      // agotado responde 429 igual que el bucket de IP.
+      if (!checkOnly("seguimiento-legacy-folio", String(number), LEGACY_FOLIO_MAX_ATTEMPTS)) {
+        return NextResponse.json(
+          { error: "Demasiadas consultas. Intenta de nuevo más tarde." },
+          { status: 429, headers: NO_STORE },
+        )
+      }
+
       // El número de folio es por-tenant (cada negocio tiene su secuencia):
       // el mismo número puede existir en varios negocios, así que se acota la
       // búsqueda y el teléfono desambigua. Más nuevo primero: el ticket
@@ -139,6 +159,12 @@ export async function GET(req: Request) {
       // El teléfono es medio secreto de la credencial legacy: si no coincide,
       // se responde el mismo 404 que si el folio no existiera.
       order = found.find(o => onlyDigits(o.customerPhone).endsWith(phone4)) ?? null
+      // El folio SÍ existe pero el phone4 falló: es la señal de fuerza bruta
+      // que el bucket por folio castiga (20/hora). Si el folio no existe la
+      // consulta solo quemó el bucket de IP — nada que aprender por aquí.
+      if (!order && found.length > 0) {
+        recordFailure("seguimiento-legacy-folio", String(number), LEGACY_FOLIO_WINDOW_MS)
+      }
     }
 
     // Respuesta genérica: no revelar si falló el token, el folio, el teléfono

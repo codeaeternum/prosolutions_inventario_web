@@ -384,13 +384,15 @@ describe("GET /api/search/pos — overlay de stock del staff", () => {
     expect(products[0].stock).toBe(7)
   })
 
-  it("anónimo: ?branchId= no dispara overlay; queda el stock total", async () => {
+  it("anónimo: ?branchId= no dispara overlay y solo recibe disponibilidad binaria", async () => {
     mocks.auth.mockResolvedValue(null)
     const res = await posSearch(new Request("https://app.invalid/api/search/pos?q=pantalla&branchId=b1"))
     expect(res.status).toBe(200)
     expect(mocks.branchStockFindMany).not.toHaveBeenCalled()
     const { products } = await res.json()
-    expect(products[0].stock).toBe(99)
+    // La existencia exacta es dato interno: al público va inStock, no el número.
+    expect(products[0].stock).toBeUndefined()
+    expect(products[0].inStock).toBe(true)
   })
 })
 

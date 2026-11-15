@@ -15,8 +15,8 @@ const tx = {
   repairOrder: { findUnique: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
   repairEvent: { create: vi.fn() },
   repairPart: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
-  payment: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
-  cashRegister: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
+  payment: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+  cashRegister: { findMany: vi.fn(), findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn() },
   cashMovement: { create: vi.fn(), findMany: vi.fn() },
   auditEvent: { create: vi.fn() },
   inventoryMovement: { findMany: vi.fn(), aggregate: vi.fn(), create: vi.fn() },
@@ -53,8 +53,12 @@ beforeEach(() => {
   // El dominio suma el dinero retenido por FILA en centavos (orderHeldCents)
   // — el mock devuelve el ledger de pagos de la orden.
   tx.payment.findMany.mockResolvedValue([])
+  // Cobro original con cashMovement: null = pago legado sin vínculo (la
+  // devolución en efectivo cae a la sucursal actual de la orden).
+  tx.payment.findFirst.mockResolvedValue(null)
   tx.payment.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ id: "pay-1", ...args.data }))
   tx.cashMovement.findMany.mockResolvedValue([])
+  tx.cashMovement.create.mockResolvedValue({ id: "cm-1" })
   tx.auditEvent.create.mockResolvedValue({ id: "ae-1" })
   // openRegister (cobros CASH): sucursal válida y lock de fila que siempre
   // confirma — los tests de pago controlan la lista de cajas por findMany.
@@ -236,6 +240,50 @@ describe("cierre sin reparación persistente", () => {
     }))
     expect(tx.auditEvent.create).not.toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "REFUND_NO_REFERENCE" }),
+    }))
+  })
+
+  it("REFUND CASH: el OUT cae en la caja del COBRO original, no en la sucursal actual", async () => {
+    // Orden en b1 (currentBranchId) pero el anticipo entró por la caja de b2
+    // — devolver por b1 cortaría una caja que nunca recibió ese efectivo.
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    tx.payment.findFirst.mockResolvedValue({
+      cashMovementId: "cm-in",
+      cashMovement: { register: { branchId: "b2" } },
+    })
+    // Sucursal/caja por id pedido: cada sucursal resuelve su propia caja OPEN.
+    tx.branch.findFirst.mockImplementation(({ where }: { where: { id?: string } }) =>
+      ({ id: where.id, name: `Suc ${where.id}`, isActive: true, businessId: "biz" }))
+    tx.cashRegister.findMany.mockImplementation(({ where }: { where: { branchId?: string } }) =>
+      [{ id: `reg-${where.branchId}` }])
+    tx.cashRegister.findUniqueOrThrow.mockImplementation(({ where }: { where: { id: string } }) =>
+      ({ id: where.id, initialAmount: 0 }))
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 1000 }])
+
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "REFUND", paymentCents: 30000, paymentMethod: "CASH", detail: "Excedente" }))
+
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", amount: 300, registerId: "reg-b2" }),
+    }))
+    // La caja abierta fue la de b2 — la de b1 (currentBranchId) jamás se tocó.
+    const opened = tx.cashRegister.findMany.mock.calls.map(c => (c[0] as { where: { branchId?: string } }).where.branchId)
+    expect(opened).toContain("b2")
+    expect(opened).not.toContain("b1")
+  })
+
+  it("REFUND CASH legado sin cashMovementId: conserva la sucursal actual de la orden", async () => {
+    tx.repairOrder.findUnique.mockResolvedValue(order({ status: "DELIVERED", closedWithoutRepair: true, diagnosticFeeCents: 20000 }))
+    tx.payment.findMany.mockResolvedValue([{ amount: 500, status: "CONFIRMED" }])
+    // payment.findFirst → null por default: cobro anterior al vínculo.
+    tx.cashRegister.findMany.mockResolvedValue([{ id: "reg-b1" }])
+    tx.cashRegister.findUniqueOrThrow.mockResolvedValue({ id: "reg-b1", initialAmount: 0 })
+    tx.cashMovement.findMany.mockResolvedValue([{ type: "IN", amount: 1000 }])
+
+    await updateRepair(db, "admin-1", "biz", "o1", payload({ action: "REFUND", paymentCents: 30000, paymentMethod: "CASH", detail: "Excedente" }))
+
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: "OUT", registerId: "reg-b1" }),
     }))
   })
 })

@@ -17,6 +17,12 @@ import { buildTelegramVerifyUrl } from "@/lib/telegram"
  * Admite cuentas PENDING (p. ej. dueños recién registrados cuyo primer código
  * expiró antes de verificar): solo rechaza no autenticados, cuentas REJECTED
  * o negocios suspendidos.
+ *
+ * A diferencia de /api/auth/password-reset/request, aquí NO hace falta un
+ * piso de latencia anti-enumeración: el lookup va por session.user.id (la
+ * propia cuenta del llamante) y cada rama ya responde status/body distintos
+ * (400 sin contacto, alreadyVerified, emailSent) — el timing no revela nada
+ * que la respuesta no diga, ni permite sondear cuentas ajenas.
  */
 
 const START_WINDOW_MS = 15 * 60 * 1000

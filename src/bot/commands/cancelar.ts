@@ -32,7 +32,7 @@ export function registerCancelar(
     registration: Record<string, WizardState>
     adminProduct: Record<string, AdminProductState>
     reservation: Record<string, ReservationState>
-  } & { deleteProduct?: ExtraSessions; sale?: ExtraSessions; cart?: ExtraSessions; qr?: ExtraSessions; settings?: ExtraSessions; orden?: ExtraSessions }
+  } & { deleteProduct?: ExtraSessions; sale?: ExtraSessions; cart?: ExtraSessions; qr?: ExtraSessions; settings?: ExtraSessions; orden?: ExtraSessions; stockAdjust?: ExtraSessions; linkVerify?: ExtraSessions }
 ) {
   bot.command("cancelar", async (ctx) => {
     const telegramId = ctx.from.id.toString()
@@ -47,7 +47,9 @@ export function registerCancelar(
       sessions.cart,
       sessions.qr,
       sessions.settings,
-      sessions.orden
+      sessions.orden,
+      sessions.stockAdjust,
+      sessions.linkVerify
     ].filter(Boolean) as Record<string, unknown>[]
 
     for (const map of maps) {

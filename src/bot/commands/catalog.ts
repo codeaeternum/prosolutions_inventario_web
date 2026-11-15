@@ -8,8 +8,10 @@ import * as path from 'path'
 import * as fs from 'fs'
 import type { BotContext } from '../lib/types'
 import { getBotAccount, requirePrisma } from '../lib/guards'
+import { visibilityLevelsFor, visibilityWhere } from '../lib/visibility'
 import { getBusinessSetting, getDefaultBusinessId } from '../../lib/settings'
-import { clipMessage, escapeMarkdownV1, escapeRegExp, TG_CAPTION_MAX } from '../lib/format'
+import { clipMessage, errorText, escapeMarkdownV1, escapeRegExp, TG_CAPTION_MAX } from '../lib/format'
+import { retryOnTelegramLimit } from '../lib/utils'
 
 export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
     // Helper: getSetting (duplicated here for independence; in production use a shared module)
@@ -38,6 +40,22 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
         return getDefaultBusinessId()
     }
 
+    // Tenant + niveles de marketVisibility del viewer en un solo lookup: es la
+    // misma matriz que la web (lib/product-dto.catalogVisibilityLevels) —
+    // anónimos/PENDING ven solo PUBLIC, aliados aprobados ALLIES+PUBLIC y el
+    // resto de aprobados el catálogo completo. Toda consulta de catálogo del
+    // bot filtra por `levels` cuando no es null.
+    async function viewerContext(telegramId?: string) {
+        const me = telegramId
+            ? await prisma.user.findUnique({
+                where: { telegramId },
+                select: { businessId: true, role: true, status: true, customerType: true },
+            })
+            : null
+        const businessId = me?.businessId ?? (await getDefaultBusinessId())
+        return { businessId, levels: visibilityLevelsFor(me) }
+    }
+
     // /categorias
     bot.command('categorias', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
@@ -51,7 +69,7 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
                 ...Markup.inlineKeyboard(buttons)
             })
         } catch (e) {
-            console.error(e)
+            console.error('[Catalog] /categorias:', errorText(e))
             await ctx.reply('Error al obtener categorías')
         }
     })
@@ -63,10 +81,10 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
         await ctx.answerCbQuery().catch(() => { })
 
         try {
-            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const { businessId, levels } = await viewerContext(ctx.from?.id?.toString())
             const category = await prisma.category.findFirst({ where: { id: categoryId, businessId } })
             const products = await prisma.product.findMany({
-                where: { categoryId, businessId, isActive: true, stock: { gt: 0 } },
+                where: { categoryId, businessId, isActive: true, stock: { gt: 0 }, ...(levels ? { marketVisibility: { in: levels } } : {}) },
                 take: 8,
                 orderBy: { stock: 'desc' }
             })
@@ -102,7 +120,7 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
                 ...Markup.inlineKeyboard(buttons)
             })
         } catch (e) {
-            console.error(e)
+            console.error('[Catalog] cat_:', errorText(e))
             await ctx.editMessageText('Error al cargar productos.')
         }
     })
@@ -118,14 +136,17 @@ export function registerCatalog({ bot, prisma, sessions, isDev }: BotContext) {
             const me = ctx.from
                 ? await prisma.user.findUnique({
                     where: { telegramId: ctx.from.id.toString() },
-                    select: { businessId: true, role: true, status: true }
+                    select: { businessId: true, role: true, status: true, customerType: true }
                 })
                 : null
             const businessId = me?.businessId ?? (await getDefaultBusinessId())
             const isAdminUser = me?.role === 'ADMIN' && me.status === 'APPROVED'
+            const levels = visibilityLevelsFor(me)
 
             const product = await prisma.product.findFirst({
-                where: { id: productId, businessId },
+                // El filtro también tapa el acceso directo por botón/id viejo:
+                // un HIDDEN no es "no encontrado" para quien no puede verlo.
+                where: { id: productId, businessId, ...(levels ? { marketVisibility: { in: levels } } : {}) },
                 include: { category: true }
             })
 
@@ -182,7 +203,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
                             const buffer = Buffer.from(base64Data, 'base64')
                             validMediaGroup.push({ type: 'photo', media: { source: buffer }, caption: i === 0 ? `📸 ${product.name}` : undefined })
                         } catch (e) {
-                            console.error('[Prod] Error processing base64 image', e)
+                            console.error('[Prod] Error processing base64 image:', errorText(e))
                         }
                     }
                 }
@@ -210,7 +231,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
                 await ctx.editMessageText(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
             }
         } catch (e) {
-            console.error('[Catalog] CRITICAL ERROR:', e)
+            console.error('[Catalog] CRITICAL ERROR:', errorText(e))
             await ctx.reply('❌ Error al cargar el producto.').catch(() => { })
         }
     })
@@ -226,13 +247,13 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
                 return ctx.answerCbQuery('⛔ Solo administradores.').catch(() => { })
             }
             await ctx.answerCbQuery().catch(() => { })
-            const product = await prisma.product.findFirst({ where: { id: productId, businessId: actor.businessId } })
+            const product = await prisma.product.findFirst({ where: { id: productId, businessId: actor.businessId, ...visibilityWhere(actor) } })
             if (!product) return
             const qrData = product.barcode || product.id
             const qrBuffer = await QRCode.toBuffer(qrData)
             await ctx.replyWithPhoto(Input.fromBuffer(qrBuffer, 'qr.png'), { caption: clipMessage(`📱 *${escapeMarkdownV1(product.name)}*\n\nCódigo: \`${qrData.replace(/`/g, '')}\``, TG_CAPTION_MAX), parse_mode: 'Markdown' })
         } catch (e) {
-            console.error('Error in showqr_:', e)
+            console.error('Error in showqr_:', errorText(e))
             await ctx.reply('❌ Error al generar el QR.').catch(() => { })
         }
     })
@@ -250,14 +271,14 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
             }
             await ctx.answerCbQuery().catch(() => { })
             const product = await prisma.product.findFirst({
-                where: { id: productId, businessId: actor.businessId },
+                where: { id: productId, businessId: actor.businessId, ...visibilityWhere(actor) },
                 include: { _count: { select: { reservations: true, movements: true } } }
             })
             if (!product) return
             sessions.deleteProduct[telegramId] = { step: 'CONFIRM', selectedProduct: product }
             await ctx.reply(`🗑️ *¿Eliminar este producto?*\n\n📦 ${escapeMarkdownV1(product.name)}\n⚠️ Ten cuidado, esta acción es irreversible.\n\nResponde SI para confirmar.`, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error('Error in delprod_:', e)
+            console.error('Error in delprod_:', errorText(e))
             await ctx.reply('❌ Error al preparar la eliminación.').catch(() => { })
         }
     })
@@ -285,7 +306,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
             // movimientos o ventas): se archiva con isActive=false para
             // conservar el ledger. Solo se elimina si no tiene movimientos.
             const product = await prisma.product.findFirst({
-                where: { id: productId, businessId: actor.businessId },
+                where: { id: productId, businessId: actor.businessId, ...visibilityWhere(actor) },
                 include: { _count: { select: { reservations: true, movements: true, saleItems: true } } }
             })
             if (!product) {
@@ -306,7 +327,7 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
             await ctx.answerCbQuery('Eliminado')
             return ctx.editMessageText(`✅ *Producto eliminado*\n\n🗑️ ${productName}\n\nEl producto fue eliminado (sin historial que preservar).`, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error('Error deleting product:', e)
+            console.error('Error deleting product:', errorText(e))
             delete sessions.deleteProduct[telegramId]
             await ctx.answerCbQuery('Error')
             return ctx.editMessageText('❌ Error al eliminar el producto. Puede tener reservas activas.')
@@ -328,7 +349,10 @@ ${product.stock <= 5 ? '⚠️ *¡Poco Stock!*' : ''}`)
                 return ctx.reply('⏳ Tu cuenta está pendiente de verificación.')
             }
 
-            const product = await prisma.product.findUnique({ where: { id: productId, businessId: user.businessId } })
+            // findFirst (no findUnique): el where lleva además el filtro de
+            // marketVisibility del viewer — un cliente aliado no puede reservar
+            // una pieza HIDDEN aunque conserve un botón/id viejo.
+            const product = await prisma.product.findFirst({ where: { id: productId, businessId: user.businessId, ...visibilityWhere(user) } })
             if (!product || product.stock <= 0) return ctx.reply('❌ Producto sin stock disponible.')
 
             // Lista de taller para clientes STORE/TECHNICIAN o cuenta aliada
@@ -356,7 +380,7 @@ _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
                 step: 'QUANTITY'
             }
         } catch (e) {
-            console.error('Error in reserve_:', e)
+            console.error('Error in reserve_:', errorText(e))
             await ctx.reply('❌ No se pudo iniciar la reserva. Intenta de nuevo.').catch(() => { })
         }
     })
@@ -402,7 +426,7 @@ ${escapeMarkdownV1(bankCashRaw)}
 📸 *Envía la FOTO del comprobante aquí cuando hayas pagado.*
 _Escribe "cancelar" para anular._`, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error('Error in pay_transfer:', e)
+            console.error('Error in pay_transfer:', errorText(e))
             await ctx.reply('❌ Error al cargar los datos de pago. Intenta de nuevo.').catch(() => { })
         }
     })
@@ -466,13 +490,16 @@ ${adminFooter}`
             for (const admin of admins) {
                 if (admin.telegramId) {
                     // Comprobantes privados se revisan únicamente desde la sesión web autenticada.
-                    bot.telegram.sendMessage(admin.telegramId, adminMsg, { parse_mode: 'Markdown' }).catch(() => {})
+                    // retryOnTelegramLimit: un 429 con retry_after espera y reintenta UNA vez.
+                    void retryOnTelegramLimit(() =>
+                        bot.telegram.sendMessage(admin.telegramId!, adminMsg, { parse_mode: 'Markdown' }),
+                    ).catch(() => {})
                 }
             }
 
             delete sessions.reservation[telegramId]
         } catch (e) {
-            console.error(e)
+            console.error('[Catalog] processReservation:', errorText(e))
             await ctx.reply('❌ No se confirmó la operación. Reintenta la misma reserva o revisa Mis reservas antes de crear otra.')
         }
     }
@@ -489,7 +516,7 @@ ${adminFooter}`
                 ...Markup.inlineKeyboard(buttons)
             })
         } catch (e) {
-            console.error('Error in back_categories:', e)
+            console.error('Error in back_categories:', errorText(e))
             await ctx.reply('❌ Error al cargar categorías. Usa /categorias.').catch(() => { })
         }
     })
@@ -498,9 +525,9 @@ ${adminFooter}`
     bot.command('ofertas', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
         try {
-            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const { businessId, levels } = await viewerContext(ctx.from?.id?.toString())
             const products = await prisma.product.findMany({
-                where: { businessId, isActive: true, stock: { gt: 5 } },
+                where: { businessId, isActive: true, stock: { gt: 5 }, ...(levels ? { marketVisibility: { in: levels } } : {}) },
                 include: { category: true },
                 orderBy: { stock: 'desc' },
                 take: 5
@@ -515,7 +542,7 @@ ${adminFooter}`
             msg += '_Busca por nombre para ver detalles._'
             await ctx.reply(msg, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Catalog] /ofertas:', errorText(e))
             await ctx.reply('❌ Error al obtener productos.')
         }
     })
@@ -539,9 +566,9 @@ ${adminFooter}`
         const brand = ctx.match[1]
         await ctx.answerCbQuery().catch(() => { })
         try {
-            const businessId = await businessIdOf(ctx.from?.id?.toString())
+            const { businessId, levels } = await viewerContext(ctx.from?.id?.toString())
             const products = await prisma.product.findMany({
-                where: { businessId, name: { contains: brand, mode: 'insensitive' }, isActive: true, stock: { gt: 0 } },
+                where: { businessId, name: { contains: brand, mode: 'insensitive' }, isActive: true, stock: { gt: 0 }, ...(levels ? { marketVisibility: { in: levels } } : {}) },
                 include: { category: true },
                 take: 8,
                 orderBy: { name: 'asc' }
@@ -562,7 +589,7 @@ ${adminFooter}`
                 ...Markup.inlineKeyboard(buttons)
             })
         } catch (e) {
-            console.error(e)
+            console.error('[Catalog] brand_:', errorText(e))
             await ctx.editMessageText('❌ Error al buscar productos.')
         }
     })

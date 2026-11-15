@@ -111,6 +111,35 @@ export interface OrdenSession {
     businessId?: string
 }
 
+/**
+ * Ajuste de /stock pendiente de confirmación: se arma cuando la magnitud del
+ * cambio es inusual (|diff| > 50 uds o > 2× el stock actual) y se ejecuta
+ * solo si el admin pulsa "✅ Confirmar" — antes cualquier typo escribía el
+ * ajuste de inmediato.
+ */
+export interface StockAdjustSession {
+    productId: string
+    productName: string
+    branchId: string
+    branchName: string
+    current: number
+    newStock: number
+    diff: number
+}
+
+/**
+ * Vinculación pendiente del deep-link verify_<code>: el código ya probó el
+ * contacto (markVerified) pero el telegramId solo se escribe si el usuario
+ * confirma "¿Vincular esta cuenta de Telegram a {nombre} de {negocio}?".
+ */
+export interface PendingTelegramLink {
+    targetUserId: string
+    targetName: string
+    businessName?: string
+    /** true cuando la cuenta ya tenía OTRO telegramId (se reemplaza al confirmar). */
+    replacing?: boolean
+}
+
 // ========== SESSION STORES ==========
 
 export interface SessionStores {
@@ -123,6 +152,8 @@ export interface SessionStores {
     qr: Record<string, QRSession>
     settings: Record<string, { key: string; businessId: string }>
     orden: Record<string, OrdenSession>
+    stockAdjust: Record<string, StockAdjustSession>
+    linkVerify: Record<string, PendingTelegramLink>
 }
 
 // ========== SHARED CONTEXT ==========

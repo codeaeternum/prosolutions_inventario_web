@@ -81,6 +81,17 @@ export function normalizePhone(phone: string | null | undefined): string {
 }
 
 /**
+ * Enmascara un teléfono para listados donde el número no le toca al lector:
+ * conserva los primeros 2 y los últimos 4 dígitos ("8112345678" →
+ * "81****5678") — suficiente para reconocer el contacto sin exponerlo.
+ */
+export function maskPhone(phone: string | null | undefined): string {
+  const digits = normalizePhone(phone)
+  if (digits.length <= 6) return digits ? `${digits.slice(0, 2)}****` : ""
+  return `${digits.slice(0, 2)}****${digits.slice(-4)}`
+}
+
+/**
  * Patrón de desbloqueo para humanos: se guarda como índices 0-8 ("0-4-8")
  * pero los puntos se cuentan 1-9 (esquina superior izquierda = 1). Devuelve
  * la cadena con cada punto +1 ("1-5-9"). Si el valor no es numérico se

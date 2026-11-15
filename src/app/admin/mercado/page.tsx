@@ -551,6 +551,9 @@ export default function MercadoPage() {
                 pendingIds={pendingIds}
                 formatPrice={formatPrice}
                 hasActiveFilters={hasActiveFilters}
+                // Publicar es decisión de ADMIN (POST /api/marketplace lo
+                // exige): el empleado ve niveles pero no los cambia.
+                canEdit={isAdmin}
               />
             )}
           </TabsContent>

@@ -66,9 +66,28 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
     const [strings, businessId] = mocks.queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, string]
     const sql = strings.join(" ")
     expect(businessId).toBe("biz-1")
-    expect(sql).toContain('JOIN "BranchStock"')
+    // LEFT JOIN: un producto activo sin filas en BranchStock (legacy) entra
+    // al agregado con Σ=0 — el INNER JOIN anterior lo escondía del drift.
+    expect(sql).toContain('LEFT JOIN "BranchStock"')
     expect(sql).toContain("HAVING")
     expect(sql).toContain('"isActive" = true')
+  })
+
+  it("producto legacy sin filas en BranchStock se reporta como drift con total 0", async () => {
+    // Fila que el LEFT JOIN + COALESCE produce: stock cacheado > 0, suma de
+    // sucursales 0 (ninguna fila). El INNER JOIN anterior la habría omitido.
+    mocks.queryRaw.mockResolvedValue([
+      { productId: "p-legacy", name: "Carátula vieja", cachedStock: 5, branchesStock: 0 },
+    ])
+    mocks.productCount.mockResolvedValue(3)
+
+    const res = await GET()
+    const json = await res.json()
+    expect(json.ok).toBe(false)
+    expect(json.totalChecked).toBe(3)
+    expect(json.drifted).toEqual([
+      { productId: "p-legacy", name: "Carátula vieja", cachedStock: 5, branchesStock: 0, diff: -5 },
+    ])
   })
 
   it("reporta refacciones cobradas con descuento de inventario incompleto", async () => {
@@ -108,6 +127,9 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
     expect(businessId).toBe("biz-1")
     expect(sql).toContain('FROM "RepairPart"')
     expect(sql).toContain('JOIN "RepairOrder"')
+    // El JOIN del movimiento va por businessId + productId + patrón de notes:
+    // movimientos de OTRA pieza con el mismo prefijo no inflan el descuento.
+    expect(sql).toContain('im."productId" = rp."productId"')
     expect(sql).toContain('"notes" LIKE')
     expect(sql).toContain("Refacción OT ")
     expect(sql).toContain('rp."status" = \'APPROVED\'')

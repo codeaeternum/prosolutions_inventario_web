@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getSession, requireMarketplaceViewer, assertModuleAllowed } from "@/lib/api-auth"
+import { hasModule } from "@/lib/access"
 import { businessIdOf } from "@/lib/tenant"
 import { catalogResponseHeaders } from "@/lib/product-dto"
 import { ALLY_CATALOG_LEVELS } from "@/lib/market-visibility"
 import { prisma } from "@/lib/prisma"
 import { operationKeySchema } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
-import { createMarketplaceRequest, marketplaceRequestInclude } from "@/lib/domain/marketplace"
+import {
+  createMarketplaceRequest,
+  marketplaceOutgoingInclude,
+  marketplaceRequestInclude,
+} from "@/lib/domain/marketplace"
 import { sendNotificationToStaff } from "@/app/api/notifications/stream/route"
 
 const statuses = ["PENDING", "APPROVED", "REJECTED", "FULFILLED"] as const
@@ -33,6 +38,13 @@ const createSchema = z.object({
   // fallo a la mitad dejaba estados inconsistentes).
   encargoId: z.string().min(1).nullish(),
   supplierNote: z.string().trim().max(500).optional(),
+  // Abono al proveedor al pasar el encargo a ORDERED en la misma operación
+  // (mismo contrato que PATCH /api/encargos/:id): solo con encargoId y solo
+  // ADMIN lo asienta — el dominio del encargo lo exige por dentro.
+  supplierId: z.string().min(1).nullish(),
+  supplierAmountCents: z.number().int().min(1).max(100000000).optional(),
+  supplierMethod: z.enum(["CASH", "CARD", "TRANSFER"]).optional(),
+  cashFromRegister: z.boolean().optional(),
 })
 
 const requestInclude = marketplaceRequestInclude
@@ -65,7 +77,9 @@ export async function GET(req: Request) {
     const businessId = businessIdOf(session)
     const isWorkshop = session.user.role === "WORKSHOP"
 
-    const requests = await prisma.marketplaceRequest.findMany({
+    // take 201 para detectar "hay más" sin otra consulta: la respuesta
+    // recorta a 200 y hasMore avisa que la lista quedó truncada.
+    const rows = await prisma.marketplaceRequest.findMany({
       where: outgoing
         ? {
             // Salientes: las pidió alguien de este negocio a otro negocio.
@@ -80,9 +94,13 @@ export async function GET(req: Request) {
             ...(isWorkshop ? { requestedById: session.user.id } : {}),
           },
       orderBy: { createdAt: "desc" },
-      take: 200,
-      include: requestInclude,
+      take: 201,
+      // Al comprador no le toca el retail interno del proveedor ni quién
+      // decidió: proyección acotada por dirección.
+      include: outgoing ? marketplaceOutgoingInclude : requestInclude,
     })
+    const hasMore = rows.length > 200
+    const requests = rows.slice(0, 200)
 
     // Pendientes primero; dentro de cada grupo conserva el orden por fecha desc.
     requests.sort((a, b) => {
@@ -91,7 +109,7 @@ export async function GET(req: Request) {
       return aPending - bPending
     })
 
-    return NextResponse.json({ requests }, { headers: catalogResponseHeaders })
+    return NextResponse.json({ requests, hasMore }, { headers: catalogResponseHeaders })
   } catch (error) {
     console.error("Error fetching marketplace requests:", error)
     return NextResponse.json({ error: "Error al obtener las solicitudes" }, { status: 500 })
@@ -120,11 +138,12 @@ export async function POST(req: Request) {
     const businessId = businessIdOf(session)
     const isWorkshop = session.user.role === "WORKSHOP"
     // El taller se autorregistra su solicitud; staff interno requiere el
-    // módulo "mercado" — o "inventario", porque pedir la pieza al aliado es
-    // parte del flujo de encargo que vive ahí.
-    if (!isWorkshop) {
-      const denied = assertModuleAllowed(session, "mercado") && assertModuleAllowed(session, "inventario")
-      if (denied) return denied
+    // módulo "mercado" O "inventario" — pedir la pieza al aliado también es
+    // parte del flujo de encargo que vive en inventario.
+    const canMercado = hasModule(session.user, "mercado")
+    const canInventario = hasModule(session.user, "inventario")
+    if (!isWorkshop && !canMercado && !canInventario) {
+      return NextResponse.json({ error: "No tienes acceso a este módulo." }, { status: 403 })
     }
     const parseResult = createSchema.safeParse(await req.json().catch(() => null))
     if (!parseResult.success) {
@@ -136,9 +155,23 @@ export async function POST(req: Request) {
     }
     const input = parseResult.data
     // Un encargo solo lo toca el mostrador: una cuenta WORKSHOP no opera el
-    // panel de encargos (el dominio además lo refuerza con permission staff).
-    if (isWorkshop && input.encargoId) {
-      return NextResponse.json({ error: "Acceso denegado" }, { status: 403 })
+    // panel de encargos (el dominio además lo refuerza con permission staff)
+    // y ligar la solicitud a un encargo exige el módulo inventario — la
+    // pieza que encargó un cliente no se puede pedir al aliado solo con
+    // mercado.
+    if (input.encargoId && (isWorkshop || !canInventario)) {
+      return NextResponse.json(
+        { error: "Pedir la pieza ligada a un encargo requiere el módulo de inventario." },
+        { status: 403 }
+      )
+    }
+    // El abono al proveedor viaja dentro de la transición del encargo: sin
+    // encargoId no hay dónde asentarlo — mejor rechazarlo que ignorarlo.
+    if (!input.encargoId && (input.supplierId || input.supplierAmountCents != null || input.supplierMethod)) {
+      return NextResponse.json(
+        { error: "El pago al proveedor solo aplica al pedir la pieza de un encargo." },
+        { status: 400 }
+      )
     }
 
     // Producto ordenable: activo y publicado para aliados (ALLIES o PUBLIC)

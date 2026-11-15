@@ -35,24 +35,38 @@ import { diffChanges, recordAudit } from "@/lib/audit"
  */
 
 const UPLOADS_PREFIX = "/uploads/"
+const PRODUCT_UPLOADS_PREFIX = "/uploads/products/"
 // Mismo tope que el form de producto (MAX_PRODUCT_IMAGES en producto-form).
 const MAX_PRODUCT_IMAGES = 12
 
-/** La imagen debe ser una ruta local servida por /api/upload/*: /uploads/<dir>/<archivo>. */
+/**
+ * La imagen debe ser una ruta local de foto de producto:
+ *   - /uploads/products/<archivo> — lo que genera hoy /api/upload/product;
+ *   - /uploads/<archivo> — un archivo PLANO en la raíz, solo por compat con
+ *     filas antiguas (ningún upload actual escribe ahí imágenes de producto).
+ * Todo subdirectorio queda fuera: /uploads/payments/* son comprobantes
+ * privados (jamás imagen de catálogo) y cualquier otra carpeta no proviene
+ * del pipeline de uploads de producto.
+ */
 function isLocalUpload(value: string): boolean {
   if (!value.startsWith(UPLOADS_PREFIX)) return false
   if (value.length <= UPLOADS_PREFIX.length) return false
   // Anti-traversal: ni ".." ni separador Windows ni NUL. Una URL absoluta
   // http(s) ya quedó fuera por el prefijo.
   if (value.includes("..") || value.includes("\\") || value.includes("\0")) return false
-  return true
+  if (value.startsWith(PRODUCT_UPLOADS_PREFIX)) {
+    const name = value.slice(PRODUCT_UPLOADS_PREFIX.length)
+    return name.length > 0 && !name.includes("/")
+  }
+  // Raíz legacy: exactamente un segmento (sin más "/").
+  return !value.slice(UPLOADS_PREFIX.length).includes("/")
 }
 
 const imageUrlSchema = z
   .string()
   .min(1, "La imagen no puede estar vacía")
   .max(2000, "La ruta de la imagen es demasiado larga")
-  .refine(isLocalUpload, "Cada imagen debe ser una ruta local /uploads/…")
+  .refine(isLocalUpload, "Cada imagen debe ser una foto subida (/uploads/products/…) o una ruta local /uploads/…")
 
 // Ids tipo cuid: token opaco alfanumérico; se aceptan "-" / "_" que traen
 // ids legados o de prueba, pero nada de espacios, "/" ni puntos.

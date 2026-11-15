@@ -17,7 +17,13 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "3005:3000"
+      # El puerto solo se publica en loopback y en la IP LAN configurada
+      # (APP_BIND_IP). El túnel de Cloudflare llega por la red interna de
+      # Docker — no necesita puerto publicado. Publicar en 0.0.0.0 exponía
+      # el origen vía Tailscale/otras interfaces y permitía forjar
+      # CF-Connecting-IP para saltarse los rate limits.
+      - "127.0.0.1:3005:3000"
+      - "${APP_BIND_IP:-192.168.1.195}:3005:3000"
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL with the current PostgreSQL credential}

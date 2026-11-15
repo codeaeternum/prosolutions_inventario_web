@@ -1,6 +1,6 @@
 import type { PrismaClient, RepairStatus } from "@prisma/client"
 import { z } from "zod"
-import { actor, BusinessError, openRegister, operation, operationKeySchema, type Transaction } from "./operations"
+import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents, type Transaction } from "./operations"
 import { formatFolio, parseFolioDigits } from "../workshop-labels"
 
 /**
@@ -279,13 +279,46 @@ function assertCashInApplies(side: "pagar" | "cobrar") {
   if (side !== "cobrar") throw new BusinessError("El ingreso en caja solo aplica a lo que el aliado te debe; el pago al taller se registra como salida aparte.", 409)
 }
 
-/** UN solo CashMovement IN por el total liquidado en ventanilla. */
+/** UN solo CashMovement IN por el total liquidado en ventanilla.
+ *  `referenceId` liga el ingreso a la(s) orden(es) saldada(s) — CSV en lote —
+ *  para que una reapertura posterior encuentre y revierta exactamente ese
+ *  asiento (ver convenioReversalOut). */
 async function convenioCashIn(tx: Transaction, args: {
   businessId: string; actorId: string; registerId: string; totalCents: number
-  allyLabel: string; folios: string[]
+  allyLabel: string; folios: string[]; referenceId: string
 }) {
   const description = `Convenio ${args.allyLabel} · ${args.folios.join(", ")}`.slice(0, 200)
-  await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: args.registerId, userId: args.actorId, type: "IN", amount: args.totalCents / 100, description, referenceType: "CONVENIO" } })
+  await tx.cashMovement.create({ data: { businessId: args.businessId, registerId: args.registerId, userId: args.actorId, type: "IN", amount: args.totalCents / 100, description, referenceType: "CONVENIO", referenceId: args.referenceId } })
+}
+
+/**
+ * Balance neto de asientos CONVENIO ligados a una orden: INs − OUTs con
+ * `referenceId` que la mencione (id directo o CSV de un lote). > 0 = hay un
+ * ingreso pendiente de revertir; 0 = sin caja ligada o ya revertido — un
+ * re-saldo posterior vuelve a subir el neto y permite revertir de nuevo.
+ */
+const convenioLinkedNet = (linked: { type: string; referenceId: string | null }[], orderId: string) =>
+  linked.reduce((net, m) => net + (m.referenceId?.includes(orderId) ? (m.type === "IN" ? 1 : -1) : 0), 0)
+
+/** Salida de caja que revierte el ingreso de un settle reabierto. La OUT cae
+ *  en la caja ABIERTA que resuelve la misma regla del settle (sucursal
+ *  indicada, la de la orden o la base de quien liquida) — misma convención
+ *  que las devoluciones de venta: el dinero sale del cajón actual, con tope
+ *  de efectivo disponible para no dejar la caja en negativo. */
+async function convenioReversalOut(tx: Transaction, args: {
+  businessId: string; actorId: string; branchId: string | null | undefined
+  totalCents: number; referenceId: string; description: string
+}) {
+  const register = await openRegister(tx, args.branchId, args.businessId)
+  const availableCents = await registerCashCents(tx, register.id)
+  if (args.totalCents > availableCents) {
+    throw new BusinessError(`El efectivo en caja no alcanza para revertir el ingreso del convenio (${((args.totalCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
+  }
+  await tx.cashMovement.create({ data: {
+    businessId: args.businessId, registerId: register.id, userId: args.actorId, type: "OUT",
+    amount: args.totalCents / 100, description: args.description.slice(0, 200),
+    referenceType: "CONVENIO", referenceId: args.referenceId,
+  } })
 }
 
 /** Texto de la bitácora privada del settle (individual y lote comparten el
@@ -317,6 +350,23 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
     if ((order.convenioSettledAt != null) === input.settled) {
       return { orderId: order.id, convenioSettledAt: order.convenioSettledAt, convenioSettledAmountCents: order.convenioSettledAmountCents, side }
     }
+    // La cuenta solo se salda cuando es exigible: el trabajo debe haber
+    // llegado a un estado entregable o de cierre (READY/DELIVERED y los
+    // cierres con devolución). En el lado "pagar" lo decide el status de la
+    // ESPEJO del reparador — igual que convenioReport — no el de la orden
+    // origen. Saldar una orden en DIAGNOSIS marcaba pagado un trabajo que el
+    // taller aún no termina.
+    // La espejo se lee aquí una sola vez: su status decide la exigibilidad y
+    // su partnerPriceCents congela el monto (cross-tenant acotado por id).
+    const mirror = input.settled && side === "pagar"
+      ? await tx.repairOrder.findUnique({ where: { id: order.delegatedOrderId! }, select: { partnerPriceCents: true, status: true } })
+      : null
+    if (input.settled) {
+      const chargeable = side === "pagar" ? isConvenioChargeable(mirror?.status) : isConvenioChargeable(order.status)
+      if (!chargeable) {
+        throw new BusinessError("La cuenta aún no es exigible: el convenio se salda cuando el trabajo llega a un estado entregable o de cierre.", 409)
+      }
+    }
     // Snapshot del monto liquidado: el precio convenio vigente EN ESTE
     // INSTANTE queda congelado en la orden — si después el taller edita el
     // partnerPriceCents de una orden ya saldada, el histórico no se mueve.
@@ -325,7 +375,7 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
     // lado "cobrar" es el de la propia orden.
     const settledAmountCents = input.settled
       ? side === "pagar"
-        ? (await tx.repairOrder.findUnique({ where: { id: order.delegatedOrderId! }, select: { partnerPriceCents: true } }))?.partnerPriceCents ?? null
+        ? mirror?.partnerPriceCents ?? null
         : order.partnerPriceCents
       : null
     // Cobro en ventanilla: la caja se valida ANTES de tocar la orden — sin
@@ -340,15 +390,49 @@ export async function settleConvenio(db: PrismaClient, actorId: string, business
       const me = await actor(tx, actorId, "admin", businessId)
       cashRegister = await openRegister(tx, input.branchId ?? order.currentBranchId ?? me.homeBranchId, businessId)
     }
+    // Reapertura con ingreso en ventanilla previo: el IN ligado a ESTA orden
+    // (referenceId) se revierte con una OUT en la caja abierta — sin el
+    // reverso, settle → reabrir → settle dejaba DOS ingresos por el mismo
+    // convenio en el arqueo. El conteo neto IN−OUT decide si hay qué
+    // revertir: un re-saldo posterior vuelve a registrar su IN y una nueva
+    // reapertura lo revierte una vez más (neto en caja = un solo IN).
+    // Las OUT históricas previas a la ligadura por referenceId no se
+    // detectan: solo los asientos ligados creados desde esta versión son
+    // reversibles.
+    let reversal: { totalCents: number } | null = null
+    if (!input.settled) {
+      const linked = await tx.cashMovement.findMany({
+        where: {
+          businessId,
+          referenceType: "CONVENIO",
+          type: { in: ["IN", "OUT"] },
+          referenceId: { contains: order.id },
+        },
+        select: { type: true, referenceId: true },
+      })
+      const amountCents = order.convenioSettledAmountCents ?? 0
+      if (convenioLinkedNet(linked, order.id) > 0 && amountCents > 0) {
+        const me = await actor(tx, actorId, "admin", businessId)
+        reversal = { totalCents: amountCents }
+        // Valida caja y efectivo ANTES de reabrir (todo o nada en la tx).
+        await convenioReversalOut(tx, {
+          businessId, actorId,
+          branchId: input.branchId ?? order.currentBranchId ?? me.homeBranchId,
+          totalCents: amountCents,
+          referenceId: order.id,
+          description: `Convenio ${order.originBusiness?.name ?? order.originBusinessName ?? "aliado"} · orden #${order.number} — reverso por reapertura`,
+        })
+      }
+    }
     const settledAt = input.settled ? new Date() : null
     await tx.repairOrder.update({ where: { id: order.id }, data: { convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, version: { increment: 1 } } })
-    await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail: settleEventDetail(input.settled, side, settledAmountCents), isPublic: false } })
+    await tx.repairEvent.create({ data: { businessId, orderId: order.id, actorId, type: "NOTE", detail: reversal ? `${settleEventDetail(false, side, null)} Se revirtió el ingreso en caja por ${(reversal.totalCents / 100).toFixed(2)} MXN.` : settleEventDetail(input.settled, side, settledAmountCents), isPublic: false } })
     if (cashRegister && settledAmountCents != null) {
       const folio = (await folioFormatter(tx, [businessId]))(businessId, order.number)
       const allyLabel = order.originBusiness?.name ?? order.originBusinessName ?? "aliado"
-      await convenioCashIn(tx, { businessId, actorId, registerId: cashRegister.id, totalCents: settledAmountCents, allyLabel, folios: [folio] })
+      await convenioCashIn(tx, { businessId, actorId, registerId: cashRegister.id, totalCents: settledAmountCents, allyLabel, folios: [folio], referenceId: order.id })
     }
-    return { orderId: order.id, convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, side }
+    return { orderId: order.id, convenioSettledAt: settledAt, convenioSettledAmountCents: settledAmountCents, side, cashReversalCents: reversal?.totalCents ?? 0 }
   })
 }
 
@@ -382,16 +466,29 @@ export async function settleConvenioBatch(db: PrismaClient, actorId: string, bus
       ? orders.map(o => o.delegatedOrderId).filter((id): id is string => Boolean(id))
       : []
     const mirrors = mirrorIds.length
-      ? await tx.repairOrder.findMany({ where: { id: { in: mirrorIds } }, select: { id: true, partnerPriceCents: true } })
+      ? await tx.repairOrder.findMany({ where: { id: { in: mirrorIds } }, select: { id: true, partnerPriceCents: true, status: true } })
       : []
-    const mirrorPriceById = new Map(mirrors.map(m => [m.id, m.partnerPriceCents]))
+    const mirrorById = new Map(mirrors.map(m => [m.id, m]))
     const snapshotOf = (order: (typeof orders)[number]): number | null =>
       !input.settled ? null
-        : side === "pagar" ? (order.delegatedOrderId ? mirrorPriceById.get(order.delegatedOrderId) ?? null : null)
+        : side === "pagar" ? (order.delegatedOrderId ? mirrorById.get(order.delegatedOrderId)?.partnerPriceCents ?? null : null)
           : order.partnerPriceCents
     // Toggle idempotente por orden: pedir el estado que ya tiene la salta.
     const toSettle = orders.filter(o => (o.convenioSettledAt != null) !== input.settled)
     const skipped = orders.filter(o => (o.convenioSettledAt != null) === input.settled).map(o => o.id)
+    // Exigibilidad por orden al SALDAR (lado cobrar: status propio; lado
+    // pagar: status de la espejo — mismo criterio que convenioReport y que
+    // el settle individual). Una orden no exigible invalida el lote entero,
+    // consistente con la regla todo-o-nada del lote.
+    if (input.settled) {
+      const unchargeable = toSettle.find(o =>
+        !(side === "pagar"
+          ? isConvenioChargeable(o.delegatedOrderId ? mirrorById.get(o.delegatedOrderId)?.status : null)
+          : isConvenioChargeable(o.status)))
+      if (unchargeable) {
+        throw new BusinessError(`La orden #${unchargeable.number} aún no es exigible: el convenio se salda cuando el trabajo llega a un estado entregable o de cierre.`, 409)
+      }
+    }
     const totalCents = toSettle.reduce((sum, o) => sum + (snapshotOf(o) ?? 0), 0)
     // La caja se valida ANTES de marcar nada: si el ingreso en efectivo no se
     // puede asentar, el lote entero espera (todo o nada en la tx).
@@ -401,6 +498,35 @@ export async function settleConvenioBatch(db: PrismaClient, actorId: string, bus
       // la caja indicada o en la base de quien liquida, con lock de fila.
       const me = await actor(tx, actorId, "admin", businessId)
       cashRegister = await openRegister(tx, input.branchId ?? me.homeBranchId, businessId)
+    }
+    // Reapertura: revierte, por orden, los IN de convenio que quedaron
+    // ligados (referenceId la menciona) y aún no revertidos (neto IN−OUT).
+    // Una sola OUT por el total revertido, ligada a los ids revertidos en
+    // CSV — misma convención que el IN del lote.
+    const linked = !input.settled && toSettle.length
+      ? await tx.cashMovement.findMany({
+          where: {
+            businessId,
+            referenceType: "CONVENIO",
+            type: { in: ["IN", "OUT"] },
+            OR: toSettle.map(o => ({ referenceId: { contains: o.id } })),
+          },
+          select: { type: true, referenceId: true },
+        })
+      : []
+    const toReverse = input.settled
+      ? []
+      : toSettle.filter(o => convenioLinkedNet(linked, o.id) > 0 && (o.convenioSettledAmountCents ?? 0) > 0)
+    const reversalCents = toReverse.reduce((sum, o) => sum + (o.convenioSettledAmountCents ?? 0), 0)
+    if (reversalCents > 0) {
+      const me = await actor(tx, actorId, "admin", businessId)
+      await convenioReversalOut(tx, {
+        businessId, actorId,
+        branchId: input.branchId ?? me.homeBranchId,
+        totalCents: reversalCents,
+        referenceId: toReverse.map(o => o.id).join(","),
+        description: `Convenio · reverso por reapertura en lote (${toReverse.length} cuenta${toReverse.length === 1 ? "" : "s"})`,
+      })
     }
     const settledAt = input.settled ? new Date() : null
     const settled: { orderId: string; amountCents: number | null }[] = []
@@ -419,8 +545,9 @@ export async function settleConvenioBatch(db: PrismaClient, actorId: string, bus
         businessId, actorId, registerId: cashRegister.id, totalCents,
         allyLabel: [...allyNames].join(", ") || "aliado",
         folios: toSettle.map(o => folio(businessId, o.number)),
+        referenceId: toSettle.map(o => o.id).join(","),
       })
     }
-    return { settled, skipped, totalCents, side }
+    return { settled, skipped, totalCents, side, cashReversalCents: reversalCents }
   })
 }

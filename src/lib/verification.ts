@@ -85,6 +85,19 @@ export async function issueVerificationCode(
  *   aplica el llamador en bot/commands/start.ts. En cambio, cuando el hash sí
  *   localiza una fila y el consumo falla (expirada), el intento SÍ se cuenta
  *   — misma regla que el mismatch con identifier.
+ *
+ * Guarda de canal: los códigos TELEGRAM del flujo de verificación (purpose
+ * SIGNUP) NO se exponen a la búsqueda por identifier. Su entrega es el
+ * deep-link mismo (/start verify_<code>) — el código viaja EN LA URL que el
+ * propio usuario abre en su navegador autenticado; si la vía web lo
+ * aceptara, podría autoconsumirlo por /api/verify y marcarse
+ * phoneVerifiedAt sin demostrar que controla el teléfono (ni ligar su
+ * telegramId). Solo el bot lo consume, por codeHash y sin identifier — la
+ * rama web ni siquiera localiza la fila (mismo MISMATCH genérico que un
+ * código inexistente, sin tocar `attempts`). OJO: los códigos TELEGRAM de
+ * PASSWORD_RESET sí pasan por aquí — esos viajan como DÍGITOS en un mensaje
+ * de Telegram y el usuario los teclea en el formulario de reset; bloquearlos
+ * rompería el reset para cuentas sin correo.
  * Devuelve el row (con userId) ya marcado como consumido.
  */
 export async function consumeVerificationCode(
@@ -102,7 +115,17 @@ export async function consumeVerificationCode(
 
   const row = input.identifier
     ? await db.verificationCode.findFirst({
-        where: { identifier: input.identifier, purpose, consumedAt: null },
+        where: {
+          identifier: input.identifier,
+          purpose,
+          consumedAt: null,
+          // Los deep-link codes de verificación solo los consume el bot (ver
+          // la guarda de canal en el docstring): la fila queda invisible para
+          // la vía web con identifier, que cae al MISMATCH genérico.
+          ...(purpose === VERIFICATION_DEFAULT_PURPOSE
+            ? { channel: { not: "TELEGRAM" as const } }
+            : {}),
+        },
         orderBy: { createdAt: "desc" },
       })
     : await db.verificationCode.findFirst({

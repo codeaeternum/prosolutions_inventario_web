@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => {
     product: {
       findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(),
       count: vi.fn(), update: vi.fn(), create: vi.fn(),
-      groupBy: vi.fn(), updateMany: vi.fn(),
+      groupBy: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn(),
     },
     productModel: { deleteMany: vi.fn() },
     category: { findMany: vi.fn(), findFirst: vi.fn() },
@@ -978,6 +978,8 @@ describe("PUT /api/products/[id] (staff inventario)", () => {
   const seedPut = () => {
     mocks.prisma.category.findFirst.mockResolvedValue({ id: "cat-1" })
     mocks.prisma.product.findUnique.mockResolvedValue(existing)
+    // El ajuste de stock relee la fila DENTRO de la tx (findUniqueOrThrow).
+    mocks.prisma.product.findUniqueOrThrow.mockResolvedValue({ stock: existing.stock })
     mocks.prisma.product.findFirst.mockResolvedValue(null) // barcode libre
     mocks.prisma.user.findUnique.mockResolvedValue({ homeBranchId: "b1" })
     mocks.prisma.product.findMany.mockResolvedValue([]) // syncLowStockAlerts

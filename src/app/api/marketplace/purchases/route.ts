@@ -54,6 +54,8 @@ export async function GET() {
       if (denied) return denied
     }
 
+    // take 201: con la fila extra se detecta "hay más" sin otra consulta;
+    // la respuesta recorta a 200 y hasMore avisa que el historial quedó truncado.
     const requests = await prisma.marketplaceRequest.findMany({
       where: {
         businessId: businessIdOf(session),
@@ -62,13 +64,15 @@ export async function GET() {
         ...(isWorkshop ? { requestedById: session.user.id } : {}),
       },
       orderBy: { decidedAt: "desc" },
-      take: 200,
+      take: 201,
       include: purchaseInclude,
     })
+    const hasMore = requests.length > 200
 
     // saleId usa onDelete: SetNull; si la venta ya no existe el request queda
     // FULFILLED pero sin documento — no se muestra como compra.
     const purchases = requests
+      .slice(0, 200)
       .filter((r) => r.sale !== null)
       .map((r) => ({
         id: r.id,
@@ -90,7 +94,7 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({ purchases, credit }, { headers: catalogResponseHeaders })
+    return NextResponse.json({ purchases, credit, hasMore }, { headers: catalogResponseHeaders })
   } catch (error) {
     console.error("Error fetching marketplace purchases:", error)
     return NextResponse.json({ error: "Error al obtener las compras" }, { status: 500 })

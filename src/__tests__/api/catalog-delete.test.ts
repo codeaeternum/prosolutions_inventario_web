@@ -9,30 +9,40 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
  * productos — todos onDelete: Cascade en el schema, un delete directo
  * arrastraría datos del catálogo). Sin dependientes borra y registra
  * *_DELETE en bitácora.
+ *
+ * Re-count + delete van dentro de transaction() serializable: un dependiente
+ * vinculado a mitad ya no cae en cascade silencioso ni en P2003→500 — el
+ * reintento del serializable (o la propia FK) termina en el mismo 409.
  */
 
 const BIZ = "biz-test"
 
-const mocks = vi.hoisted(() => ({
-  auth: vi.fn(),
-  brandFindFirst: vi.fn(),
-  brandDelete: vi.fn(),
-  modelFindFirst: vi.fn(),
-  modelDelete: vi.fn(),
-  categoryFindFirst: vi.fn(),
-  categoryDelete: vi.fn(),
-  auditCreate: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const m = {
+    auth: vi.fn(),
+    brandFindFirst: vi.fn(),
+    brandDelete: vi.fn(),
+    modelFindFirst: vi.fn(),
+    modelDelete: vi.fn(),
+    categoryFindFirst: vi.fn(),
+    categoryDelete: vi.fn(),
+    auditCreate: vi.fn(),
+    transaction: vi.fn(),
+  }
+  // El tx que transaction() entrega a la ruta tiene los mismos delegates
+  // mockeados que el cliente global: findFirst/delete corren "dentro".
+  const client = {
+    brand: { findFirst: m.brandFindFirst, delete: m.brandDelete },
+    model: { findFirst: m.modelFindFirst, delete: m.modelDelete },
+    category: { findFirst: m.categoryFindFirst, delete: m.categoryDelete },
+    auditEvent: { create: m.auditCreate },
+    $transaction: (work: (tx: unknown) => unknown) => m.transaction(work),
+  }
+  return { ...m, client }
+})
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    brand: { findFirst: mocks.brandFindFirst, delete: mocks.brandDelete },
-    model: { findFirst: mocks.modelFindFirst, delete: mocks.modelDelete },
-    category: { findFirst: mocks.categoryFindFirst, delete: mocks.categoryDelete },
-    auditEvent: { create: mocks.auditCreate },
-  },
-}))
+vi.mock("@/lib/prisma", () => ({ prisma: mocks.client }))
 
 import { DELETE as deleteBrand } from "@/app/api/brands/[id]/route"
 import { DELETE as deleteModel } from "@/app/api/models/[id]/route"
@@ -116,6 +126,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(admin)
   mocks.auditCreate.mockResolvedValue({})
+  // transaction() llama prisma.$transaction(work, opts): el mock ejecuta el
+  // trabajo con el cliente mockeado como tx (mismos delegates).
+  mocks.transaction.mockImplementation((work: (tx: unknown) => unknown) => work(mocks.client))
 })
 
 for (const r of resources) {
@@ -128,11 +141,13 @@ for (const r of resources) {
 
       expect(res.status).toBe(200)
       expect(await res.json()).toMatchObject({ deleted: true })
-      // El lookup va acotado al tenant de la sesión.
+      // El lookup va acotado al tenant de la sesión (dentro de la tx).
       expect(r.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ id: idOf(r.url), businessId: BIZ }) }),
       )
       expect(r.del).toHaveBeenCalledWith({ where: { id: idOf(r.url) } })
+      // La escritura corrió por transaction() serializable, no por prisma plano.
+      expect(mocks.transaction).toHaveBeenCalledTimes(1)
       expect(mocks.auditCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ action: r.auditAction, businessId: BIZ }),
@@ -159,6 +174,39 @@ for (const r of resources) {
       expect(res.status).toBe(404)
       expect((await res.json()).error).toBe(r.notFoundMsg)
       expect(r.del).not.toHaveBeenCalled()
+    })
+
+    it.each(["P2003", "P2014"])(
+      "la FK aborta el delete (%s): responde el mismo 409, nunca 500",
+      async (code) => {
+        r.findFirst.mockResolvedValueOnce(r.empty)
+        r.del.mockRejectedValueOnce(Object.assign(new Error("FK violation"), { code }))
+
+        const res = await r.handler(deleteReq(r.url), paramsOf(idOf(r.url)))
+
+        expect(res.status).toBe(409)
+        expect((await res.json()).error).toContain("vinculad")
+        expect(mocks.auditCreate).not.toHaveBeenCalled()
+      },
+    )
+
+    it("delete concurrente: el reintento serializable re-cuenta y responde 409", async () => {
+      // Primer intento: vacío al contar, pero el commit choca con la
+      // vinculación concurrente (P2034 — transaction() reintenta). En el
+      // reintento el _count ya ve al dependiente → 409, no 500 ni cascade.
+      r.findFirst
+        .mockResolvedValueOnce(r.empty)
+        .mockResolvedValueOnce(r.busy)
+      r.del.mockRejectedValueOnce(Object.assign(new Error("serialization"), { code: "P2034" }))
+
+      const res = await r.handler(deleteReq(r.url), paramsOf(idOf(r.url)))
+
+      expect(res.status).toBe(409)
+      expect((await res.json()).error).toContain(r.busyMsg)
+      // La tx corrió dos veces: la segunda lectura ya vio al dependiente.
+      expect(r.findFirst).toHaveBeenCalledTimes(2)
+      expect(r.del).toHaveBeenCalledTimes(1)
+      expect(mocks.auditCreate).not.toHaveBeenCalled()
     })
 
     it("empleado sin el módulo inventario recibe 403", async () => {

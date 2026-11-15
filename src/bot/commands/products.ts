@@ -8,13 +8,14 @@ import * as QRCode from 'qrcode'
 import { randomBytes } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
-import type { Product } from '@prisma/client'
+import { Prisma, type Product } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { createProduct } from '../../lib/domain/products'
 import { requireAdmin, requireAdminAccount, requirePrisma } from '../lib/guards'
+import { visibilityLevelsFor, visibilityWhere } from '../lib/visibility'
 import { getDefaultBusinessId } from '../../lib/settings'
 import { normalizePhone } from '../lib/utils'
-import { clipMessage, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
+import { clipMessage, errorText, escapeMarkdownV1, TG_CAPTION_MAX } from '../lib/format'
 
 type Intent = 'greeting' | 'help' | 'profile' | 'categories' | 'offers'
     | 'price_check' | 'stock_check' | 'reservation_status' | 'cancel'
@@ -76,7 +77,7 @@ _Usa /cancelar para salir en cualquier momento._`, { parse_mode: 'Markdown' })
 
         try {
             const products = await prisma.product.findMany({
-                where: { businessId: actor.businessId, name: { contains: args, mode: 'insensitive' } },
+                where: { businessId: actor.businessId, name: { contains: args, mode: 'insensitive' }, ...visibilityWhere(actor) },
                 take: 5,
                 select: {
                     id: true, name: true, stock: true,
@@ -116,7 +117,7 @@ ${productList}
 
 Responde con el número (1-${products.length}) o /cancelar`, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Products] /eliminar:', errorText(e))
             await ctx.reply('❌ Error al buscar productos.')
         }
     })
@@ -148,7 +149,8 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
                     OR: [
                         { name: { contains: args, mode: 'insensitive' } },
                         { barcode: args }
-                    ]
+                    ],
+                    ...visibilityWhere(actor)
                 },
                 take: 5,
                 select: { id: true, name: true, barcode: true }
@@ -170,7 +172,7 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
             const productList = products.map((p: { name: string }, i: number) => `${i + 1}. *${escapeMarkdownV1(p.name)}*`).join('\n')
             await ctx.reply(`📱 *Productos encontrados:*\n\n${productList}\n\nResponde con el número (1-${products.length}) para obtener el QR`, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error('Error in /qr:', e)
+            console.error('Error in /qr:', errorText(e))
             await ctx.reply('❌ Error al generar QR.')
         }
     })
@@ -225,7 +227,7 @@ El bot enviará una imagen del código QR para escanear.`, { parse_mode: 'Markdo
 
 ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             } catch (e) {
-                console.error('Error uploading photo:', e)
+                console.error('Error uploading photo:', errorText(e))
                 await ctx.reply('❌ Error al subir la imagen. Intenta de nuevo.')
             }
             return
@@ -335,7 +337,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                             ...Markup.inlineKeyboard(buttons)
                         })
                     } catch (replyErr) {
-                        console.error('[Reserve] Error:', replyErr)
+                        console.error('[Reserve] Error:', errorText(replyErr))
                         try { await ctx.reply('❌ Error. Intenta de nuevo o /cancelar.') } catch { }
                         return
                     }
@@ -400,7 +402,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                     }
 
                 } catch (e) {
-                    console.error('[RegWizard] General Error:', e)
+                    console.error('[RegWizard] General Error:', errorText(e))
                     delete sessions.registration[telegramId]
                     try { await ctx.reply('❌ Error en el proceso. Intenta de nuevo con /start') } catch { }
                 }
@@ -491,6 +493,10 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
             // usuario; visitantes sin cuenta ven el negocio por defecto (el
             // bot de este despliegue es mono-negocio por diseño).
             const searchBusinessId = userObj?.businessId ?? (await getDefaultBusinessId())
+            // Matriz de visibilidad de la web (lib/product-dto): anónimos y
+            // cuentas sin aprobar solo ven PUBLIC — antes este buscador (y el
+            // fuzzy SQL) exponían piezas HIDDEN/ALLIES con precio y stock.
+            const marketLevels = visibilityLevelsFor(userObj)
 
             if (intent === 'greeting') return await ctx.reply(`¡Hola ${userName}! 👋 ¿En qué puedo ayudarte? Escribe el nombre de un producto para buscar.\n\nTambién puedes usar /categorias o /ofertas.`)
             if (intent === 'help') return await ctx.reply(`📋 *Ayuda — Reficio*\n\n🔍 Escribe el nombre de un producto para buscar.\n   Ej: Pantalla iPhone 15\n\n/start - Reiniciar\n/perfil - Tu perfil\n/categorias - Catálogo por categoría\n/ofertas - Productos destacados`, { parse_mode: 'Markdown' })
@@ -517,7 +523,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 }))
 
                 let products: ProductSearchResult[] = await prisma.product.findMany({
-                    where: { businessId: searchBusinessId, AND: andConditions, isActive: true, stock: { gt: 0 } },
+                    where: { businessId: searchBusinessId, AND: andConditions, isActive: true, stock: { gt: 0 }, ...(marketLevels ? { marketVisibility: { in: marketLevels } } : {}) },
                     take: 5,
                     include: { category: true },
                     orderBy: { stock: 'desc' }
@@ -526,11 +532,17 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                 let usedFuzzy = false
                 if (products.length === 0) {
                     try {
+                        // Fragmento de visibilidad parametrizado (Prisma.join):
+                        // un anónimo/PENDING jamás recibe HIDDEN del fuzzy.
+                        const visibilitySql = marketLevels
+                            ? Prisma.sql`AND p."marketVisibility" IN (${Prisma.join(marketLevels)})`
+                            : Prisma.empty
                         const results = await prisma.$queryRaw<ProductSearchResult[]>`
                             SELECT p.id, p.name, p."retailPrice", p.stock
                             FROM "Product" p
                             WHERE p."isActive" = true AND p.stock > 0
                               AND p."businessId" = ${searchBusinessId}
+                              ${visibilitySql}
                               AND similarity(p.name, ${queryLower}) > 0.3
                             ORDER BY similarity(p.name, ${queryLower}) DESC
                             LIMIT 3
@@ -546,7 +558,7 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
                                 ]
                             }))
                             const orProducts = await prisma.product.findMany({
-                                where: { businessId: searchBusinessId, OR: orConditions, isActive: true, stock: { gt: 0 } },
+                                where: { businessId: searchBusinessId, OR: orConditions, isActive: true, stock: { gt: 0 }, ...(marketLevels ? { marketVisibility: { in: marketLevels } } : {}) },
                                 take: 10, include: { category: true }
                             })
                             const scored = orProducts.map((p) => {
@@ -575,11 +587,11 @@ ID: \`${newProduct.id}\``, { parse_mode: 'Markdown' })
 
                 await ctx.reply(msg, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) })
             } catch (error) {
-                console.error('Error processing message:', error)
+                console.error('Error processing message:', errorText(error))
                 await ctx.reply('❌ Algo falló al buscar. Intenta /categorias.')
             }
         } catch (e) {
-            console.error('[Text Handler] CRITICAL ERROR:', e)
+            console.error('[Text Handler] CRITICAL ERROR:', errorText(e))
             try { await ctx.reply('❌ Algo falló. Usa /cancelar e intenta de nuevo.') } catch { }
         }
     })

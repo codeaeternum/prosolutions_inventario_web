@@ -53,7 +53,10 @@ export async function transaction<T>(db: PrismaClient, work: (tx: Transaction) =
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : ""
       if (!["P2034", "P2002", "40001", "40P01"].includes(code)) throw error
-      if (attempt === 3) throw new BusinessError("Otra operación cambió estos datos. Reintenta conservando el mismo folio.", 409, "CONCURRENT_OPERATION")
+      // El folio NO se conserva entre reintentos: la secuencia ya se consumió
+      // antes del rollback y el reintento asigna uno nuevo (mensaje corregido:
+      // antes prometía "conservando el mismo folio").
+      if (attempt === 3) throw new BusinessError("Otra operación cambió estos datos. Reintenta la operación (el folio puede variar).", 409, "CONCURRENT_OPERATION")
       await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
     }
   }

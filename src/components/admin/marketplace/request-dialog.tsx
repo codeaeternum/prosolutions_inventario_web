@@ -109,7 +109,14 @@ function RequestForm({ product, sellerName, onClose, onSuccess, formatPrice, isW
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "No se pudo enviar la solicitud")
-      toast.success("Solicitud enviada al proveedor")
+      // deduplicated: el servidor reutilizó la solicitud PENDING que ya estaba
+      // en la bandeja del proveedor (mismo taller y pieza) — no es un envío
+      // nuevo y el usuario debe saberlo.
+      toast.success(
+        data.deduplicated
+          ? "Ya existía una solicitud pendiente de este taller — se reutilizó."
+          : "Solicitud enviada al proveedor"
+      )
       onClose()
       onSuccess?.()
     } catch (error) {

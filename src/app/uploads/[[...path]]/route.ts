@@ -10,7 +10,13 @@ export async function GET(
   try {
     const resolvedParams = await params;
     const filePathParams = resolvedParams.path || [];
-    
+
+    // /uploads a secas (o /uploads/): es un directorio, no un archivo — 404
+    // limpio, no el 500 que daba readFileSync(EISDIR).
+    if (filePathParams.length === 0) {
+      return new NextResponse("Not Found", { status: 404 });
+    }
+
     // Case-insensitive: on case-insensitive filesystems the file could exist under another casing.
     if (filePathParams[0]?.toLowerCase() === "payments") {
       if (filePathParams.length !== 2) return new NextResponse("Not Found", { status: 404 })
@@ -22,9 +28,19 @@ export async function GET(
       return new NextResponse("Forbidden", { status: 403 });
     }
 
+    // Un segmento con NUL rompe path.join/open con excepción: 404 limpio.
+    if (filePathParams.some(p => p.includes("\0"))) {
+      return new NextResponse("Not Found", { status: 404 });
+    }
+
     const filePath = path.join(process.cwd(), "public", "uploads", ...filePathParams);
 
-    if (!fs.existsSync(filePath)) {
+    // stat + isFile: inexistente, directorio (p. ej. /uploads/products a
+    // secas) o un stat que falla (symlink roto, permisos) → 404 limpio,
+    // nunca el 500 que daba readFileSync(EISDIR).
+    let stat: fs.Stats | null = null;
+    try { stat = fs.statSync(filePath) } catch { /* cae al 404 de abajo */ }
+    if (!stat?.isFile()) {
       return new NextResponse("Not Found", { status: 404 });
     }
 

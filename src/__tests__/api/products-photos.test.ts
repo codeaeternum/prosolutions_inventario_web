@@ -138,6 +138,10 @@ describe("validación del body", () => {
     ["path traversal", { assignments: [{ productId: "p1", images: ["/uploads/../secret.png"] }] }],
     ["traversal en medio del path", { assignments: [{ productId: "p1", images: ["/uploads/products/../../secret.png"] }] }],
     ["traversal con backslash", { assignments: [{ productId: "p1", images: ["/uploads/products/..\\secret.png"] }] }],
+    ["comprobante privado (subdirectorio payments)", { assignments: [{ productId: "p1", images: ["/uploads/payments/comprobante.png"] }] }],
+    ["subdirectorio arbitrario de uploads", { assignments: [{ productId: "p1", images: ["/uploads/internos/x.png"] }] }],
+    ["subdirectorio dentro de products", { assignments: [{ productId: "p1", images: ["/uploads/products/2024/foto.png"] }] }],
+    ["NUL en el path", { assignments: [{ productId: "p1", images: ["/uploads/products/x\0.png"] }] }],
     ["/uploads/ sin archivo", { assignments: [{ productId: "p1", images: ["/uploads/"] }] }],
     ["imagen demasiado larga", { assignments: [{ productId: "p1", images: [`/uploads/${"a".repeat(2000)}.png`] }] }],
     ["idempotencyKey inválida", { assignments: [{ productId: "p1", images: [img("a")] }], idempotencyKey: "x" }],
@@ -185,6 +189,17 @@ describe("anexar fotos", () => {
     mocks.productFindMany.mockResolvedValue([product("p1")])
     await post({ assignments: [{ productId: "p1", images: [img("a")] }] })
     expect(mocks.productUpdate.mock.calls[0][0].data).toEqual({ images: [img("a")] })
+  })
+
+  it("una ruta plana legacy /uploads/<archivo> (un solo segmento) sigue aceptándose", async () => {
+    mocks.productFindMany.mockResolvedValue([product("p1")])
+    const res = await post({
+      assignments: [{ productId: "p1", images: ["/uploads/logo-viejo.png"] }],
+    })
+    expect(await res.json()).toEqual({ updated: 1, skipped: [] })
+    expect(mocks.productUpdate.mock.calls[0][0].data).toEqual({
+      images: ["/uploads/logo-viejo.png"],
+    })
   })
 
   it("procesa varios productos en una sola llamada", async () => {

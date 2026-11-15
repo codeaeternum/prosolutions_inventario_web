@@ -127,10 +127,11 @@ describe("POST /api/asistencia/kiosco — sesión y rate limit", () => {
 })
 
 describe("POST /api/asistencia/kiosco — PIN y anti-enumeración", () => {
-  it("usuario inexistente o de otro tenant → 404 con el mismo mensaje que PIN incorrecto", async () => {
+  it("usuario inexistente o de otro tenant → 401 con el mismo mensaje que PIN incorrecto", async () => {
     mocks.userFindFirst.mockResolvedValue(null)
     const res = await post({ userId: "u-fantasma", pin: "1234" })
-    expect(res.status).toBe(404)
+    // 401 uniforme: ni el mensaje ni el status distinguen si el userId existe.
+    expect(res.status).toBe(401)
     const body = await res.json()
     expect(body.error).toBe("PIN incorrecto o usuario inválido")
     // El bcrypt dummy corre igual: existencia no se filtra por timing.

@@ -48,6 +48,8 @@ interface PaymentRow {
     createdAt: string
     purchase: { id: string; number: number } | null
     createdBy: { id: string; name: string } | null
+    // El dominio devuelve el marcador derivado de la convención [ANULADO].
+    voided?: boolean
 }
 
 interface DebtRow {
@@ -102,6 +104,7 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
     const [payTarget, setPayTarget] = useState<DebtRow | null>(null)
     const [search, setSearch] = useState("")
     const [dueFilter, setDueFilter] = useState<DueFilter>("all")
+    const [voidingId, setVoidingId] = useState<string | null>(null)
 
     const fetchAll = useCallback(async (signal?: AbortSignal) => {
         setError(null)
@@ -201,6 +204,29 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
     ), [filteredRows])
 
     const supplierNames = useMemo(() => new Map(balances.map(b => [b.supplier.id, b.supplier.name])), [balances])
+
+    // Anular un abono: DELETE /api/supplier-payments revierte saldo y caja
+    // (solo admin; la fila queda marcada, no borrada).
+    const voidPayment = async (payment: PaymentRow) => {
+        const label = supplierNames.get(payment.supplierId) ?? "el proveedor"
+        if (!window.confirm(`¿Anular el abono de ${formatPrice(payment.amountCents / 100)} a ${label}? El saldo vuelve a quedar pendiente.`)) return
+        setVoidingId(payment.id)
+        try {
+            const res = await fetch("/api/supplier-payments", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paymentId: payment.id }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data.error || "No se pudo anular el abono")
+            setPayments(prev => prev.map(p => p.id === payment.id ? { ...p, voided: true } : p))
+            void fetchAll()
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "No se pudo anular el abono.")
+        } finally {
+            setVoidingId(null)
+        }
+    }
 
     const handleExportCsv = () => {
         if (filteredRows.length === 0) return
@@ -397,9 +423,9 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                     <CardContent>
                         <div className="space-y-3">
                             {payments.map(p => (
-                                <div key={p.id} className="flex items-center justify-between gap-3 border-b last:border-0 pb-2 text-sm">
+                                <div key={p.id} className={`flex items-center justify-between gap-3 border-b last:border-0 pb-2 text-sm ${p.voided ? "opacity-60" : ""}`}>
                                     <div className="min-w-0">
-                                        <p className="font-medium truncate">
+                                        <p className={`font-medium truncate ${p.voided ? "line-through" : ""}`}>
                                             {supplierNames.get(p.supplierId) ?? "Proveedor"}
                                             {p.purchase && <span className="text-muted-foreground font-normal"> · OC #{p.purchase.number}</span>}
                                         </p>
@@ -413,7 +439,20 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                                         <Badge variant="outline" className="text-[10px] font-normal">
                                             {SUPPLIER_METHOD_LABELS[p.method] ?? p.method}
                                         </Badge>
+                                        {p.voided && <Badge variant="destructive" className="text-[10px]">Anulado</Badge>}
                                         <span className="font-bold tabular-nums">{formatPrice(p.amountCents / 100)}</span>
+                                        {isAdmin && !p.voided && (
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 px-2 text-destructive"
+                                                disabled={voidingId === p.id}
+                                                onClick={() => void voidPayment(p)}
+                                            >
+                                                {voidingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Anular"}
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
                             ))}

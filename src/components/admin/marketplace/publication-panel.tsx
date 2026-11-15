@@ -31,6 +31,10 @@ interface MarketplacePublicationPanelProps {
   pendingIds: ReadonlySet<string>
   formatPrice: (price: number) => string
   hasActiveFilters: boolean
+  /** Publicar decide la exposición externa del catálogo: solo ADMIN
+      (POST /api/marketplace lo exige). Sin el permiso el panel queda
+      de solo lectura. */
+  canEdit?: boolean
 }
 
 /**
@@ -45,6 +49,7 @@ export function MarketplacePublicationPanel({
   pendingIds,
   formatPrice,
   hasActiveFilters,
+  canEdit = true,
 }: MarketplacePublicationPanelProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
@@ -94,7 +99,13 @@ export function MarketplacePublicationPanel({
 
   return (
     <div className="space-y-3">
+      {!canEdit && (
+        <p className="text-xs text-muted-foreground rounded-lg border bg-muted/40 px-3 py-2">
+          Solo un administrador decide qué se publica al mercado — la visibilidad se muestra de solo lectura.
+        </p>
+      )}
       {/* Barra de publicación masiva por nivel */}
+      {canEdit && (
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
         <button
           type="button"
@@ -129,6 +140,7 @@ export function MarketplacePublicationPanel({
           ))}
         </div>
       </div>
+      )}
 
       <div className="rounded-lg border overflow-x-auto">
         <Table>
@@ -190,6 +202,7 @@ export function MarketplacePublicationPanel({
                     <MarketVisibilityControl
                       value={product.marketVisibility}
                       busy={busy}
+                      disabled={!canEdit}
                       onChange={(level) => onSetLevel([product.id], level)}
                     />
                   </TableCell>

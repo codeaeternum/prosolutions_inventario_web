@@ -3,7 +3,7 @@ import type { Telegraf } from 'telegraf'
 import type { PrismaClient } from '@prisma/client'
 import type { BotContext } from '../lib/types'
 import { clipMessage, errorText, escapeHtml } from '../lib/format'
-import { TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
+import { retryOnTelegramLimit, TELEGRAM_API_TIMEOUT_MS, withTimeout } from '../lib/utils'
 import { deriveJornadas } from '../../lib/asistencia'
 import { BUSINESS_TIME_ZONE, businessDayKey } from '../../lib/business-time'
 
@@ -189,11 +189,11 @@ export async function sendLongShiftAlerts(
                 continue
             }
 
-            await withTimeout(
-                bot.telegram.sendMessage(shift.telegramId, formatLongShiftMessage(shift, now), { parse_mode: 'HTML' }),
+            await retryOnTelegramLimit(() => withTimeout(
+                bot.telegram.sendMessage(shift.telegramId!, formatLongShiftMessage(shift, now), { parse_mode: 'HTML' }),
                 TELEGRAM_API_TIMEOUT_MS,
                 'sendMessage de turno largo',
-            )
+            ))
             result.sent++
 
             const horas = Math.floor(shift.elapsedMin / 60)
@@ -250,12 +250,20 @@ export function registerLongShiftAlerts({ bot, prisma, isDev }: BotContext): cro
     // los dos barridos no colisionen. SIN timezone: el umbral es por duración
     // (≥10 h corridas desde el IN), así que la zona del negocio es
     // irrelevante para cuándo dispara el tick.
+    // Overlap guard por job: un barrido horario que siga vivo al siguiente
+    // tick se salta en vez de apilarse (dedup por Notification ya evita
+    // re-pings, pero el barrido completo no debe acumularse).
+    let running = false
     const task = cron.schedule('15 * * * *', async () => {
-        if (isDev) console.log('⏰ [LongShift] Revisando turnos abiertos >10h…')
+        if (running) { console.warn('⏰ [LongShift] Corrida anterior sigue viva; se salta este tick.'); return }
+        running = true
         try {
+            if (isDev) console.log('⏰ [LongShift] Revisando turnos abiertos >10h…')
             await runLongShiftAlerts(bot, prisma, isDev)
         } catch (e) {
-            console.error('[LongShift] Error en el barrido horario:', e)
+            console.error('[LongShift] Error en el barrido horario:', errorText(e))
+        } finally {
+            running = false
         }
     })
 

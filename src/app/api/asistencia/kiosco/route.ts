@@ -78,8 +78,11 @@ export async function POST(request: NextRequest) {
     const coincide = await bcrypt.compare(body.pin, target?.quickPin ?? DUMMY_PIN_HASH)
     const pinOk = /^\d{4,6}$/.test(body.pin) && coincide
 
+    // Mismo 401 para usuario inexistente/ajeno y PIN incorrecto: el status
+    // no debe distinguir si el userId existe (los ids son cuids, pero el
+    // mensaje y el código de estado se mantienen uniformes).
     if (!target) {
-      return NextResponse.json({ error: "PIN incorrecto o usuario inválido" }, { status: 404 })
+      return NextResponse.json({ error: "PIN incorrecto o usuario inválido" }, { status: 401 })
     }
     if (!target.quickPin) {
       return NextResponse.json(

@@ -3,12 +3,14 @@ import { moveInventory } from "../../lib/domain/inventory"
 import { resolveBranch } from "../../lib/domain/operations"
 import { randomUUID } from "crypto"
 import { Markup } from 'telegraf'
+import type { Context } from 'telegraf'
 import type { InlineKeyboardButton } from 'telegraf/types'
 import * as QRCode from 'qrcode'
-import type { BotContext } from '../lib/types'
+import type { PrismaClient } from '@prisma/client'
+import type { BotContext, StockAdjustSession } from '../lib/types'
 import { customerTypeLabels } from '../lib/types'
-import { requireAdminAccount, requirePrisma } from '../lib/guards'
-import { clipMessage, escapeMarkdownV1 } from '../lib/format'
+import { getBotAccount, requireAdminAccount, requirePrisma } from '../lib/guards'
+import { clipMessage, errorText, escapeMarkdownV1 } from '../lib/format'
 
 function generateProgressBar(percent: number): string {
     const filled = Math.min(10, Math.floor(percent / 10))
@@ -16,7 +18,32 @@ function generateProgressBar(percent: number): string {
     return '█'.repeat(filled) + '░'.repeat(empty)
 }
 
-export function registerReports({ bot, prisma }: BotContext) {
+// Umbrales de "ajuste raro" de /stock: superado cualquiera se pide
+// confirmación inline antes de tocar inventario (un typo como /stock id 500
+// en vez de 5 ya no se aplica de inmediato).
+const STOCK_CONFIRM_ABS_DIFF = 50
+const STOCK_CONFIRM_RATIO = 2
+
+/** Ejecuta el ajuste de /stock (camino directo y el confirmado por botón). */
+async function applyStockAdjust(
+    ctx: Context,
+    prisma: PrismaClient,
+    actor: { id: string; businessId: string },
+    adj: StockAdjustSession,
+) {
+    const result = await moveInventory(prisma, actor.id, actor.businessId, {
+        idempotencyKey: `bot-stock-${ctx.from!.id}-${Date.now()}-${randomUUID()}`,
+        items: [{
+            productId: adj.productId, type: adj.diff > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
+            quantity: Math.abs(adj.diff), branchId: adj.branchId,
+            reason: `Ajuste desde bot: ${adj.branchName} → ${adj.newStock} unidades`,
+        }],
+    })
+    const movement = result.movements[0]
+    await ctx.reply(`✅ Stock actualizado en *${escapeMarkdownV1(adj.branchName)}*:\n📦 ${escapeMarkdownV1(adj.productName)}\n📊 ${adj.current} → ${adj.newStock} unidades (total: ${movement?.newStock ?? '—'})`, { parse_mode: 'Markdown' })
+}
+
+export function registerReports({ bot, prisma, sessions }: BotContext) {
     // /stock
     bot.command('stock', async (ctx) => {
         if (!(await requirePrisma(ctx))) return
@@ -49,22 +76,92 @@ export function registerReports({ bot, prisma }: BotContext) {
             const current = await prisma.branchStock.findUnique({
                 where: { productId_branchId: { productId, branchId: branch.id }, businessId: adminUser.businessId }
             })
-            const diff = newStock - (current?.quantity ?? 0)
+            const currentQty = current?.quantity ?? 0
+            const diff = newStock - currentQty
             if (diff === 0) return ctx.reply(`ℹ️ ${product.name} ya tiene ${newStock} en ${branch.name}.`)
-            const result = await moveInventory(prisma, adminUser.id, adminUser.businessId, {
-                idempotencyKey: `bot-stock-${ctx.from!.id}-${Date.now()}-${randomUUID()}`,
-                items: [{
-                    productId, type: diff > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
-                    quantity: Math.abs(diff), branchId: branch.id,
-                    reason: `Ajuste desde bot: ${branch.name} → ${newStock} unidades`,
-                }],
-            })
-            const movement = result.movements[0]
-            await ctx.reply(`✅ Stock actualizado en *${escapeMarkdownV1(branch.name)}*:\n📦 ${escapeMarkdownV1(product.name)}\n📊 ${current?.quantity ?? 0} → ${newStock} unidades (total: ${movement?.newStock ?? '—'})`, { parse_mode: 'Markdown' })
+
+            const pending: StockAdjustSession = {
+                productId, productName: product.name,
+                branchId: branch.id, branchName: branch.name,
+                current: currentQty, newStock, diff,
+            }
+
+            // Confirmación obligatoria cuando el cambio es inusual:
+            // |diff| > 50 unidades o más del doble del stock actual.
+            if (Math.abs(diff) > STOCK_CONFIRM_ABS_DIFF || Math.abs(diff) > STOCK_CONFIRM_RATIO * currentQty) {
+                sessions.stockAdjust[ctx.from.id.toString()] = pending
+                return ctx.reply(`⚠️ *Ajuste grande de stock*
+
+📦 ${escapeMarkdownV1(product.name)}
+🏪 Sucursal: ${escapeMarkdownV1(branch.name)}
+📊 ${currentQty} → ${newStock} unidades (${diff > 0 ? '+' : ''}${diff})
+
+Es un cambio inusualmente grande. ¿Confirmar ajuste?`, {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback('✅ Confirmar ajuste', 'stock_confirm')],
+                        [Markup.button.callback('❌ Cancelar', 'stock_cancel')]
+                    ])
+                })
+            }
+
+            await applyStockAdjust(ctx, prisma, adminUser, pending)
         } catch (error) {
             const msg = error instanceof Error ? error.message : 'Error desconocido'
-            await ctx.reply(`❌ No se pudo ajustar: ${msg}`)
+            await ctx.reply(`❌ No se pudo ajustar: ${msg.slice(0, 300)}`)
         }
+    })
+
+    // Confirmación inline del ajuste grande de /stock: revalida rol admin y
+    // la sesión pendiente; el teclado viejo sin sesión muere con aviso.
+    bot.action('stock_confirm', async (ctx) => {
+        const telegramId = ctx.from.id.toString()
+        try {
+            const actor = await getBotAccount(prisma, telegramId)
+            if (!actor || actor.role !== 'ADMIN' || actor.status !== 'APPROVED') {
+                return ctx.answerCbQuery('⛔ Solo administradores.')
+            }
+            const pending = sessions.stockAdjust[telegramId]
+            if (!pending) {
+                await ctx.answerCbQuery('Sesión expirada')
+                return ctx.editMessageText('❌ El ajuste expiró. Repite /stock.').catch(() => { })
+            }
+
+            // Revalidación en el momento del "sí": entre el prompt y el clic
+            // el producto pudo borrarse o el stock pudo moverse (venta, otro
+            // ajuste). Si la existencia actual ya no es la del resumen que
+            // confirmó el admin, el ajuste no se aplica — pide repetir /stock
+            // con los números frescos.
+            const product = await prisma.product.findUnique({
+                where: { id: pending.productId, businessId: actor.businessId },
+                select: { id: true },
+            })
+            const current = product ? await prisma.branchStock.findUnique({
+                where: { productId_branchId: { productId: pending.productId, branchId: pending.branchId }, businessId: actor.businessId },
+                select: { quantity: true },
+            }) : null
+            const currentQty = current?.quantity ?? 0
+            if (!product || currentQty !== pending.current) {
+                delete sessions.stockAdjust[telegramId]
+                await ctx.answerCbQuery('El stock cambió').catch(() => { })
+                return ctx.editMessageText(
+                    `⚠️ El ajuste no se aplicó: ${product ? `la existencia actual es ${currentQty} uds (en el resumen eran ${pending.current})` : 'el producto ya no existe'}.\nRepite /stock para ver el número fresco.`
+                ).catch(() => { })
+            }
+
+            delete sessions.stockAdjust[telegramId]
+            await ctx.answerCbQuery().catch(() => { })
+            await applyStockAdjust(ctx, prisma, actor, pending)
+        } catch (e) {
+            console.error('Error en stock_confirm:', errorText(e))
+            await ctx.answerCbQuery('❌ Error').catch(() => { })
+        }
+    })
+
+    bot.action('stock_cancel', async (ctx) => {
+        delete sessions.stockAdjust[ctx.from.id.toString()]
+        await ctx.answerCbQuery().catch(() => { })
+        await ctx.editMessageText('❌ Ajuste cancelado.').catch(() => { })
     })
 
     // /pendientes
@@ -99,7 +196,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             // clipMessage: 15 reservas × nombres largos pueden pasar de 4096.
             await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /pendientes:', errorText(e))
             await ctx.reply('❌ Error al obtener reservas. Usa /cancelar si estabas en otro proceso.')
         }
     })
@@ -155,7 +252,7 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             await ctx.reply(msg, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /caja:', errorText(e))
             await ctx.reply('❌ Error al consultar caja.')
         }
     })
@@ -194,7 +291,7 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /credito:', errorText(e))
             await ctx.reply('❌ Error al consultar créditos.')
         }
     })
@@ -249,7 +346,7 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             await ctx.reply(msg, { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /reporte:', errorText(e))
             await ctx.reply('❌ Error al generar reporte.')
         }
     })
@@ -287,7 +384,7 @@ export function registerReports({ bot, prisma }: BotContext) {
 
             await ctx.reply(clipMessage(msg), { parse_mode: 'Markdown' })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /historial:', errorText(e))
             await ctx.reply('❌ Error al obtener historial.')
         }
     })
@@ -301,7 +398,7 @@ export function registerReports({ bot, prisma }: BotContext) {
             const telegramId = ctx.from.id.toString()
             user = await prisma.user.findUnique({ where: { telegramId } })
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /perfil:', errorText(e))
             return ctx.reply('❌ Error al obtener perfil.')
         }
         if (user && user.status !== 'APPROVED' && user.role !== 'ADMIN') {
@@ -409,7 +506,7 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
                 })
             }
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /misreservas:', errorText(e))
             await ctx.reply('❌ Error al obtener reservas.')
         }
     })
@@ -443,7 +540,7 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
             await ctx.editMessageText(`❌ *Reserva Cancelada*\n\n📦 ${escapeMarkdownV1(reservation.product.name)}\nEstado: Cancelado por usuario`, { parse_mode: 'Markdown' })
 
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] cancel_res_:', errorText(e))
             await ctx.reply('❌ Error al cancelar reserva.')
         }
     })
@@ -493,7 +590,7 @@ Código: ${escapeMarkdownV1(qrDisplay)}`, { parse_mode: 'Markdown' })
 ${baseUrl}/verificar/${reservation.qrCode}`)
 
         } catch (e) {
-            console.error(e)
+            console.error('[Reports] /entregar:', errorText(e))
             await ctx.reply('❌ Error al procesar entrega.')
         }
     })

@@ -644,7 +644,18 @@ export async function updateRepair(db: PrismaClient, actorId: string, businessId
         })
       }
       if (input.paymentMethod === "CASH") {
-        const register = await openRegister(tx, order.currentBranchId, businessId)
+        // La caja del reembolso es la del COBRO original, no la sucursal
+        // donde está el equipo hoy: el abono pudo entrar por otra caja y el
+        // OUT por currentBranchId dejaría el asiento en una caja que nunca
+        // recibió ese efectivo. Se sigue el cashMovementId del cobro
+        // CONFIRMED más reciente; un pago legado sin vínculo conserva la
+        // sucursal actual de la orden.
+        const originalCash = await tx.payment.findFirst({
+          where: { repairOrderId: id, status: "CONFIRMED", amount: { gt: 0 }, cashMovementId: { not: null } },
+          orderBy: { createdAt: "desc" },
+          select: { cashMovement: { select: { register: { select: { branchId: true } } } } },
+        })
+        const register = await openRegister(tx, originalCash?.cashMovement?.register.branchId ?? order.currentBranchId, businessId)
         // Igual que las devoluciones de venta: la caja no queda en negativo —
         // si no alcanza el efectivo se rechaza antes de registrar la salida.
         const availableCents = await registerCashCents(tx, register.id)

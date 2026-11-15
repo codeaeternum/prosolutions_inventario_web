@@ -53,6 +53,8 @@ export interface PlatformHealth {
     /** Órdenes en cualquier estado no terminal. */
     openCount: number
   }
+  /** Cajas OPEN con más de 48 h sin cerrar (señal de operación descuidada). */
+  staleRegisters: number
   platformEvents: {
     total: number
     lastAt: Date | null
@@ -82,6 +84,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     usersPending,
     salesCompleted,
     ordersOpen,
+    staleRegisters,
     eventsTotal,
     eventsLast,
     backupStatus,
@@ -102,6 +105,11 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
     }),
     prisma.repairOrder.count({
       where: { status: { notIn: [...TERMINAL_ORDER_STATUSES] } },
+    }),
+    // Caja abierta más de 48 h: nadie la cerró al terminar el turno (o se
+    // abandonó). Read-only, sin desglose por tenant — solo el volumen.
+    prisma.cashRegister.count({
+      where: { status: "OPEN", openedAt: { lt: new Date(Date.now() - 48 * 60 * 60 * 1000) } },
     }),
     prisma.platformEvent.count(),
     prisma.platformEvent.aggregate({ _max: { createdAt: true } }),
@@ -144,6 +152,7 @@ export async function getPlatformHealth(): Promise<PlatformHealth> {
       totalRevenueCents: Math.round((salesCompleted._sum.total ?? 0) * 100),
     },
     repairs: { openCount: ordersOpen },
+    staleRegisters,
     platformEvents: { total: eventsTotal, lastAt: eventsLast._max.createdAt },
     rateLimits: getRateLimitStats(),
     backup,

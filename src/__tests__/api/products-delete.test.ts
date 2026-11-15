@@ -8,6 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
  *   (PENDING, PENDING_PAYMENT, DEPOSIT_VERIFIED, APPROVED): una reserva viva
  *   a crédito o con anticipo bloquea el delete con 409 — borrarla dejaría la
  *   deuda del cliente apuntando a una fila inexistente.
+ * - Con existencias (Product.stock > 0) bloquea con 409 salvo ?force=true:
+ *   BranchStock es onDelete: Cascade y borrar con stock quema el costo de lo
+ *   que queda en anaqueles. Force lo permite y el stock retirado queda
+ *   asentado en la bitácora (changes.stock before→0).
+ * - El stock se RE-LEE dentro de la tx serializable: si entró mercancía
+ *   entre la primera lectura y el commit, el reintento/la re-lectura ve la
+ *   cifra vigente y bloquea igual.
  * - Solo las reservas TERMINALES se purgan con el producto; el delete se
  *   re-verifica dentro de la transacción por si una reserva nació entre el
  *   chequeo y el commit.
@@ -18,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   productFindUnique: vi.fn(),
+  productFindUniqueOrThrowTx: vi.fn(),
   productDelete: vi.fn(),
   productModelDeleteMany: vi.fn(),
   inventoryMovementDeleteMany: vi.fn(),
@@ -69,30 +77,33 @@ const tx = {
   productModel: { deleteMany: mocks.productModelDeleteMany },
   inventoryMovement: { deleteMany: mocks.inventoryMovementDeleteMany },
   reservation: { count: mocks.reservationCount, findMany: mocks.reservationFindMany, deleteMany: mocks.reservationDeleteMany },
-  product: { delete: mocks.productDelete },
+  product: { delete: mocks.productDelete, findUniqueOrThrow: mocks.productFindUniqueOrThrowTx },
 }
 
 const session = (id = "u-admin", role = "ADMIN", extra: Record<string, unknown> = {}) => ({
   user: { id, role, status: "APPROVED", businessId: "biz-1", ...extra },
 })
 
-const productRow = (reservations: unknown[] = [], images: string[] = []) => ({
+const productRow = (reservations: unknown[] = [], images: string[] = [], stock = 0) => ({
   id: "p1",
   name: "Pantalla iPhone 11",
   retailPrice: 1200,
+  stock,
   images,
   reservations,
 })
 
-const del = (id = "p1") =>
-  DELETE(new NextRequest(`https://app.invalid/api/products/${id}`, { method: "DELETE" }), {
-    params: Promise.resolve({ id }),
-  })
+const del = (id = "p1", force = false) =>
+  DELETE(
+    new NextRequest(`https://app.invalid/api/products/${id}${force ? "?force=true" : ""}`, { method: "DELETE" }),
+    { params: Promise.resolve({ id }) },
+  )
 
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(session())
   mocks.productFindUnique.mockResolvedValue(productRow())
+  mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 0 })
   mocks.reservationCount.mockResolvedValue(0)
   mocks.reservationFindMany.mockResolvedValue([])
   mocks.reservationCountOuter.mockResolvedValue(0)
@@ -158,6 +169,55 @@ describe("reservas activas", () => {
     expect(mocks.reservationDeleteMany).not.toHaveBeenCalled()
     expect(mocks.productDelete).not.toHaveBeenCalled()
     expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe("guard de existencias", () => {
+  it("con stock > 0 responde 409 y pide ajustar a 0 antes de eliminar", async () => {
+    mocks.productFindUnique.mockResolvedValue(productRow([], [], 7))
+    const res = await del()
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe(
+      "El producto tiene 7 en existencia; ajusta el stock a 0 antes de eliminar"
+    )
+    // Ni la tx ni el delete corrieron: la mercancía y su costo quedan vivos.
+    expect(mocks.transaction).not.toHaveBeenCalled()
+    expect(mocks.productDelete).not.toHaveBeenCalled()
+    expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+
+  it("re-lee el stock dentro de la tx: mercancía que entró a mitad bloquea con 409", async () => {
+    // La lectura previa vio stock 0, pero dentro de la tx la fila ya marca 4
+    // (llegó mercancía entre ambas lecturas): sin force sigue siendo 409.
+    mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 4 })
+    const res = await del()
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe(
+      "El producto tiene 4 en existencia; ajusta el stock a 0 antes de eliminar"
+    )
+    expect(mocks.productDelete).not.toHaveBeenCalled()
+    expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+
+  it("?force=true borra con existencias y asienta el stock retirado en bitácora", async () => {
+    mocks.productFindUnique.mockResolvedValue(productRow([], [], 5))
+    mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 5 })
+    const res = await del("p1", true)
+    expect(res.status).toBe(200)
+
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit.action).toBe("PRODUCT_DELETE")
+    expect(audit.changes).toEqual({ stock: { before: 5, after: 0 } })
+    expect(audit.summary).toContain("5 en existencia")
+    expect(mocks.productDelete).toHaveBeenCalledWith({ where: { id: "p1", businessId: "biz-1" } })
+  })
+
+  it("?force=true con stock 0 borra normal y la bitácora no lleva changes", async () => {
+    const res = await del("p1", true)
+    expect(res.status).toBe(200)
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit.action).toBe("PRODUCT_DELETE")
+    expect(audit.changes).toBeUndefined()
   })
 })
 

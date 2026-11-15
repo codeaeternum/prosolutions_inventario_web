@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Building2,
   DatabaseBackup,
@@ -17,6 +18,7 @@ import {
   Store,
   UserCheck,
   Users,
+  Vault,
   Wrench,
 } from "lucide-react"
 
@@ -135,6 +137,26 @@ export default async function PlatformHealthPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold tabular-nums">{health.users.pendingApproval}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1.5">
+              <CardTitle className="text-sm font-medium">Cajas sin cerrar</CardTitle>
+              <CardDescription>Abiertas hace más de 48 h</CardDescription>
+            </div>
+            <span className={`rounded-lg p-2 shrink-0 ${health.staleRegisters > 0 ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-primary/10 text-primary"}`}>
+              {health.staleRegisters > 0
+                ? <AlertTriangle className="h-4 w-4" />
+                : <Vault className="h-4 w-4" />}
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold tabular-nums">{health.staleRegisters}</div>
+            <p className="text-xs text-muted-foreground">
+              {health.staleRegisters > 0 ? "Turnos que nadie cerró" : "Todas conciliadas"}
+            </p>
           </CardContent>
         </Card>
 

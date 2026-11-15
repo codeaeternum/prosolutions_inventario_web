@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
+// El barrido de cajas olvidadas es fire-and-forget y ajeno al contrato de
+// esta suite: se stub el módulo entero para que no toque los delegates.
+vi.mock("@/lib/caja-stale", () => ({ checkStaleRegisters: vi.fn(async () => ({ scanned: 0, notified: 0, deduped: 0 })) }))
 // route.ts usa el import default de prisma; se exportan ambos por simetría.
 vi.mock("@/lib/prisma", () => ({
   default: {

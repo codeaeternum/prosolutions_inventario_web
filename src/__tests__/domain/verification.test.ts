@@ -63,11 +63,19 @@ function fakeDb() {
         return row
       }),
       findFirst: vi.fn(async ({ where, orderBy }: any) => {
+        // Prisma admite channel: "X" (igualdad) o channel: { not: "X" } —
+        // el fake replica ambos para que la guarda de canal se ejerza.
+        const channelMatches = (row: Row) => {
+          if (!where.channel) return true
+          if (typeof where.channel === "string") return row.channel === where.channel
+          if (where.channel.not !== undefined) return row.channel !== where.channel.not
+          return true
+        }
         const candidates = rows.filter(
           (row) =>
             (!where.identifier || row.identifier === where.identifier) &&
             (!where.codeHash || row.codeHash === where.codeHash) &&
-            (!where.channel || row.channel === where.channel) &&
+            channelMatches(row) &&
             row.purpose === where.purpose &&
             (where.consumedAt === null ? row.consumedAt === null : true),
         )
@@ -155,12 +163,79 @@ describe("consumeVerificationCode", () => {
     const { db, rows } = fakeDb()
     const { code } = await issueVerificationCode(db, {
       userId: "u42",
+      identifier: "a@b.com",
+      channel: "EMAIL",
+    })
+    const row = await consumeVerificationCode(db, { identifier: "a@b.com", code })
+    expect(row.userId).toBe("u42")
+    expect(row.consumedAt).not.toBeNull()
+    expect(rows[0].consumedAt).not.toBeNull()
+  })
+
+  // ─── Guarda de canal (T3) ─────────────────────────────────────────────
+  // Los códigos TELEGRAM del flujo SIGNUP viajan en el deep-link que el
+  // propio usuario abre autenticado en el navegador: si /api/verify los
+  // aceptara por identifier, el usuario podría autoconsumirlo y marcarse
+  // phoneVerifiedAt sin demostrar que controla el teléfono (ni ligar su
+  // telegramId). La vía web ni siquiera localiza la fila → MISMATCH
+  // genérico; solo el bot consume por codeHash sin identifier.
+  it("un código TELEGRAM de SIGNUP NO se consume por la vía web (identifier)", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, {
+      userId: "u42",
       identifier: "5512345678",
       channel: "TELEGRAM",
     })
-    const row = await consumeVerificationCode(db, { identifier: "5512345678", code })
+    await expect(
+      consumeVerificationCode(db, { identifier: "5512345678", code }),
+    ).rejects.toMatchObject({ reason: "MISMATCH" })
+    // La fila queda intacta: ni consumida ni con attempts quemados — el
+    // intento web es indistinguible de un código inexistente.
+    expect(rows[0].consumedAt).toBeNull()
+    expect(rows[0].attempts).toBe(0)
+  })
+
+  it("el mismo código TELEGRAM sí lo consume el bot por codeHash (sin identifier)", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, {
+      userId: "u42",
+      identifier: "5512345678",
+      channel: "TELEGRAM",
+    })
+    await expect(
+      consumeVerificationCode(db, { identifier: "5512345678", code }),
+    ).rejects.toMatchObject({ reason: "MISMATCH" })
+    const row = await consumeVerificationCode(db, { code, channel: "TELEGRAM" })
     expect(row.userId).toBe("u42")
-    expect(row.consumedAt).not.toBeNull()
+    expect(rows[0].consumedAt).not.toBeNull()
+  })
+
+  it("la guarda solo aplica a SIGNUP: TELEGRAM+PASSWORD_RESET sí pasa por identifier", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, {
+      userId: "u42",
+      identifier: "5512345678",
+      channel: "TELEGRAM",
+      purpose: "PASSWORD_RESET",
+    })
+    const row = await consumeVerificationCode(db, {
+      identifier: "5512345678",
+      code,
+      purpose: "PASSWORD_RESET",
+    })
+    expect(row.userId).toBe("u42")
+    expect(rows[0].consumedAt).not.toBeNull()
+  })
+
+  it("la guarda no rompe EMAIL+SIGNUP por identifier", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, {
+      userId: "u42",
+      identifier: "a@b.com",
+      channel: "EMAIL",
+    })
+    const row = await consumeVerificationCode(db, { identifier: "a@b.com", code })
+    expect(row.userId).toBe("u42")
     expect(rows[0].consumedAt).not.toBeNull()
   })
 

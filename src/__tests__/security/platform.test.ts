@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     "repairOrder", "repairPart", "repairEvent", "repairPhoto",
     "marketplaceRequest", "encargo", "supplier", "purchase", "purchaseItem",
     "supplierPayment", "shoppingItem", "directoryEvent",
+    "clockEvent", "notification",
   ]
   const count = Object.fromEntries(blocking.map((a) => [a, vi.fn().mockResolvedValue(0)]))
   const del = Object.fromEntries(
@@ -37,10 +38,12 @@ const mocks = vi.hoisted(() => {
   const businessDelete = vi.fn().mockResolvedValue({})
   const platformEventCreate = vi.fn().mockResolvedValue({})
   const userCount = vi.fn().mockResolvedValue(9)
+  // Guard del DELETE: ¿hay cuentas isSuperAdmin en el tenant? Default: ninguna.
+  const userFindFirst = vi.fn().mockResolvedValue(null)
   const prisma: Record<string, unknown> = {
     business: { findMany: findBusinesses, findUnique: findBusiness, update: updateBusiness, delete: businessDelete },
     platformEvent: { create: platformEventCreate, findMany: vi.fn().mockResolvedValue([]) },
-    user: { findMany: findUsers, deleteMany: del.user, count: userCount },
+    user: { findMany: findUsers, findFirst: userFindFirst, deleteMany: del.user, count: userCount },
     businessOperation: { deleteMany: del.businessOperation },
     auditEvent: { deleteMany: del.auditEvent },
     pushSubscription: { deleteMany: del.pushSubscription },
@@ -64,7 +67,7 @@ const mocks = vi.hoisted(() => {
   return {
     auth: vi.fn(), findBusinesses, findBusiness, updateBusiness, saleGroup,
     orderGroup, findUsers, findOrders, findOrderFirst, findSales, findSaleFirst,
-    saleAggregate, count, del, businessDelete, platformEventCreate, userCount, prisma,
+    saleAggregate, count, del, businessDelete, platformEventCreate, userCount, userFindFirst, prisma,
   }
 })
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))

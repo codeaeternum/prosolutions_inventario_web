@@ -150,12 +150,17 @@ export async function GET(req: Request) {
         }),
         total: products.length,
         visibleCount,
-        counts: {
-          hidden: counts.HIDDEN,
-          allies: counts.ALLIES,
-          public: counts.PUBLIC,
-          published: visibleCount,
-        },
+        // El desglose por nivel (en particular cuántos quedan OCULTOS) es
+        // información interna del catálogo: solo staff. El aliado recibe el
+        // total publicado — que es exactamente lo que él puede ver.
+        counts: isWorkshop
+          ? { published: visibleCount }
+          : {
+              hidden: counts.HIDDEN,
+              allies: counts.ALLIES,
+              public: counts.PUBLIC,
+              published: visibleCount,
+            },
       },
       { headers: catalogResponseHeaders }
     )
@@ -171,11 +176,23 @@ export async function GET(req: Request) {
 // Compat: `marketplaceVisible` booleano viejo → true:"ALLIES" false:"HIDDEN".
 // marketVisibility ∈ HIDDEN | ALLIES | PUBLIC — el nivel decide quién ve la
 // pieza: nadie / solo talleres aliados / también el público general.
+//
+// Publicar decide la exposición EXTERNA del catálogo (aliados y, en PUBLIC,
+// el directorio abierto con precios): es una decisión de ADMIN — igual que
+// aprobar/surtir solicitudes en /api/marketplace/requests/:id — así que un
+// EMPLOYEE con el módulo no basta. El corte temprano evita que el panel de
+// publicación prometa cambios que el dominio no respaldaría.
 export async function POST(req: Request) {
   try {
     const result = await requireModule("mercado")
     if (result.error) return result.error
     const session = getSession(result)!
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Solo un administrador decide qué se publica al mercado." },
+        { status: 403 }
+      )
+    }
     const businessId = businessIdOf(session)
 
     const body = await req.json()

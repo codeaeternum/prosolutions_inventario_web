@@ -63,9 +63,14 @@ interface Category {
   _count: { products: number }
 }
 
-type ProductWithDetails = Omit<Product, "wholesalePrice" | "minStock"> & {
+type ProductWithDetails = Omit<Product, "wholesalePrice" | "minStock" | "stock"> & {
   wholesalePrice?: number
   minStock?: number
+  // Existencia exacta solo para cuentas APPROVED: al público anónimo la API
+  // manda disponibilidad binaria (productDto), nunca el número — así que
+  // `stock` puede no venir y hay que consultar `inStock` en ese caso.
+  stock?: number
+  inStock?: boolean
   description?: string | null
   models: Array<{
     model: {
@@ -74,6 +79,14 @@ type ProductWithDetails = Omit<Product, "wholesalePrice" | "minStock"> & {
     }
   }>
   category: { name: string }
+}
+
+/** Disponibilidad para mostrar: exacta si vino `stock` (sesión aprobada),
+ *  binaria si solo vino `inStock` (vitrina anónima). */
+function productAvailable(product: ProductWithDetails | null | undefined): boolean {
+  if (!product) return false
+  if (typeof product.stock === "number") return product.stock > 0
+  return product.inStock === true
 }
 
 // useSearchParams exige un boundary de Suspense en build/prerender.
@@ -391,7 +404,7 @@ function CatalogoView() {
       price: price,
       quantity: quantity,
       image: selectedProduct.images[0],
-      maxStock: selectedProduct.stock
+      maxStock: selectedProduct.stock ?? 1
     })
 
     setReservationOpen(false)
@@ -511,8 +524,8 @@ function CatalogoView() {
                   )}
                 </p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge variant={detailsProduct?.stock && detailsProduct.stock > 0 ? "default" : "secondary"}>
-                    {detailsProduct?.stock && detailsProduct.stock > 0 ? "Disponible" : "Agotado"}
+                  <Badge variant={productAvailable(detailsProduct) ? "default" : "secondary"}>
+                    {productAvailable(detailsProduct) ? "Disponible" : "Agotado"}
                   </Badge>
                   <Badge variant="outline">
                     {detailsProduct?.category?.name}
@@ -524,7 +537,7 @@ function CatalogoView() {
                 {detailsProduct?.description || "Sin descripción disponible."}
               </div>
 
-              {detailsProduct?.stock && detailsProduct.stock > 0 && (
+              {productAvailable(detailsProduct) && (
                 <Button
                   className="w-full mt-4"
                   size="lg"
@@ -838,18 +851,27 @@ function CatalogoView() {
                           </div>
                         )}
 
-                        {/* Stock badge */}
-                        {product.stock > 0 && product.stock <= (product.minStock ?? 1) && (
+                        {/* Stock badge: exacto con sesión aprobada; binario
+                            (Disponible/Agotado) en la vitrina anónima. */}
+                        {typeof product.stock !== "number" ? (
+                          <Badge
+                            variant={productAvailable(product) ? "default" : "secondary"}
+                            className={`absolute top-2 right-2 text-[10px] px-1.5 z-10 ${productAvailable(product) ? "bg-green-600" : ""}`}
+                          >
+                            {productAvailable(product) ? "Disponible" : "Agotado"}
+                          </Badge>
+                        ) : null}
+                        {typeof product.stock === "number" && product.stock > 0 && product.stock <= (product.minStock ?? 1) && (
                           <Badge variant="destructive" className="absolute top-2 right-2 text-[10px] px-1.5 z-10">
                             {product.stock} UD
                           </Badge>
                         )}
-                        {product.stock === 0 && (
+                        {product.stock != null && product.stock === 0 && (
                           <Badge variant="secondary" className="absolute top-2 right-2 text-[10px] px-1.5 z-10">
                             Agotado
                           </Badge>
                         )}
-                        {product.stock > (product.minStock ?? 1) && (
+                        {typeof product.stock === "number" && product.stock > (product.minStock ?? 1) && (
                           <Badge variant="default" className="absolute top-2 right-2 text-[10px] px-1.5 bg-green-600 z-10">
                             {product.stock} UD
                           </Badge>
@@ -881,7 +903,7 @@ function CatalogoView() {
                     </div>
 
                     {/* Add button - Always visible and separated from click area */}
-                    {product.stock > 0 && (
+                    {productAvailable(product) && (
                       <div className="absolute bottom-3 right-3 z-20">
                         <Button
                           size="sm"

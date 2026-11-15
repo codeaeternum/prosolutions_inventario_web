@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
-import { listSupplierPayments, paySupplier } from "@/lib/domain/supplier-payments"
+import { listSupplierPayments, paySupplier, voidSupplierPayment } from "@/lib/domain/supplier-payments"
 import { businessFailure } from "@/lib/domain/http"
 
 /** Historial de abonos: ?supplierId=<id> acota a un proveedor; sin él,
@@ -54,6 +54,33 @@ export async function POST(request: NextRequest) {
       idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),
     })
     return NextResponse.json(result, { status: 201 })
+  } catch (error) {
+    return businessFailure(error)
+  }
+}
+
+/** Anula un abono registrado por error: revierte saldo de OC y, si sacó
+ *  efectivo del cajón, asienta el IN de reverso. La fila queda marcada
+ *  ([ANULADO] en notes) — sin columna de estado la convención es el
+ *  marcador; reintentar sobre la misma llave o un abono ya anulado es no-op. */
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireModule("inventario")
+    if (auth.error) return auth.error
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
+    // Anular un asiento de dinero es la misma clase de decisión que
+    // registrarlo: solo ADMIN (el dominio además lo exige por dentro).
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Solo un administrador puede anular pagos a proveedores." }, { status: 403 })
+    }
+    const body = await request.json().catch(() => ({}))
+    const result = await voidSupplierPayment(prisma, session.user.id, businessId, {
+      paymentId: body?.paymentId,
+      reason: body?.reason,
+      idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key"),
+    })
+    return NextResponse.json(result)
   } catch (error) {
     return businessFailure(error)
   }

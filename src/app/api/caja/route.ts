@@ -3,6 +3,7 @@ import { businessFailure } from "@/lib/domain/http"
 import { NextResponse } from "next/server"
 import { assertBranchAllowed, assertOperationBranch, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
+import { checkStaleRegisters } from "@/lib/caja-stale"
 import prisma from "@/lib/prisma"
 
 const METHODS = ["CASH", "CARD", "TRANSFER", "CREDIT"] as const
@@ -58,6 +59,11 @@ export async function GET(req: Request) {
     if (result.error) return result.error
     const session = getSession(result)!
     const businessId = businessIdOf(session)
+
+    // Barrido de cajas olvidadas (>48 h OPEN): crea a lo sumo una
+    // Notification "stale_register" al día por caja. Fire-and-forget —
+    // jamás se awaita ni puede tumbar la respuesta del GET.
+    void checkStaleRegisters(businessId).catch(console.error)
 
     const url = new URL(req.url)
     const branchId = url.searchParams.get("branchId") || undefined

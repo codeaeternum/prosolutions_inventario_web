@@ -25,6 +25,8 @@ export async function getBotAccount(prisma: PrismaClient, telegramId: string) {
       role: true,
       status: true,
       name: true,
+      // La matriz de visibilidad del catálogo (lib/visibility) lo necesita.
+      customerType: true,
       allowedModules: true,
       allowedBranchIds: true,
       homeBranchId: true,

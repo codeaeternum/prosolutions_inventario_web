@@ -5,7 +5,7 @@ import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { prisma } from "@/lib/prisma"
-import { BusinessError, releaseStock, takeStock } from "@/lib/domain/operations"
+import { BusinessError, releaseStock, takeStock, transaction } from "@/lib/domain/operations"
 import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reservations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
@@ -13,9 +13,6 @@ import { normalizeProductName } from "@/lib/utils"
 import { deleteOrphanedPaymentProofs } from "@/lib/payment-proofs"
 import { promises as fs } from "node:fs"
 import path from "node:path"
-import type { Prisma } from "@prisma/client"
-
-type TransactionClient = Prisma.TransactionClient
 
 // Las imágenes subidas viven en public/uploads/products/<archivo> y se
 // referencian como "/uploads/products/<archivo>". El valor guardado nunca se
@@ -264,7 +261,6 @@ export async function PUT(
         { status: 400 }
       )
     }
-    const stockDiff = parsedStock === null ? 0 : parsedStock - existingProduct.stock
     const parsedMinStock = minStock === undefined || minStock === null || minStock === "" ? existingProduct.minStock : parseInt(minStock, 10)
     if (!Number.isFinite(parsedMinStock) || parsedMinStock < 0) {
       return NextResponse.json(
@@ -293,8 +289,19 @@ export async function PUT(
     }
     const editor = await prisma.user.findUnique({ where: { id: session.user.id }, select: { homeBranchId: true } })
 
-    // Actualizar producto y modelos en transacción
-    const product = await prisma.$transaction(async (tx: TransactionClient) => {
+    // Actualizar producto y modelos en transacción serializable. La base del
+    // ajuste de existencias se RE-LEE dentro: una venta que commitió entre el
+    // findUnique previo y el commit movería `Product.stock` y el diff quedaría
+    // calculado sobre una copia vieja — el ajuste terminaría en otra cifra de
+    // la que el operador escribió. Bajo Serializable, esa escritura
+    // concurrente aborta la tx (P2034) y el reintento relee la fila vigente.
+    const { product, stockDiff, stockBefore } = await transaction(prisma, async tx => {
+      const { stock: liveStock } = await tx.product.findUniqueOrThrow({
+        where: { id, businessId },
+        select: { stock: true },
+      })
+      const stockDiff = parsedStock === null ? 0 : parsedStock - liveStock
+
       // Eliminar relaciones de modelos existentes
       await tx.productModel.deleteMany({
         where: { productId: id },
@@ -383,7 +390,7 @@ export async function PUT(
         })
       }
 
-      return updatedProduct
+      return { product: updatedProduct, stockDiff, stockBefore: liveStock }
     })
 
     // Bitácora: antes→después de los campos editables. Las llaves del diff
@@ -395,7 +402,7 @@ export async function PUT(
       taller: existingProduct.wholesalePrice,
       tallerPropio: existingProduct.internalPrice,
       costo: existingProduct.costPrice,
-      stock: existingProduct.stock,
+      stock: stockBefore,
       stockMinimo: existingProduct.minStock,
       activo: existingProduct.isActive,
       universal: existingProduct.isUniversal,
@@ -409,7 +416,7 @@ export async function PUT(
       taller: parsedWholesale,
       tallerPropio: parsedInternalPrice,
       costo: parsedCostPrice,
-      stock: existingProduct.stock + stockDiff,
+      stock: stockBefore + stockDiff,
       stockMinimo: parsedMinStock,
       activo: isActive ?? true,
       universal: isUniversal ?? false,
@@ -425,7 +432,7 @@ export async function PUT(
       if (changes.tallerPropio) parts.push(`Taller propio ${money(existingProduct.internalPrice)} → ${money(auditAfter.tallerPropio)}`)
       if (changes.nombre) parts.push(`Nombre "${existingProduct.name}" → "${name}"`)
       if (changes.activo) parts.push(auditAfter.activo ? "Reactivado" : "Desactivado")
-      if (changes.stock) parts.push(`Stock ${existingProduct.stock} → ${auditAfter.stock}`)
+      if (changes.stock) parts.push(`Stock ${stockBefore} → ${auditAfter.stock}`)
       if (changes.stockMinimo) parts.push(`Stock mínimo ${existingProduct.minStock} → ${auditAfter.stockMinimo}`)
       if (changes.categoriaId) parts.push("Cambió de categoría")
       if (changes.codigoBarras) parts.push("Cambió el código de barras")
@@ -481,6 +488,10 @@ export async function DELETE(
 
     const { id } = await params
 
+    // ?force=true permite borrar CON existencias (el operador asume la
+    // pérdida); el stock que se llevó queda asentado en la bitácora.
+    const force = new URL(req.url).searchParams.get("force") === "true"
+
     // Verificar que el producto existe
     const existingProduct = await prisma.product.findUnique({
       where: { id, businessId },
@@ -510,11 +521,24 @@ export async function DELETE(
       )
     }
 
-    // Eliminar en transacción — devuelve las URLs de comprobantes de las
-    // reservas purgadas para limpiar sus archivos tras el commit.
+    // No eliminar con existencias: `Product.stock` (total cacheado, la suma
+    // de BranchStock) es el costo que queda en anaqueles — borrarlo lo quema
+    // en silencio (BranchStock es onDelete: Cascade). Se re-verifica dentro
+    // de la tx serializable por si entró mercancía entre esta lectura y el
+    // commit; `?force=true` es la salida explícita y queda auditada.
+    const stockError = (stock: number) =>
+      `El producto tiene ${stock} en existencia; ajusta el stock a 0 antes de eliminar`
+    if (existingProduct.stock > 0 && !force) {
+      return NextResponse.json({ error: stockError(existingProduct.stock) }, { status: 409 })
+    }
+
+    // Eliminar en transacción serializable — devuelve las URLs de
+    // comprobantes de las reservas purgadas para limpiar sus archivos tras
+    // el commit, más el stock vigente al borrar (para la bitácora de force).
     let proofUrls: (string | null)[]
+    let stockRemoved = 0
     try {
-      proofUrls = await prisma.$transaction(async (tx: TransactionClient) => {
+      const txResult = await transaction(prisma, async tx => {
         // Re-verificación dentro de la tx: una reserva pudo crearse entre el
         // findUnique y este punto (la FK del producto es Cascade y se la
         // llevaría silenciosamente).
@@ -526,6 +550,17 @@ export async function DELETE(
             "No se puede eliminar: tiene reservas activas. Resuélvelas o cancélalas primero, o desactiva el producto.",
             409
           )
+        }
+
+        // Re-lectura del stock dentro de la tx: pudo entrar mercancía entre
+        // la primera lectura y aquí. Con force el número vigente es el que
+        // se asienta en la bitácora.
+        const { stock: liveStock } = await tx.product.findUniqueOrThrow({
+          where: { id, businessId },
+          select: { stock: true },
+        })
+        if (liveStock > 0 && !force) {
+          throw new BusinessError(stockError(liveStock), 409)
         }
 
         // Eliminar relaciones de modelos
@@ -554,8 +589,10 @@ export async function DELETE(
           where: { id, businessId },
         })
 
-        return proofUrls
+        return { proofUrls, stockRemoved: liveStock }
       })
+      proofUrls = txResult.proofUrls
+      stockRemoved = txResult.stockRemoved
     } catch (error) {
       if (error instanceof BusinessError) {
         return NextResponse.json({ error: error.message }, { status: error.status })
@@ -581,7 +618,12 @@ export async function DELETE(
       entity: "product",
       entityId: id,
       entityName: existingProduct.name,
-      summary: `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
+      summary: stockRemoved > 0
+        ? `Eliminó forzado "${existingProduct.name}" con ${stockRemoved} en existencia · Precio ${money(existingProduct.retailPrice)}`
+        : `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
+      // Con force y stock>0 la bitácora asienta cuántas piezas se llevaron:
+      // las BranchStock desaparecieron en cascade con el producto.
+      ...(stockRemoved > 0 ? { changes: { stock: { before: stockRemoved, after: 0 } } } : {}),
     })
 
     // Post-delete: las fotos /uploads/products/* quedaban huérfanas en disco.

@@ -538,7 +538,7 @@ export default async function TicketPage({
   }
 
   if (!ticketData && !repairData && !workshopData && !quoteData) {
-    return <div className="p-8 text-center text-red-500">Ticket no encontrado</div>
+    notFound()
   }
 
   // Load ticket customization settings

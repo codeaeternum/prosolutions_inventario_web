@@ -18,6 +18,7 @@ export function registerHelp(bot: Telegraf) {
 /categorias - Catálogo por categoría
 /ofertas - Productos destacados
 /miid - Tu ID de Telegram
+/desvincular - Desvincular tu Telegram
 
 ¿Necesitas algo más? Responde con tu búsqueda.`
 
@@ -44,6 +45,7 @@ export function registerHelp(bot: Telegraf) {
 /categorias - Catálogo por categoría
 /ofertas - Productos destacados
 /miid - Tu ID de Telegram
+/desvincular - Desvincular tu Telegram
 
 ¿Necesitas algo más? Responde con tu búsqueda.`
 

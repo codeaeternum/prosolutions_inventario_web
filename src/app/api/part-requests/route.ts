@@ -5,7 +5,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { recordDirectoryEvent } from "@/lib/directory-events"
-import { normalizePhone } from "@/lib/utils"
+import { maskPhone, normalizePhone } from "@/lib/utils"
 
 // POST /api/part-requests — PÚBLICO. Un visitante de /mercado pide una
 // refacción que ningún negocio tiene publicada; el feed es a nivel
@@ -41,7 +41,8 @@ export async function GET(req: Request) {
   try {
     const auth = await requireModule("mercado")
     if (auth.error) return auth.error
-    businessIdOf(getSession(auth)!) // valida sesión con empresa asignada
+    const session = getSession(auth)!
+    businessIdOf(session) // valida sesión con empresa asignada
 
     const params = new URL(req.url).searchParams
     const status = params.get("status")
@@ -64,9 +65,14 @@ export async function GET(req: Request) {
       prisma.partRequest.count({ where: { status: "OPEN" } }),
     ])
 
+    // PartRequest es GLOBAL (sin businessId): el teléfono del visitante es
+    // dato personal que viaja a TODOS los negocios del directorio. Solo un
+    // ADMIN — quien decide y contacta — recibe el número completo; el resto
+    // del staff ve la solicitud con el teléfono enmascarado.
+    const masked = session.user.role !== "ADMIN"
     return NextResponse.json(
       {
-        requests,
+        requests: masked ? requests.map(r => ({ ...r, phone: maskPhone(r.phone) })) : requests,
         total,
         page,
         totalPages: Math.ceil(total / take) || 1,

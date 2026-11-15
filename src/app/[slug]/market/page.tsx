@@ -204,11 +204,16 @@ export default async function PublicMarketPage({ params, searchParams }: PagePro
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-              {products.map(product => (
+              {products.map(({ stock, ...product }) => (
                 <PublicProductCard
                   key={product.id}
                   product={{
                     ...product,
+                    // Al cliente le llega disponibilidad binaria: el número
+                    // exacto jamás cruza al navegador (misma regla que
+                    // productDto para viewers anónimos) — por eso `stock`
+                    // queda fuera del spread, solo se usa para inStock.
+                    inStock: stock > 0,
                     branchNames: product.stocks
                       .map((s) => s.branch.name)
                       .sort((a, b) => a.localeCompare(b, "es")),

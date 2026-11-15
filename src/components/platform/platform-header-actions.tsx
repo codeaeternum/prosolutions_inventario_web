@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -85,6 +86,7 @@ interface SupportAccessButtonProps {
 export function SupportAccessButton({ userId, userName, businessName }: SupportAccessButtonProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [reason, setReason] = useState("")
 
   const handleSupportLogin = async () => {
     if (loading) return
@@ -93,7 +95,7 @@ export function SupportAccessButton({ userId, userName, businessName }: SupportA
       const res = await fetch("/api/auth/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId, ...(reason.trim() ? { reason: reason.trim() } : {}) }),
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok) {
@@ -130,7 +132,7 @@ export function SupportAccessButton({ userId, userName, businessName }: SupportA
         )}
         Entrar al panel
       </Button>
-      <AlertDialog open={open} onOpenChange={(next) => { if (!loading) setOpen(next) }}>
+      <AlertDialog open={open} onOpenChange={(next) => { if (!loading) { setOpen(next); if (!next) setReason("") } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Entrar como {userName}?</AlertDialogTitle>
@@ -138,9 +140,25 @@ export function SupportAccessButton({ userId, userName, businessName }: SupportA
               Verás el panel de <strong>{businessName}</strong> exactamente como lo ve
               esta cuenta, con un banner amarillo de modo soporte en la parte
               superior. Todo lo que hagas queda registrado a nombre de tu cuenta
-              de operador. Para salir, usa «Volver a mi cuenta» en ese banner.
+              de operador y el negocio recibe un aviso en su campana. Para salir,
+              usa «Volver a mi cuenta» en ese banner.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor={`support-reason-${userId}`}>Motivo (opcional)</Label>
+            <Textarea
+              id={`support-reason-${userId}`}
+              value={reason}
+              disabled={loading}
+              maxLength={200}
+              rows={2}
+              placeholder="Ej. El dueño reportó que no puede cerrar su caja"
+              onChange={(e) => setReason(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Queda en el historial de plataforma y en el aviso que recibe el negocio.
+            </p>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>Cancelar</AlertDialogCancel>
             <AlertDialogAction

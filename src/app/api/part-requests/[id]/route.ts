@@ -3,6 +3,7 @@ import { z } from "zod"
 import { getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
+import { maskPhone } from "@/lib/utils"
 
 const NO_STORE = { "Cache-Control": "no-store" } as const
 
@@ -21,7 +22,8 @@ export async function PATCH(
   try {
     const auth = await requireModule("mercado")
     if (auth.error) return auth.error
-    businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    businessIdOf(session)
     const { id } = await params
 
     const parseResult = updateSchema.safeParse(await req.json().catch(() => null))
@@ -39,7 +41,12 @@ export async function PATCH(
       data: { status: parseResult.data.status },
     })
 
-    return NextResponse.json({ request }, { headers: NO_STORE })
+    // Mismo recorte que el listado: el teléfono completo es solo para ADMIN.
+    const masked = session.user.role !== "ADMIN"
+    return NextResponse.json(
+      { request: masked ? { ...request, phone: maskPhone(request.phone) } : request },
+      { headers: NO_STORE },
+    )
   } catch (error) {
     console.error("[part-requests] Error al actualizar la solicitud:", error)
     return NextResponse.json(

@@ -118,6 +118,8 @@ vi.mock("@/lib/prisma", () => ({
 }))
 vi.mock("@/lib/rate-limit", () => ({
   checkAndRecord: mocks.checkAndRecord,
+  checkOnly: vi.fn(() => true),
+  recordFailure: vi.fn(),
   getClientIp: vi.fn(() => "1.2.3.4"),
 }))
 vi.mock("@/lib/settings", async importOriginal => ({

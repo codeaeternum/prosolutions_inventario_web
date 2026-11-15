@@ -251,6 +251,9 @@ const transitionSchema = z.object({
   supplierAmountCents: z.number().int().min(1).max(100000000).optional(),
   supplierMethod: z.enum(ENCARGO_MONEY_METHODS).optional(),
   cashFromRegister: z.boolean().optional(),
+  // Sucursal del cajón cuando cashFromRegister: un ADMIN pagando al proveedor
+  // desde otra sucursal lo declara aquí; ausente, cae a su sucursal base.
+  branchId: z.string().min(1).optional(),
 })
 
 /**
@@ -310,6 +313,7 @@ export async function transitionEncargoTx(
     supplierAmountCents?: number
     supplierMethod?: (typeof ENCARGO_MONEY_METHODS)[number]
     cashFromRegister?: boolean
+    branchId?: string
     saleId?: string | null
   },
 ) {
@@ -383,9 +387,10 @@ export async function transitionEncargoTx(
     supplierPaymentId = payment.id
     // Salida real del cajón: solo cuando el cobrador declara que el efectivo
     // sale de su caja (cashFromRegister) — igual que en paySupplier, el tope
-    // es el efectivo disponible y el registro cae en SU sucursal base.
+    // es el efectivo disponible y el registro cae en la sucursal declarada
+    // (input.branchId) o en SU sucursal base cuando no se declara otra.
     if (input.supplierMethod === "CASH" && input.cashFromRegister) {
-      const register = await openRegister(tx, payer.homeBranchId, input.businessId)
+      const register = await openRegister(tx, input.branchId ?? payer.homeBranchId, input.businessId)
       const availableCents = await registerCashCents(tx, register.id)
       if (input.supplierAmountCents > availableCents) {
         throw new BusinessError(`El pago supera el efectivo en caja (${((input.supplierAmountCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
@@ -623,6 +628,6 @@ export async function transitionEncargo(db: PrismaClient, actorId: string, busin
       marketplaceRequestId: input.marketplaceRequestId, supplierNote: input.supplierNote,
       reason: input.reason, refundMethod: input.refundMethod, refundReference: input.refundReference, supplierId: input.supplierId,
       supplierAmountCents: input.supplierAmountCents, supplierMethod: input.supplierMethod,
-      cashFromRegister: input.cashFromRegister,
+      cashFromRegister: input.cashFromRegister, branchId: input.branchId,
     }))
 }

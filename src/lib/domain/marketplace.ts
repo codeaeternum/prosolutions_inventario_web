@@ -36,9 +36,28 @@ export const marketplaceRequestInclude = {
   },
   // Negocio proveedor (dueño del producto): alimenta "Pedidos que hago".
   business: { select: { id: true, name: true, slug: true } },
-  requestedBy: { select: { id: true, name: true, role: true } },
+  // businessId del solicitante: un WORKSHOP de OTRO tenant no puede ser el
+  // cliente de la venta del surtido (actor() lo rechaza) — el proveedor
+  // necesita el dato para pedir una cuenta local en su lugar.
+  requestedBy: { select: { id: true, name: true, role: true, businessId: true } },
   decidedBy: { select: { name: true } },
-  sale: { select: { id: true, number: true } },
+  // status de la venta ligada: una venta VOIDED deja la solicitud surtida
+  // sin documento — con el dato la UI/API la puede devolver a APPROVED.
+  sale: { select: { id: true, number: true, status: true } },
+} satisfies Prisma.MarketplaceRequestInclude
+
+/**
+ * Proyección para direction=out (lado COMPRADOR): la fila vive en el tenant
+ * del proveedor, así que se recorta lo que es interno suyo — el precio
+ * retail de su catálogo y quién de su staff decidió la solicitud.
+ */
+export const marketplaceOutgoingInclude = {
+  product: {
+    select: { name: true, barcode: true, wholesalePrice: true },
+  },
+  business: { select: { id: true, name: true, slug: true } },
+  requestedBy: { select: { id: true, name: true, role: true, businessId: true } },
+  sale: { select: { id: true, number: true, status: true } },
 } satisfies Prisma.MarketplaceRequestInclude
 
 const createSchema = z.object({
@@ -57,6 +76,13 @@ const createSchema = z.object({
   // creada pero el encargo pendiente (o viceversa).
   encargoId: z.string().min(1).optional(),
   supplierNote: z.string().trim().max(500).optional(),
+  // Abono al proveedor al pasar el encargo a ORDERED (mismo patrón que
+  // transitionEncargo de /api/encargos): solo aplica con encargoId y solo
+  // ADMIN lo asienta — el dominio del encargo lo exige por dentro.
+  supplierId: z.string().min(1).optional(),
+  supplierAmountCents: z.number().int().min(1).max(100000000).optional(),
+  supplierMethod: z.enum(["CASH", "CARD", "TRANSFER"]).optional(),
+  cashFromRegister: z.boolean().optional(),
 })
 export type CreateMarketplaceRequestInput = z.infer<typeof createSchema>
 
@@ -128,7 +154,16 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
     const duplicated = input.encargoId
       ? null
       : await tx.marketplaceRequest.findFirst({
-          where: { requestedById: actorId, productId: product.id, status: "PENDING" },
+          where: {
+            requestedById: actorId,
+            productId: product.id,
+            status: "PENDING",
+            // El alta manual registra pedidos de VARIOS talleres desde la
+            // misma cuenta de mostrador: sin el taller en el dedupe, una
+            // solicitud de "Taller A" se fusionaba con la pendiente de
+            // "Taller B" sobre el mismo producto.
+            tallerName: { equals: input.tallerName, mode: "insensitive" },
+          },
           orderBy: { createdAt: "desc" },
           include: marketplaceRequestInclude,
         })
@@ -160,6 +195,10 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
         action: "ORDERED",
         marketplaceRequestId: request.id,
         supplierNote: input.supplierNote,
+        supplierId: input.supplierId,
+        supplierAmountCents: input.supplierAmountCents,
+        supplierMethod: input.supplierMethod,
+        cashFromRegister: input.cashFromRegister,
       })
     }
 

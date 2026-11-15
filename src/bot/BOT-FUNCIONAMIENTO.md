@@ -19,7 +19,12 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
 - **Comando**: `/start` (si el usuario no existe en la BD).
 - **Módulo**: `commands/start.ts` + wizard en `index.ts` (callbacks `reg_type_1`, `reg_type_2`, `reg_type_3` y handler de texto).
 - **Pasos**: Nombre → Tipo de cliente (Técnico / Local / Particular) → Nombre del negocio (opcional) → Teléfono → Meta de compra mensual.
-- **Resultado**: Se crea un `User` en la BD con `role: CUSTOMER`, `status: APPROVED`, `telegramId` y un `qrCode` único. Se guarda en `registrationSessions` hasta completar.
+- **Resultado**: Se crea un `User` en la BD con `role: CUSTOMER`, `status: PENDING`, `telegramId` y un `qrCode` único. Se guarda en `registrationSessions` hasta completar. La cuenta queda **pendiente de aprobación**: un ADMIN del negocio la aprueba (botones `approve_user_`/`reject_user_` en el aviso a admins, o el panel web) y recién entonces puede reservar/ver precios; al aprobarse se aplica el `requestedCustomerType` que pidió.
+
+### 2.1b Vinculación de Telegram (deep-link verify)
+
+- **Flujo**: la app genera un código → link `t.me/<bot>?start=verify_<código>` → `handleVerifyPayload` lo consume (`consumeVerificationCode`), marca el contacto verificado (`markVerified`) y **pregunta con botones inline** "¿Vincular esta cuenta de Telegram a {nombre} de {negocio}?" antes de escribir `telegramId` (estado pendiente en `linkVerify`, sesión RAM).
+- **`/desvincular`**: quita el `telegramId` propio tras confirmación inline; si es el único Telegram vinculado del negocio advierte que las alertas dejarán de llegar (se permite igual).
 
 ### 2.2 Usuario ya registrado
 
@@ -30,6 +35,7 @@ El bot es un cliente de Telegram que comparte la **misma base de datos** que la 
 
 - **Entrada**: Cualquier mensaje de texto que **no** sea comando (no empiece por `/`) y que no esté dentro de un wizard activo (registro, reserva, agregar producto admin).
 - **Lógica**: Se divide el texto en palabras (≥ 2 caracteres). Se buscan productos con **AND** (todas las palabras en el nombre). Si no hay resultados, se hace **OR** y se ordena por coincidencias. Solo productos `isActive: true` y `stock > 0`.
+- **Visibilidad de mercado**: todos los listados/detalle de catálogo del bot (búsqueda, fuzzy SQL, `/categorias`, `/modelos`, `/ofertas`, `prod_`, `reserve_`) filtran `marketVisibility` con la **misma matriz de la web** (`catalogVisibilityLevels` en `src/lib/product-dto.ts`): anónimos/PENDING/REJECTED → solo `PUBLIC`; APPROVED WORKSHOP o CUSTOMER STORE/TECHNICIAN → `ALLIES`+`PUBLIC`; APPROVED CUSTOMER NORMAL y staff ADMIN/EMPLOYEE → catálogo completo.
 - **Respuesta**: Lista de hasta 5 productos con botones inline; al pulsar uno se abre el detalle (`prod_<id>`).
 
 ### 2.4 Detalle de producto y acciones
@@ -84,7 +90,8 @@ Las ventas del bot crean **movimientos de inventario** en la misma tabla que usa
 - **Comando**: `/admin`. Muestra lista de comandos: agregar producto, stock, eliminar, vender, carrito, makeadmin/removeadmin, pendientes, etc.
 - **Comandos útiles**:
   - `/agregar`: wizard (nombre → categoría → precios → stock → foto). Crea `Product` en la BD.
-  - `/stock <producto> <cantidad>`: actualiza stock del producto.
+  - `/stock <producto> <cantidad>`: actualiza stock del producto; si el cambio es inusual (|diff| > 50 uds o > 2× el stock actual) pide confirmación inline antes de aplicar.
+  - `/makeadmin <teléfono|telegram_id>`, `/removeadmin`: exigen match **exacto** (telegramId completo o teléfono completo → `phoneNormalized`); sin match exacto muestran hasta 5 candidatos con botones de confirmación (`mkadm_`/`rmadm_`). Ambos graban `USER_UPDATE` en la bitácora.
   - `/eliminar <nombre>`: busca producto, pide confirmación “SI” y elimina de la BD.
   - `/makeadmin <teléfono|telegram_id>`, `/removeadmin`: cambian `role` del usuario a ADMIN o CUSTOMER.
   - `/pendientes`: lista reservas pendientes (PENDING y PENDING_PAYMENT), con expiración; gestionar en la web.

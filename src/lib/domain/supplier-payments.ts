@@ -2,6 +2,7 @@ import type { PrismaClient, PurchaseStatus } from "@prisma/client"
 import { z } from "zod"
 import { actor, BusinessError, openRegister, operation, operationKeySchema, registerCashCents } from "./operations"
 import { purchaseFolio } from "./purchasing"
+import { recordAudit } from "../audit"
 
 /** Medios documentados para pagos a proveedor (solo informativo; ver paySupplier). */
 export const SUPPLIER_PAYMENT_METHODS = ["CASH", "CARD", "TRANSFER"] as const
@@ -9,6 +10,17 @@ export type SupplierPaymentMethod = (typeof SUPPLIER_PAYMENT_METHODS)[number]
 
 /** Un pago puede ligarse solo a una OC ya comprometida: ordenada o recibida. */
 const PAYABLE_STATUSES: PurchaseStatus[] = ["ORDERED", "RECEIVED"]
+
+/**
+ * Anulación de abonos SIN columna de estado en el modelo: la convención es
+ * marcar `notes` con este prefijo (el abono anulado conserva su rastro — la
+ * fila no se borra, como la venta VOIDED). Saldos, antigüedad y ligaduras lo
+ * excluyen con `notVoidedPaymentWhere`; el historial lo muestra marcado.
+ */
+export const SUPPLIER_PAYMENT_VOIDED_PREFIX = "[ANULADO]"
+export const isSupplierPaymentVoided = (payment: { notes: string | null }): boolean =>
+  payment.notes?.startsWith(SUPPLIER_PAYMENT_VOIDED_PREFIX) ?? false
+const notVoidedPaymentWhere = { NOT: { notes: { startsWith: SUPPLIER_PAYMENT_VOIDED_PREFIX } } } as const
 
 const paymentSchema = z.object({
   idempotencyKey: operationKeySchema,
@@ -21,6 +33,9 @@ const paymentSchema = z.object({
   // sucursal del cobrador. Con ella el pago asienta su CashMovement OUT para
   // que el corte cuadre; ausente, CASH solo documenta la salida (ver paySupplier).
   cashFromRegister: z.boolean().optional(),
+  // Sucursal del cajón cuando cashFromRegister: un ADMIN pagando desde otra
+  // sucursal lo declara aquí; ausente, cae a la sucursal base del cobrador.
+  branchId: z.string().min(1).optional(),
 })
 
 /**
@@ -86,12 +101,13 @@ export async function paySupplier(db: PrismaClient, actorId: string, businessId:
 
     // Salida real del cajón: solo cuando el cobrador declara que el efectivo
     // sale de su caja (cashFromRegister). openRegister exige caja abierta en
-    // su sucursal base — declarar la salida sin caja sería inconsistente — y
-    // el tope es el efectivo disponible, igual que una devolución.
+    // la sucursal declarada (input.branchId) o la base del cobrador —
+    // declarar la salida sin caja sería inconsistente — y el tope es el
+    // efectivo disponible, igual que una devolución.
     let cashMovement: { id: string } | null = null
     if (input.method === "CASH" && input.cashFromRegister) {
       const cashier = await actor(tx, actorId, "admin", businessId)
-      const register = await openRegister(tx, cashier.homeBranchId, businessId)
+      const register = await openRegister(tx, input.branchId ?? cashier.homeBranchId, businessId)
       const availableCents = await registerCashCents(tx, register.id)
       if (input.amountCents > availableCents) {
         throw new BusinessError(`El pago supera el efectivo en caja (${((input.amountCents - availableCents) / 100).toFixed(2)} faltantes).`, 409, "INSUFFICIENT_CASH")
@@ -121,6 +137,100 @@ export async function paySupplier(db: PrismaClient, actorId: string, businessId:
       purchasePaid,
       cashMovementId: cashMovement?.id ?? null,
     }
+  })
+}
+
+const voidSchema = z.object({
+  idempotencyKey: operationKeySchema,
+  paymentId: z.string().min(1),
+  reason: z.string().trim().max(500).optional(),
+})
+
+/**
+ * Anula un abono a proveedor registrado por error. No existe columna de
+ * estado en SupplierPayment, así que la anulación es la convención marcada
+ * en `notes` (SUPPLIER_PAYMENT_VOIDED_PREFIX) — la fila se conserva para la
+ * historia, igual que una venta VOIDED.
+ *
+ * Qué revierte dentro de la misma operación durable:
+ * - Si el abono estaba ligado a una OC: su `paidCents` baja lo abonado y el
+ *   `paidAt` se limpia cuando la OC deja de quedar liquidada (guard de
+ *   concurrencia sobre el paidCents leído, como paySupplier).
+ * - Si el abono sacó efectivo del cajón (CashMovement OUT con
+ *   referenceType "SUPPLIER_PAYMENT" + referenceId del abono): se asienta el
+ *   CashMovement IN de reverso en la caja abierta de la MISMA sucursal — el
+ *   dinero vuelve a entrar físicamente a un cajón — ligado por el mismo
+ *   referenceId para que el par OUT/IN quede trazado.
+ *
+ * Solo ADMIN — anular un asiento de dinero es la misma clase de decisión
+ * que registrarlo. Reintentar una anulación ya hecha es no-op idempotente.
+ */
+export async function voidSupplierPayment(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
+  const input = voidSchema.parse(raw)
+  return operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "SUPPLIER_PAYMENT_VOID", permission: "admin", payload: input }, async tx => {
+    const payment = await tx.supplierPayment.findFirst({
+      where: { id: input.paymentId, businessId },
+      include: { supplier: { select: { name: true } }, purchase: { select: { id: true, number: true, totalCents: true, paidCents: true, paidAt: true } } },
+    })
+    if (!payment) throw new BusinessError("Abono no encontrado.", 404)
+    // Ya anulado: el reintento no duplica reverso ni reescribe el marcador.
+    if (isSupplierPaymentVoided(payment)) {
+      return { payment, alreadyVoided: true, cashMovementId: null }
+    }
+
+    // La OC ligada recupera su saldo: el abono deja de contar.
+    let purchasePaid: { paidCents: number; totalCents: number; settled: boolean } | null = null
+    if (payment.purchase) {
+      const purchase = payment.purchase
+      const paidCents = Math.max(0, purchase.paidCents - payment.amountCents)
+      const updated = await tx.purchase.updateMany({
+        where: { id: purchase.id, paidCents: purchase.paidCents },
+        data: { paidCents, ...(paidCents < purchase.totalCents ? { paidAt: null } : {}) },
+      })
+      if (updated.count !== 1) throw new BusinessError("El saldo de la orden cambió durante la anulación; reintenta.", 409)
+      purchasePaid = { paidCents, totalCents: purchase.totalCents, settled: paidCents >= purchase.totalCents }
+    }
+
+    // Reverso de la salida de caja, si la hubo: el IN vuelve a la caja
+    // abierta de la sucursal de donde salió el efectivo.
+    let cashMovement: { id: string } | null = null
+    const originalOut = await tx.cashMovement.findFirst({
+      where: { businessId, type: "OUT", referenceType: "SUPPLIER_PAYMENT", referenceId: payment.id },
+      include: { register: { select: { branchId: true } } },
+    })
+    if (originalOut) {
+      const register = await openRegister(tx, originalOut.register.branchId, businessId)
+      cashMovement = await tx.cashMovement.create({ data: {
+        businessId, registerId: register.id, userId: actorId, type: "IN",
+        amount: payment.amountCents / 100, referenceType: "SUPPLIER_PAYMENT", referenceId: payment.id,
+        description: `Reverso del pago a proveedor ${payment.supplier.name} (abono anulado)`,
+      } })
+    }
+
+    const reason = input.reason?.trim()
+    const marked = await tx.supplierPayment.update({
+      where: { id: payment.id },
+      data: {
+        notes: `${SUPPLIER_PAYMENT_VOIDED_PREFIX} ${reason ? `${reason} · ` : ""}${payment.notes ?? ""}`.trim().slice(0, 900),
+      },
+      include: {
+        purchase: { select: { id: true, number: true } },
+        supplier: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+    })
+
+    await recordAudit(tx, {
+      businessId,
+      actorId,
+      action: "SUPPLIER_PAYMENT_VOID",
+      entity: "supplier",
+      entityId: payment.id,
+      entityName: payment.supplier.name,
+      summary: `Abono a proveedor anulado: ${(payment.amountCents / 100).toFixed(2)} MXN a ${payment.supplier.name}${payment.purchase ? ` · ${purchaseFolio(payment.purchase.number)}` : " · cuenta general"}${originalOut ? " · efectivo devuelto a caja" : ""}${reason ? ` · motivo: ${reason}` : ""}`,
+    })
+
+    return { payment: marked, alreadyVoided: false, purchasePaid, cashMovementId: cashMovement?.id ?? null }
   })
 }
 
@@ -156,7 +266,8 @@ export async function supplierBalances(db: PrismaClient, businessId: string, pur
     }),
     db.supplierPayment.groupBy({
       by: ["supplierId"],
-      where: { businessId, ...paymentScope },
+      // Abonos anulados no restan deuda: el marcador en notes los excluye.
+      where: { businessId, ...paymentScope, ...notVoidedPaymentWhere },
       _sum: { amountCents: true },
     }),
     db.purchase.findMany({
@@ -274,7 +385,7 @@ export async function supplierAging(db: PrismaClient, businessId: string, now: D
       select: { id: true, supplierId: true, totalCents: true, dueAt: true },
     }),
     db.supplierPayment.findMany({
-      where: { businessId, ...paymentScopeWhere(purchaseBranchIds) },
+      where: { businessId, ...paymentScopeWhere(purchaseBranchIds), ...notVoidedPaymentWhere },
       select: { supplierId: true, purchaseId: true, amountCents: true },
     }),
   ])
@@ -339,7 +450,7 @@ export async function listSupplierPayments(db: PrismaClient, businessId: string,
     const supplier = await db.supplier.findFirst({ where: { id: supplierId, businessId } })
     if (!supplier) throw new BusinessError("Proveedor no encontrado.", 404)
   }
-  return db.supplierPayment.findMany({
+  const payments = await db.supplierPayment.findMany({
     where: { businessId, ...(supplierId ? { supplierId } : {}), ...paymentScopeWhere(purchaseBranchIds) },
     include: {
       purchase: { select: { id: true, number: true } },
@@ -348,4 +459,7 @@ export async function listSupplierPayments(db: PrismaClient, businessId: string,
     orderBy: { createdAt: "desc" },
     take: 100,
   })
+  // Los anulados se conservan en el historial marcados (voided): la fila no
+  // se borra — el panel puede pintarlos tachados sin perder la traza.
+  return payments.map(p => ({ ...p, voided: isSupplierPaymentVoided(p) }))
 }

@@ -47,3 +47,41 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label = "operaci
     )
   })
 }
+
+/** Dormir `ms` sin retener el event loop (unref, mismo patrón que withTimeout). */
+export function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref()
+  })
+}
+
+/** Tope del retry_after que Telegram manda en un 429 (cap de producto: 60 s). */
+const TELEGRAM_RETRY_AFTER_CAP_S = 60
+
+/**
+ * Milisegundos que Telegram pide esperar en un error 429
+ * (`err.response.parameters.retry_after`), tope 60 s. 0 cuando el error no
+ * es rate-limit — el caller NO debe reintentar en ese caso.
+ */
+export function telegramRetryAfterMs(err: unknown): number {
+  const params = (err as { response?: { parameters?: { retry_after?: unknown } } } | null)?.response?.parameters
+  const secs = typeof params?.retry_after === "number" && Number.isFinite(params.retry_after) ? params.retry_after : 0
+  return Math.min(Math.max(secs, 0), TELEGRAM_RETRY_AFTER_CAP_S) * 1000
+}
+
+/**
+ * Ejecuta `fn` (p. ej. un sendMessage) y, si Telegram contesta 429 con
+ * `retry_after`, duerme ese tiempo (cap 60 s) y reintenta UNA sola vez.
+ * Cualquier otro error propaga tal cual — no hay colas ni reintentos extra.
+ */
+export async function retryOnTelegramLimit<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    const waitMs = telegramRetryAfterMs(err)
+    if (waitMs <= 0) throw err
+    await sleep(waitMs)
+    return fn()
+  }
+}

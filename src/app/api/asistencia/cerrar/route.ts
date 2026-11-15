@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
+import { transaction } from "@/lib/domain/operations"
 import { recordAudit } from "@/lib/audit"
 
 const NO_STORE = { "Cache-Control": "private, no-store" } as const
@@ -64,62 +65,73 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
     }
 
-    const events = await prisma.clockEvent.findMany({
-      where: { businessId, userId: target.id },
-      orderBy: [{ at: "asc" }, { id: "asc" }],
+    // Búsqueda del candidato y creación del OUT en una sola transacción
+    // serializable: leer la serie fuera deja una ventana donde dos cierres
+    // concurrentes (o un OUT del kiosco a mitad) ven el mismo IN sin pareja
+    // y ambos insertan — la jornada queda con dos cierres solapados.
+    // SERIALIZABLE aborta el commit perdedor y el reintento de transaction()
+    // relee la serie ya commiteada: el segundo intento ve el OUT recién
+    // creado y responde 409 (o cierra el siguiente IN compatible).
+    const closed = await transaction(prisma, async tx => {
+      const events = await tx.clockEvent.findMany({
+        where: { businessId, userId: target.id },
+        orderBy: [{ at: "asc" }, { id: "asc" }],
+      })
+
+      let candidate: (typeof events)[number] | null = null
+      for (let i = 0; i < events.length; i++) {
+        const e = events[i]
+        if (e.type !== "IN") continue
+        const next = events[i + 1] ?? null
+        // IN ya consumido por un OUT posterior: esa jornada ya tiene cierre.
+        if (next?.type === "OUT") continue
+        if (e.at.getTime() > outAt.getTime()) continue // cerrar antes de entrar no tiene sentido
+        // Un evento intermedio a ≤ outAt se interpone: el OUT nuevo no
+        // emparejaría con ESTE IN al derivarse.
+        if (next && next.at.getTime() <= outAt.getTime()) continue
+        candidate = e // el más antiguo compatible (events viene ordenado)
+        break
+      }
+      if (!candidate) return null
+
+      // La sucursal del OUT es la misma que la del IN que cierra: son una
+      // sola jornada; el snapshot escalar ya lo documenta el schema.
+      const event = await tx.clockEvent.create({
+        data: {
+          businessId,
+          userId: target.id,
+          branchId: candidate.branchId ?? null,
+          type: "OUT",
+          at: outAt,
+          note: body.note?.trim() || "Salida corregida por un administrador",
+        },
+      })
+      return { candidate, event }
     })
 
-    let candidate: (typeof events)[number] | null = null
-    for (let i = 0; i < events.length; i++) {
-      const e = events[i]
-      if (e.type !== "IN") continue
-      const next = events[i + 1] ?? null
-      // IN ya consumido por un OUT posterior: esa jornada ya tiene cierre.
-      if (next?.type === "OUT") continue
-      if (e.at.getTime() > outAt.getTime()) continue // cerrar antes de entrar no tiene sentido
-      // Un evento intermedio a ≤ outAt se interpone: el OUT nuevo no
-      // emparejaría con ESTE IN al derivarse.
-      if (next && next.at.getTime() <= outAt.getTime()) continue
-      candidate = e // el más antiguo compatible (events viene ordenado)
-      break
-    }
-
-    if (!candidate) {
+    if (!closed) {
       return NextResponse.json(
         { error: "No hay una jornada abierta que cerrar con esa hora de salida." },
         { status: 409 }
       )
     }
 
-    // La sucursal del OUT es la misma que la del IN que cierra: son una sola
-    // jornada; el snapshot escalar ya lo documenta el schema.
-    const event = await prisma.clockEvent.create({
-      data: {
-        businessId,
-        userId: target.id,
-        branchId: candidate.branchId ?? null,
-        type: "OUT",
-        at: outAt,
-        note: body.note?.trim() || "Salida corregida por un administrador",
-      },
-    })
-
     await recordAudit(prisma, {
       businessId,
       actorId: session.user.id,
       action: "ASISTENCIA_CIERRE",
       entity: "asistencia",
-      entityId: event.id,
+      entityId: closed.event.id,
       entityName: target.name,
-      summary: `Cerró la jornada de "${target.name}": entrada ${mxDateTime(candidate.at)} → salida ${mxDateTime(outAt)}`,
+      summary: `Cerró la jornada de "${target.name}": entrada ${mxDateTime(closed.candidate.at)} → salida ${mxDateTime(outAt)}`,
       changes: {
         usuarioId: { before: null, after: target.id },
         salida: { before: null, after: outAt.toISOString() },
-        entradaEvento: { before: null, after: candidate.id },
+        entradaEvento: { before: null, after: closed.candidate.id },
       },
     })
 
-    return NextResponse.json({ event }, { status: 201, headers: NO_STORE })
+    return NextResponse.json({ event: closed.event }, { status: 201, headers: NO_STORE })
   } catch (error) {
     return businessFailure(error)
   }

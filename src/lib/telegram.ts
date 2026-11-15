@@ -55,6 +55,41 @@ export function escapeTelegramHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
+/** Tope de espera por llamada a la Bot API desde el proceso web. */
+const TELEGRAM_FETCH_TIMEOUT_MS = 8000
+/** Cap de producto al retry_after que Telegram pida en un 429. */
+const TELEGRAM_RETRY_AFTER_CAP_MS = 60_000
+
+/**
+ * POST /sendMessage con timeout de 8 s (un socket colgado antes congelaba el
+ * bucle entero de destinatarios) y UNA reintentación cuando la API responde
+ * 429: se lee `parameters.retry_after` del cuerpo, se espera (cap 60 s) y se
+ * reintenta una sola vez. Sin colas: cualquier otro status devuelve la
+ * respuesta original.
+ */
+async function postTelegramMessage(token: string, chatId: string, message: string): Promise<Response> {
+  const send = () => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" }),
+    signal: AbortSignal.timeout(TELEGRAM_FETCH_TIMEOUT_MS),
+  })
+  const res = await send()
+  if (res.status !== 429) return res
+  let waitMs = 0
+  try {
+    const data = (await res.json()) as { parameters?: { retry_after?: unknown } } | null
+    const secs = data?.parameters?.retry_after
+    if (typeof secs === "number" && Number.isFinite(secs) && secs > 0) {
+      waitMs = Math.min(secs * 1000, TELEGRAM_RETRY_AFTER_CAP_MS)
+    }
+  } catch {
+    // Cuerpo ilegible en el 429: reintento inmediato igual vale una vez.
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
+  return send()
+}
+
 /**
  * Mensaje HTML directo a un chat de Telegram ya resuelto (telegramId ligado).
  * A diferencia de sendTelegramToCustomer no filtra por rol/tenant: el caller
@@ -65,12 +100,7 @@ export async function sendTelegramMessage(telegramId: string, message: string): 
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return false
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: telegramId, text: message, parse_mode: "HTML" }),
-      signal: AbortSignal.timeout(8000),
-    })
+    const res = await postTelegramMessage(token, telegramId, message)
     if (!res.ok) console.error(`[telegram] sendMessage directo falló: HTTP ${res.status}`)
     return res.ok
   } catch (error) {
@@ -100,12 +130,7 @@ export async function sendTelegramToCustomer(
   })
   if (!customer?.telegramId) return false
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: customer.telegramId, text: message, parse_mode: "HTML" }),
-      signal: AbortSignal.timeout(8000),
-    })
+    const res = await postTelegramMessage(token, customer.telegramId, message)
     if (!res.ok) console.error(`[telegram] sendMessage a cliente falló: HTTP ${res.status}`)
     return res.ok
   } catch (error) {
@@ -139,11 +164,9 @@ export async function sendTelegramToUsers(
   let sent = 0
   for (const user of users) {
     try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: user.telegramId, text: message, parse_mode: "HTML" }),
-      })
+      // Timeout + reintento de 429 en postTelegramMessage: antes el fetch en
+      // bucle no tenía timeout — un socket colgado congelaba toda la lista.
+      const res = await postTelegramMessage(token, user.telegramId!, message)
       if (res.ok) sent++
     } catch (error) {
       console.error("[telegram] sendMessage falló:", error)

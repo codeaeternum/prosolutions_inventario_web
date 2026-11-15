@@ -501,7 +501,12 @@ export function EncargosPanel() {
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data.error || "El aliado no recibió la solicitud")
             transitionKeys.current[keySlot] = null
-            toast.success(`Solicitud enviada a ${suggestion.business.name}`, { description: "El encargo quedó como pedida." })
+            toast.success(
+                data.deduplicated
+                    ? `El encargo ya tenía una solicitud ligada en ${suggestion.business.name}`
+                    : `Solicitud enviada a ${suggestion.business.name}`,
+                { description: data.deduplicated ? "Se reutilizó la solicitud pendiente; no se abrió otra." : "El encargo quedó como pedida." },
+            )
             if (!item) resetEncargoForm()
             setAllyBoxFor(null)
             await fetchEncargos()

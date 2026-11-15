@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { businessFailure } from "@/lib/domain/http"
 import { BusinessError, operationKeySchema } from "@/lib/domain/operations"
 import { checkAndRecord } from "@/lib/rate-limit"
+import { readBoundedBody, requestWithBody } from "@/lib/bounded-body"
 import { deleteRepairPhotoFile, evidenceImageFormat, MAX_EVIDENCE_BYTES, writeRepairPhoto } from "@/lib/repair-evidence"
 
 // Órdenes en estado terminal: la evidencia es parte del expediente cerrado.
@@ -63,7 +64,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       throw new BusinessError("La orden está cerrada; solo un administrador puede agregar evidencia.", 403)
     }
 
-    const form = await req.formData()
+    // Cota real del cuerpo: el chequeo de Content-Length de arriba solo es
+    // el rechazo temprano — con chunked no hay header y formData() buferaría
+    // todo. Se cuentan los bytes del stream y se aborta al pasar el tope
+    // (patrón de /api/payment-proofs, ver lib/bounded-body).
+    const bounded = await readBoundedBody(req, MAX_EVIDENCE_BYTES + MULTIPART_OVERHEAD_BYTES)
+    if (!bounded.ok) {
+      throw new BusinessError(
+        bounded.reason === "too_large" ? "La imagen debe pesar máximo 5 MB." : "Adjunta una imagen en el campo file.",
+        bounded.reason === "too_large" ? 413 : 400,
+      )
+    }
+    const form = await requestWithBody(req, bounded.bytes).formData()
     const file = form.get("file")
     if (!(file instanceof File)) throw new BusinessError("Adjunta una imagen en el campo file.")
     if (file.size === 0 || file.size > MAX_EVIDENCE_BYTES) throw new BusinessError("La imagen debe pesar máximo 5 MB.")

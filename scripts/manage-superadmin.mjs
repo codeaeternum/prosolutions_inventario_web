@@ -74,6 +74,7 @@ async function run() {
         process.exit(1)
       }
       const nextValue = command === "--grant"
+      await client.query("BEGIN")
       const res = await client.query(
         `UPDATE "User" SET "isSuperAdmin" = $1, "updatedAt" = NOW() WHERE LOWER(email) = $2 RETURNING id, name, email, role, "isSuperAdmin", "businessId"`,
         [nextValue, email]
@@ -83,6 +84,31 @@ async function run() {
         process.exit(1)
       }
       const u = res.rows[0]
+      // Bitácora de plataforma: el grant/revoke por CLI queda en el mismo
+      // historial que el de la consola web (actor "cli" — no hay sesión).
+      const bizRes = await client.query(
+        `SELECT name, slug FROM "Business" WHERE id = $1`,
+        [u.businessId]
+      )
+      const biz = bizRes.rows[0] ?? {}
+      await client.query(
+        `INSERT INTO "PlatformEvent" (id, "businessId", "businessSlug", "businessName", kind, "actorId", "actorEmail", detail, "createdAt")
+         VALUES ($1, $2, $3, $4, $5, 'cli', NULL, $6::jsonb, NOW())`,
+        [
+          `pe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          u.businessId,
+          biz.slug ?? "",
+          biz.name ?? "",
+          nextValue ? "SUPERADMIN_GRANTED" : "SUPERADMIN_REVOKED",
+          JSON.stringify({
+            targetUserId: u.id,
+            targetUserName: u.name,
+            targetUserEmail: u.email,
+            via: "manage-superadmin.mjs",
+          }),
+        ]
+      )
+      await client.query("COMMIT")
       console.log(
         nextValue
           ? `OK: "${u.name}" (${u.email}) ahora es Superadmin de plataforma (/platform).`

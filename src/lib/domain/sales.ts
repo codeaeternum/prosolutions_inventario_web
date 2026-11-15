@@ -308,10 +308,29 @@ export async function refund(tx: Transaction, input: {
   if (input.refundCents > netCents) throw new BusinessError("El reembolso supera lo cobrado por ese medio de pago.", 409)
 
   let cashMovementId: string | undefined
+  // La caja de la devolución es la del COBRO original, no la de la venta:
+  // payDocument puede cobrar en una sucursal distinta a sale.branchId
+  // (cashierBranchId) y sacar el OUT por input.branchId dejaría el asiento
+  // en una caja que nunca recibió ese efectivo — la A queda cortada y la B
+  // inflada. Se sigue el cashMovementId del cobro CONFIRMED más reciente;
+  // pagos sin movimiento de caja (tarjeta/transferencia/crédito) no abren
+  // caja, y un EFECTIVO legado sin vínculo conserva input.branchId.
+  let resolvedCashBranchId: string | null = null
+  const cashBranchId = async () => {
+    if (resolvedCashBranchId === null) {
+      const original = await tx.payment.findFirst({
+        where: { saleId: input.saleId, status: "CONFIRMED", amount: { gt: 0 }, cashMovementId: { not: null } },
+        orderBy: { createdAt: "desc" },
+        select: { cashMovement: { select: { register: { select: { branchId: true } } } } },
+      })
+      resolvedCashBranchId = original?.cashMovement?.register.branchId ?? input.branchId
+    }
+    return resolvedCashBranchId
+  }
   // Devolución física de dinero: solo si la caja tiene efectivo suficiente —
   // una salida mayor dejaría la caja en negativo (dinero ficticio).
   const cashRefund = async (refundCents: number, description: string) => {
-    const register = await openRegister(tx, input.branchId, input.businessId)
+    const register = await openRegister(tx, await cashBranchId(), input.businessId)
     const availableCents = await registerCashCents(tx, register.id)
     if (refundCents > availableCents) throw new BusinessError("El efectivo en caja no alcanza para esta devolución.", 409, "INSUFFICIENT_CASH")
     const cashOut = await tx.cashMovement.create({ data: {

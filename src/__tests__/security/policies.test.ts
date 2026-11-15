@@ -60,10 +60,15 @@ describe("next-auth server redirect callback", () => {
 })
 describe("catalog role-based disclosure", () => {
   const product = { id: "p", name: "Screen", retailPrice: 100, wholesalePrice: 80, costPrice: 50, minStock: 2, stock: 3, _count: { reservations: 4 }, futurePrivateColumn: "private" }
-  it("anonymous, pending and normal customers receive only retail fields", () => {
-    for (const viewer of [null, { role: "CUSTOMER", status: "APPROVED", customerType: "NORMAL" }, { role: "ADMIN", status: "PENDING" }]) {
-      expect(productDto(product, viewer)).toEqual({ id: "p", name: "Screen", retailPrice: 100, stock: 3 })
+  it("anonymous and pending viewers receive binary availability; approved customers keep exact stock", () => {
+    // Sin sesión o sin aprobar: la existencia exacta es dato interno — solo
+    // disponibilidad binaria (igual que la vitrina pública).
+    for (const viewer of [null, { role: "ADMIN", status: "PENDING" }]) {
+      expect(productDto(product, viewer)).toEqual({ id: "p", name: "Screen", retailPrice: 100, inStock: true })
     }
+    // Cliente aprobado (mostrador/POS operan con sesión): stock exacto.
+    expect(productDto(product, { role: "CUSTOMER", status: "APPROVED", customerType: "NORMAL" }))
+      .toEqual({ id: "p", name: "Screen", retailPrice: 100, stock: 3 })
   })
   it("approved wholesale customer sees negotiated tier but never costs, counts or future columns", () => {
     const dto = productDto(product, { role: "CUSTOMER", status: "APPROVED", customerType: "STORE" })

@@ -6,6 +6,7 @@ import { normalizePhone } from "@/lib/utils"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendPasswordResetEmail } from "@/lib/mailer"
 import { escapeTelegramHtml, sendTelegramMessage } from "@/lib/telegram"
+import { withLatencyFloor } from "@/lib/timing"
 
 /**
  * POST /api/auth/password-reset/request
@@ -61,73 +62,82 @@ export async function POST(req: Request) {
       )
     }
 
-    const slug = parsed.data.businessSlug?.trim().toLowerCase() || undefined
-    const where = {
-      ...(isEmail
-        ? { email: normId }
-        : {
-            OR: [
-              { phone: normId },
-              ...(rawLower !== normId ? [{ phone: rawLower }] : []),
-            ],
-          }),
-      status: { not: "REJECTED" as const },
-      business: {
-        isActive: true,
-        ...(slug ? { slug } : {}),
-      },
-    }
-    const select = {
-      id: true,
-      businessId: true,
-      email: true,
-      phone: true,
-      telegramId: true,
-      status: true,
-      business: { select: { name: true, isActive: true } },
-    } as const
-
-    const matches =
-      typeof prisma.user.findMany === "function"
-        ? await prisma.user.findMany({ where, select, take: 2 })
-        : []
-    const user =
-      matches.length === 1
-        ? matches[0]
-        : matches.length === 0 && typeof prisma.user.findFirst === "function"
-          ? await prisma.user.findFirst({ where, select })
-          : null
-
-    if (
-      user &&
-      user.status !== "REJECTED" &&
-      user.business?.isActive !== false &&
-      (user.email || user.telegramId)
-    ) {
-      const channel = user.email ? "EMAIL" : "TELEGRAM"
-      const { code } = await issueVerificationCode(prisma, {
-        userId: user.id,
-        businessId: user.businessId,
-        identifier: normId,
-        channel,
-        purpose: "PASSWORD_RESET",
-      })
-
-      if (user.email) {
-        await sendPasswordResetEmail(user.email, code, user.business?.name)
+    // Piso de latencia anti-enumeración: status y body son constantes, pero
+    // la rama "cuenta existe" await-ea issueVerificationCode + Resend
+    // (~200-800 ms) + Telegram y la "no existe" respondía en ~10 ms — una
+    // request de >300 ms confirmaba la cuenta. El piso aleatorio [500, 800]
+    // iguala ambas ramas y el jitter por request impide que el propio umbral
+    // las distinga (ver lib/timing). Los 400/429 anteriores no entran al
+    // piso: ya se distinguen por status y no revelan existencia.
+    return withLatencyFloor(async () => {
+      const slug = parsed.data.businessSlug?.trim().toLowerCase() || undefined
+      const where = {
+        ...(isEmail
+          ? { email: normId }
+          : {
+              OR: [
+                { phone: normId },
+                ...(rawLower !== normId ? [{ phone: rawLower }] : []),
+              ],
+            }),
+        status: { not: "REJECTED" as const },
+        business: {
+          isActive: true,
+          ...(slug ? { slug } : {}),
+        },
       }
-      if (user.telegramId) {
-        await sendTelegramMessage(
-          user.telegramId,
-          `🔑 <b>Código para restablecer tu contraseña</b>\n\nTu código de verificación es: <code>${escapeTelegramHtml(code)}</code>\n\nExpira en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.`,
-        )
-      }
-    }
+      const select = {
+        id: true,
+        businessId: true,
+        email: true,
+        phone: true,
+        telegramId: true,
+        status: true,
+        business: { select: { name: true, isActive: true } },
+      } as const
 
-    return NextResponse.json(
-      { ok: true, message: ANTI_ENUM_MESSAGE },
-      { status: 200, headers: NO_STORE },
-    )
+      const matches =
+        typeof prisma.user.findMany === "function"
+          ? await prisma.user.findMany({ where, select, take: 2 })
+          : []
+      const user =
+        matches.length === 1
+          ? matches[0]
+          : matches.length === 0 && typeof prisma.user.findFirst === "function"
+            ? await prisma.user.findFirst({ where, select })
+            : null
+
+      if (
+        user &&
+        user.status !== "REJECTED" &&
+        user.business?.isActive !== false &&
+        (user.email || user.telegramId)
+      ) {
+        const channel = user.email ? "EMAIL" : "TELEGRAM"
+        const { code } = await issueVerificationCode(prisma, {
+          userId: user.id,
+          businessId: user.businessId,
+          identifier: normId,
+          channel,
+          purpose: "PASSWORD_RESET",
+        })
+
+        if (user.email) {
+          await sendPasswordResetEmail(user.email, code, user.business?.name)
+        }
+        if (user.telegramId) {
+          await sendTelegramMessage(
+            user.telegramId,
+            `🔑 <b>Código para restablecer tu contraseña</b>\n\nTu código de verificación es: <code>${escapeTelegramHtml(code)}</code>\n\nExpira en 15 minutos. Si no solicitaste este cambio, ignora este mensaje.`,
+          )
+        }
+      }
+
+      return NextResponse.json(
+        { ok: true, message: ANTI_ENUM_MESSAGE },
+        { status: 200, headers: NO_STORE },
+      )
+    })
   } catch (error) {
     console.error("[password-reset/request] Error:", error)
     return NextResponse.json(
