@@ -21,6 +21,18 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: "components",
+          environment: "jsdom",
+          // Convención: los *.test.tsx renderizan React con
+          // @testing-library/react; los *.test.ts de src/__tests__/components/
+          // siguen en `unit` (nodos, helpers puros extraídos de componentes).
+          include: ["src/**/*.test.tsx"],
+          setupFiles: ["src/__tests__/setup-components.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "integration",
           include: ["src/**/*.integration.test.ts"],
           // Todos los *.integration.test.ts comparten la misma base de datos

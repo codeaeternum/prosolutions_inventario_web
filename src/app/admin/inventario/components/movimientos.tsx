@@ -291,13 +291,15 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                                 <SelectContent>
                                                     {movementTypes.map(t => (
                                                         <SelectItem key={t.value} value={t.value}>
-                                                            <div className="flex flex-col gap-0.5">
+                                                            {/* span (no div): ItemText de Radix renderiza un
+                                                                span; un bloque dentro violaría el DOM. */}
+                                                            <span className="flex flex-col gap-0.5">
                                                                 <span className="flex items-center gap-2">
                                                                     <t.icon className={`h-4 w-4 ${t.color}`} />
                                                                     {t.label}
                                                                 </span>
                                                                 <span className="text-xs text-muted-foreground whitespace-normal">{t.help}</span>
-                                                            </div>
+                                                            </span>
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>

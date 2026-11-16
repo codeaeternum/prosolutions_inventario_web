@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -163,24 +164,6 @@ interface AdminSidebarProps {
 export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed = false }: AdminSidebarProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  // Drawer móvil: foco al primer enlace al abrir y de vuelta a la
-  // hamburguesa al cerrar (incluida la tecla Escape).
-  const menuButtonRef = useRef<HTMLButtonElement>(null)
-  const drawerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return
-    drawerRef.current?.querySelector<HTMLElement>("nav a")?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileMenuOpen(false)
-    }
-    document.addEventListener("keydown", onKeyDown)
-    const menuButton = menuButtonRef.current
-    return () => {
-      document.removeEventListener("keydown", onKeyDown)
-      menuButton?.focus()
-    }
-  }, [mobileMenuOpen])
 
   const filteredNavigation = (user.role === "WORKSHOP" ? workshopGroups : navigationGroups)
     .map(group => ({
@@ -236,7 +219,6 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
     <>
       {/* Mobile menu button - visible in header area */}
       <Button
-        ref={menuButtonRef}
         variant="outline"
         size="icon"
         aria-label="Abrir menú de navegación"
@@ -247,104 +229,103 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
         <Menu className="h-5 w-5" />
       </Button>
 
-      {/* Mobile Drawer Overlay */}
-      {mobileMenuOpen && (
-        <div
-          className="fixed inset-0 z-[100] bg-black/50 lg:hidden"
-          onClick={() => setMobileMenuOpen(false)}
-        />
-      )}
-
-      {/* Mobile Drawer: diálogo modal mientras está abierto (Escape cierra,
-          foco entra al primer enlace y vuelve a la hamburguesa al salir). */}
-      <div
-        ref={drawerRef}
-        role={mobileMenuOpen ? "dialog" : undefined}
-        aria-modal={mobileMenuOpen ? true : undefined}
-        aria-label={mobileMenuOpen ? "Menú" : undefined}
-        // Cerrado sigue en el DOM para animar la salida: inert lo saca del
-        // orden de tab y del árbol de accesibilidad mientras está oculto.
-        inert={!mobileMenuOpen}
-        className={cn(
-          "fixed inset-y-0 left-0 z-[100] w-72 bg-card border-r transform transition-transform duration-300 ease-in-out lg:hidden",
-          mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-        )}
-      >
-        <div className="flex h-16 items-center justify-between px-6 border-b">
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Wrench className="h-5 w-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-lg leading-tight">Reficio</span>
-              <BusinessName fallback="Mi taller" className="text-[10px] text-muted-foreground leading-tight" />
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Cerrar menú de navegación"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-        {/* Búsqueda global: abre la paleta de comandos */}
-        <div className="p-4 pb-0">
-          <button
-            type="button"
-            onClick={() => {
-              setMobileMenuOpen(false)
-              openCommandPalette()
+      {/* Mobile Drawer: Radix Dialog modal — overlay, Escape, focus trap,
+          foco de vuelta a la hamburguesa al cerrar y aria-hidden del resto
+          de la página, todo nativo (mismo patrón que ui/sheet.tsx). */}
+      <DialogPrimitive.Root open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/50 lg:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+          <DialogPrimitive.Content
+            aria-describedby={undefined}
+            onOpenAutoFocus={(event) => {
+              // Como antes: al abrir, el foco cae en el primer enlace de
+              // navegación (no en el botón de cerrar del encabezado).
+              event.preventDefault()
+              ;(event.currentTarget as HTMLElement)
+                .querySelector<HTMLElement>("nav a")
+                ?.focus()
             }}
-            className="flex w-full h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="fixed inset-y-0 left-0 z-[100] w-72 bg-card border-r lg:hidden flex flex-col data-[state=open]:animate-in data-[state=open]:slide-in-from-left data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left duration-300 ease-in-out"
           >
-            <Search className="h-4 w-4 shrink-0" />
-            <span className="flex-1 text-left">Buscar…</span>
-          </button>
-        </div>
-        <nav className="flex-1 overflow-y-auto p-4 pb-24">
-          <ul role="list" className="space-y-6">
-            {filteredNavigation.map((group, groupIndex) => (
-              <li key={group.name || groupIndex}>
-                {group.name !== "" && (
-                  <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2 px-2">
-                    {group.name}
-                  </div>
-                )}
-                <ul role="list" className="-mx-2 space-y-1">
-                  {group.items.map((item) => {
-                    const isActive = isNavItemActive(pathname, item.href)
-                    return (
-                      <li key={item.name}>
-                        <Link
-                          href={item.href}
-                          onClick={() => setMobileMenuOpen(false)}
-                          className={cn(
-                            isActive
-                              ? "bg-primary/10 text-primary"
-                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                            "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150"
-                          )}
-                        >
-                          <item.icon
-                            className={cn(
-                              isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
-                              "h-5 w-5 shrink-0"
-                            )}
-                            aria-hidden="true"
-                          />
-                          {item.name}
-                        </Link>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </div>
+            <DialogPrimitive.Title className="sr-only">Menú</DialogPrimitive.Title>
+            <div className="flex h-16 shrink-0 items-center justify-between px-6 border-b">
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <Wrench className="h-5 w-5" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-bold text-lg leading-tight">Reficio</span>
+                  <BusinessName fallback="Mi taller" className="text-[10px] text-muted-foreground leading-tight" />
+                </div>
+              </div>
+              <DialogPrimitive.Close asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Cerrar menú de navegación"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </DialogPrimitive.Close>
+            </div>
+            {/* Búsqueda global: abre la paleta de comandos */}
+            <div className="p-4 pb-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  openCommandPalette()
+                }}
+                className="flex w-full h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Search className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">Buscar…</span>
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-4 pb-24">
+              <ul role="list" className="space-y-6">
+                {filteredNavigation.map((group, groupIndex) => (
+                  <li key={group.name || groupIndex}>
+                    {group.name !== "" && (
+                      <div className="text-xs font-semibold leading-6 text-muted-foreground uppercase tracking-wider mb-2 px-2">
+                        {group.name}
+                      </div>
+                    )}
+                    <ul role="list" className="-mx-2 space-y-1">
+                      {group.items.map((item) => {
+                        const isActive = isNavItemActive(pathname, item.href)
+                        return (
+                          <li key={item.name}>
+                            <Link
+                              href={item.href}
+                              onClick={() => setMobileMenuOpen(false)}
+                              className={cn(
+                                isActive
+                                  ? "bg-primary/10 text-primary"
+                                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                                "group flex gap-x-3 rounded-lg px-3 py-2 text-sm leading-6 font-medium transition-all duration-150"
+                              )}
+                            >
+                              <item.icon
+                                className={cn(
+                                  isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+                                  "h-5 w-5 shrink-0"
+                                )}
+                                aria-hidden="true"
+                              />
+                              {item.name}
+                            </Link>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
       {/* Mobile Bottom Navigation Bar */}
       <div className="fixed bottom-0 left-0 right-0 z-[90] lg:hidden bg-background border-t safe-area-bottom">

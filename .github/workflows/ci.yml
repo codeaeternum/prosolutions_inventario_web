@@ -39,7 +39,7 @@ jobs:
         run: npm run lint
 
       - name: Run unit tests
-        run: npx vitest run --project unit
+        run: npx vitest run --project unit --project components
 
       - name: Telegram bot bundle check
         run: npm run bot:build

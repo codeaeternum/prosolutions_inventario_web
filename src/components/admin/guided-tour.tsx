@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
-import { createPortal } from "react-dom"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { ArrowRight, Check, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -30,6 +30,11 @@ import {
  *
  * Mientras está abierto, su role="dialog" hace que anyDialogOpen() de la
  * paleta ⌘K apague los atajos globales: las teclas le pertenecen al tour.
+ *
+ * Es un diálogo MODAL de verdad (el overlay bloquea toda la página y el
+ * foco no puede salir del tooltip), así que vive sobre Radix Dialog:
+ * focus trap, Escape → "skipped", aria-hidden del resto del documento y
+ * restauración del foco al cerrar salen gratis de la primitiva.
  */
 
 // Retraso para no competir con la carga inicial del dashboard.
@@ -143,7 +148,6 @@ export function GuidedTour({ hasTaller = true }: { hasTaller?: boolean }) {
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null)
   const [tipPos, setTipPos] = useState<TooltipPosition | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
-  const restoreFocusRef = useRef<HTMLElement | null>(null)
 
   const open = stepIndex !== null
   const step = open ? steps[stepIndex] : null
@@ -152,8 +156,8 @@ export function GuidedTour({ hasTaller = true }: { hasTaller?: boolean }) {
   const finish = useCallback((result: TourResult) => {
     persistTourResult(result)
     setStepIndex(null)
-    restoreFocusRef.current?.focus?.()
-    restoreFocusRef.current = null
+    // La restauración del foco la hace Radix (onCloseAutoFocus por defecto
+    // vuelve al elemento que tenía el foco antes de abrir el diálogo).
   }, [])
 
   // Auto-apertura: una sola vez por navegador, tras la carga inicial.
@@ -165,10 +169,7 @@ export function GuidedTour({ hasTaller = true }: { hasTaller?: boolean }) {
       return
     }
     if (seen) return
-    const timer = setTimeout(() => {
-      restoreFocusRef.current = document.activeElement as HTMLElement | null
-      setStepIndex(0)
-    }, TOUR_DELAY_MS)
+    const timer = setTimeout(() => setStepIndex(0), TOUR_DELAY_MS)
     return () => clearTimeout(timer)
   }, [])
 
@@ -212,21 +213,7 @@ export function GuidedTour({ hasTaller = true }: { hasTaller?: boolean }) {
     dialogRef.current?.focus()
   }, [open, stepIndex])
 
-  // Escape cierra (cuenta como "skipped" para no volver a molestar). El
-  // listener va en document por si el foco saliera del tooltip.
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation()
-        finish("skipped")
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [open, finish])
-
-  if (!open || !step || typeof document === "undefined") return null
+  if (!open || !step) return null
 
   const next = () => {
     if (isLast) {
@@ -236,163 +223,149 @@ export function GuidedTour({ hasTaller = true }: { hasTaller?: boolean }) {
     }
   }
 
-  // Focus trap: Tab cicla entre los controles del tooltip (el overlay
-  // bloquea el resto de la UI, así que el foco no tiene a dónde irse).
-  const trapTab = (e: React.KeyboardEvent) => {
-    if (e.key !== "Tab" || !dialogRef.current) return
-    const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
-      'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    )
-    if (focusables.length === 0) return
-    const first = focusables[0]
-    const last = focusables[focusables.length - 1]
-    const active = document.activeElement
-    if (!dialogRef.current.contains(active)) {
-      e.preventDefault()
-      first.focus()
-    } else if (e.shiftKey && active === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault()
-      first.focus()
-    }
-  }
-
   const pad = SPOTLIGHT_PADDING
 
-  return createPortal(
-    <div
-      // El contenedor a pantalla completa captura todos los clics: el hueco
-      // es solo visual, la UI de abajo queda bloqueada durante el tour.
-      className="fixed inset-0 z-[105]"
-      onKeyDown={trapTab}
+  return (
+    <DialogPrimitive.Root
+      open={open}
+      // Escape (DismissableLayer) es el único cierre iniciado por Radix:
+      // cuenta como "skipped" para no volver a molestar.
+      onOpenChange={(nextOpen) => { if (!nextOpen) finish("skipped") }}
     >
-      {/* Backdrop con "hueco": el anillo sobre el objetivo proyecta la
-          sombra que oscurece todo lo demás. */}
-      {targetRect ? (
-        <div
-          aria-hidden="true"
-          className="fixed rounded-lg ring-2 ring-primary/70 motion-safe:transition-all motion-safe:duration-300"
-          style={{
-            top: targetRect.top - pad,
-            left: targetRect.left - pad,
-            width: targetRect.width + pad * 2,
-            height: targetRect.height + pad * 2,
-            boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.55)",
-          }}
-        />
-      ) : (
-        <div aria-hidden="true" className="fixed inset-0 bg-black/55" />
-      )}
-
-      {/* Tooltip del paso */}
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="guided-tour-title"
-        aria-describedby="guided-tour-body"
-        tabIndex={-1}
-        className={cn(
-          "fixed w-[min(20rem,calc(100vw-2rem))] rounded-xl border bg-popover p-4 text-popover-foreground shadow-2xl outline-none",
-          "motion-safe:transition-[top,left] motion-safe:duration-300"
-        )}
-        style={{
-          top: tipPos?.top ?? 0,
-          left: tipPos?.left ?? 0,
-          visibility: tipPos ? "visible" : "hidden",
-        }}
-      >
-        {/* Flecha hacia el objetivo (solo cuando hay ancla real) */}
-        {tipPos && tipPos.placement !== "center" && tipPos.arrowLeft !== null && (
-          <span
+      <DialogPrimitive.Portal>
+        {/* Backdrop con "hueco": el anillo sobre el objetivo proyecta la
+            sombra que oscurece todo lo demás. Los clics en la página no la
+            alcanzan: modal deshabilita pointer-events fuera del contenido
+            y los que caen aquí se previenen abajo (outside interactions). */}
+        {targetRect ? (
+          <div
             aria-hidden="true"
-            className={cn(
-              "absolute h-2.5 w-2.5 rotate-45 bg-popover",
-              tipPos.placement === "bottom"
-                ? "-top-[5px] border-t border-l"
-                : "-bottom-[5px] border-b border-r"
-            )}
-            style={{ left: tipPos.arrowLeft - 5 }}
+            className="fixed z-[105] rounded-lg ring-2 ring-primary/70 motion-safe:transition-all motion-safe:duration-300"
+            style={{
+              top: targetRect.top - pad,
+              left: targetRect.left - pad,
+              width: targetRect.width + pad * 2,
+              height: targetRect.height + pad * 2,
+              boxShadow: "0 0 0 9999px rgb(0 0 0 / 0.55)",
+            }}
           />
+        ) : (
+          <div aria-hidden="true" className="fixed inset-0 z-[105] bg-black/55" />
         )}
 
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-            <h2 id="guided-tour-title" className="text-sm font-semibold leading-tight">
-              {step.title}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => finish("skipped")}
-            aria-label="Cerrar la guía"
-            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <p id="guided-tour-body" className="mt-2 text-sm leading-snug text-muted-foreground">
-          {step.body}
-        </p>
-
-        <div className="mt-4 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => finish("skipped")}
-            aria-label="No volver a mostrar esta guía"
-            className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-          >
-            No volver a mostrar
-          </button>
-          <div className="flex items-center gap-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => finish("skipped")}
-              aria-label="Omitir la guía"
-            >
-              Omitir
-            </Button>
-            <Button
-              size="sm"
-              onClick={next}
-              aria-label={
-                isLast
-                  ? "Terminar la guía"
-                  : `Ir al paso ${stepIndex + 2} de ${steps.length}`
-              }
-            >
-              {isLast ? "Listo" : "Siguiente"}
-              {isLast ? (
-                <Check className="ml-1.5 h-4 w-4" />
-              ) : (
-                <ArrowRight className="ml-1.5 h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* Progreso: puntos visuales + anuncio "paso X de N" para lectores. */}
-        <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden="true">
-          {steps.map((s, i) => (
+        {/* Tooltip del paso: position absoluta manual (spotlight), por eso
+            no va centrada como un Dialog normal. */}
+        <DialogPrimitive.Content
+          ref={dialogRef}
+          tabIndex={-1}
+          // El autofocus inicial lo maneja el effect de arriba (contenedor,
+          // no primer botón) para que se anuncie el título del paso.
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          // Clic fuera del tooltip no cierra el tour (antes el overlay
+          // simplemente tragaba los clics); solo lo cierran sus botones.
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+          className={cn(
+            "fixed z-[105] w-[min(20rem,calc(100vw-2rem))] rounded-xl border bg-popover p-4 text-popover-foreground shadow-2xl outline-none",
+            "motion-safe:transition-[top,left] motion-safe:duration-300"
+          )}
+          style={{
+            top: tipPos?.top ?? 0,
+            left: tipPos?.left ?? 0,
+            visibility: tipPos ? "visible" : "hidden",
+          }}
+        >
+          {/* Flecha hacia el objetivo (solo cuando hay ancla real) */}
+          {tipPos && tipPos.placement !== "center" && tipPos.arrowLeft !== null && (
             <span
-              key={s.id}
+              aria-hidden="true"
               className={cn(
-                "h-1.5 rounded-full motion-safe:transition-all",
-                i === stepIndex ? "w-4 bg-primary" : "w-1.5 bg-muted-foreground/30"
+                "absolute h-2.5 w-2.5 rotate-45 bg-popover",
+                tipPos.placement === "bottom"
+                  ? "-top-[5px] border-t border-l"
+                  : "-bottom-[5px] border-b border-r"
               )}
+              style={{ left: tipPos.arrowLeft - 5 }}
             />
-          ))}
-        </div>
-        <p role="status" className="sr-only">
-          Paso {stepIndex + 1} de {steps.length}: {step.title}
-        </p>
-      </div>
-    </div>,
-    document.body
+          )}
+
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              {/* Title/Description autogeneran los ids de aria-labelledby /
+                  aria-describedby del Content — no pasar id propio. */}
+              <DialogPrimitive.Title className="text-sm font-semibold leading-tight">
+                {step.title}
+              </DialogPrimitive.Title>
+            </div>
+            <button
+              type="button"
+              onClick={() => finish("skipped")}
+              aria-label="Cerrar la guía"
+              className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <DialogPrimitive.Description className="mt-2 text-sm leading-snug text-muted-foreground">
+            {step.body}
+          </DialogPrimitive.Description>
+
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => finish("skipped")}
+              aria-label="No volver a mostrar esta guía"
+              className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+            >
+              No volver a mostrar
+            </button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => finish("skipped")}
+                aria-label="Omitir la guía"
+              >
+                Omitir
+              </Button>
+              <Button
+                size="sm"
+                onClick={next}
+                aria-label={
+                  isLast
+                    ? "Terminar la guía"
+                    : `Ir al paso ${stepIndex + 2} de ${steps.length}`
+                }
+              >
+                {isLast ? "Listo" : "Siguiente"}
+                {isLast ? (
+                  <Check className="ml-1.5 h-4 w-4" />
+                ) : (
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* Progreso: puntos visuales + anuncio "paso X de N" para lectores. */}
+          <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden="true">
+            {steps.map((s, i) => (
+              <span
+                key={s.id}
+                className={cn(
+                  "h-1.5 rounded-full motion-safe:transition-all",
+                  i === stepIndex ? "w-4 bg-primary" : "w-1.5 bg-muted-foreground/30"
+                )}
+              />
+            ))}
+          </div>
+          <p role="status" className="sr-only">
+            Paso {stepIndex + 1} de {steps.length}: {step.title}
+          </p>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }

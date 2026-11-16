@@ -95,10 +95,44 @@ npm run test:e2e:ui
 | `cart-flow.spec.ts` | Carrito anónimo: `cart:public` en localStorage hidrata el badge del header; "Agregar" sin sesión → `/login?callbackUrl=/catalogo`; `/carrito` anónimo rebota a `/?redirect=bot`. | No |
 | `tenant-isolation.spec.ts` | Fugas cross-tenant vía localStorage (caché legacy de notificaciones, `cart:{businessId}`, preferencia `reficio-branch`). | No / gated |
 | `admin-smoke.spec.ts` | Login admin → dashboard + sidebar, POS (`/admin/ventas`), `/admin/reportes`, `/carrito` con sesión (quitar item, sync localStorage). | Sí — `E2E_ADMIN_*` |
+| `admin-venta.spec.ts` | **Escribe.** POS: venta real en EFECTIVO (alta de producto E2E por API, ticket por búsqueda, `#pos-cash-given`, confirmación) + anulación del ticket (reembolso y stock de vuelta). Venta a TRANSFERENCIA sin folio se bloquea; con folio confirma. | Sí — `E2E_ALLOW_WRITES=1` |
+| `admin-refund.spec.ts` | **Escribe.** Venta a transferencia por UI + devolución parcial por API (`/api/sales/[id]/returns`) con `refundMethod` bancario: `returnedQuantity`, Payment negativo `REFUNDED`. Persistencia del `reference` del reembolso y la UI «Referencia bancaria» se auto-skipean si la imagen es anterior a las oleadas 41/43. | Sí — `E2E_ALLOW_WRITES=1` |
+| `admin-catalogo.spec.ts` | **Escribe.** `/admin/inventario` → «Dar de alta» por UI (`#pf-name`, `#pf-category`, `#pf-retail`, `#pf-universal`), aparece en la lista, se borra por `DELETE /api/products/[id]` (stock 0 — el DELETE rechaza productos con existencia). | Sí — `E2E_ALLOW_WRITES=1` |
+| `admin-kiosco.spec.ts` | **Escribe (rate-limit counters).** `POST /api/asistencia/kiosco`: userId inexistente y PIN malformado responden el mismo 401 «PIN incorrecto o usuario inválido» (sin oráculo de existencia); sin sesión rebota 401/403/redirect. Se auto-skipea si la imagen es pre-oleada 37 (endpoint inexistente). | Sí — `E2E_ALLOW_WRITES=1` |
+
+### Ambiente pilot desechable
+
+El compose `pilot` (`prosolutions-pilot-app-1` + `prosolutions-pilot-db-1`) expone la app **solo en 127.0.0.1:3316** del host donde corre (N5 `galindoasc-desktop`, o la Mac si el stack también corre local en OrbStack/Docker). Es un ambiente **desechable**: los specs de escritura ensucian su BD con registros prefijados `E2E-` + timestamp.
+
+```bash
+bash scripts/e2e-pilot.sh                    # suite completa contra el pilot
+bash scripts/e2e-pilot.sh e2e/admin-venta.spec.ts   # solo un spec
+```
+
+El script:
+
+1. Verifica si `http://localhost:3316/login` ya responde; si no, abre el túnel `ssh -fN -L 3316:127.0.0.1:3316 galindoasc-desktop` (BatchMode, alias del `~/.ssh/config`).
+2. Exporta `E2E_ADMIN_EMAIL=e2e-admin@prosolutions.local`, la contraseña (vive solo en el script, no en docs) y `E2E_ALLOW_WRITES=1`.
+3. Corre `E2E_BASE_URL=http://localhost:3316 npx playwright test "$@"` — los args de Playwright pasan tal cual.
+
+Notas operativas del pilot:
+
+- La cuenta `e2e-admin@prosolutions.local` es exclusiva de ese ambiente (ADMIN, APPROVED, sucursal principal). No existe en producción.
+- El login limita intentos por IP (30 / 15 min compartidos cuando no hay `TRUST_PROXY_HEADERS`). Los specs de escritura comparten UNA sesión vía `loginAdminCached` (`e2e/pilot-helpers.ts`): un solo login real por corrida, cookies cacheadas en `$TMPDIR`. Si una corrida anterior dejó el bucket saturado, `docker restart prosolutions-pilot-app-1` lo resetea (el limiter es en memoria).
+- **Imagen del pilot:** la imagen `prosolutions-app:invfix` es ANTERIOR a las oleadas 37–43 del repo. Los specs de escritura validan lo que la imagen soporta y se **auto-skipean con nota** en capacidades que todavía no llegan (kiosco, UI de devoluciones, `reference` en reembolsos, `?q=` de `/api/sales` — por eso el helper filtra del lado del cliente). Al refrescar la imagen esos skips se convierten en cobertura real sin tocar los specs.
 
 ### Proyectos y seguridad
 
 - **chromium** (Desktop Chrome): toda la suite. **mobile-chrome** (Pixel 7): solo los specs públicos — responsive smoke barato.
-- Contra **producción** solo es segura la suite pública + los specs con sesión de solo-lectura. Cualquier spec futuro que persista datos debe vivir en el describe `escritura — ambiente desechable` de `admin-smoke.spec.ts`, gated por `E2E_ALLOW_WRITES=1`.
+- Contra **producción** solo es segura la suite pública + los specs con sesión de solo-lectura. Cualquier spec que persista datos debe vivir en el describe `escritura — solo ambiente desechable`, gated por `E2E_ALLOW_WRITES=1`.
 
 Verificado: `E2E_BASE_URL=https://reficio.app npx playwright test` → **46 passed, 11 skipped** (los de sesión, sin credenciales).
+
+Verificado: `bash scripts/e2e-pilot.sh` contra el pilot → los specs de escritura **4 passed / 5 skipped / 0 failed** (los skips son capacidades ausentes en la imagen vieja: kiosco, UI de devoluciones, `reference` de reembolso). En la corrida de la suite completa (66 tests, 9 workers) los 4 specs de escritura pasaron; los demás fallos son specs históricos escritos contra el código nuevo corriendo sobre la imagen vieja del pilot (comportamiento de carrito, `/recuperar`, `/catalogo` público, scopes de localStorage, `/login` — divergencia de imagen, no del repo).
+
+Defectos reales observados en el pilot durante esta verificación:
+
+- **Layout duplicado en la imagen del pilot:** el admin renderiza dos `<main role="main" id="main-content">` (id duplicado + landmark doble) y dos inputs `aria-label="Buscar producto para vender"`. Los specs toleran el duplicado (`:visible`); si la imagen nueva lo arregla, siguen funcionando.
+- **`POST /api/sales` intermitente bajo carga:** con 9 workers el pilot registró `Business operation failed { code: 'UNEXPECTED' }` y la venta no persistió (una vez, transitorio). Los specs de escritura tienen `retries: 1` para absorber el ruido — una falla real sigue fallando.
+- **Rate limit de login por IP** (30/15 min, bucket compartido `direct-clients` sin `TRUST_PROXY_HEADERS`): saturaba los logins a mitad de suite. Mitigado con `loginAdminCached` (1 login por corrida).
+- **Constraint vieja de `Payment`:** la BD del pilot traía `Payment_amount_positive_finite` (amount > 0) que rechazaba los reembolsos negativos del void — se reemplazó manualmente por `Payment_amount_nonzero_finite` como exige la migración del repo. `/health` reporta `migration_failed` por migraciones viejas con índices duplicados.
