@@ -702,6 +702,9 @@ function CheckoutForm({
                                         />
                                         <span className="text-xs text-muted-foreground">de descuento</span>
                                     </div>
+                                    {/* Chips táctiles: 36px de alto mínimo y
+                                        44px con dedo (pointer coarse) — el
+                                        cobro en mostrador/teléfono es touch. */}
                                     <div className="flex flex-wrap gap-1.5">
                                         {DISCOUNT_REASON_PRESETS.map(reason => (
                                             <button
@@ -710,7 +713,7 @@ function CheckoutForm({
                                                 disabled={processing}
                                                 onClick={() => setDiscountReason(reason)}
                                                 className={cn(
-                                                    "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+                                                    "inline-flex items-center rounded-full border px-3 py-0.5 min-h-9 pointer-coarse:min-h-11 text-xs font-medium transition-colors",
                                                     discountReason === reason
                                                         ? "bg-primary text-primary-foreground border-primary"
                                                         : "bg-background text-muted-foreground hover:bg-muted"
@@ -793,7 +796,7 @@ function CheckoutForm({
                                             type="button"
                                             disabled={processing}
                                             onClick={() => setCashGiven(payable.toFixed(2))}
-                                            className="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors bg-background text-muted-foreground hover:bg-muted"
+                                            className="inline-flex items-center rounded-full border px-3 py-1 min-h-9 pointer-coarse:min-h-11 text-xs font-medium transition-colors bg-background text-muted-foreground hover:bg-muted"
                                         >
                                             Exacto
                                         </button>
@@ -804,7 +807,7 @@ function CheckoutForm({
                                                 disabled={processing}
                                                 onClick={() => setCashGiven(String(bill))}
                                                 className={cn(
-                                                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                                                    "inline-flex items-center rounded-full border px-3 py-1 min-h-9 pointer-coarse:min-h-11 text-xs font-medium transition-colors",
                                                     cashGivenCents === bill * 100
                                                         ? "bg-primary text-primary-foreground border-primary"
                                                         : "bg-background text-muted-foreground hover:bg-muted"

@@ -96,6 +96,10 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
     const [loadingMore, setLoadingMore] = useState(false)
     const [searchResults, setSearchResults] = useState<PosProduct[]>([])
     const [searching, setSearching] = useState(false)
+    // Error de red persistente (distinto del estado vacío): sin él un catch
+    // vaciaba los datos y el mostrador creía que no había productos.
+    const [searchError, setSearchError] = useState(false)
+    const [browseError, setBrowseError] = useState(false)
     const searchRef = useRef(0)
 
     useEffect(() => {
@@ -107,35 +111,42 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
             .catch(() => {})
     }, [])
 
+    const runSearch = useCallback(async (q: string) => {
+        const requestId = ++searchRef.current
+        setSearching(true)
+        setSearchError(false)
+        try {
+            const res = await fetch(`/api/search/pos?q=${encodeURIComponent(q)}${branchId ? `&branchId=${branchId}` : ""}`)
+            const data: { products?: PosProduct[] } | null = await res.json().catch(() => null)
+            if (!res.ok) throw new Error("search failed")
+            if (searchRef.current === requestId) setSearchResults(data?.products ?? [])
+        } catch {
+            if (searchRef.current === requestId) {
+                setSearchResults([])
+                setSearchError(true)
+                toast.error("Error al buscar productos")
+            }
+        } finally {
+            if (searchRef.current === requestId) setSearching(false)
+        }
+    }, [branchId])
+
     // Búsqueda con debounce: ≥2 caracteres usa el endpoint del POS (stock por sucursal).
     useEffect(() => {
         const q = query.trim()
         if (q.length < 2) return // los resultados visibles se filtran por la query
-        const requestId = ++searchRef.current
-        const timer = setTimeout(async () => {
-            setSearching(true)
-            try {
-                const res = await fetch(`/api/search/pos?q=${encodeURIComponent(q)}${branchId ? `&branchId=${branchId}` : ""}`)
-                const data: { products?: PosProduct[] } | null = await res.json().catch(() => null)
-                if (!res.ok) throw new Error("search failed")
-                if (searchRef.current === requestId) setSearchResults(data?.products ?? [])
-            } catch {
-                if (searchRef.current === requestId) {
-                    setSearchResults([])
-                    toast.error("Error al buscar productos")
-                }
-            } finally {
-                if (searchRef.current === requestId) setSearching(false)
-            }
-        }, 300)
+        const timer = setTimeout(() => void runSearch(q), 300)
         return () => clearTimeout(timer)
-    }, [query, branchId, refreshKey])
+    }, [query, runSearch, refreshKey])
 
     // Modo exploración: /api/pos/products da el stock de la sucursal activa
     // y pagina por cursor (orden alfabético), filtrado por la categoría.
     const loadBrowse = useCallback(async (cursor: string | null, append: boolean) => {
         if (append) setLoadingMore(true)
-        else setBrowseLoading(true)
+        else {
+            setBrowseLoading(true)
+            setBrowseError(false)
+        }
         try {
             const params = new URLSearchParams({ limit: String(PAGE_SIZE) })
             if (categoryId) params.set("categoryId", categoryId)
@@ -148,7 +159,12 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
             setBrowseProducts(prev => (append ? [...prev, ...incoming] : incoming))
             setNextCursor(data?.nextCursor ?? null)
         } catch {
-            if (!append) setBrowseProducts([])
+            if (!append) {
+                setBrowseProducts([])
+                setBrowseError(true)
+            }
+            // El error de "cargar más" no tira la parrilla ya cargada: solo
+            // el toast transitorio y el botón queda disponible para reintentar.
             toast.error("No se pudo cargar el catálogo")
         } finally {
             setBrowseLoading(false)
@@ -165,6 +181,11 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
     const searchingMode = query.trim().length >= 2
     const shownProducts = searchingMode ? searchResults : browseProducts
     const loading = searchingMode ? searching : browseLoading
+    const loadError = searchingMode ? searchError : browseError
+    const retryLoad = () => {
+        if (searchingMode) void runSearch(query.trim())
+        else void loadBrowse(null, false)
+    }
 
     return (
         <section className="flex flex-col gap-3 min-h-0">
@@ -203,12 +224,15 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
                 ) : null}
             </div>
 
+            {/* Chips de categoría: xs compacto en escritorio, pero con dedo
+                (pointer coarse) suben a 36-44px — el mostrador táctil es el
+                uso principal del POS. */}
             <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
                 <Button
                     type="button"
                     size="xs"
                     variant={categoryId === "" ? "default" : "outline"}
-                    className="rounded-full shrink-0"
+                    className="rounded-full shrink-0 min-h-9 pointer-coarse:min-h-11"
                     onClick={() => setCategoryId("")}
                 >
                     Todos
@@ -219,7 +243,7 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
                         type="button"
                         size="xs"
                         variant={categoryId === c.id ? "default" : "outline"}
-                        className="rounded-full shrink-0"
+                        className="rounded-full shrink-0 min-h-9 pointer-coarse:min-h-11"
                         onClick={() => setCategoryId(c.id)}
                     >
                         {c.name}
@@ -230,6 +254,19 @@ export function ProductCatalog({ branchId, workshopActive, disabled, query, onQu
             {loading ? (
                 <div className="flex items-center justify-center py-16 text-muted-foreground">
                     <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+            ) : loadError ? (
+                // Error de red persistente con reintento: el estado vacío de
+                // abajo solo aplica a una carga exitosa sin datos — antes un
+                // catch de red se disfrazaba de "sin productos".
+                <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                    <PackageSearch className="h-10 w-10 text-destructive/50" />
+                    <p className="text-sm text-destructive">
+                        {searchingMode ? "No se pudo completar la búsqueda — revisa tu conexión" : "No se pudo cargar el catálogo — revisa tu conexión"}
+                    </p>
+                    <Button type="button" variant="outline" size="sm" onClick={retryLoad}>
+                        Reintentar
+                    </Button>
                 </div>
             ) : shownProducts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

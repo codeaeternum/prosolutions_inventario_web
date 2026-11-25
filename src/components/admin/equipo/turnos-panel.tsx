@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Clock, Download, History, RefreshCw, Search, AlertTriangle } from "lucide-react"
 import { csvCell } from "@/lib/csv"
 import { formatBusinessTime } from "@/lib/business-time"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface TurnoDia {
   dia: string
@@ -193,7 +194,11 @@ export function TurnosPanel() {
         ) : (
           <>
         {turnos.length === 0 && (
-          <p className="text-sm text-muted-foreground">Sin actividad registrada en el período.</p>
+          <EmptyState
+            icon={Clock}
+            title="Sin actividad registrada en el período"
+            description="La jornada se reconstruye sola con el primer y último movimiento del equipo en el sistema — cuando vendan, reciban equipos o muevan inventario, aparecerá aquí. Prueba también ampliar el período."
+          />
         )}
         {turnos.length > 0 && filteredTurnos.length === 0 && (
           <p className="text-sm text-muted-foreground">Sin resultados para &ldquo;{searchQuery.trim()}&rdquo;.</p>

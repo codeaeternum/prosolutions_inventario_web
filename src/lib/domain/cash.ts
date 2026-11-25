@@ -23,6 +23,31 @@ export function denominationsTotalCents(denoms: Record<string, number>): number 
 export type CashMovementLike = { type: "IN" | "OUT"; amount: number; payment?: { method: string; amount: number } | null }
 
 /**
+ * Ligaduras de un abono de crédito documentado como Payment. Payment no tiene
+ * columna de sucursal ni FK a CreditMovement y el schema no puede tocarse en
+ * esta corrección; los tags van al final de Payment.notes con formato
+ * máquina estable y se ocultan al presentar el movimiento. Es deuda técnica
+ * explícita: el reemplazo correcto son columnas creditMovementId/branchId.
+ */
+export const CREDIT_PAYMENT_PURPOSE = "CREDIT_PAYMENT"
+export const creditPaymentMovementTag = (creditMovementId: string) => `[credit-movement:${creditMovementId}]`
+export const creditPaymentBranchTag = (branchId: string) => `[branch:${branchId}]`
+
+export function creditPaymentBranchFromNotes(notes: string | null | undefined): string | null {
+  return notes?.match(/\[branch:([^\]]+)\]/)?.[1] ?? null
+}
+
+export function creditPaymentMovementFromNotes(notes: string | null | undefined): string | null {
+  return notes?.match(/\[credit-movement:([^\]]+)\]/)?.[1] ?? null
+}
+
+/** Quita los tags máquina del texto visible; conserva notas del usuario. */
+export function stripCreditPaymentMetadata(notes: string | null | undefined): string | null {
+  const stripped = notes?.replace(/\s*· \[(?:branch|credit-movement):[^\]]+\]/g, "").trim()
+  return stripped ? stripped : null
+}
+
+/**
  * Efectivo esperado del turno en centavos: fondo inicial + movimientos que sí
  * movieron billetes del cajón. Regla de clasificación (ver los call sites de
  * cashMovement.create):
@@ -64,7 +89,9 @@ export function expectedCashCents(initialAmount: number, movements: CashMovement
  *   • Pagos sin asiento de caja (`cashMovementId: null`, tarjeta/transferencia/
  *     crédito): no tocan ningún cajón físico y se acotan a la sucursal del
  *     documento (`sale.branchId` / `repairOrder.currentBranchId` /
- *     `encargo.branchId`), igual que en `/api/caja/movements`.
+ *     `encargo.branchId`), igual que en `/api/caja/movements`; los abonos de
+ *     crédito no tienen documento FK y usan el tag estructurado de sucursal
+ *     en Payment.notes hasta que exista una columna real.
  */
 export function registerPaymentWhere(
   businessId: string,
@@ -84,6 +111,13 @@ export function registerPaymentWhere(
                 { sale: { branchId: register.branchId } },
                 { repairOrder: { currentBranchId: register.branchId } },
                 { encargo: { branchId: register.branchId } },
+                // Abonos de crédito: no tienen documento FK; la sucursal de
+                // cobro va en el tag estructurado de notes (deuda técnica
+                // documentada junto a creditPaymentBranchTag).
+                {
+                  purpose: CREDIT_PAYMENT_PURPOSE,
+                  notes: { contains: creditPaymentBranchTag(register.branchId) },
+                },
               ],
             },
           ],

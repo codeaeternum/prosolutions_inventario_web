@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto"
 import type { JWT } from "@auth/core/jwt"
 
-// El resto de claims del JWT se declara en lib/auth.config.ts; éste lo escribe
-// /api/auth/switch al mintear una sesión impersonada (epoch ms).
+// El resto de claims del JWT se declara en lib/auth.config.ts; éstos los
+// escribe /api/auth/switch al mintear una sesión impersonada (epoch ms) y el
+// refresco de sesión para el tope de operador de plataforma.
 declare module "@auth/core/jwt" {
   interface JWT {
     impersonatedAt?: number | null
+    /** Epoch ms en que arrancó la ventana de sesión superadmin (tope 10 h). */
+    superAdminIat?: number | null
   }
 }
 
@@ -32,6 +35,19 @@ export type CurrentUser = {
  */
 export const IMPERSONATION_TTL_MS = 8 * 60 * 60 * 1000
 
+/**
+ * Tope de la sesión de un operador de plataforma (isSuperAdmin): la cookie
+ * dura 30 días como cualquier otra, pero una sesión superadmin viva ese
+ * tiempo es demasiado poder para una cookie robada u olvidada en una PC —
+ * pasadas 10 h la sesión cae a null y toca re-ingresar con contraseña. El
+ * arranque de la ventana viaja firmado en el claim superAdminIat: se estampa
+ * al entrar con contraseña y lo preserva /api/auth/switch a través del modo
+ * soporte (cambiar de cuenta y volver NO reinicia el reloj). Si la cuenta se
+ * eleva a superadmin con la sesión ya abierta, la ventana arranca en ese
+ * refresh — la elevación exige escritura en BD, no la puede forjar el cliente.
+ */
+export const SUPERADMIN_SESSION_TTL_MS = 10 * 60 * 60 * 1000
+
 /** A cookie proves identity; authorization always comes from the current database row. */
 export function refreshSessionToken(token: JWT, current: CurrentUser | null, signingIn = false): JWT | null {
   if (!current || current.status === "REJECTED") return null
@@ -47,6 +63,17 @@ export function refreshSessionToken(token: JWT, current: CurrentUser | null, sig
       return null
     }
   }
+  // Tope superadmin (ver SUPERADMIN_SESSION_TTL_MS). El claim se conserva en
+  // tokens de NO superadmin sin tocarlo: la cadena de impersonación de un
+  // operador lo trae consigo y el restore recupera el arranque original.
+  let superAdminIat = token.superAdminIat ?? null
+  if (current.isSuperAdmin) {
+    const now = Date.now()
+    if (signingIn || typeof superAdminIat !== "number" || !Number.isFinite(superAdminIat)) {
+      superAdminIat = now
+    }
+    if (now - superAdminIat > SUPERADMIN_SESSION_TTL_MS) return null
+  }
   const passwordVersion = createHash("sha256").update(current.password ?? "").digest("hex")
   // Old cookies without a credential version must sign in again once after this upgrade.
   if (!signingIn && token.passwordVersion !== passwordVersion) return null
@@ -55,5 +82,6 @@ export function refreshSessionToken(token: JWT, current: CurrentUser | null, sig
     role: current.role, status: current.status, customerType: current.customerType, passwordVersion,
     jobTitle: current.jobTitle, businessId: current.businessId, isSuperAdmin: current.isSuperAdmin,
     allowedModules: current.allowedModules, allowedBranchIds: current.allowedBranchIds,
+    superAdminIat,
   }
 }

@@ -174,7 +174,16 @@ const saleSchema = z.object({
   "Envía payments o paymentMethod.",
 )
 
-export async function sell(db: PrismaClient, actorId: string, businessId: string, raw: unknown) {
+/**
+ * Gancho transaccional para documentos que nacen ligados a otra entidad
+ * (p. ej. el surtido del mercado): corre dentro de la MISMA transacción
+ * serializable de la venta, antes de sellar el recibo idempotente. Si el
+ * gancho falla, la venta entera se revierte — nunca queda una Sale comitida
+ * sin su ligadura documental.
+ */
+export type SaleCommitHook = (tx: Transaction, result: { sale: { id: string; number: number } }) => Promise<void>
+
+export async function sell(db: PrismaClient, actorId: string, businessId: string, raw: unknown, options?: { commitHook?: SaleCommitHook }) {
   const input = saleSchema.parse(raw)
   const items = mergeItems(input.items)
   const hasPayments = Boolean(input.payments) || Boolean(input.paymentMethod)
@@ -267,7 +276,7 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
         depositCents,
       })
     }
-    return {
+    const response = {
       sale, items: committed.items, payments: committed.payments, movements: committed.movements,
       quantity: items.reduce((sum, item) => sum + item.quantity, 0), total, kind: sale.kind,
       // Recibo de la operación: folio y lista efectivamente cobrada ("retail" |
@@ -275,6 +284,10 @@ export async function sell(db: PrismaClient, actorId: string, businessId: string
       number: sale.number, priceTier: wholesaleCharged ? "wholesale" : "retail",
       ...(encargoInfo ? { encargoId: encargoInfo.encargo.id, depositCents, payableCents } : {}),
     }
+    // La ligadura externa (si existe) entra en el mismo commit: un fallo ahí
+    // revierte venta, cobros, stock y recibo de idempotencia juntos.
+    await options?.commitHook?.(tx, response)
+    return response
   })
   // Post-commit: la alerta de stock bajo nunca corre dentro de la transacción.
   await syncLowStockAlerts(db, businessId, collectLowStockIds(items))

@@ -594,8 +594,10 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      {/* Banner de error si /api/reports falla */}
-      {(error || !stats) && (
+      {/* Banner de error si /api/reports falla. Solo con error real o carga
+          terminada sin datos: stats arranca en null y sin el !loading el
+          banner rojo salía en CADA carga normal como si hubiera fallado. */}
+      {(error || (!loading && !stats)) && (
         <div
           role="alert"
           className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive"
@@ -622,6 +624,16 @@ export default function ReportsPage() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Reintentar
           </Button>
+        </div>
+      )}
+
+      {/* Carga inicial sin datos: esqueleto de las tarjetas resumen en vez
+          del banner rojo o el hueco en blanco. */}
+      {loading && !stats && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4" aria-busy="true" aria-label="Cargando estadísticas">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[122px] rounded-xl" />
+          ))}
         </div>
       )}
 

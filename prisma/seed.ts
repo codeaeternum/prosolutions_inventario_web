@@ -2,6 +2,7 @@ import { PrismaClient, UserRole, UserStatus, CustomerType } from '@/generated/pr
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'
 import bcrypt from 'bcryptjs'
+import { resolveSeedPassword } from '../src/lib/seed-passwords'
 
 const DEFAULT_BUSINESS_ID = 'biz-default'
 
@@ -249,15 +250,24 @@ async function main() {
 
   // Create admin user
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@prosolutions.com'
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
   const superAdminEmail = process.env.SUPERADMIN_EMAIL || 'admin@reficio.app'
-  const superAdminPassword = process.env.SUPERADMIN_PASSWORD || adminPassword
 
-  const hashedPassword = await bcrypt.hash(adminPassword, 12)
-  const superAdminHashedPassword =
-    superAdminPassword === adminPassword
-      ? hashedPassword
-      : await bcrypt.hash(superAdminPassword, 12)
+  // Las contraseñas solo se exigen cuando la cuenta se CREA por primera vez:
+  // no hay default (el fallback admin123 dejaba la instalación abierta a
+  // cualquiera que conociera el correo semilla). En corridas contra una BD ya
+  // sembrada el upsert no toca el password y las variables pueden omitirse.
+  const [adminRow, superAdminRow] = await Promise.all([
+    prisma.user.findUnique({ where: { email: adminEmail }, select: { id: true } }),
+    prisma.user.findUnique({ where: { email: superAdminEmail }, select: { id: true } }),
+  ])
+  const adminPassword = resolveSeedPassword(process.env.ADMIN_PASSWORD, 'ADMIN_PASSWORD', adminEmail, !!adminRow)
+  const superAdminPassword = resolveSeedPassword(process.env.SUPERADMIN_PASSWORD, 'SUPERADMIN_PASSWORD', superAdminEmail, !!superAdminRow)
+
+  // El create del upsert solo corre cuando la cuenta no existe — caso en que
+  // resolveSeedPassword ya garantizó la contraseña. El string vacío de aquí
+  // es un valor muerto que nunca llega a persistirse.
+  const hashedPassword = adminPassword ? await bcrypt.hash(adminPassword, 12) : ''
+  const superAdminHashedPassword = superAdminPassword ? await bcrypt.hash(superAdminPassword, 12) : ''
 
   // Negocio por defecto: todos los registros del seed cuelgan de este tenant.
   const business = await prisma.business.upsert({
@@ -307,12 +317,12 @@ async function main() {
 
   const superAdmin = await prisma.user.upsert({
     where: { email: superAdminEmail },
-    update: {
-      businessId: operatorBusiness.id,
-      role: UserRole.ADMIN,
-      isSuperAdmin: true,
-      status: UserStatus.APPROVED,
-    },
+    // El update NO re-eleva: antes re-concedía isSuperAdmin/role/status en
+    // cada corrida, así que un operador degradado o suspendido a propósito
+    // recuperaba acceso total a plataforma con el siguiente seed. La elevación
+    // solo aplica en el create inicial; después se administra con
+    // scripts/manage-superadmin.mjs o la consola /platform.
+    update: {},
     create: {
       businessId: operatorBusiness.id,
       email: superAdminEmail,
@@ -490,7 +500,9 @@ async function main() {
   console.log('')
   console.log('Credenciales Admin:')
   console.log(`  Email: ${adminEmail}`)
-  console.log(`  Password: ${adminPassword}`)
+  // La contraseña nunca se imprime: es la de ADMIN_PASSWORD si la cuenta se
+  // creó en esta corrida; si ya existía, se conservó la que tenía.
+  console.log(`  Password: ${adminPassword ? '(la definida en ADMIN_PASSWORD)' : '(sin cambio — la cuenta ya existía)'}`)
   console.log('========================================')
 }
 

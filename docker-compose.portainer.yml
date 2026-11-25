@@ -1,13 +1,16 @@
 name: prosolutions
 
-# Nota: los límites de memoria (mem_limit) solo están en docker-compose.yml
-# (deploys locales desde el N5); los stacks de Portainer pueden ignorarlos,
-# por eso este archivo no los fija.
+# Nota: mem_limit sí se respeta cuando Portainer despliega con docker-compose
+# v2 (el binario compose del host N5): produce --memory en el create/run del
+# contenedor igual que un up local. Lo que NO aplica límites es el modo swarm
+# (docker stack deploy usa deploy.resources, otra clave) — este stack no se
+# despliega en swarm. Valores en paridad con docker-compose.yml.
 services:
   app:
     image: ${APP_IMAGE:-prosolutions-app:latest}
     container_name: prosolutions-app
     restart: unless-stopped
+    mem_limit: 1g
     logging:
       driver: "json-file"
       options:
@@ -89,6 +92,7 @@ services:
     image: ${BOT_IMAGE:-prosolutions-bot:latest}
     container_name: prosolutions-bot
     restart: unless-stopped
+    mem_limit: 512m
     logging:
       driver: "json-file"
       options:
@@ -133,6 +137,7 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     container_name: prosolutions-db
     restart: unless-stopped
+    mem_limit: 2g
     logging:
       driver: "json-file"
       options:

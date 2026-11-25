@@ -3,6 +3,13 @@ import { assertBranchAllowed, getSession, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { repairFolio } from "@/lib/workshop-labels"
 import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
+import {
+  CREDIT_PAYMENT_PURPOSE,
+  creditPaymentBranchFromNotes,
+  creditPaymentBranchTag,
+  creditPaymentMovementFromNotes,
+  stripCreditPaymentMetadata,
+} from "@/lib/domain/cash"
 import { prisma } from "@/lib/prisma"
 
 /**
@@ -115,6 +122,7 @@ function creditHref(referenceType: string | null, referenceId: string | null): s
 
 const PAYMENT_PURPOSE_LABELS: Record<string, string> = {
   ADVANCE: "anticipo", ABONO: "abono", SETTLEMENT: "liquidación", REFUND: "devolución", RESERVATION: "apartado",
+  CREDIT_PAYMENT: "abono de crédito",
 }
 
 export async function GET(req: Request) {
@@ -140,15 +148,25 @@ export async function GET(req: Request) {
     const branchScope: BranchScope = branchId ?? (allowed?.length ? { in: allowed } : undefined)
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
+    const scopedBranchIds = typeof branchScope === "string" ? [branchScope] : branchScope?.in ?? []
     const paymentBranchScope = branchScope
-      ? { OR: [{ sale: { branchId: branchScope } }, { repairOrder: { currentBranchId: branchScope } }, { encargo: { branchId: branchScope } }] }
+      ? {
+          OR: [
+            { sale: { branchId: branchScope } },
+            { repairOrder: { currentBranchId: branchScope } },
+            { encargo: { branchId: branchScope } },
+            // Abonos de crédito: sin FK documental ni columna de sucursal, el
+            // alcance usa el tag estructurado escrito por domain/credit.
+            ...scopedBranchIds.map(id => ({ purpose: CREDIT_PAYMENT_PURPOSE, notes: { contains: creditPaymentBranchTag(id) } })),
+          ],
+        }
       : {}
     // Abonos a cuenta general (purchaseId null) son del negocio: no se recortan.
     const supplierBranchScope = branchScope
       ? { OR: [{ purchaseId: null }, { purchase: { branchId: branchScope } }] }
       : {}
 
-    const [cashMovements, payments, creditMovements, supplierPayments, folioDigits, orderPrefix] = await Promise.all([
+    const [cashMovements, payments, creditMovements, supplierPayments, creditPaymentDocs, folioDigits, orderPrefix] = await Promise.all([
       prisma.cashMovement.findMany({
         where: {
           businessId,
@@ -200,6 +218,19 @@ export async function GET(req: Request) {
         orderBy: { createdAt: "desc" },
         take,
       }),
+      // Ligaduras Payment ↔ CreditMovement de abonos nuevos. Se consultan
+      // sin recorte de sucursal porque su única función es evitar duplicar el
+      // MISMO abono en el ledger de crédito y en el comprobante Payment.
+      prisma.payment.findMany({
+        where: {
+          businessId,
+          createdAt: { gte: since },
+          purpose: CREDIT_PAYMENT_PURPOSE,
+          notes: { contains: "[credit-movement:" },
+        },
+        select: { notes: true },
+        take: MAX_TAKE,
+      }),
       getOrderFolioDigits(businessId),
       // Prefijo del folio de taller (order_prefix): los documentos de
       // referencia "Taller PS-000123" salen con el mismo formato del ticket.
@@ -219,6 +250,18 @@ export async function GET(req: Request) {
         })
       : []
     const inCash = new Set(cashSeats.map(row => row.referenceId))
+    const documentedCreditPayments = new Set(
+      creditPaymentDocs
+        .map(row => creditPaymentMovementFromNotes(row.notes))
+        .filter((id): id is string => Boolean(id)),
+    )
+    // El CreditMovement es el asiento de deuda y el Payment es el comprobante
+    // del dinero. Para abonos nuevos ambos existen; el feed de DINERO muestra
+    // el Payment (ya trae método/folio estructurados) y omite la fila gemela
+    // del ledger. Abonos históricos sin Payment se conservan como antes.
+    const visibleCreditMovements = creditMovements.filter(
+      movement => !(movement.type === "PAYMENT" && documentedCreditPayments.has(movement.id)),
+    )
 
     const rows: MoneyMovementRow[] = [
       ...cashMovements.map(m => ({
@@ -237,7 +280,8 @@ export async function GET(req: Request) {
         duplicatesCash: false,
       })),
       ...payments.map(p => {
-        const branchIdOf = p.sale?.branchId ?? p.repairOrder?.currentBranchId ?? p.encargo?.branchId ?? null
+        const creditBranchId = p.purpose === CREDIT_PAYMENT_PURPOSE ? creditPaymentBranchFromNotes(p.notes) : null
+        const branchIdOf = p.sale?.branchId ?? p.repairOrder?.currentBranchId ?? p.encargo?.branchId ?? creditBranchId
         const branchName = p.sale?.branch?.name ?? p.repairOrder?.currentBranch?.name ?? p.encargo?.branch?.name ?? null
         const documentRef = p.sale
           ? `V-${p.sale.number}`
@@ -258,6 +302,7 @@ export async function GET(req: Request) {
           p.status === "VOIDED"
             ? `Cobro anulado${documentRef ? ` · ${documentRef}` : ""}`
             : `${p.status === "REFUNDED" ? "Reembolso" : "Cobro"}${documentRef ? ` ${documentRef}` : ""}${purpose ? ` · ${purpose}` : ""}`
+        const visibleNotes = p.purpose === CREDIT_PAYMENT_PURPOSE ? stripCreditPaymentMetadata(p.notes) : p.notes
         return {
           id: p.id,
           kind: (p.status === "VOIDED" ? "PAYMENT_VOID" : p.status === "REFUNDED" ? "PAYMENT_REFUND" : "PAYMENT") as MovementKind,
@@ -270,12 +315,12 @@ export async function GET(req: Request) {
           amountCents: signedCents(p.amount),
           method: p.method,
           reference: p.reference ?? documentRef,
-          description: p.notes ? `${description} — ${p.notes}` : description,
+          description: visibleNotes ? `${description} — ${visibleNotes}` : description,
           href,
           duplicatesCash: false,
         }
       }),
-      ...creditMovements.map(m => ({
+      ...visibleCreditMovements.map(m => ({
         id: m.id,
         kind: (m.type === "DEBT" ? "CREDIT_DEBT" : m.type === "PAYMENT" ? "CREDIT_PAYMENT" : "CREDIT_REVERSAL") as MovementKind,
         occurredAt: m.createdAt,

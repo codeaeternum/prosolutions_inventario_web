@@ -25,7 +25,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
     "bot:build": "esbuild src/bot/index.ts --bundle --platform=node --packages=external --outfile=dist/bot.cjs",
-    "platform:superadmin": "node --env-file=.env scripts/manage-superadmin.mjs"
+    "platform:superadmin": "node --env-file=.env scripts/manage-superadmin.mjs",
+    "security:check": "node scripts/security-http-check.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -56,12 +57,10 @@
     "react-dom": "19.2.8",
     "react-hook-form": "^7.71.1",
     "react-leaflet": "^5.0.0",
-    "react-to-print": "^3.3.0",
     "sharp": "0.35.5",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "telegraf": "^4.16.3",
-    "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.3.5"
   },
@@ -81,7 +80,6 @@
     "@types/qrcode.react": "^1.0.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/web-push": "^3.6.4",
     "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",

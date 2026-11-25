@@ -299,6 +299,13 @@ export default function WorkshopPage() {
   const [slaHours, setSlaHours] = useState<SlaHours>(DEFAULT_SLA_HOURS)
   const [selected, setSelected] = useState<Order | null>(null)
   const [evidenceLinkExpired, setEvidenceLinkExpired] = useState(false)
+  // Deep-link ?fotos=1 (CTA "Agregar fotos de recepción" tras crear la orden):
+  // la sección de evidencias arranca desplegada y se desplaza a la vista —
+  // una sola vez, no en cada orden que se abra después en la misma sesión.
+  const [evidenceDeepLink] = useState(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("fotos") === "1")
+  const evidenceSectionRef = useRef<HTMLDivElement>(null)
+  const evidenceScrolled = useRef(false)
   const [saving, setSaving] = useState(false)
   const [action, setAction] = useState("NOTE")
   const [drafts, setDrafts] = useState<Record<string, ActionDraft>>({})
@@ -639,6 +646,14 @@ export default function WorkshopPage() {
     return () => { clearTimeout(timer); window.removeEventListener("popstate", onPop) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Deep-link ?fotos=1: con la orden ya cargada, baja a la sección de
+  // evidencias — una sola vez por sesión (el flag se consume al disparar).
+  useEffect(() => {
+    if (!evidenceDeepLink || evidenceScrolled.current || !selected) return
+    evidenceScrolled.current = true
+    evidenceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [evidenceDeepLink, selected])
   async function post(url: string, payload: Record<string, unknown>) {
     operationKey.current = getClientOperationKey(operationKey.current, { url, ...payload })
     const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, idempotencyKey: operationKey.current.key }) })
@@ -1589,23 +1604,29 @@ export default function WorkshopPage() {
               onChange={setPlanForm}
               onSubmit={e => void submitPlan(e)}
             />
-            <EvidenceSection
-              order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
-              // El enlace público solo sube en órdenes abiertas: la ruta rechaza
-              // los mismos estados que cierran refacciones; si el token venció el
-              // admin puede regenerarlo desde la misma sección.
-              linkState={
-                partsClosedStages.includes(selected.status)
-                  ? "closed"
-                  : evidenceLinkExpired
-                    ? "expired"
-                    : "active"
-              }
-              onRotateLink={isAdmin ? () => setRotateTokenDialog(true) : undefined}
-              rotateBusy={saving || opening}
-              onChanged={() => void openOrder(selected.id, true)}
-              onDirtyChange={setEvidenceDirty}
-            />
+            {/* Deep-link ?fotos=1: arranca desplegada (defaultOpen) y el
+                scroll cae aquí — la recepción recién creada ofrece subir las
+                fotos del equipo como siguiente paso. */}
+            <div ref={evidenceSectionRef} className="scroll-mt-4">
+              <EvidenceSection
+                order={{ id: selected.id, uploadToken: selected.uploadToken, photos: selected.photos ?? [] }}
+                // El enlace público solo sube en órdenes abiertas: la ruta rechaza
+                // los mismos estados que cierran refacciones; si el token venció el
+                // admin puede regenerarlo desde la misma sección.
+                linkState={
+                  partsClosedStages.includes(selected.status)
+                    ? "closed"
+                    : evidenceLinkExpired
+                      ? "expired"
+                      : "active"
+                }
+                onRotateLink={isAdmin ? () => setRotateTokenDialog(true) : undefined}
+                rotateBusy={saving || opening}
+                onChanged={() => void openOrder(selected.id, true)}
+                onDirtyChange={setEvidenceDirty}
+                defaultOpen={evidenceDeepLink ? true : undefined}
+              />
+            </div>
             {(!terminalStages.includes(selected.status) || selected.status === "DELIVERED") && (
               <form onSubmit={e => void submit(e, "update")} className="space-y-4 rounded-xl border bg-card p-5">
                 <h2 className="font-semibold">

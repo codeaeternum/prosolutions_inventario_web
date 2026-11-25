@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select"
 import Image from "next/image"
 import { cn } from "@/lib/utils"
-import { AlertTriangle, ChevronLeft, ChevronRight, Globe, ImagePlus, Loader2, Plus, Store, Wand2, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, Globe, ImagePlus, Loader2, Plus, Store, Wand2, X } from "lucide-react"
 import { toast } from "sonner"
 
 const selectClassName =
@@ -290,6 +290,21 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
     // captura en su sucursal (fija); el admin puede repartir entre todas.
     const stockBranches = lockedBranchId ? branches.filter((b) => b.id === lockedBranchId) : branches
     const [stockByBranch, setStockByBranch] = useState<Record<string, string>>({})
+
+    // Revelación progresiva: el diálogo monolítico mostraba todo a la vez.
+    // Lo básico (nombre, precio público, stock) queda siempre visible; los
+    // precios de taller/costo y la distribución por sucursal van plegados.
+    // null = automático: los precios arrancan abiertos en edición si ya traen
+    // valores; el stock multi-sucursal arranca abierto con una sola sucursal
+    // (es la única vía de captura del empleado) o si ya hay cantidades.
+    const [tierPricesOpen, setTierPricesOpen] = useState<boolean | null>(null)
+    const [stockGridOpen, setStockGridOpen] = useState<boolean | null>(null)
+    const hasTierPriceValues = Boolean(
+        formData.wholesalePrice.trim() || formData.internalPrice.trim() || formData.costPrice.trim()
+    )
+    const tierPricesVisible = tierPricesOpen ?? (editing && hasTierPriceValues)
+    const hasStockValues = Object.values(stockByBranch).some((v) => v.trim())
+    const stockGridVisible = stockGridOpen ?? (stockBranches.length <= 1 || hasStockValues)
 
     const saveOp = useRef<ClientOperationKey | null>(null)
 
@@ -1057,7 +1072,9 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                 )}
             </section>
 
-            {/* Precios: todos en una fila; ganancia y visibilidad dinámicas. */}
+            {/* Precios: el público siempre visible; taller/taller propio/costo
+                van plegados (revelación progresiva) — en edición se despliegan
+                solos si el producto ya trae alguno capturado. */}
             <section className="space-y-4 rounded-lg border p-4">
                 <div>
                     <p className="font-medium">Precios</p>
@@ -1066,7 +1083,7 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     </p>
                 </div>
 
-                <div className={`grid gap-4 sm:grid-cols-2 ${isAdmin ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="space-y-2">
                         <Label htmlFor="pf-retail">Precio público *</Label>
                         <Input
@@ -1080,46 +1097,63 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                             required
                         />
                     </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="pf-wholesale">Taller</Label>
-                        <Input
-                            id="pf-wholesale"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={formData.wholesalePrice}
-                            onChange={(e) => setFormData({ ...formData, wholesalePrice: e.target.value })}
-                            placeholder="= al público"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="pf-internal">Taller propio</Label>
-                        <Input
-                            id="pf-internal"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={formData.internalPrice}
-                            onChange={(e) => setFormData({ ...formData, internalPrice: e.target.value })}
-                            placeholder="= al público"
-                        />
-                    </div>
-                    {/* El costo revela el margen: solo el dueño lo ve/captura. */}
-                    {isAdmin && (
+                </div>
+
+                <button
+                    type="button"
+                    aria-expanded={tierPricesVisible}
+                    onClick={() => setTierPricesOpen(!tierPricesVisible)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-primary transition hover:underline"
+                >
+                    <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", tierPricesVisible && "rotate-180")} />
+                    Precios de taller y costo (opcional)
+                    {hasTierPriceValues && !tierPricesVisible && (
+                        <span className="font-normal text-muted-foreground">— ya hay valores capturados</span>
+                    )}
+                </button>
+                {tierPricesVisible && (
+                    <div className={`grid gap-4 rounded-md border border-dashed p-3 sm:grid-cols-2 ${isAdmin ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
                         <div className="space-y-2">
-                            <Label htmlFor="pf-cost">Costo</Label>
+                            <Label htmlFor="pf-wholesale">Taller</Label>
                             <Input
-                                id="pf-cost"
+                                id="pf-wholesale"
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={formData.costPrice}
-                                onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
-                                placeholder="0.00"
+                                value={formData.wholesalePrice}
+                                onChange={(e) => setFormData({ ...formData, wholesalePrice: e.target.value })}
+                                placeholder="= al público"
                             />
                         </div>
-                    )}
-                </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="pf-internal">Taller propio</Label>
+                            <Input
+                                id="pf-internal"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={formData.internalPrice}
+                                onChange={(e) => setFormData({ ...formData, internalPrice: e.target.value })}
+                                placeholder="= al público"
+                            />
+                        </div>
+                        {/* El costo revela el margen: solo el dueño lo ve/captura. */}
+                        {isAdmin && (
+                            <div className="space-y-2">
+                                <Label htmlFor="pf-cost">Costo</Label>
+                                <Input
+                                    id="pf-cost"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={formData.costPrice}
+                                    onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                                    placeholder="0.00"
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Coherencia de precios: avisos ámbar que nunca bloquean el guardado. */}
                 {priceWarnings.map((warning) => (
@@ -1297,53 +1331,74 @@ function ProductoForm({ productId, initialBarcode, isAdmin, branches, lockedBran
                     </div>
                 ) : (
                     <div className="space-y-3">
-                        <div className="flex items-end justify-between gap-4">
-                            <div className="space-y-2 w-40">
-                                <Label htmlFor="pf-minstock">Stock mínimo (alerta)</Label>
-                                <Input
-                                    id="pf-minstock"
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    inputMode="numeric"
-                                    value={formData.minStock}
-                                    onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
-                                />
-                            </div>
-                            {stockBranches.length > 1 && Object.values(stockByBranch).some((v) => v.trim()) && (
-                                <button
-                                    type="button"
-                                    className="text-xs text-primary hover:underline pb-2"
-                                    onClick={() => {
-                                        const first = Object.values(stockByBranch).find((v) => v.trim())
-                                        if (first) setStockByBranch(Object.fromEntries(stockBranches.map((b) => [b.id, first])))
-                                    }}
-                                >
-                                    Igual cantidad en todas
-                                </button>
-                            )}
+                        <div className="space-y-2 w-40">
+                            <Label htmlFor="pf-minstock">Stock mínimo (alerta)</Label>
+                            <Input
+                                id="pf-minstock"
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={formData.minStock}
+                                onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
+                            />
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                            {stockBranches.map((b) => (
-                                <div key={b.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
-                                    <span className="min-w-0 flex-1 truncate text-sm">{b.name}</span>
-                                    <Input
-                                        type="number"
-                                        min="0"
-                                        step="1"
-                                        inputMode="numeric"
-                                        className="w-20 shrink-0"
-                                        placeholder="0"
-                                        value={stockByBranch[b.id] ?? ""}
-                                        onChange={(e) => setStockByBranch((prev) => ({ ...prev, [b.id]: e.target.value }))}
-                                        aria-label={`Stock inicial en ${b.name}`}
-                                    />
+                        {/* Multi-sucursal plegada: con varias sucursales la parrilla
+                            ya no grita en el diálogo — una sola sucursal (empleado)
+                            la muestra siempre porque es su única vía de captura. */}
+                        {stockBranches.length > 1 && (
+                            <button
+                                type="button"
+                                aria-expanded={stockGridVisible}
+                                onClick={() => setStockGridOpen(!stockGridVisible)}
+                                className="flex items-center gap-1.5 text-xs font-medium text-primary transition hover:underline"
+                            >
+                                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", stockGridVisible && "rotate-180")} />
+                                Existencias por sucursal (opcional)
+                                {hasStockValues && !stockGridVisible && (
+                                    <span className="font-normal text-muted-foreground">— ya hay cantidades capturadas</span>
+                                )}
+                            </button>
+                        )}
+                        {stockGridVisible && (
+                            <div className="space-y-2">
+                                {stockBranches.length > 1 && Object.values(stockByBranch).some((v) => v.trim()) && (
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="button"
+                                            className="text-xs text-primary hover:underline"
+                                            onClick={() => {
+                                                const first = Object.values(stockByBranch).find((v) => v.trim())
+                                                if (first) setStockByBranch(Object.fromEntries(stockBranches.map((b) => [b.id, first])))
+                                            }}
+                                        >
+                                            Igual cantidad en todas
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                    {stockBranches.map((b) => (
+                                        <div key={b.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
+                                            <span className="min-w-0 flex-1 truncate text-sm">{b.name}</span>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                inputMode="numeric"
+                                                className="w-20 shrink-0"
+                                                placeholder="0"
+                                                value={stockByBranch[b.id] ?? ""}
+                                                onChange={(e) => setStockByBranch((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                                                aria-label={`Stock inicial en ${b.name}`}
+                                            />
+                                        </div>
+                                    ))}
+                                    {stockBranches.length === 0 && (
+                                        <p className="text-xs text-muted-foreground">No hay sucursales activas.</p>
+                                    )}
                                 </div>
-                            ))}
-                            {stockBranches.length === 0 && (
-                                <p className="text-xs text-muted-foreground">No hay sucursales activas.</p>
-                            )}
-                        </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </section>

@@ -33,7 +33,7 @@ const tx = {
 }
 const db = { ...tx, $transaction: vi.fn((work: (t: unknown) => unknown) => work(tx)) } as unknown as PrismaClient
 
-/** Conteo OPEN con un producto capturado 3 vs 5 en sistema (ajuste −2). */
+/** Conteo OPEN con un producto capturado 3 vs 5 en sistema al capturar (ajuste −2). */
 const openCount = (createdById: string) => ({
   id: "count-1",
   businessId: BIZ,
@@ -42,7 +42,7 @@ const openCount = (createdById: string) => ({
   status: "OPEN",
   blind: false,
   createdById,
-  items: [{ id: "ci-1", productId: "p1", expectedQty: 5, countedQty: 3 }],
+  items: [{ id: "ci-1", productId: "p1", expectedQty: 5, countedQty: 3, product: { name: "Batería" } }],
   branch: { id: "b1", name: "Matriz" },
 })
 
@@ -138,5 +138,105 @@ describe("applyCount — separación de funciones", () => {
     await apply(employee.id)
     const persisted = tx.businessOperation.update.mock.calls[0][0].data.response
     expect(persisted).toMatchObject({ createdById: admin.id, appliedById: employee.id, status: "APPLIED" })
+  })
+})
+
+/**
+ * Ajuste RELATIVO al stock vigente (auditoría D2): la varianza se fija al
+ * capturar (countedQty − expectedQty de ese momento) y se aplica sobre la
+ * existencia viva al aplicar. Fijar el contado como absoluto deshacía ventas
+ * legítimas ocurridas durante la captura (contar 10 con stock 10, vender 1 y
+ * aplicar "resucitaba" la pieza regresando a 10).
+ */
+describe("applyCount — varianza de captura aplicada al stock vigente", () => {
+  const countWith = (item: { expectedQty: number; countedQty: number }) => ({
+    ...openCount(admin.id),
+    items: [{ id: "ci-1", productId: "p1", product: { name: "Batería" }, ...item }],
+  })
+
+  it("conteo cuadrado al capturar NO ajusta aunque el stock se mueva después: la venta intermedia se conserva", async () => {
+    // Al capturar: sistema 10, físico 10 — sin merma. Antes de aplicar se
+    // vende 1 (vigente 9). El ajuste correcto es NINGUNO; el bug fijaba 10.
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 10, countedQty: 10 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 9 })
+
+    const result = await apply(admin.id)
+    expect(result.status).toBe("APPLIED")
+    expect(result.adjustments).toBe(0)
+    expect(tx.branchStock.upsert).not.toHaveBeenCalled()
+    expect(tx.product.update).not.toHaveBeenCalled()
+    expect(tx.inventoryMovement.create).not.toHaveBeenCalled()
+  })
+
+  it("merma real con venta intermedia: el delta de captura (−2) se aplica sobre el vigente (9 → 7), no el contado absoluto", async () => {
+    // Al capturar: sistema 10, físico 8 — merma real de 2. Antes de aplicar
+    // se vende 1 (vigente 9): la verdad física es 8 − 1 = 7.
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 10, countedQty: 8 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 9 })
+    tx.product.update.mockResolvedValue({ stock: 7 })
+
+    const result = await apply(admin.id)
+    expect(result.adjustments).toBe(1)
+    // Existencia final 7 (vigente − delta), no 8 (contado absoluto).
+    expect(tx.branchStock.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ quantity: 7 }),
+      update: expect.objectContaining({ quantity: 7 }),
+    }))
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { stock: { increment: -2 } } })
+    const movement = tx.inventoryMovement.create.mock.calls[0][0].data
+    expect(movement).toMatchObject({ type: "ADJUSTMENT", quantity: 2, previousStock: 9, newStock: 7 })
+    expect(movement.notes).toContain("Contado 8 vs 10 en sistema al capturar (-2)")
+    expect(movement.notes).toContain("existencia 9 → 7 al aplicar")
+  })
+
+  it("sobrante con recepción intermedia: el delta (+2) se suma al vigente", async () => {
+    // Al capturar: sistema 5, físico 7 — sobrante de 2. Antes de aplicar
+    // entran 3 por compra (vigente 8): queda 10.
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 5, countedQty: 7 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 8 })
+    tx.product.update.mockResolvedValue({ stock: 10 })
+
+    const result = await apply(admin.id)
+    expect(result.adjustments).toBe(1)
+    expect(tx.branchStock.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ quantity: 10 }),
+    }))
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { stock: { increment: 2 } } })
+  })
+
+  it("expectedQty NO se re-sincroniza al aplicar: queda como foto histórica de la captura", async () => {
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 10, countedQty: 8 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 9 })
+    tx.product.update.mockResolvedValue({ stock: 7 })
+
+    await apply(admin.id)
+    expect(tx.inventoryCountItem.update).not.toHaveBeenCalled()
+  })
+
+  it("409 cuando el faltante del conteo excede la existencia vigente (la captura contradice los movimientos posteriores)", async () => {
+    // Al capturar: sistema 10, físico 2 — faltante de 8. Pero el vigente es 3:
+    // aplicar −8 daría −5, físicamente imposible (y prohibido por el CHECK de
+    // BD). La captura y las ventas se contradicen: se exige recapturar.
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 10, countedQty: 2 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 3 })
+
+    await expect(apply(admin.id)).rejects.toMatchObject({
+      name: "BusinessError",
+      status: 409,
+      message: expect.stringContaining("Vuelve a capturar"),
+    })
+    expect(tx.branchStock.upsert).not.toHaveBeenCalled()
+    expect(tx.inventoryMovement.create).not.toHaveBeenCalled()
+    // El conteo sigue OPEN (la tx revertiría todo de todos modos).
+    expect(tx.inventoryCount.updateMany).not.toHaveBeenCalled()
+  })
+
+  it("el error del guard nombra el producto en conflicto", async () => {
+    tx.inventoryCount.findFirst.mockResolvedValue(countWith({ expectedQty: 10, countedQty: 2 }))
+    tx.branchStock.findUnique.mockResolvedValue({ quantity: 3 })
+
+    await expect(apply(admin.id)).rejects.toMatchObject({
+      message: expect.stringContaining("Batería"),
+    })
   })
 })

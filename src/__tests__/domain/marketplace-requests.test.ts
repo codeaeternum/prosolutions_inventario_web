@@ -69,6 +69,11 @@ describe("alta de solicitud", () => {
         tallerName: "Refacciones Galindo", requestedById: "u-staff",
       }),
     }))
+    // La respuesta de creación es para el COMPRADOR: la proyección no trae
+    // retailPrice interno del proveedor ni decidedBy.
+    const include = tx.marketplaceRequest.create.mock.calls[0][0].include
+    expect(include.product.select).not.toHaveProperty("retailPrice")
+    expect(include).not.toHaveProperty("decidedBy")
     expect(tx.businessOperation.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ actorId: "u-staff", businessId: BUYER_BIZ, kind: "MARKETPLACE_REQUEST" }),
     }))

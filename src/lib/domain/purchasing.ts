@@ -162,6 +162,10 @@ const STATUS_LABEL: Record<PurchaseStatus, string> = {
  * RECEIVE cubre todo lo pendiente de todas las líneas; RECEIVE_PARTIAL recibe
  * solo lo capturado por línea y la OC sigue ORDERED hasta completarse (la UI
  * deriva "parcial" de receivedQty vs quantity, no hay estado extra).
+ * CANCEL se bloquea con 409 cuando la orden ya está comprometida —unidades
+ * recibidas en inventario o abonos vigentes— porque la transición no revierte
+ * ni uno ni otro: la salida es operativa (devolución al proveedor / anulación
+ * de abonos), no un cambio de estado.
  */
 export async function setPurchaseStatus(db: PrismaClient, actorId: string, businessId: string, id: string, raw: unknown) {
   const input = statusSchema.parse(raw)
@@ -187,6 +191,33 @@ export async function setPurchaseStatus(db: PrismaClient, actorId: string, busin
       }
     } else if (target === null || !ALLOWED[purchase.status].includes(target)) {
       throw new BusinessError(`No se puede aplicar la acción: la compra está en estado ${STATUS_LABEL[purchase.status]}.`, 409)
+    }
+
+    // Cancelar una OC comprometida no es un cambio de estado inocuo:
+    // - Con recepciones parciales el stock ya entró al inventario y cancelar
+    //   no lo revierte — quedaría inflado sin rastro de por qué. La salida
+    //   correcta es operativa: la devolución al proveedor se registra como
+    //   salida de inventario.
+    // - Con abonos vigentes (paidCents es el total no anulado ligado a la OC,
+    //   mantenido en la misma tx por paySupplier/voidSupplierPayment) cancelar
+    //   desliga la deuda sin resolverla: la cuenta por pagar se "limpia" de
+    //   mentiras y los abonos quedan huérfanos. Primero se anulan los abonos.
+    // Una OC en DRAFT nunca tiene recepciones ni abonos (ambos exigen ORDERED),
+    // así que el guard no estorba la cancelación de borradores.
+    if (target === "CANCELLED") {
+      const receivedUnits = purchase.items.reduce((sum, item) => sum + item.receivedQty, 0)
+      if (receivedUnits > 0) {
+        throw new BusinessError(
+          `No se puede cancelar: la orden ya tiene ${receivedUnits} unidad${receivedUnits === 1 ? "" : "es"} recibida${receivedUnits === 1 ? "" : "s"} y ese stock ya está en inventario. Registra la devolución al proveedor como salida de inventario antes de cancelarla.`,
+          409,
+        )
+      }
+      if (purchase.paidCents > 0) {
+        throw new BusinessError(
+          `No se puede cancelar: la orden tiene abonos vigentes por ${(purchase.paidCents / 100).toFixed(2)}. Anúlalos primero.`,
+          409,
+        )
+      }
     }
 
     const folio = purchaseFolio(purchase.number)

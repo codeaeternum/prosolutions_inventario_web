@@ -2,6 +2,9 @@ name: prosolutions-pilot
 services:
   db:
     image: postgres:16-alpine
+    # Piloto de demostración: límites chicos — instancia efímera con datos
+    # ficticios, sin el volumen del taller real.
+    mem_limit: 512m
     environment:
       POSTGRES_DB: prosolutions_pilot
       POSTGRES_USER: pilot
@@ -16,6 +19,7 @@ services:
     restart: unless-stopped
   app:
     image: prosolutions-app:invfix
+    mem_limit: 512m
     build:
       context: .
       target: runner

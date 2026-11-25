@@ -190,6 +190,9 @@ function layawayBankChannels(doc: PosDocumentSummary | null): ("TARJETA" | "TRAN
 export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOpenTicket }: LayawaysSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
+    // Error de red persistente con reintento: un catch que solo vaciaba la
+    // lista se disfrazaba de "no hay apartados".
+    const [loadError, setLoadError] = useState<string | null>(null)
 
     const [payTarget, setPayTarget] = useState<PosDocumentSummary | null>(null)
     const [payMethod, setPayMethod] = useState<PosPaymentMethod>("EFECTIVO")
@@ -210,6 +213,7 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
 
     const load = useCallback(async () => {
         setLoading(true)
+        setLoadError(null)
         try {
             const params = new URLSearchParams({ status: "OPEN", kind: "LAYAWAY" })
             if (branchId) params.set("branchId", branchId)
@@ -217,9 +221,9 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
             const data: { documents?: PosDocumentSummary[]; error?: string } | null = await res.json().catch(() => null)
             if (!res.ok) throw new Error(data?.error || "No se pudieron cargar")
             setDocuments(data?.documents ?? [])
-        } catch (error) {
+        } catch {
             setDocuments([])
-            toast.error(error instanceof Error ? error.message : "No se pudieron cargar los apartados")
+            setLoadError("No se pudieron cargar los apartados. Revisa tu conexión y vuelve a intentar.")
         } finally {
             setLoading(false)
         }
@@ -398,6 +402,13 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                     </SheetHeader>
                     {loading && documents.length === 0 ? (
                         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                    ) : loadError ? (
+                        <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                            <p className="text-sm text-destructive">{loadError}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+                                Reintentar
+                            </Button>
+                        </div>
                     ) : documents.length === 0 ? (
                         <p className="py-16 text-center text-sm text-muted-foreground">No hay apartados pendientes en esta sucursal</p>
                     ) : (

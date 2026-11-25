@@ -16,8 +16,12 @@ import { paymentProofFilename, writePaymentProof } from "@/lib/payment-proofs"
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=", "base64")
 const user = (id: string, role = "CUSTOMER", status = "APPROVED") => ({ user: { id, role, status, customerType: "NORMAL", businessId: "biz-test" } })
-// The proxy (antes middleware) only reads req.auth and req.nextUrl; a stub with a real NextURL exercises the same logic.
-const runMiddleware = (req: NextRequest, auth: unknown) => (proxy as any)({ auth, nextUrl: req.nextUrl })
+// El proxy lee req.auth (inyectado por el wrapper de next-auth en producción),
+// req.nextUrl, req.method y req.headers (barrera de origen + x-request-id):
+// adjuntar auth al NextRequest real ejerce exactamente la misma lógica — un
+// stub pelado { auth, nextUrl } ya no basta desde que el proxy sella el
+// x-request-id leyendo/escribiendo req.headers.
+const runMiddleware = (req: NextRequest, auth: unknown) => (proxy as any)(Object.assign(req, { auth }))
 const getUpload = (segments: string[]) => uploads(new NextRequest(`https://app.invalid/uploads/${segments.join("/")}`), { params: Promise.resolve({ path: segments }) })
 
 let directory: string

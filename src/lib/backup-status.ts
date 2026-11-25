@@ -38,6 +38,9 @@ export interface BackupStatusFile {
   uploads?: unknown
   proofs?: unknown
   evidence?: unknown
+  // Copia espejo en otro disco físico (scripts/backup-n5.ps1, -OffsiteRoot,
+  // default F:\prosolutions-backups en el N5): { enabled, files, bytes, ok, error }.
+  offsite?: unknown
 }
 
 export function isoOrNull(value: unknown): string | null {

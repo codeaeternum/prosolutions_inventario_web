@@ -5,11 +5,26 @@ set -e  # Exit on any error
 # PRO-SOLUTIONS INVENTARIO - Deploy to N5 Pro
 # MacBook → GitHub → N5 Pro (Windows 11 + Docker)
 # ============================================
+#
+# WRAPPER DELGADO. Toda la lógica de build/migraciones/up/health vive en
+# deploy-n5.ps1 (se ejecuta EN el N5). Este script solo:
+#   1. Verifica calidad en el Mac (typecheck + lint + tests) — SKIP_VERIFY=1 la omite.
+#   2. Sube la rama activa a GitHub (push-driven: el N5 descarga, nunca se
+#      copia código por SSH).
+#   3. Dispara en el N5: git fetch + git reset --hard origin/<rama> +
+#      powershell -ExecutionPolicy Bypass -File deploy-n5.ps1
+#
+# El comando remoto viaja como -EncodedCommand (UTF-16LE base64): no depende
+# del shell por defecto del SSH del N5 — funciona igual si es PowerShell o
+# cmd.exe, porque invoca powershell.exe explícitamente y el payload base64 no
+# necesita quoting en ninguno de los dos. La versión anterior mandaba el bloque
+# PowerShell en crudo y solo funcionaba si el shell por defecto era PowerShell.
 
 # --- CONFIGURACIÓN DEL N5 PRO ---
 # Alias configurado en ~/.ssh/config con llave prosolutions_galindoasc_ed25519
 SSH_TARGET="${SSH_TARGET:-galindoasc-desktop}"
 REMOTE_HOST="100.124.116.70"
+REMOTE_PATH='D:\Projectos\prosolutions_inventario_web'
 
 # Colores
 RED='\033[0;31m'
@@ -54,6 +69,10 @@ fi
 
 # Push de la rama activa
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ -z "$CURRENT_BRANCH" ] || [ "$CURRENT_BRANCH" = "HEAD" ]; then
+    echo -e "${RED}HEAD detached: no se puede determinar la rama a desplegar.${NC}"
+    exit 1
+fi
 echo -e "${YELLOW}Pushing branch ${CURRENT_BRANCH}...${NC}"
 git push origin "HEAD:${CURRENT_BRANCH}"
 
@@ -70,92 +89,43 @@ if ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SSH_TARGET" "echo 'C
     exit 1
 fi
 
-echo -e "${GREEN}>>> Actualizando código y reconstruyendo contenedores...${NC}"
+echo -e "${GREEN}>>> Actualizando código en el N5 y ejecutando deploy-n5.ps1...${NC}"
 
-# Comando remoto - PowerShell (Windows SSH en N5 Pro)
-ssh -o StrictHostKeyChecking=no "$SSH_TARGET" "
-cd D:\\Projectos
-
-if (Test-Path 'prosolutions_inventario_web') {
-    if (-not (Test-Path 'prosolutions_inventario_web\\.git')) {
-        Write-Host '>>> Carpeta existe pero no es repo git, borrando...'
-        Remove-Item -Recurse -Force 'prosolutions_inventario_web'
-    }
-}
-
-if (-not (Test-Path 'prosolutions_inventario_web')) {
-    Write-Host '>>> Clonando repositorio por primera vez...'
+# Comando remoto (PowerShell). Delgado a propósito: sincroniza el repo con la
+# rama recién pusheada y delega TODO el resto (build, tags por SHA, volúmenes,
+# migraciones, up, health-poll, prune) a deploy-n5.ps1 — edita ese archivo para
+# cambiar el deploy, no este.
+REMOTE_PS=$(cat <<EOF
+\$path = '${REMOTE_PATH}'
+if (-not (Test-Path -LiteralPath \$path)) {
+    Set-Location 'D:\Projectos'
     git clone https://github.com/codeaeternum/prosolutions_inventario_web.git
+    if (\$LASTEXITCODE -ne 0) { Write-Host 'git clone fallo'; exit 1 }
+    Write-Host 'Repo clonado. Crea .env.docker en el N5 (copia .env.docker.example) y vuelve a desplegar.'
+    exit 1
 }
-
-cd prosolutions_inventario_web
-
+if (-not (Test-Path -LiteralPath (Join-Path \$path '.git'))) {
+    Write-Host "\$path existe pero no es un repo git; revisalo a mano (no se borra automáticamente)."
+    exit 1
+}
+Set-Location -LiteralPath \$path
 Write-Host '>>> Actualizando desde GitHub (${CURRENT_BRANCH})...'
-git fetch --all
+git fetch origin
 if (\$LASTEXITCODE -ne 0) { Write-Host 'git fetch fallo'; exit 1 }
-git checkout ${CURRENT_BRANCH}
-if (\$LASTEXITCODE -ne 0) { Write-Host 'git checkout fallo'; exit 1 }
-git pull --ff-only origin ${CURRENT_BRANCH}
-if (\$LASTEXITCODE -ne 0) { Write-Host 'git pull fallo'; exit 1 }
+git reset --hard origin/${CURRENT_BRANCH}
+if (\$LASTEXITCODE -ne 0) { Write-Host 'git reset fallo'; exit 1 }
+if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5 (copia .env.docker.example).'; exit 1 }
+powershell -ExecutionPolicy Bypass -File .\deploy-n5.ps1
+if (\$LASTEXITCODE -ne 0) { Write-Host 'deploy-n5.ps1 fallo'; exit 1 }
+EOF
+)
 
-if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5.'; exit 1 }
+# UTF-16LE base64 (lo que espera powershell -EncodedCommand). Node está
+# garantizado: el paso 0 corre npm. Una sola línea, sin caracteres especiales
+# para cmd.exe ni PowerShell — por eso no hace falta quoting anidado.
+ENCODED=$(node -e 'process.stdout.write(Buffer.from(process.argv[1], "utf16le").toString("base64"))' "$REMOTE_PS")
 
-# SHA del commit desplegado: queda horneado en la imagen (APP_BUILD_SHA) y la
-# consola /platform lo muestra — así se ve a simple vista qué build corre.
-\$env:GIT_SHA = (git rev-parse --short HEAD)
-Write-Host ('>>> Construyendo imagenes (incluida la de migraciones) [build ' + \$env:GIT_SHA + ']...')
-docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
-if (\$LASTEXITCODE -ne 0) { exit 1 }
-
-# Tag inmutable por SHA junto a :latest — permite rollback sin rebuild con
-# APP_IMAGE=prosolutions-app:<sha> (ver PORTAINER-STACK.md, 'Rollback por tag SHA').
-foreach (\$img in @('prosolutions-app','prosolutions-bot','prosolutions-migrate')) { docker tag \"\${img}:latest\" \"\${img}:\$env:GIT_SHA\" }
-
-# Los volumenes son external (docker-compose.yml): un 'up' en host limpio
-# falla si no existen. 'docker volume create' es idempotente (no-op si ya
-# estan), asi que se aseguran antes de cada up sin tocar datos existentes.
-Write-Host '>>> Asegurando volumenes externos (no-op si ya existen)...'
-# 'docker volume create' acepta UN solo volumen por llamada.
-foreach (\$vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create \$vol | Out-Null }
-if (\$LASTEXITCODE -ne 0) { exit 1 }
-
-Write-Host '>>> Asegurando DB y aplicando migraciones ANTES de promover la app...'
-docker compose -f docker-compose.yml --env-file .env.docker up -d db
-if (\$LASTEXITCODE -ne 0) { exit 1 }
-docker compose -f docker-compose.yml --env-file .env.docker --profile migrate run --rm migrate
-if (\$LASTEXITCODE -ne 0) { Write-Host 'Migracion fallo; app no promovida.'; exit 1 }
-
-Write-Host '>>> Promoviendo app y bot...'
-docker compose -f docker-compose.yml --env-file .env.docker up -d --force-recreate app bot
-if (\$LASTEXITCODE -ne 0) { exit 1 }
-
-Write-Host '>>> Esperando a que prosolutions-app reporte healthy (hasta 150s)...'
-\$deadline = (Get-Date).AddSeconds(150)
-\$health = ''
-do {
-    Start-Sleep -Seconds 5
-    \$health = docker inspect prosolutions-app --format '{{.State.Health.Status}}' 2>\$null
-    if (\$health -eq 'healthy') { break }
-} while ((Get-Date) -lt \$deadline)
-if (\$health -ne 'healthy') {
-    Write-Host ('prosolutions-app no llego a healthy (estado: ' + \$health + ').')
-    docker logs prosolutions-app --tail 40
-    exit 1
-}
-
-\$botStatus = docker inspect prosolutions-bot --format '{{.State.Status}}' 2>\$null
-if (\$botStatus -ne 'running') {
-    Write-Host ('prosolutions-bot no esta running (estado: ' + \$botStatus + ').')
-    docker logs prosolutions-bot --tail 40
-    exit 1
-}
-
-# Limpieza de imagenes dangling; los tags :<sha> se conservan para rollback.
-docker image prune -f | Out-Null
-
-Write-Host '>>> Estado de contenedores:'
-docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-"
+ssh -o StrictHostKeyChecking=no "$SSH_TARGET" "powershell -NoProfile -EncodedCommand ${ENCODED}"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"

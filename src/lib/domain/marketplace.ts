@@ -133,7 +133,7 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
       if (encargo.marketplaceRequestId) {
         const linked = await tx.marketplaceRequest.findUnique({
           where: { id: encargo.marketplaceRequestId },
-          include: marketplaceRequestInclude,
+          include: marketplaceOutgoingInclude,
         })
         if (linked) {
           return {
@@ -165,7 +165,7 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
             tallerName: { equals: input.tallerName, mode: "insensitive" },
           },
           orderBy: { createdAt: "desc" },
-          include: marketplaceRequestInclude,
+          include: marketplaceOutgoingInclude,
         })
 
     const request = duplicated ?? await tx.marketplaceRequest.create({
@@ -179,7 +179,10 @@ export async function createMarketplaceRequest(db: PrismaClient, actorId: string
         note: input.note || null,
         requestedById: actorId,
       },
-      include: marketplaceRequestInclude,
+      // create() solo responde al COMPRADOR: incluso cuando el pedido es al
+      // propio negocio, la respuesta usa la proyección externa para que el
+      // retail interno/decididor jamás salgan por este endpoint.
+      include: marketplaceOutgoingInclude,
     })
 
     // El encargo pasa a ORDERED en la misma tx ligando la solicitud (la que

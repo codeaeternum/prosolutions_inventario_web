@@ -296,6 +296,17 @@ describe("POST /api/users — empleado con módulo usuarios", () => {
     expect(data.status).toBe("APPROVED")
   })
 
+  it("normaliza el correo (trim + minúsculas) en el dup-check y en el create", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue(null) // correo libre
+    const res = await createUser(postReq(newUserPayload({ email: "  NUEVO@Test.MX  " })))
+    expect(res.status).toBe(200)
+    // El unique de User.email es case-sensitive en Postgres: sin esta
+    // normalización "NUEVO@Test.MX" y "nuevo@test.mx" eran dos cuentas.
+    expect(mocks.userFindUnique).toHaveBeenCalledWith({ where: { email: "nuevo@test.mx" } })
+    expect(mocks.userCreate.mock.calls[0][0].data.email).toBe("nuevo@test.mx")
+  })
+
   it("rol inválido del body es 400 (admin)", async () => {
     mocks.auth.mockResolvedValue(admin())
     const res = await createUser(postReq(newUserPayload({ role: "SUPERUSER" })))

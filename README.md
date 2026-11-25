@@ -4,7 +4,7 @@ Sistema de inventario, reservas y ventas para refacciones de celulares. Incluye 
 
 ## Requisitos
 
-- **Node.js** 20+
+- **Node.js** >=22.18 <25 (los scripts `.mjs` cargan el cliente Prisma generado con el type-stripping nativo de Node 22.18+; `engines` del package.json lo exige)
 - **PostgreSQL** 16 (o compatible)
 - **npm** o pnpm
 
@@ -61,8 +61,13 @@ Abre [http://localhost:3000](http://localhost:3000).
 | `npm run db:studio` | Abre Prisma Studio |
 | `npm run bot:dev` | Bot de Telegram en desarrollo |
 | `npm run bot:start` | Bot de Telegram (producción) |
+| `npm run bot:build` | Bundle del bot a `dist/bot.cjs` con esbuild (imagen Docker) |
 | `npm run pwa:icons` | Genera iconos PWA desde `public/logo.jpg` |
-| `npm run test` | Tests (Vitest) |
+| `npm run test` | Tests unitarios + de componentes (Vitest, proyectos `unit` y `components`) |
+| `npm run test:components` | Solo tests de componentes (Vitest) |
+| `npm run test:e2e` | Tests end-to-end (Playwright) |
+| `npm run security:check` | Chequeo HTTP de seguridad contra el piloto aislado (requiere el piloto arriba y `PILOT_ENV_FILE`) |
+| `npm run platform:superadmin` | Gestión del superadmin de plataforma (`scripts/manage-superadmin.mjs`) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint sobre `src` y `scripts` (falla con warnings) |
 

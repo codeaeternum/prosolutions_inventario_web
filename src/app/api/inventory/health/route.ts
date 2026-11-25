@@ -3,6 +3,7 @@ import { getSession, requireAdmin } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { recordAudit } from "@/lib/audit"
+import { transaction } from "@/lib/domain/operations"
 
 export interface StockDriftRow {
   productId: string
@@ -124,6 +125,36 @@ export async function GET() {
 }
 
 /**
+ * Reconcilia UN producto dentro de una transacción serializable: recalcula el
+ * Σ BranchStock y relee Product.stock ahí mismo, y solo escribe si siguen
+ * difiriendo. La foto del escaneo (computeStockDrift, fuera de tx) es solo una
+ * pista — escribir su branchesStock como absoluto pisaría ventas o recepciones
+ * concurrentes que movieran BranchStock y Product.stock de forma consistente
+ * entre el escaneo y la escritura. Dentro de la tx serializable la suma y la
+ * escritura son atómicas respecto a esos movimientos: o el movimiento queda
+ * antes (entra en la suma) o la tx reintenta/falla (P2034 lo reintenta
+ * transaction()), pero nunca se pierde un decremento legítimo.
+ * Devuelve la fila reconciliada con los valores reales, o null si el producto
+ * ya estaba alineado (se corrigió solo, se desactivó o el drift cambió).
+ */
+async function reconcileProductStock(businessId: string, productId: string): Promise<StockDriftRow | null> {
+  return transaction(prisma, async tx => {
+    const aggregate = await tx.branchStock.aggregate({
+      where: { productId, businessId },
+      _sum: { quantity: true },
+    })
+    const branchesStock = aggregate._sum.quantity ?? 0
+    const product = await tx.product.findFirst({
+      where: { id: productId, businessId, isActive: true },
+      select: { name: true, stock: true },
+    })
+    if (!product || product.stock === branchesStock) return null
+    await tx.product.update({ where: { id: productId }, data: { stock: branchesStock } })
+    return { productId, name: product.name, cachedStock: product.stock, branchesStock, diff: branchesStock - product.stock }
+  })
+}
+
+/**
  * POST /api/inventory/health — Reconcilia Product.stock al Σ BranchStock.quantity real.
  */
 export async function POST() {
@@ -138,32 +169,36 @@ export async function POST() {
       return NextResponse.json({ ok: true, reconciledCount: 0, reconciled: [] })
     }
 
-    await prisma.$transaction(
-      drifted.map((row) =>
-        prisma.product.update({
-          where: { id: row.productId },
-          data: { stock: row.branchesStock },
-        })
-      )
-    )
+    // Producto por producto, cada uno en su propia tx serializable: granulares
+    // y cortas — una sola tx gigante chocaría con ventas de todo el catálogo
+    // y agotaría los reintentos. Si una falla, las ya reconciliadas quedan
+    // bien (cada una es consistente por sí misma) y reintentar el POST retoma
+    // el resto.
+    const reconciled: StockDriftRow[] = []
+    for (const candidate of drifted) {
+      const row = await reconcileProductStock(businessId, candidate.productId)
+      if (row) reconciled.push(row)
+    }
 
-    await recordAudit(prisma, {
-      businessId,
-      actorId: session.user.id,
-      action: "STOCK_RECONCILE",
-      entity: "product",
-      entityId: businessId,
-      entityName: `${drifted.length} producto(s)`,
-      summary: `Reconciliación de stock total contra sucursales en ${drifted.length} producto(s)`,
-      changes: Object.fromEntries(
-        drifted.slice(0, 20).map((r) => [r.name, { before: r.cachedStock, after: r.branchesStock }])
-      ),
-    })
+    if (reconciled.length > 0) {
+      await recordAudit(prisma, {
+        businessId,
+        actorId: session.user.id,
+        action: "STOCK_RECONCILE",
+        entity: "product",
+        entityId: businessId,
+        entityName: `${reconciled.length} producto(s)`,
+        summary: `Reconciliación de stock total contra sucursales en ${reconciled.length} producto(s)`,
+        changes: Object.fromEntries(
+          reconciled.slice(0, 20).map((r) => [r.name, { before: r.cachedStock, after: r.branchesStock }])
+        ),
+      })
+    }
 
     return NextResponse.json({
       ok: true,
-      reconciledCount: drifted.length,
-      reconciled: drifted,
+      reconciledCount: reconciled.length,
+      reconciled,
     })
   } catch (error) {
     console.error("[inventory/health] Error reconciliando:", error)

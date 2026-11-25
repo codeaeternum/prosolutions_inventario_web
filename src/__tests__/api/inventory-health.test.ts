@@ -4,9 +4,14 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   queryRaw: vi.fn(),
   productCount: vi.fn(),
-  productUpdate: vi.fn(),
   auditCreate: vi.fn(),
   transaction: vi.fn(),
+  // Mock del tx interactivo que transaction() (domain/operations) entrega al
+  // trabajo de reconciliación: la suma de BranchStock y la escritura se hacen
+  // DENTRO de la tx serializable, no con la foto del escaneo.
+  txBranchStockAggregate: vi.fn(),
+  txProductFindFirst: vi.fn(),
+  txProductUpdate: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }))
@@ -15,7 +20,6 @@ vi.mock("@/lib/prisma", () => ({
     $queryRaw: mocks.queryRaw,
     product: {
       count: mocks.productCount,
-      update: mocks.productUpdate,
     },
     auditEvent: {
       create: mocks.auditCreate,
@@ -32,10 +36,18 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
     mocks.auth.mockResolvedValue({
       user: { id: "u-admin", role: "ADMIN", status: "APPROVED", businessId: "biz-1" },
     })
-    mocks.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops))
+    // transaction() invoca db.$transaction(work, opts) forma interactiva: el
+    // mock entrega un tx con los agregados controlados por cada prueba.
+    const tx = {
+      branchStock: { aggregate: mocks.txBranchStockAggregate },
+      product: { findFirst: mocks.txProductFindFirst, update: mocks.txProductUpdate },
+    }
+    mocks.transaction.mockImplementation(async (work: (t: unknown) => unknown) => work(tx))
     mocks.queryRaw.mockResolvedValue([])
     mocks.productCount.mockResolvedValue(0)
-    mocks.productUpdate.mockResolvedValue({})
+    mocks.txBranchStockAggregate.mockResolvedValue({ _sum: { quantity: 0 } })
+    mocks.txProductFindFirst.mockResolvedValue(null)
+    mocks.txProductUpdate.mockResolvedValue({})
     mocks.auditCreate.mockResolvedValue({})
   })
 
@@ -144,19 +156,82 @@ describe("GET & POST /api/inventory/health — verificación y reconciliación d
     expect(json.chargedWithoutStock).toEqual({ count: 0, parts: [] })
   })
 
-  it("reconcilia el stock en POST y registra evento en la bitácora", async () => {
+  it("reconcilia el stock en POST recalculando la suma DENTRO de la tx y registra bitácora", async () => {
+    // El escaneo (fuera de tx) reporta cached 4 vs sucursales 7. Dentro de la
+    // tx serializable la suma se recalcula y concuerda con el escaneo.
     mocks.queryRaw.mockResolvedValue([
       { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },
     ])
+    mocks.txBranchStockAggregate.mockResolvedValue({ _sum: { quantity: 7 } })
+    mocks.txProductFindFirst.mockResolvedValue({ name: "Batería iPhone 13", stock: 4 })
 
     const res = await POST()
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.reconciledCount).toBe(1)
-    expect(mocks.productUpdate).toHaveBeenCalledWith({
+    expect(mocks.txProductUpdate).toHaveBeenCalledWith({
       where: { id: "p-drift" },
       data: { stock: 7 },
     })
     expect(mocks.auditCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it("concurrencia: escribe la suma VIGENTE en la tx, no la foto del escaneo (una venta intermedia no se pisa)", async () => {
+    // Escaneo: cached 4 vs sucursales 7. Antes de escribir, una venta de 2
+    // descuenta consistente: sucursales 7→5 y Product.stock 4→2. El drift
+    // (−3) es el mismo, así que el producto sigue desalineado — pero el
+    // absoluto correcto ahora es 5, no 7. Escribir la foto del escaneo (7)
+    // resucitaría las 2 piezas vendidas: el bug exacto de la auditoría D4.
+    mocks.queryRaw.mockResolvedValue([
+      { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },
+    ])
+    mocks.txBranchStockAggregate.mockResolvedValue({ _sum: { quantity: 5 } })
+    mocks.txProductFindFirst.mockResolvedValue({ name: "Batería iPhone 13", stock: 2 })
+
+    const res = await POST()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.reconciledCount).toBe(1)
+    expect(mocks.txProductUpdate).toHaveBeenCalledWith({
+      where: { id: "p-drift" },
+      data: { stock: 5 },
+    })
+    // La fila reportada refleja los valores reales al escribir, no los del escaneo.
+    expect(json.reconciled).toEqual([
+      { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 2, branchesStock: 5, diff: 3 },
+    ])
+    // La bitácora registra el antes/después real de la escritura.
+    expect(mocks.auditCreate).toHaveBeenCalledTimes(1)
+    const auditData = mocks.auditCreate.mock.calls[0][0].data
+    expect(auditData.changes["Batería iPhone 13"]).toEqual({ before: 2, after: 5 })
+  })
+
+  it("omite el producto que ya quedó alineado al momento de la tx (se corrigió solo entre escaneo y reconciliación)", async () => {
+    // El escaneo lo marcó desfasado, pero una recepción concurrente alineó
+    // ambos lados: dentro de la tx suma == stock y no hay nada que escribir.
+    mocks.queryRaw.mockResolvedValue([
+      { productId: "p-drift", name: "Batería iPhone 13", cachedStock: 4, branchesStock: 7 },
+    ])
+    mocks.txBranchStockAggregate.mockResolvedValue({ _sum: { quantity: 6 } })
+    mocks.txProductFindFirst.mockResolvedValue({ name: "Batería iPhone 13", stock: 6 })
+
+    const res = await POST()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.reconciledCount).toBe(0)
+    expect(json.reconciled).toEqual([])
+    expect(mocks.txProductUpdate).not.toHaveBeenCalled()
+    // Sin escrituras reales no hay evento de bitácora.
+    expect(mocks.auditCreate).not.toHaveBeenCalled()
+  })
+
+  it("sin drift en el escaneo no abre transacción ni escribe nada", async () => {
+    mocks.queryRaw.mockResolvedValue([])
+
+    const res = await POST()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json).toMatchObject({ ok: true, reconciledCount: 0, reconciled: [] })
+    expect(mocks.transaction).not.toHaveBeenCalled()
   })
 })

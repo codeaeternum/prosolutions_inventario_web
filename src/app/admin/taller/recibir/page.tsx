@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Store, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Banknote, CalendarClock, Camera, CheckCircle2, CircleDollarSign, CreditCard, Droplets, Gamepad2, Grid3x3, Hash, Headphones, KeyRound, Laptop, Loader2, LockOpen, MapPin, MessageCircle, Monitor, Package, PowerOff, Printer, Puzzle, RotateCcw, Search, ShieldAlert, ShieldCheck, Smartphone, Store, Tablet, Tv, UserRound, Watch, Wrench, X, Zap, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,6 +27,7 @@ import { resolveServicePrice } from "@/lib/service-pricing"
 import { formatAccessPattern, formatCents, titleCaseName } from "@/lib/utils"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio } from "@/lib/workshop-labels"
 import { waMeHref } from "@/components/public/whatsapp-button"
+import { INTAKE_DRAFT_KEY, intakeDraftFromForm, intakeFormIsEmpty, parseIntakeDraft, serializeIntakeDraft, type IntakeDraft } from "@/components/admin/taller/intake-draft"
 
 type Branch = { id: string; name: string }
 type Person = { id: string; name: string }
@@ -184,14 +185,28 @@ function SummaryGroup({ title, icon: Icon, items, onEdit }: { title: string; ico
 }
 
 export default function ReceiveEquipmentPage() {
-  const [step, setStep] = useState(0)
-  const [form, setForm] = useState(emptyForm)
+  // Borrador de recepción en localStorage (mismo patrón que el ticket del POS):
+  // un crash, corte de luz o cierre accidental no pierde la captura. Restaurado
+  // en estado inicial perezoso — sin credenciales del equipo ni firma (ver
+  // intake-draft.ts); es borrador, no verdad: el servidor valida todo al crear.
+  const [restoredDraft] = useState<IntakeDraft | null>(() => {
+    if (typeof window === "undefined") return null
+    try {
+      return parseIntakeDraft(localStorage.getItem(INTAKE_DRAFT_KEY), Date.now())
+    } catch {
+      return null
+    }
+  })
+  const [step, setStep] = useState(() => restoredDraft?.step ?? 0)
+  const [form, setForm] = useState(() => restoredDraft ? { ...emptyForm, ...restoredDraft.form } : emptyForm)
   const [stepError, setStepError] = useState("")
   const [branches, setBranches] = useState<Branch[]>([])
   const [staff, setStaff] = useState<Person[]>([])
   const [metaLoaded, setMetaLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [dirty, setDirty] = useState(false)
+  const [dirty, setDirty] = useState(() => restoredDraft !== null)
+  // Aviso de borrador recuperado: visible hasta descartarlo o ignorarlo.
+  const [draftNoticeDismissed, setDraftNoticeDismissed] = useState(false)
   const [created, setCreated] = useState<CreatedOrder | null>(null)
   const [lookupField, setLookupField] = useState<LookupField>("customerName")
   const [lookupTerm, setLookupTerm] = useState("")
@@ -217,7 +232,7 @@ export default function ReceiveEquipmentPage() {
   const [modelSearching, setModelSearching] = useState(false)
   const [modelSearched, setModelSearched] = useState("")
   const [modelCatalogDown, setModelCatalogDown] = useState(false)
-  const [pickedModel, setPickedModel] = useState<DeviceModel | null>(null)
+  const [pickedModel, setPickedModel] = useState<DeviceModel | null>(() => restoredDraft?.pickedModel ?? null)
   // Prefijo del folio impreso (ajuste `order_prefix` del negocio); OT por defecto.
   const [orderPrefix, setOrderPrefix] = useState(DEFAULT_ORDER_PREFIX)
   // Largo del consecutivo impreso (ajuste `order_folio_digits`, 4–8); 6 por defecto.
@@ -499,6 +514,28 @@ export default function ReceiveEquipmentPage() {
       document.removeEventListener("click", interceptInternalNavigation, true)
     }
   }, [dirty, created])
+
+  // Aviso único al recuperar el borrador (montaje): el staff sabe de dónde
+  // salieron esos datos — el aviso persistente permite descartarlos.
+  useEffect(() => {
+    if (restoredDraft) toast.info("Se recuperó un borrador de recepción sin terminar")
+  }, [restoredDraft])
+
+  // El borrador se reescribe con cada cambio del formulario y se borra al
+  // quedar vacío o al crear la orden — una recepción creada no resucita en el
+  // próximo load. Sin credenciales del equipo ni firma: intakeDraftFromForm
+  // filtra la whitelist de campos persistibles.
+  useEffect(() => {
+    if (created) return
+    try {
+      const draftForm = intakeDraftFromForm(form)
+      if (!dirty || intakeFormIsEmpty(draftForm)) {
+        localStorage.removeItem(INTAKE_DRAFT_KEY)
+      } else {
+        localStorage.setItem(INTAKE_DRAFT_KEY, serializeIntakeDraft({ step, form: draftForm, pickedModel }))
+      }
+    } catch { /* storage lleno o modo privado: la captura sigue en memoria */ }
+  }, [form, step, pickedModel, dirty, created])
 
   useEffect(() => {
     // Por teléfono se busca solo con los dígitos locales: User.phone está
@@ -808,6 +845,9 @@ export default function ReceiveEquipmentPage() {
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || "No se pudo crear la orden. Reintenta sin cambiar los datos.")
       operationKey.current = null
+      // La orden quedó creada: el borrador se limpia aquí y el efecto de
+      // persistencia no lo reescribe porque `created` ya viene activo.
+      try { localStorage.removeItem(INTAKE_DRAFT_KEY) } catch { /* storage restringido: el efecto no reescribe con created activo */ }
       setCreated(data.order)
       toast.success(`Orden ${formatFolio(orderPrefix, data.order.number, folioDigits)} registrada`)
     } catch (cause) {
@@ -837,11 +877,15 @@ export default function ReceiveEquipmentPage() {
   }
 
   const reset = () => {
+    // "Registrar otro equipo" o descartar el borrador: la captura guardada
+    // en localStorage muere con el formulario en memoria.
+    try { localStorage.removeItem(INTAKE_DRAFT_KEY) } catch { /* el efecto de persistencia también lo limpia al quedar vacío */ }
     setForm({ ...emptyForm, intakeBranchId: branches.length === 1 ? branches[0].id : "" })
     setStep(0)
     setStepError("")
     setCreated(null)
     setDirty(false)
+    setDraftNoticeDismissed(true)
     setSuggestions([])
     setMatchedCustomer(null)
     setLookupTerm("")
@@ -952,6 +996,22 @@ export default function ReceiveEquipmentPage() {
         </div>
       </div>
 
+      {/* Borrador recuperado al cargar: aviso persistente con salida — el
+          PIN/patrón del equipo y la firma NO se restauran (no se guardan en
+          localStorage), así que el aviso lo dice desde aquí. */}
+      {restoredDraft && !draftNoticeDismissed && !created && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3" role="status">
+          <p className="min-w-0 flex-1 text-sm">
+            <span className="font-medium">Se recuperó un borrador de recepción.</span>{" "}
+            <span className="text-muted-foreground">Los datos capturados siguen aquí; el PIN/patrón del equipo y la firma se vuelven a pedir por seguridad.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setDraftNoticeDismissed(true)}>Continuar capturando</Button>
+            <Button type="button" variant="outline" size="sm" onClick={reset}>Descartar borrador</Button>
+          </div>
+        </div>
+      )}
+
       {created ? (
         <section className="rounded-xl border bg-card p-6 text-center sm:p-8">
           <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500 dark:text-emerald-400" />
@@ -972,9 +1032,16 @@ export default function ReceiveEquipmentPage() {
                 <a href={createdWhatsApp} target="_blank" rel="noreferrer"><MessageCircle className="mr-2 h-4 w-4" />WhatsApp al cliente</a>
               </Button>
             )}
+            {/* Evidencia fotográfica de recepción: la orden abre con la
+                sección de evidencias desplegada (?fotos=1) — fotos del equipo
+                al recibirlo protegen contra disputas de golpes/estado. */}
+            <Button variant="secondary" asChild>
+              <Link href={`/admin/taller?orden=${created.id}&fotos=1`}><Camera className="mr-2 h-4 w-4" />Agregar fotos de recepción ahora</Link>
+            </Button>
             <Button variant="outline" asChild><Link href={`/admin/taller?orden=${created.id}`}>Abrir orden</Link></Button>
             <Button variant="outline" onClick={reset}><RotateCcw className="mr-2 h-4 w-4" />Registrar otro equipo</Button>
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">Las fotos del equipo al recibirlo son tu evidencia ante disputas de golpes o estado — tómalas antes de guardarlo.</p>
         </section>
       ) : (
         <>
@@ -1529,7 +1596,7 @@ export default function ReceiveEquipmentPage() {
                     : <span />}
                   {step < STEPS.length - 1
                     ? <Button type="button" onClick={goNext}>Siguiente<ArrowRight className="ml-2 h-4 w-4" /></Button>
-                    : <Button type="button" onClick={() => void submit()} disabled={saving}>{saving ? "Creando…" : "Crear orden"}</Button>}
+                    : <Button type="button" onClick={() => void submit()} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{saving ? "Creando…" : "Crear orden"}</Button>}
                 </div>
               </div>
             </fieldset>
@@ -1544,7 +1611,7 @@ export default function ReceiveEquipmentPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Salir de la recepción?</AlertDialogTitle>
             <AlertDialogDescription>
-              Hay una recepción sin guardar. Si sales ahora se perderán los datos capturados.
+              Hay una recepción sin terminar. Los datos capturados se conservan como borrador en este navegador — sin el PIN/patrón del equipo ni la firma — para continuar después.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1557,7 +1624,7 @@ export default function ReceiveEquipmentPage() {
                 window.location.assign(leaveTarget)
               }}
             >
-              Salir sin guardar
+              Salir de todos modos
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

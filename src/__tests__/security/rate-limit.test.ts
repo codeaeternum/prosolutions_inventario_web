@@ -84,6 +84,66 @@ describe("login throttling", () => {
   })
 })
 
+describe("anti-evicción de scopes críticos (S4)", () => {
+  // El store vive en el módulo y lo comparten todos los tests del archivo:
+  // para llenar el mapa con contenido controlado se reimporta fresco.
+  const freshRateLimit = async () => {
+    vi.resetModules()
+    return await import("@/lib/rate-limit")
+  }
+
+  it("un flood de llaves no críticas NO evicta los bloqueos de login", async () => {
+    const rl = await freshRateLimit()
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const victim = `flood-victim-${Math.random()}@test.mx`
+    // La víctima queda bloqueada en el par (6.6.6.6, victim) antes del flood.
+    for (let i = 0; i < 10; i++) rl.recordLoginFailure("6.6.6.6", victim)
+    expect(rl.loginAttemptAllowed("6.6.6.6", victim)).toBe(false)
+    // El atacante siembra llaves basura no críticas hasta llenar el mapa:
+    // antes de la protección, la evicción de "las más viejas" se llevaba el
+    // bloqueo de login (fail-open). Ahora las llaves login-* son intocables.
+    for (let i = 0; i < 10000; i++) {
+      rl.checkAndRecord("flood-nc", `semilla-${i}`, 60_000, 5)
+    }
+    expect(rl.loginAttemptAllowed("6.6.6.6", victim)).toBe(false)
+    // Y el mapa sigue admitiendo llaves nuevas: el flood sí es evictable.
+    expect(rl.checkAndRecord("register", `llegada-${Math.random()}`, 60_000, 5)).toBe(true)
+  })
+
+  it("con el mapa lleno de puro crítico: el no-crítico nuevo se rechaza y el crítico entra", async () => {
+    const rl = await freshRateLimit()
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    // Llenar el mapa con llaves CRÍTICAS vivas (verify con identificador
+    // arbitrario — el vector exacto del ataque original).
+    for (let i = 0; i < 10000; i++) {
+      rl.checkAndRecord("verify", `codigo-${i}`, 60_000, 5)
+    }
+    // Una llave NUEVA de scope no crítico no tiene ya nada evictable delante:
+    // fail-closed — se rechaza en vez de tumbar castigos de seguridad.
+    expect(rl.checkAndRecord("directory", `visitante-${Math.random()}`, 60_000, 5)).toBe(false)
+    // La llave crítica nueva sí se admite aunque el mapa exceda MAX_KEYS:
+    // sus entradas expiran solas; perder el bloqueo sería peor.
+    expect(rl.checkAndRecord("verify", `codigo-nuevo-${Math.random()}`, 60_000, 5)).toBe(true)
+    // recordFailure de scope no crítico no revienta ni desplaza nada: no-op.
+    rl.recordFailure("catalog-list", `x-${Math.random()}`, 60_000)
+    // El backoff del login (scope crítico) sigue registrándose con el mapa lleno.
+    const acct = `saturada-${Math.random()}@test.mx`
+    for (let i = 0; i < 10; i++) rl.recordLoginFailure("7.7.7.7", acct)
+    expect(rl.loginAttemptAllowed("7.7.7.7", acct)).toBe(false)
+  })
+
+  it("las llaves críticas expiran solas por ventana aunque nunca se evicten", async () => {
+    const rl = await freshRateLimit()
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const key = `expira-${Math.random()}`
+    expect(rl.checkAndRecord("verify", key, 1000, 1)).toBe(true)
+    expect(rl.checkAndRecord("verify", key, 1000, 1)).toBe(false)
+    vi.advanceTimersByTime(1001)
+    // La protección es contra evicción forzada, no contra la expiración natural.
+    expect(rl.checkAndRecord("verify", key, 1000, 1)).toBe(true)
+  })
+})
+
 describe("TRUST_PROXY_SECRET — candado de los headers de proxy", () => {
   it("con secreto configurado, solo honra los headers si x-origin-secret coincide", () => {
     vi.stubEnv("TRUST_PROXY_HEADERS", "true")

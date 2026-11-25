@@ -50,4 +50,24 @@ export function validateEnv(): void {
       }
     }
   }
+
+  // TRUST_PROXY_HEADERS sin TRUST_PROXY_SECRET: los headers de IP del proxy
+  // (CF-Connecting-IP / X-Forwarded-For) se honran de CUALQUIER peer que
+  // alcance el origen — y la app también se publica en la LAN del taller
+  // (:3005) para operación directa. Un equipo en la LAN puede forjar la IP
+  // por request: abre buckets infinitos de rate-limit y siembra la IP falsa
+  // en auditoría. No se bloquea el arranque: la app LAN de dev depende de
+  // poder correr sin la Transform Rule de Cloudflare — pero el warning debe
+  // ser imposible de ignorar en el log de arranque. Configuración documentada
+  // en .env.docker.example (secreto + Transform Rule x-origin-secret).
+  const trustProxy = getEnv("TRUST_PROXY_HEADERS")?.trim().toLowerCase() === "true"
+  const proxySecret = getEnv("TRUST_PROXY_SECRET")?.trim()
+  if (trustProxy && !proxySecret) {
+    console.warn(
+      "[env] ⚠ TRUST_PROXY_HEADERS=true sin TRUST_PROXY_SECRET: cualquier cliente que alcance " +
+      "el origen (incluida la LAN :3005) puede forjar CF-Connecting-IP/X-Forwarded-For y esquivar " +
+      "el rate limit por IP. Genera el secreto (openssl rand -hex 32), declara TRUST_PROXY_SECRET " +
+      "y crea la Transform Rule de Cloudflare documentada en .env.docker.example."
+    )
+  }
 }

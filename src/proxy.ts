@@ -3,6 +3,52 @@ import { getAuthRedirect } from "@/lib/auth.config"
 import { NextResponse } from "next/server"
 import type { NextFetchEvent, NextRequest } from "next/server"
 
+// --- x-request-id: correlación extremo a extremo ----------------------------
+// Todo request sale con un x-request-id: el que venga del cliente/edge (si es
+// sano: no vacío, máx 128 chars) o uno nuevo con crypto.randomUUID(). Se
+// propaga en DOS lugares:
+//   · request upstream — NextResponse.next/rewrite({ request: { headers } })
+//     reescribe los headers que ve el route handler / server component (así
+//     businessFailure y cualquier handler lo leen con req.headers/headers()).
+//   · response — para que el cliente/edge y los logs del docker json-file se
+//     puedan cruzar (el túnel de Cloudflare no lo genera por nosotros).
+// La mutación de req.headers de ensureRequestId() hace que TODA derivación
+// posterior dentro de la cadena del proxy vea el mismo id — incluido el clone
+// del request que next-auth crea para el callback de auth (reqWithEnvURL copia
+// headers). Los headers de un NextRequest son mutables en la práctica; el
+// try/catch cubre el caso exótico en que no lo fueran (degrada a ids
+// independientes por punto de respuesta, nunca a un 500).
+const REQUEST_ID_HEADER = "x-request-id"
+
+function ensureRequestId(req: NextRequest): string {
+  const existing = req.headers.get(REQUEST_ID_HEADER)
+  if (existing && existing.length <= 128) return existing
+  const id = crypto.randomUUID()
+  try { req.headers.set(REQUEST_ID_HEADER, id) } catch { /* headers inmutables: la respuesta igual queda sellada */ }
+  return id
+}
+
+/** Headers del request clonados con el x-request-id garantizado (para upstream). */
+function requestHeadersWithId(req: NextRequest): Headers {
+  const headers = new Headers(req.headers)
+  headers.set(REQUEST_ID_HEADER, ensureRequestId(req))
+  return headers
+}
+
+/** Sella cualquier respuesta con el x-request-id del request y la devuelve. */
+function stampWithId<T extends Response>(req: NextRequest, res: T): T {
+  try { res.headers.set(REQUEST_ID_HEADER, ensureRequestId(req)) } catch { /* respuesta inmutable: no romper el request por telemetría */ }
+  return res
+}
+
+/** NextResponse.next() con propagación del id en request (upstream) y response. */
+function nextWithId(req: NextRequest): NextResponse {
+  const res = NextResponse.next({ request: { headers: requestHeadersWithId(req) } })
+  res.headers.set(REQUEST_ID_HEADER, ensureRequestId(req))
+  return res
+}
+// ------------------------------------------------------------------------------
+
 // --- Barrera anti-CSRF para /api/* (Origin + Fetch Metadata) ------------------
 // Solo métodos que mutan estado. GET/HEAD son lecturas (cada route valida su
 // propia autorización) y OPTIONS es el preflight CORS del navegador — bloquearlo
@@ -66,11 +112,11 @@ function allowedOriginHosts(req: NextRequest): Set<string> {
   return hosts
 }
 
-const forbiddenOrigin = () =>
-  NextResponse.json(
+const forbiddenOrigin = (req: NextRequest) =>
+  stampWithId(req, NextResponse.json(
     { error: "Origen no permitido" },
     { status: 403, headers: { "Cache-Control": "private, no-store" } },
-  )
+  ))
 
 // Devuelve el 403 cuando la request /api es un mutable cross-site, o null si
 // pasa. Función pura: solo Web APIs + process.env, corre sin wrapper auth.
@@ -90,7 +136,7 @@ function apiOriginDenied(req: NextRequest): NextResponse | null {
 
   // Fetch Metadata lo emite el navegador y JS no puede falsificarlo:
   // cross-site es rechazo directo aunque no haya Origin.
-  if (fetchSite === "cross-site") return forbiddenOrigin()
+  if (fetchSite === "cross-site") return forbiddenOrigin(req)
 
   // Regla estricta: cuando Origin (o Referer de fallback) está presente, su
   // host debe estar en la allowlist SIEMPRE. Sec-Fetch-Site: same-site admite
@@ -99,9 +145,9 @@ function apiOriginDenied(req: NextRequest): NextResponse | null {
   const source = origin ?? referer
   if (!source) return null // solo quedaba un Sec-Fetch-Site same-*/none
   try {
-    return allowedOriginHosts(req).has(new URL(source).host.toLowerCase()) ? null : forbiddenOrigin()
+    return allowedOriginHosts(req).has(new URL(source).host.toLowerCase()) ? null : forbiddenOrigin(req)
   } catch {
-    return forbiddenOrigin() // "null" o header malformado → no confiable
+    return forbiddenOrigin(req) // "null" o header malformado → no confiable
   }
 }
 // ------------------------------------------------------------------------------
@@ -119,34 +165,41 @@ const authHandler = auth((req) => {
   // Intercept legacy public files BEFORE Next's static file handler, including file extensions.
   // Case-insensitive: filesystems that ignore case could otherwise serve the file statically.
   if (lowerPathname.startsWith("/uploads/payments/")) {
-    if (!req.auth?.user || req.auth.user.status !== "APPROVED") return new NextResponse(null, { status: 401, headers: { "Cache-Control": "private, no-store" } })
+    if (!req.auth?.user || req.auth.user.status !== "APPROVED") return stampWithId(req, new NextResponse(null, { status: 401, headers: { "Cache-Control": "private, no-store" } }))
     const target = req.nextUrl.clone()
     target.pathname = `/api/payment-proofs/${pathname.slice("/uploads/payments/".length)}`
-    return NextResponse.rewrite(target)
+    return stampWithId(req, NextResponse.rewrite(target, { request: { headers: requestHeadersWithId(req) } }))
   }
   // Proof images must never be cached or fetched without the authenticated file handler.
   if (lowerPathname === "/_next/image") {
     let imageUrl = req.nextUrl.searchParams.get("url") ?? ""
-    try { imageUrl = decodeURIComponent(imageUrl).toLowerCase() } catch { return new NextResponse(null, { status: 400 }) }
-    if (imageUrl.includes("/uploads/payments/") || imageUrl.includes("/api/payment-proofs/")) return new NextResponse(null, { status: 403, headers: { "Cache-Control": "private, no-store" } })
-    return NextResponse.next()
+    try { imageUrl = decodeURIComponent(imageUrl).toLowerCase() } catch { return stampWithId(req, new NextResponse(null, { status: 400 })) }
+    if (imageUrl.includes("/uploads/payments/") || imageUrl.includes("/api/payment-proofs/")) return stampWithId(req, new NextResponse(null, { status: 403, headers: { "Cache-Control": "private, no-store" } }))
+    return nextWithId(req)
   }
   const redirect = getAuthRedirect(req.auth, req.nextUrl)
-  return redirect ?? NextResponse.next()
+  return redirect ? stampWithId(req, redirect) : nextWithId(req)
 })
 
 // /api/* nunca resuelve sesión aquí: cada route handler hace su propia auth,
 // así que la barrera de origen corre como función pura y listo. El resto
 // (páginas, /uploads/payments, /_next/image) va por authHandler → auth().
-export function proxy(req: NextRequest, event: NextFetchEvent) {
+export async function proxy(req: NextRequest, event: NextFetchEvent) {
+  ensureRequestId(req) // una sola vez por request: todas las ramas derivan el mismo id
   const pathname = req.nextUrl.pathname
   if (pathname.startsWith("/api/")) {
     // GET/HEAD/OPTIONS son lecturas o preflight CORS: la barrera actual ya
     // los deja pasar, así que ni siquiera evaluamos headers.
-    if (!MUTATING_METHODS.has(req.method)) return NextResponse.next()
-    return apiOriginDenied(req) ?? NextResponse.next()
+    if (!MUTATING_METHODS.has(req.method)) return nextWithId(req)
+    return apiOriginDenied(req) ?? nextWithId(req)
   }
-  return authHandler(req as never, event as never)
+  // Sello central: cubre también los redirects que produce el callback
+  // `authorized` de auth.config (esas respuestas no pasan por los helpers de
+  // arriba) — las que ya traen el sello reciben el mismo valor, idempotente.
+  // El `void` del tipo de authHandler es el fallback interno de next-auth
+  // (nuestro callback siempre devuelve respuesta): el ?? solo satisface a TS.
+  const res = await authHandler(req as never, event as never)
+  return stampWithId(req, res ?? nextWithId(req))
 }
 
 export const config = {

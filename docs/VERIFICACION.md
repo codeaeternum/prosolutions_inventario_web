@@ -112,10 +112,8 @@ bash scripts/e2e-pilot.sh e2e/admin-venta.spec.ts   # solo un spec
 El script:
 
 1. Verifica si `http://localhost:3316/login` ya responde; si no, abre el túnel `ssh -fN -L 3316:127.0.0.1:3316 galindoasc-desktop` (BatchMode, alias del `~/.ssh/config`).
-2. Exporta `E2E_ADMIN_EMAIL=e2e-admin@prosolutions.local`, la contraseña y `E2E_ALLOW_WRITES=1`.
+2. Exporta `E2E_ADMIN_EMAIL=e2e-admin@prosolutions.local`, la contraseña (vive solo en el script, no en docs) y `E2E_ALLOW_WRITES=1`.
 3. Corre `E2E_BASE_URL=http://localhost:3316 npx playwright test "$@"` — los args de Playwright pasan tal cual.
-
-**Password del pilot (no versionada):** el script la toma de `E2E_ADMIN_PASSWORD` en el entorno o de un archivo local `e2e/.env.pilot` (también acepta `e2e/pilot.env` o `pilot.env`; todos están en `.gitignore`) con una línea `E2E_ADMIN_PASSWORD=<password>`. Si falta, el script aborta con instrucciones antes de correr Playwright.
 
 Notas operativas del pilot:
 

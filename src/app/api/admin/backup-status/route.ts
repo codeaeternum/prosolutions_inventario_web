@@ -36,6 +36,32 @@ function artifact(value: unknown, backupRoot: string): BackupArtifact {
   }
 }
 
+interface OffsiteMirror {
+  enabled: boolean
+  ok: boolean
+  files: number
+  bytes: number
+  error: string | null
+}
+
+/**
+ * Espejo offsite (segundo disco físico, scripts/backup-n5.ps1 -OffsiteRoot):
+ * mismo saneado que artifact() — el error puede traer la ruta del disco
+ * espejo (F:\…) y nunca sale en la respuesta. `enabled:false` significa que
+ * el backup corre con -OffsiteRoot "" (espejo desactivado a propósito).
+ */
+function offsite(value: unknown, backupRoot: string): OffsiteMirror {
+  const raw = (value ?? {}) as Record<string, unknown>
+  const error = typeof raw.error === "string" && raw.error ? scrubPaths(raw.error, backupRoot) : null
+  return {
+    enabled: raw.enabled === true,
+    ok: raw.ok === true,
+    files: typeof raw.files === "number" && Number.isFinite(raw.files) ? raw.files : 0,
+    bytes: typeof raw.bytes === "number" && Number.isFinite(raw.bytes) ? raw.bytes : 0,
+    error,
+  }
+}
+
 interface RestoreDrillResponse {
   configured: boolean
   ok: boolean
@@ -106,6 +132,7 @@ export async function GET() {
         proofs: artifact(raw.proofs, backupRoot),
         evidence: artifact(raw.evidence, backupRoot),
       },
+      offsite: offsite(raw.offsite, backupRoot),
       restoreDrill,
     },
     { headers: noStore },

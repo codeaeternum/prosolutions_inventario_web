@@ -486,8 +486,11 @@ export default function VentasPage() {
         onOpenQuotes: () => setShowQuotes(true),
     }
 
+    // pb: la barra del ticket flota sobre la bottom-nav del admin — abajo de
+    // md el safe-area-page raíz ya reserva la nav, pero entre md y lg no, así
+    // que en ese tramo la página reserva nav + barra ella misma.
     return (
-        <div className="space-y-4 pb-24 lg:pb-8">
+        <div className="space-y-4 pb-24 md:pb-40 lg:pb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -595,15 +598,24 @@ export default function VentasPage() {
 
             <ShortcutHints />
 
-            {/* Ticket como barra inferior en pantallas angostas */}
-            <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Ticket como barra inferior en pantallas angostas. Flota sobre
+                la bottom-nav del admin (h-16 + safe-area, z-[90]): pegada a
+                bottom-0 la nav tapaba el botón y el cajero no podía abrir el
+                ticket para cobrar. La nav ya absorbe el safe-area del iPhone,
+                así que la barra no repite ese padding (mismo criterio que la
+                barra pegajosa de taller/recibir). */}
+            <div className="lg:hidden fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] z-40 border-t bg-background/95 backdrop-blur p-3">
                 <Button className="w-full h-12" onClick={() => setShowMobileCart(true)} disabled={cart.length === 0}>
                     <ReceiptText className="h-5 w-5 mr-2" />
                     Ticket {cartUnits > 0 && `(${cartUnits})`} — {formatPrice(cartTotal)}
                 </Button>
             </div>
             <Sheet open={showMobileCart} onOpenChange={setShowMobileCart}>
-                <SheetContent side="bottom" className="max-h-[85dvh] p-4">
+                {/* pb extra bajo lg: los sheets/dialogs del repo van en z-50 y
+                    la bottom-nav en z-[90] — la nav pinta ENCIMA del sheet en
+                    móvil, así que el pie (botón Cobrar) necesita reservar la
+                    banda de la nav para no quedar tapado tras ella. */}
+                <SheetContent side="bottom" className="max-h-[85dvh] p-4 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:pb-4">
                     <SheetHeader className="pb-2"><SheetTitle className="sr-only">Ticket</SheetTitle></SheetHeader>
                     <CartPanel {...panelProps} variant="plain" />
                 </SheetContent>

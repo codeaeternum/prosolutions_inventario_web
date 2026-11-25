@@ -9,9 +9,10 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertTriangle, Clock, Download, History, RefreshCw, Search, ShieldAlert, TrendingUp } from "lucide-react"
+import { AlertTriangle, Clock, Download, History, RefreshCw, Search, ShieldAlert, TrendingUp, UserPlus, Users } from "lucide-react"
 import { csvCell } from "@/lib/csv"
 import { formatPrice } from "@/lib/utils"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface UsuarioDesempeno {
   id: string
@@ -230,7 +231,16 @@ export function DesempenoPanel() {
             </Button>
           </div>
         ) : usuarios.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin empleados registrados.</p>
+          <EmptyState
+            icon={Users}
+            title="Sin empleados registrados"
+            description="Registra a tu equipo en la pestaña Usuarios para medir su producción aquí."
+            action={{
+              label: "Ir a Usuarios",
+              icon: UserPlus,
+              href: "/admin/equipo?tab=usuarios",
+            }}
+          />
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

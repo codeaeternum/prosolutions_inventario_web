@@ -120,6 +120,25 @@ describe("POST /api/auth/register", () => {
     const res = await register(postReq(validBody))
     expect(res.status).toBe(500)
   })
+
+  it("rechaza nombres con saltos de línea o <>& (inyección en bitácora/notificaciones)", async () => {
+    for (const name of ["Cliente\nMalo", "Cliente\r\nMalo", "<script>alert(1)</script>", "Cliente & Cia", "Cliente > X"]) {
+      const res = await register(postReq({ ...validBody, name }))
+      expect(res.status).toBe(400)
+    }
+    expect(mocks.createUser).not.toHaveBeenCalled()
+  })
+
+  it("recorta el nombre y rechaza uno que queda vacío tras el trim", async () => {
+    const ok = await register(postReq({ ...validBody, name: "  Cliente Nuevo  " }))
+    expect(ok.status).toBe(200)
+    expect(mocks.createUser).toHaveBeenCalledWith({
+      data: expect.objectContaining({ name: "Cliente Nuevo" }),
+    })
+
+    const blank = await register(postReq({ ...validBody, name: "     " }))
+    expect(blank.status).toBe(400)
+  })
 })
 
 describe("POST /api/verify/start", () => {

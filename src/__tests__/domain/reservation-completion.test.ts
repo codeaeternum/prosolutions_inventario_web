@@ -111,6 +111,10 @@ function fakeDb(res: Record<string, unknown>) {
         created.sales.push(row)
         return row
       }),
+      // La ligadura nueva reserva → venta vive en Sale.note; el fallback por
+      // Payment.reference solo cubre documentos históricos.
+      findFirst: vi.fn(async ({ where }: { where: { note?: string } }) =>
+        created.sales.find(s => s.note === where.note) ?? null),
     },
     saleItem: {
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { created.saleItems.push(data); return { id: "si-1", ...data } }),
@@ -177,6 +181,33 @@ describe("entrega de reserva → Sale + SaleItem + Payment", () => {
     expect(created.cash).toHaveLength(0)
     expect(created.payments).toHaveLength(1)
     expect(created.payments[0]).toMatchObject({ method: "CARD", amount: 400, purpose: "RESERVATION", cashMovementId: null })
+  })
+
+  it("liquidación por TRANSFERENCIA exige referencia bancaria de al menos 4 caracteres", async () => {
+    const { db, created } = fakeDb(reservation())
+    await expect(changeReservation(db, "emp-1", BIZ, "res-1", {
+      action: "complete", finalPaymentMethod: "TRANSFERENCIA", reference: " 12 ",
+    })).rejects.toMatchObject({ status: 400 })
+    expect(created.sales).toHaveLength(0)
+    expect(created.payments).toHaveLength(0)
+  })
+
+  it("liquidación por TRANSFERENCIA guarda el folio real en Payment.reference y liga la venta por Sale.note", async () => {
+    const { db, created } = fakeDb(reservation())
+    await changeReservation(db, "emp-1", BIZ, "res-1", {
+      action: "complete", finalPaymentMethod: "TRANSFERENCIA", reference: "SPEI-12345",
+    })
+    expect(created.sales[0].note).toBe("Entrega de reserva #res-1")
+    expect(created.payments[0]).toMatchObject({ method: "TRANSFER", reference: "SPEI-12345" })
+
+    // El reintento ya no depende de que reference cargue el id de la reserva:
+    // localiza la venta por la nota documental exacta y no duplica dinero.
+    const again = await changeReservation(db, "emp-1", BIZ, "res-1", {
+      action: "complete", finalPaymentMethod: "TRANSFERENCIA", reference: "SPEI-12345",
+    })
+    expect(again).toMatchObject({ changed: false, saleId: "sale-1" })
+    expect(created.sales).toHaveLength(1)
+    expect(created.payments).toHaveLength(1)
   })
 
   it("segunda entrega no duplica la venta ni el dinero (guardia de estado)", async () => {

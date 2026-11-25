@@ -11,10 +11,11 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertTriangle, DoorOpen, History, Loader2, LogIn, LogOut, MonitorCheck, Pencil, RefreshCw, Search, ShieldAlert } from "lucide-react"
+import { AlertTriangle, Clock, DoorOpen, History, Loader2, LogIn, LogOut, MonitorCheck, Pencil, RefreshCw, Search, ShieldAlert, UserPlus, Users } from "lucide-react"
 import { toast } from "sonner"
 import { businessDayKey, formatBusinessDateTime, formatBusinessTime } from "@/lib/business-time"
 import { JORNADA_ALERTA_MIN, JORNADA_MAX_MS } from "@/lib/asistencia"
+import { EmptyState } from "@/components/admin/empty-state"
 
 // Misma forma que JornadaDerivada de lib/asistencia (la respuesta del GET).
 interface Jornada {
@@ -455,13 +456,28 @@ export function AsistenciaPanel() {
           </div>
         )}
         {!loading && !error && staff.length === 0 && porUsuario.size === 0 && (
-          <p className="text-sm text-muted-foreground">No hay personal registrado en el negocio.</p>
+          <EmptyState
+            icon={Users}
+            title="No hay personal registrado en el negocio"
+            description="Registra a tu equipo en la pestaña Usuarios para llevar el control de asistencia."
+            action={{
+              label: "Ir a Usuarios",
+              icon: UserPlus,
+              href: "/admin/equipo?tab=usuarios",
+            }}
+          />
         )}
         {!loading && !error && staff.length > 0 && porUsuario.size === 0 && (
-          <p className="text-sm text-muted-foreground">
-            Nadie ha marcado asistencia aún — el registro por actividad sigue en{" "}
-            <Link href="/admin/equipo?tab=turnos" className="text-primary hover:underline">Turnos</Link>.
-          </p>
+          <EmptyState
+            icon={Clock}
+            title="Nadie ha marcado asistencia aún"
+            description="Las entradas y salidas del equipo aparecerán aquí; el registro por actividad sigue en Turnos."
+            action={{
+              label: "Ver turnos por actividad",
+              icon: History,
+              href: "/admin/equipo?tab=turnos",
+            }}
+          />
         )}
         {!loading && !error && porUsuario.size > 0 && filtered.length === 0 && (
           <p className="text-sm text-muted-foreground">Sin resultados para &ldquo;{searchQuery.trim()}&rdquo;.</p>

@@ -23,13 +23,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const denied = assertBranchAllowed(session, purchase.branchId)
       if (denied) return denied
     }
+    const clientKey = body.idempotencyKey ?? request.headers.get("idempotency-key")
+    // RECEIVE_PARTIAL NO es idempotente por estado (la OC sigue ORDERED tras
+    // una entrega parcial): un retry tras timeout con una llave inventada en
+    // servidor duplicaría la entrada de stock. Por eso la llave debe venir del
+    // cliente — el mismo reenvío repite la misma llave y operation() devuelve
+    // el recibo sin re-ejecutar. Las demás transiciones sí son idempotentes
+    // por estado y conservan el respaldo aleatorio.
+    if (body.action === "RECEIVE_PARTIAL" && (typeof clientKey !== "string" || clientKey.trim() === "")) {
+      return NextResponse.json(
+        { error: "La recepción parcial requiere un identificador de operación (idempotencyKey) generado por el cliente; sin él un reintento duplicaría la entrada de stock. Actualiza la aplicación y reintenta." },
+        { status: 400 },
+      )
+    }
     const result = await setPurchaseStatus(prisma, session.user.id, businessIdOf(session), id, {
       action: body.action,
       // RECEIVE_PARTIAL trae items: [{ purchaseItemId, quantity }] con lo que
       // llegó en esta entrega; el dominio valida que no exceda lo pendiente.
       items: body.items,
       // Las transiciones ya son idempotentes por estado; la llave solo protege reintentos de red.
-      idempotencyKey: body.idempotencyKey ?? request.headers.get("idempotency-key") ?? crypto.randomUUID(),
+      idempotencyKey: clientKey ?? crypto.randomUUID(),
     })
     return NextResponse.json(result)
   } catch (error) {

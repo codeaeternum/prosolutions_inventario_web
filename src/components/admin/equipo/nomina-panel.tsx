@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Banknote, Download, RefreshCw, Search, Settings2, ShieldAlert } from "lucide-react"
+import { Banknote, Download, RefreshCw, Search, Settings2, ShieldAlert, UserPlus, Users } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
@@ -375,7 +376,16 @@ export function NominaPanel() {
           </div>
         )}
         {!error && !loading && employees.length === 0 && (
-          <p className="text-sm text-muted-foreground">Sin empleados registrados.</p>
+          <EmptyState
+            icon={Users}
+            title="Sin empleados registrados"
+            description="Registra a tu equipo en la pestaña Usuarios para estimar su nómina del periodo."
+            action={{
+              label: "Ir a Usuarios",
+              icon: UserPlus,
+              href: "/admin/equipo?tab=usuarios",
+            }}
+          />
         )}
         {!error && !loading && employees.length > 0 && filtered.length === 0 && (
           <p className="text-sm text-muted-foreground">

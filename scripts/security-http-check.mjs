@@ -28,8 +28,13 @@ try {
   const publicProducts = await request("/api/products?limit=1")
   check("catalog is anonymous and uncached", publicProducts.status === 200 && publicProducts.headers.get("cache-control").includes("no-store"))
   check("catalog page is public", (await request("/catalogo")).status === 200)
-  for (const path of ["/api/workshop", "/api/users", "/api/reports", "/api/fix-catalog"]) check(`anonymous blocked: ${path}`, [401, 403].includes((await request(path)).status))
-  check("anonymous write to maintenance blocked", [401, 403].includes((await request("/api/fix-catalog", { method: "POST" })).status))
+  // /api/fix-catalog ya no existe: el mantenimiento del catálogo se hizo script
+  // (scripts/fix-catalog.mjs, corre con DATABASE_URL en el host). Las rutas
+  // vivas equivalentes para verificar la barrera de auth son /api/users (GET/POST
+  // admin) y /api/admin/backup-status (GET solo-admin).
+  for (const path of ["/api/workshop", "/api/users", "/api/reports", "/api/admin/backup-status"]) check(`anonymous blocked: ${path}`, [401, 403].includes((await request(path)).status))
+  check("anonymous write to user management blocked", [401, 403].includes((await request("/api/users", { method: "POST" })).status))
+  check("retired maintenance route stays gone", (await request("/api/fix-catalog")).status === 404)
   check("legacy proof file blocked before static handler", (await request("/uploads/payments/nonexistent.png")).status === 401)
   check("image optimizer cannot proxy private proof", (await request("/_next/image?url=%2Fuploads%2Fpayments%2Fnonexistent.png&w=64&q=75")).status === 403)
   const csrf = await (await request("/api/auth/csrf", {}, true)).json()

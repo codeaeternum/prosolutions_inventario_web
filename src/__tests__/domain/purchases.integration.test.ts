@@ -4,6 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg"
 import { Pool } from "pg"
 import { randomUUID } from "node:crypto"
 import { createPurchase, setPurchaseStatus, updatePurchaseDraft } from "@/lib/domain/purchasing"
+import { paySupplier, voidSupplierPayment } from "@/lib/domain/supplier-payments"
 
 const enabled = process.env.RUN_DATABASE_TESTS === "1"
 const url = process.env.DATABASE_URL ?? "postgresql://audit:audit-isolated-only@127.0.0.1:55433/hardening"
@@ -234,5 +235,47 @@ describe.skipIf(!enabled)("purchase partial receiving", () => {
     expect(done.received).toEqual([{ productId: p, qty: 3 }]) // solo lo pendiente
     expect(await stockOf(p)).toBe(5)
     expect((await db2.purchaseItem.findUniqueOrThrow({ where: { id: item.id } })).receivedQty).toBe(5)
+  })
+
+  it("blocks cancelling a partially received order: the stock already entered inventory", async () => {
+    const p = await product2()
+    const { purchaseId, item } = await orderedOf(p, 5)
+    await setPurchaseStatus(db2, admin2, biz2, purchaseId, {
+      action: "RECEIVE_PARTIAL",
+      items: [{ purchaseItemId: item.id, quantity: 2 }],
+      idempotencyKey: key(),
+    })
+    await expect(setPurchaseStatus(db2, admin2, biz2, purchaseId, { action: "CANCEL", idempotencyKey: key() }))
+      .rejects.toThrow(/recibida/i)
+    // La OC sigue ORDERED y el stock recibido queda intacto (nada se revirtió a medias).
+    expect((await db2.purchase.findUniqueOrThrow({ where: { id: purchaseId } })).status).toBe("ORDERED")
+    expect(await stockOf(p)).toBe(2)
+  })
+
+  it("blocks cancelling an order with active payments; voiding them first releases the cancel", async () => {
+    const supplier = await db2.supplier.create({ data: { businessId: biz2, name: `${prefix}-sup-${randomUUID().slice(0, 8)}` } })
+    const p = await product2()
+    const { purchase } = await createPurchase(db2, admin2, biz2, {
+      branchId: branch2,
+      supplierId: supplier.id,
+      items: [{ productId: p, quantity: 2, unitCostCents: 5000 }],
+      idempotencyKey: key(),
+    })
+    await setPurchaseStatus(db2, admin2, biz2, purchase.id, { action: "ORDER", idempotencyKey: key() })
+    const paid = await paySupplier(db2, admin2, biz2, {
+      supplierId: supplier.id,
+      purchaseId: purchase.id,
+      amountCents: 4000,
+      method: "TRANSFER",
+      idempotencyKey: key(),
+    })
+    await expect(setPurchaseStatus(db2, admin2, biz2, purchase.id, { action: "CANCEL", idempotencyKey: key() }))
+      .rejects.toThrow(/abonos/i)
+    expect((await db2.purchase.findUniqueOrThrow({ where: { id: purchase.id } })).status).toBe("ORDERED")
+
+    // La salida que prescribe el mensaje: anular el abono libera la cancelación.
+    await voidSupplierPayment(db2, admin2, biz2, { paymentId: paid.payment.id, idempotencyKey: key() })
+    const cancelled = await setPurchaseStatus(db2, admin2, biz2, purchase.id, { action: "CANCEL", idempotencyKey: key() })
+    expect(cancelled.status).toBe("CANCELLED")
   })
 })

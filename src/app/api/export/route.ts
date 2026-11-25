@@ -6,6 +6,8 @@ import { getBusinessSetting, getOrderFolioDigits } from "@/lib/settings"
 import { repairFolio, repairLabels } from "@/lib/workshop-labels"
 import { orderTotalCents } from "@/lib/workshop-money"
 import { csvCell } from "@/lib/csv"
+import { checkAndRecord } from "@/lib/rate-limit"
+import { businessDayKey, formatBusinessDateTimeNumeric } from "@/lib/business-time"
 
 const MAX_ROWS = 5000
 const EXPORT_TYPES = ["products", "sales", "orders"] as const
@@ -27,7 +29,9 @@ function toCsv(headers: string[], rows: (string | number | null | undefined)[][]
 }
 
 function csvResponse(type: ExportType, csv: string): NextResponse {
-  const date = new Date().toISOString().slice(0, 10)
+  // La fecha del nombre de archivo también es la del negocio, no la UTC del
+  // contenedor: a las 6-7 pm del taller el ISO ya amanecía "mañana".
+  const date = businessDayKey(new Date())
   return new NextResponse(csv, {
     status: 200,
     headers: {
@@ -41,9 +45,11 @@ function csvResponse(type: ExportType, csv: string): NextResponse {
 const money = (n: number) => n.toFixed(2)
 const centsToPesos = (cents: number) => (cents / 100).toFixed(2)
 
+// Hora del negocio (America/Mexico_City), no la del proceso: los getters de
+// Date leen la zona del contenedor — UTC en producción — y el CSV salía ~6 h
+// desfasado de la operación del taller.
 function formatDateTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return formatBusinessDateTimeNumeric(date)
 }
 
 async function exportProducts(businessId: string): Promise<string> {
@@ -169,7 +175,8 @@ export async function GET(req: Request) {
     // Solo admin: los CSV incluyen costPrice y PII de clientes (teléfonos).
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
 
     const query = new URL(req.url).searchParams
     const type = query.get("type") as ExportType | null
@@ -177,6 +184,18 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Tipo de exportación inválido. Usa products, sales u orders." }, { status: 400 })
     }
     const branchId = query.get("branchId") || undefined
+
+    // Freno por usuario contra extracción masiva: 10 descargas por hora
+    // compartidas con /api/activity/export (mismo scope "export" — el dato
+    // sensible es el mismo y un bucket por endpoint se esquivaría alternando).
+    // Va DESPUÉS de validar el input: un 400 no extrae nada y no debe quemar
+    // el presupuesto de exportaciones del usuario.
+    if (!checkAndRecord("export", session.user.id, 60 * 60 * 1000, 10)) {
+      return NextResponse.json(
+        { error: "Demasiadas exportaciones. Espera antes de descargar de nuevo." },
+        { status: 429, headers: { "Retry-After": "3600" } },
+      )
+    }
 
     let csv: string
     switch (type) {

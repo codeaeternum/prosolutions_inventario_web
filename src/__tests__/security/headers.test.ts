@@ -45,8 +45,9 @@ describe("next.config headers() — endurecimiento global", () => {
     // filtrarse a terceros por enlaces salientes.
     expect(h.get("referrer-policy")).toBe("strict-origin-when-cross-origin")
     // Clickjacking: nada en la app se embebe en iframes externos. SAMEORIGIN
-    // (no DENY) porque react-to-print monta un iframe de mismo origen para
-    // imprimir tickets/etiquetas.
+    // basta (la impresión de tickets/etiquetas usa window.print / window.open,
+    // no iframes — la dependencia react-to-print que lo justificaba ya no existe;
+    // DENY sería viable hoy pero SAMEORIGIN cubre igual el framing externo).
     expect(h.get("x-frame-options")).toBe("SAMEORIGIN")
   })
 

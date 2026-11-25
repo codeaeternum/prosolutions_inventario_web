@@ -217,6 +217,23 @@ describe("filtros compartidos con el feed", () => {
   })
 })
 
+describe("freno de 10 descargas/hora por usuario (S5)", () => {
+  it("la descarga 11 en la misma hora responde 429 sin consultar nada", async () => {
+    // Usuario exclusivo de este test: el bucket es compartido con /api/export
+    // y los demás tests del archivo ya consumen sus propias descargas.
+    mocks.auth.mockResolvedValue(session("admin-rl-act"))
+    for (let i = 0; i < 10; i++) {
+      expect((await get()).status).toBe(200)
+    }
+    const limited = await get()
+    expect(limited.status).toBe(429)
+    expect(limited.headers.get("retry-after")).toBe("3600")
+    const calls = mocks.operationFindMany.mock.calls.length
+    await get()
+    expect(mocks.operationFindMany.mock.calls.length).toBe(calls) // la BD no se vuelve a tocar
+  })
+})
+
 describe("tope de filas", () => {
   it("exporta como máximo 2000 filas (las más recientes del merge)", async () => {
     mocks.auth.mockResolvedValue(session("admin-1"))

@@ -57,20 +57,23 @@ check("expectedQty capturado", itemA.expectedQty === 5 && itemB.expectedQty === 
 await db.branchStock.update({ where: { productId_branchId: { productId: prodA.id, branchId: branch.id } }, data: { quantity: 4 } })
 await db.product.update({ where: { id: prodA.id }, data: { stock: 4 } })
 
-// 6) applyCount: diff vs stock VIVO → A: 3-4=-1 (OUT), B: 2-0=+2 (IN)
+// 6) applyCount: el delta DE CAPTURA se aplica RELATIVO al stock vivo →
+//    A: capturado 3 vs 5 esperado (delta −2) sobre vigente 4 → 2 (la pieza
+//       "vendida" durante la captura se conserva; fijar el absoluto 3 la
+//       resucitaría). B: capturado 2 vs 0 esperado (delta +2) sobre 0 → 2.
 const applied = await applyCount(db, admin.id, biz.id, c1.count.id, { idempotencyKey: key() })
 check("applyCount APPLIED", applied.status === "APPLIED" && applied.adjustments === 2, `adjustments=${applied.adjustments}`)
 const stockA = await db.branchStock.findUnique({ where: { productId_branchId: { productId: prodA.id, branchId: branch.id } } })
 const stockB = await db.branchStock.findUnique({ where: { productId_branchId: { productId: prodB.id, branchId: branch.id } } })
 const totalA = await db.product.findUniqueOrThrow({ where: { id: prodA.id } })
 const totalB = await db.product.findUniqueOrThrow({ where: { id: prodB.id } })
-check("branchStock absoluto", stockA?.quantity === 3 && stockB?.quantity === 2, `A=${stockA?.quantity} B=${stockB?.quantity}`)
-check("product.stock consistente", totalA.stock === 3 && totalB.stock === 2, `A=${totalA.stock} B=${totalB.stock}`)
+check("branchStock relativo al delta de captura", stockA?.quantity === 2 && stockB?.quantity === 2, `A=${stockA?.quantity} B=${stockB?.quantity}`)
+check("product.stock consistente", totalA.stock === 2 && totalB.stock === 2, `A=${totalA.stock} B=${totalB.stock}`)
 const movs = await db.inventoryMovement.findMany({ where: { businessId: biz.id, reason: `Conteo físico ${applied.folio}` }, orderBy: { createdAt: "asc" } })
 check("2 movimientos ADJUSTMENT", movs.length === 2 && movs.every(m => m.type === "ADJUSTMENT"), movs.map(m => `${m.type}:${m.quantity}:${m.previousStock}->${m.newStock}`).join(" | "))
 check("movimientos con sucursal y usuario", movs.every(m => m.branchId === branch.id && m.userId === admin.id))
 const itemA2 = (await getCount(db, biz.id, c1.count.id))!.items.find(i => i.productId === prodA.id)!
-check("expectedQty re-sincronizado al aplicar", itemA2.expectedQty === 4 && itemA2.countedQty === 3, `expected=${itemA2.expectedQty}`)
+check("expectedQty queda como foto de captura (sin re-sincronizar)", itemA2.expectedQty === 5 && itemA2.countedQty === 3, `expected=${itemA2.expectedQty}`)
 
 // 7) aplicar dos veces → 409 (y la repetición por idempotency con OTRA llave también falla)
 let reapply = ""

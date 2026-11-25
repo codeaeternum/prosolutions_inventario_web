@@ -24,6 +24,7 @@ export function VerifyActions({
   isExpired,
 }: VerifyActionsProps) {
   const [finalPaymentMethod, setFinalPaymentMethod] = useState("")
+  const [reference, setReference] = useState("")
   const [completing, setCompleting] = useState(false)
   const [completed, setCompleted] = useState(status === "COMPLETED")
   const [error, setError] = useState("")
@@ -34,8 +35,14 @@ export function VerifyActions({
   const handleComplete = async () => {
     if (inFlight.current || completed) return
     if (paymentMethod !== "CREDIT" && due > 0 && !finalPaymentMethod) { setError("Selecciona el medio con el que recibiste el saldo."); return }
+    const trimmedReference = reference.trim()
+    if (paymentMethod !== "CREDIT" && due > 0 && finalPaymentMethod === "TRANSFERENCIA" && trimmedReference.length < 4) {
+      setError("Captura la referencia bancaria (mínimo 4 caracteres).")
+      return
+    }
     inFlight.current = true
-    operation.current = getClientOperationKey(operation.current, { qrCode, finalPaymentMethod })
+    const finalReference = finalPaymentMethod === "TRANSFERENCIA" ? trimmedReference : undefined
+    operation.current = getClientOperationKey(operation.current, { qrCode, finalPaymentMethod, reference: finalReference })
     setCompleting(true)
     setError("")
 
@@ -43,7 +50,7 @@ export function VerifyActions({
       const res = await fetch("/api/reservations/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qrCode, finalPaymentMethod: paymentMethod === "CREDIT" ? "CREDIT" : finalPaymentMethod || undefined, idempotencyKey: operation.current.key }),
+        body: JSON.stringify({ qrCode, finalPaymentMethod: paymentMethod === "CREDIT" ? "CREDIT" : finalPaymentMethod || undefined, reference: finalReference, idempotencyKey: operation.current.key }),
       })
 
       const data = await res.json()
@@ -76,6 +83,19 @@ export function VerifyActions({
         <select className="mt-2 w-full rounded-md border bg-background p-2" aria-label="Medio de pago del saldo" value={finalPaymentMethod} disabled={completing} onChange={event => setFinalPaymentMethod(event.target.value)}>
           <option value="">Selecciona el medio de pago</option><option value="EFECTIVO">Efectivo</option><option value="TARJETA">Tarjeta</option><option value="TRANSFERENCIA">Transferencia</option>
         </select></label>}
+      {canComplete && !completed && paymentMethod !== "CREDIT" && due > 0 && finalPaymentMethod === "TRANSFERENCIA" && (
+        <label className="block text-sm">Referencia bancaria
+          <input
+            className="mt-2 w-full rounded-md border bg-background p-2"
+            value={reference}
+            disabled={completing}
+            maxLength={50}
+            onChange={event => setReference(event.target.value)}
+            placeholder="Folio SPEI o clave de rastreo"
+          />
+          <span className="mt-1 block text-xs text-muted-foreground">Aparece en el estado de cuenta del cliente.</span>
+        </label>
+      )}
       {canComplete && !completed && paymentMethod === "CREDIT" && <p className="text-sm text-muted-foreground">Compra a crédito: entregar conserva la deuda. Registra los abonos desde Crédito.</p>}
       {completed ? (
         <div className="p-4 bg-primary/10 rounded-lg text-center border border-primary/20">

@@ -7,8 +7,8 @@ Sistema de inventario y catálogo para refacciones de celulares.
 ## 🔐 Credenciales
 
 ### Admin
-- **Email:** `admin@prosolutions.com`
-- **Contraseña:** `admin123`
+- **Email:** `admin@prosolutions.com` (o `ADMIN_EMAIL`)
+- **Contraseña:** la que exportes como `ADMIN_PASSWORD` al correr el seed por primera vez — **ya no hay contraseña por defecto** (`admin123` quedó eliminado): sin la variable el seed falla con un error claro. El superadmin de plataforma nace con `SUPERADMIN_PASSWORD` / `SUPERADMIN_EMAIL` (`admin@reficio.app`).
 
 ### Base de Datos (PostgreSQL)
 - **Host:** `localhost`

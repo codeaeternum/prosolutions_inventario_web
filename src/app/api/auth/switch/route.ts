@@ -35,7 +35,7 @@ async function mintSession(req: NextRequest, user: {
   isSuperAdmin?: boolean | null;
   allowedModules?: string[] | null;
   allowedBranchIds?: string[] | null;
-}, impersonator: string | null, impersonatedAt: number | null) {
+}, impersonator: string | null, impersonatedAt: number | null, superAdminIat: number | null) {
   const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET
   if (!secret) throw new Error("AUTH_SECRET no configurado")
   const cookieName = sessionCookieName(req)
@@ -57,6 +57,10 @@ async function mintSession(req: NextRequest, user: {
       // El JWT vive 30 días pero la impersonación caduca a las 8 h
       // (lib/session-policy) — el timestamp viaja firmado en la cookie.
       impersonatedAt,
+      // Arranque de la ventana de 10 h del operador de plataforma: se hereda
+      // de la cookie saliente para que cambiar de cuenta y volver NO reinicie
+      // el reloj (lib/session-policy lo impone en cada refresh).
+      superAdminIat,
     },
     secret,
     salt: cookieName,
@@ -94,6 +98,7 @@ export async function POST(req: NextRequest) {
     : null
   const previousImpersonator = typeof decoded?.impersonator === "string" ? decoded.impersonator : null
   const previousImpersonatedAt = typeof decoded?.impersonatedAt === "number" ? decoded.impersonatedAt : null
+  const previousSuperAdminIat = typeof decoded?.superAdminIat === "number" ? decoded.superAdminIat : null
 
   // Impersonación encadenada: si esta sesión YA era impersonada, "Volver a mi
   // cuenta" debe regresar al impersonador RAÍZ (el operador), no a la cuenta
@@ -185,7 +190,12 @@ export async function POST(req: NextRequest) {
   // El TTL corre desde la entrada original: en una cadena de cambios
   // (op → caja → otra caja) se conserva el impersonatedAt vigente.
   const impersonatedAt = impersonator ? (previousImpersonatedAt ?? Date.now()) : null
-  const { token } = await mintSession(req, target, impersonator, impersonatedAt)
+  // El reloj de 10 h del operador tampoco se reinicia al cambiar de cuenta:
+  // se hereda el arranque de la cookie saliente; solo arranca fresco cuando
+  // el destino es superadmin y no había marca previa (cookie anterior al
+  // tope, o primer cambio tras el deploy).
+  const superAdminIat = previousSuperAdminIat ?? (target.isSuperAdmin === true ? Date.now() : null)
+  const { token } = await mintSession(req, target, impersonator, impersonatedAt, superAdminIat)
 
   // Bitácora: el cambio de cuenta es un evento de acceso — quién operó como
   // quién. En el restore el actor real es la cuenta impersonadora (target):

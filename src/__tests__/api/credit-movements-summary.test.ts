@@ -69,6 +69,20 @@ beforeEach(() => {
 })
 
 describe("ventana de 24 meses + saldo de apertura", () => {
+  it("Pagos del mes arranca el día 1 a medianoche en America/Mexico_City, no en la TZ del proceso", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date("2026-03-15T12:00:00.000Z"))
+      await summary()
+      const where = mocks.creditAgg.mock.calls[0][0].where
+      // 2026-03-01 00:00:00 en Ciudad de México = 06:00 UTC (sin DST desde 2023).
+      expect(where.createdAt.gte.toISOString()).toBe("2026-03-01T06:00:00.000Z")
+      expect(where.type).toBe("PAYMENT")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("las filas detalladas se acotan al cutoff y el pre-periodo se agrega por usuario", async () => {
     mocks.userFindMany.mockResolvedValue([debtor("u1", 100)])
     await summary()

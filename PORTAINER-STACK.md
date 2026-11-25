@@ -4,19 +4,25 @@
 
 ---
 
-## Despliegue sin pasos manuales (todo desde el N5 Pro)
+## Despliegue sin pasos manuales
 
-**Se hace todo desde el N5 Pro** (Cursor y el proyecto están en el N5). En la carpeta del proyecto:
+**Deploy canónico — desde el Mac (o cualquier Linux):**
 
-```powershell
-.\deploy.ps1
+```bash
+./deploy-n5.sh
 ```
 
-o bien `.\deploy-n5.ps1`. Eso hace en esta máquina: **build** de las imágenes (incluida `prosolutions-migrate`) → **db** → **`prisma migrate deploy`** → **up** de `app`/`bot` con `docker-compose.portainer.yml` y tu `.env.docker` → **espera a que `/api/health` reporte healthy**. Si la migración falla, el script se detiene y la app nueva no se promueve. No hace falta abrir Portainer ni SSH.
+Es un wrapper delgado push-driven: verifica calidad en el Mac, sube la rama activa a GitHub y por SSH hace que el N5 ejecute `git fetch` + `git reset --hard origin/<rama>` + `powershell -ExecutionPolicy Bypass -File deploy-n5.ps1`. **Toda la lógica del deploy vive en `deploy-n5.ps1`** (se ejecuta en el N5): **build** de las imágenes (incluida `prosolutions-migrate`) → **tags por SHA** para rollback → **volúmenes external** → **db** → **`prisma migrate deploy`** → **up** de `app`/`bot` con `docker-compose.portainer.yml` y `.env.docker` → **espera a que `/api/health` reporte healthy**. Si la migración falla, el script se detiene y la app nueva no se promueve. No hace falta abrir Portainer.
 
-**Requisitos en el N5:** Tener el repo (clonado o esta carpeta) y un `.env.docker` en la misma carpeta — se genera copiando **`.env.docker.example`** y rellenando los valores (la plantilla lista todo lo usado con comentarios). Obligatorias en el compose actual: `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD` y `CRON_SECRET`.
+**Directo en el N5** (mismo resultado, sin push ni SSH):
 
-*(Si algún día trabajas desde otro PC y quieres desplegar en el N5 por SSH: `.\deploy.ps1 -Remote`.)*
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy-n5.ps1
+```
+
+> **`deploy.ps1` está DEPRECATED** (comentario grande al inicio del archivo): usa `.env` en vez de `.env.docker` y duplica lógica vieja. No lo uses para deploys nuevos.
+
+**Requisitos en el N5:** el repo en `D:\Projectos\prosolutions_inventario_web` y un `.env.docker` en la misma carpeta — se genera copiando **`.env.docker.example`** y rellenando los valores (la plantilla lista todo lo usado con comentarios). Obligatorias en el compose actual: `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `POSTGRES_PASSWORD` y `CRON_SECRET`. Además **`TRUST_PROXY_SECRET` es obligatorio en producción** (ver la sección de variables fijadas más abajo): sin él los headers de IP de proxy no se validan y el rate limit por cliente queda expuesto a forjado desde la LAN.
 
 ---
 
@@ -26,11 +32,12 @@ Tu aplicación está publicada en Cloudflare como:
 
 | Publicado en Cloudflare | URL interna (origen) |
 |-------------------------|----------------------|
-| **reficio.app** | `http://host.docker.internal:3005` |
+| **reficio.app** | `http://app:3000` |
 
-- El stack expone la app en el puerto **3005** del host (`3005:3000` en el compose).
-- Si el agente de Cloudflare Tunnel (**cloudflared**) corre **dentro de Docker**, `http://host.docker.internal:3005` es correcto: así el contenedor del tunnel alcanza el puerto 3005 del host donde escucha la app.
-- Si **cloudflared** corre **directamente en el N5** (no en Docker), en la config del tunnel usa `http://127.0.0.1:3005` o `http://localhost:3005` en lugar de `host.docker.internal`.
+- **El túnel NO usa el puerto publicado del host.** El contenedor `cloudflared_tunnel` está conectado a la red interna de Docker `prosolutions_prosolutions-network` y alcanza la app por el **nombre del servicio** del compose: `http://app:3000` (el nombre de contenedor `prosolutions-app:3000` también resuelve en esa red). La config del tunnel vive en el dashboard de Cloudflare (Zero Trust → Networks → Tunnels), no en este repo.
+- Esto es obligatorio, no opcional: el compose publica el 3005 solo en loopback (`127.0.0.1:3005`) y en la IP LAN del taller (`APP_BIND_IP`) — `host.docker.internal:3005` podría no responder según la interfaz por la que entre, y la red interna es el único camino garantizado.
+- El puerto **3005** del host existe para acceso directo del taller (LAN) y para pruebas en loopback; Cloudflare no depende de él.
+- Si algún día **cloudflared** corriera directamente en el host (hoy corre en Docker), el origen sería `http://127.0.0.1:3005`.
 
 **Pasos rápidos en Portainer (N5):**
 
@@ -148,6 +155,7 @@ El compose usa `${VAR:?...}`: sin estas variables el despliegue falla al validar
 ### Variables fijadas dentro del compose (no van en el `.env`)
 
 - `TRUST_PROXY_HEADERS: "true"` — la app va siempre tras Cloudflare Tunnel: `cloudflared` sobrescribe `CF-Connecting-IP`/`X-Forwarded-For` con la IP real del visitante y el rate limit los usa para el bucket por cliente. **Si alguna vez se publica el puerto 3005 directo a internet** (sin tunnel), hay que quitarla o ponerla en `false`: un cliente podría forjar los headers y evadir el límite.
+- `TRUST_PROXY_SECRET` — **obligatoria en producción** (va en `.env.docker`, no fijada en el compose): candado de los headers de IP. El puerto 3005 también se publica en la LAN del taller, y ahí cualquier equipo puede mandar `CF-Connecting-IP` falso. Con el secreto configurado los headers de IP solo se honran si el request trae `x-origin-secret` con el mismo valor — la Transform Rule de Cloudflare lo inyecta y un peer directo no lo conoce (pasos de alta en `.env.docker.example`). Vacío = feature apagada y rate limit/auditoría expuestos a IP forjada desde la LAN.
 - `REPAIR_EVIDENCE_DIR=/app/storage/repair-evidence` — volumen nombrado `repair_evidence` (como `payment_proofs`) para que las evidencias fotográficas sobrevivan a los deploys.
 
 ### Tareas programadas (cron externo)
@@ -168,12 +176,17 @@ Si se quiere un disparo externo (p. ej. cron del host o un scheduler como cron-j
 
 ### Volúmenes (primera vez)
 
-`postgres_data` y `uploads` son volúmenes **external** con nombre fijo (`prosolutions_postgres_data`, `prosolutions_uploads`). En un host nuevo créalos antes del primer `up`:
+Los **cuatro** volúmenes de datos son **external** con nombre fijo (docker-compose.yml): `prosolutions_postgres_data`, `prosolutions_uploads`, `prosolutions_payment_proofs` y `prosolutions_repair_evidence`. En un host nuevo créalos ANTES del primer `up` — si falta cualquiera, el `up` falla:
 
-```bash
+```powershell
+# docker volume create acepta UN volumen por llamada (idempotente: no-op si ya existe)
 docker volume create prosolutions_postgres_data
 docker volume create prosolutions_uploads
+docker volume create prosolutions_payment_proofs
+docker volume create prosolutions_repair_evidence
 ```
+
+`deploy-n5.ps1` ya los asegura en cada deploy (mismo comando idempotente), así que esto solo hace falta a mano si despliegas sin el script.
 
 ---
 
@@ -187,33 +200,50 @@ docker volume create prosolutions_uploads
 El esquema se aplica con `prisma migrate deploy` desde la imagen dedicada `prosolutions-migrate:latest` (Dockerfile target `migrate`). **La imagen final de la app no lleva Prisma CLI**: `docker exec prosolutions-app npx prisma …` ya no funciona a propósito. La app tampoco sincroniza el esquema al arrancar: un preflight (`scripts/docker-preflight.mjs`) verifica la conexión, `_prisma_migrations` sin fallos y las tablas/columnas de todas las migraciones; si falta algo, el contenedor falla de forma visible hasta que la migración se ejecute.
 
 ```powershell
-# En el N5, desde la carpeta del proyecto (con .env):
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
+# En el N5, desde la carpeta del proyecto (con .env.docker):
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d db
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker --profile migrate run --rm migrate
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
 ```
 
-Los scripts `deploy.ps1` / `deploy-n5.ps1` / `deploy-n5.sh` ya hacen esto en ese orden y abortan si la migración falla.
+`deploy-n5.ps1` ya hace esto en ese orden y aborta si la migración falla (`deploy-n5.sh` lo dispara por SSH; `deploy.ps1` está deprecated).
 
 ### Rollback por tag SHA (sin rebuild)
 
-Cada `deploy-n5.ps1` / `deploy-n5.sh` etiqueta las imágenes recién construidas con el SHA del commit — `prosolutions-app:<sha>`, `prosolutions-bot:<sha>`, `prosolutions-migrate:<sha>` — además de `:latest`. Los compose respetan `${APP_IMAGE:-prosolutions-app:latest}` (igual `BOT_IMAGE`/`MIGRATE_IMAGE`), así que volver a una build anterior **no requiere recompilar**:
+Cada deploy con `deploy-n5.ps1` etiqueta las imágenes recién construidas con el SHA corto del commit — `prosolutions-app:<sha>`, `prosolutions-bot:<sha>`, `prosolutions-migrate:<sha>` — además de `:latest` (deploy-n5.ps1 líneas ~34-43). Esos tags inmutables son los puntos de retorno: volver a una build anterior es **re-tag + up**, sin recompilar nada.
+
+**Procedimiento** (en el N5, PowerShell, carpeta del proyecto):
 
 ```powershell
-# En el N5, desde la carpeta del proyecto:
-docker image ls prosolutions-app        # elige el <sha> destino
-$env:APP_IMAGE = "prosolutions-app:<sha>"
-$env:BOT_IMAGE  = "prosolutions-bot:<sha>"
+# 1) Elegir el SHA destino entre los tags conservados (misma lista en bot/migrate):
+docker image ls prosolutions-app
+
+# 2) Re-etiquetar el SHA elegido como :latest — el compose usa :latest por defecto
+#    (${APP_IMAGE:-prosolutions-app:latest}), así que con mover el tag basta:
+docker tag prosolutions-app:<sha> prosolutions-app:latest
+docker tag prosolutions-bot:<sha> prosolutions-bot:latest
+
+# 3) Recrear app/bot con la imagen re-etiquetada:
 docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
-# Tras verificar, quita las vars para volver a seguir :latest:
-Remove-Item Env:APP_IMAGE, Env:BOT_IMAGE
+
+# 4) Verificar salud y build efectivo (la consola /platform muestra el SHA horneado):
+docker inspect prosolutions-app --format '{{.State.Health.Status}}'
+docker logs prosolutions-app --tail 20
 ```
 
-Si el esquema también retrocede, corre primero la imagen migrate del SHA destino: `MIGRATE_IMAGE=prosolutions-migrate:<sha>` + el `--profile migrate run --rm migrate` de arriba (cuidado: `migrate deploy` nunca deshace migraciones — solo aplica las pendientes; un rollback a esquema viejo que la app nueva ya migró exige restore del backup).
+No hace falta "limpiar" nada después: el próximo deploy normal reconstruye y vuelve a apuntar `:latest` al build nuevo (el rollback queda como un tag `<sha>` más).
 
-En un stack de **Portainer**, añade `APP_IMAGE=prosolutions-app:<sha>` y `BOT_IMAGE=prosolutions-bot:<sha>` a las *Environment variables* del stack y redeploya; quítalas al terminar.
+**Alternativa sin tocar los tags:** los compose respetan `${APP_IMAGE}`/`${BOT_IMAGE}`/`${MIGRATE_IMAGE}`, así que también vale fijar las vars solo para el comando de recreación — útil en Portainer, donde se añaden a las *Environment variables* del stack y se quitan al terminar:
 
-**Limpieza de tags:** se acumula uno por deploy. `docker image ls prosolutions-app` para listarlos y `docker image rm prosolutions-app:<sha-viejo>` para podar (guarda siempre el tag en producción y el anterior como mínimo). `docker image prune -f` —que los scripts ya corren al final— solo elimina imágenes *dangling*, nunca las etiquetadas.
+```powershell
+$env:APP_IMAGE = "prosolutions-app:<sha>"; $env:BOT_IMAGE = "prosolutions-bot:<sha>"
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
+Remove-Item Env:APP_IMAGE, Env:BOT_IMAGE   # si no, los siguientes up manuales quedan clavados al SHA
+```
+
+**Límite importante — el esquema NO retrocede:** `migrate deploy` solo aplica migraciones pendientes, jamás las deshace. Si entre el SHA destino y el actual hubo migraciones nuevas, la app vieja correrá contra un esquema más nuevo (puede fallar el preflight o romper en runtime): en ese caso el rollback real exige restaurar el backup anterior a esa migración (ver docs/BACKUP.md) y entonces sí correr la imagen `prosolutions-migrate:<sha>` contra la base restaurada.
+
+**Higiene de tags:** se acumula uno por deploy. `docker image ls prosolutions-app` para listar y `docker image rm prosolutions-app:<sha-viejo>` para podar — conserva siempre el tag en producción y el anterior. El `docker image prune -f` que corre al final de cada deploy solo borra imágenes *dangling*, nunca los tags `<sha>`.
 
 ### BD vacía vs BD existente
 

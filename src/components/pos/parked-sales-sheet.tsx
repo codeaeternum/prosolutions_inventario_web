@@ -36,6 +36,9 @@ interface ParkedSalesSheetProps {
 export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refreshKey, hasTicket }: ParkedSalesSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
+    // Error de red persistente con reintento: un catch que solo vaciaba la
+    // lista se disfrazaba de "no hay ventas suspendidas".
+    const [loadError, setLoadError] = useState<string | null>(null)
     // "Ahora" se fotografía al cargar: Date.now() en render viola react-hooks/purity.
     const [nowMs, setNowMs] = useState<number | null>(null)
     const [resumingId, setResumingId] = useState<string | null>(null)
@@ -48,6 +51,7 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
 
     const load = useCallback(async () => {
         setLoading(true)
+        setLoadError(null)
         try {
             // Sin filtro de kind: RETAIL y WORKSHOP son ventas suspendidas
             // (QUOTE también es DRAFT, pero se gestiona desde cotizaciones).
@@ -58,9 +62,9 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
             if (!res.ok) throw new Error(data?.error || "No se pudieron cargar")
             setDocuments((data?.documents ?? []).filter(d => d.kind === "RETAIL" || d.kind === "WORKSHOP"))
             setNowMs(Date.now())
-        } catch (error) {
+        } catch {
             setDocuments([])
-            toast.error(error instanceof Error ? error.message : "No se pudieron cargar las ventas suspendidas")
+            setLoadError("No se pudieron cargar las ventas suspendidas. Revisa tu conexión y vuelve a intentar.")
         } finally {
             setLoading(false)
         }
@@ -131,6 +135,13 @@ export function ParkedSalesSheet({ open, onOpenChange, branchId, onResume, refre
                     </SheetHeader>
                     {loading && documents.length === 0 ? (
                         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                    ) : loadError ? (
+                        <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                            <p className="text-sm text-destructive">{loadError}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+                                Reintentar
+                            </Button>
+                        </div>
                     ) : documents.length === 0 ? (
                         <p className="py-16 text-center text-sm text-muted-foreground">No hay ventas suspendidas en esta sucursal</p>
                     ) : (

@@ -449,7 +449,7 @@ describe("GET /api/caja — Cobrado por método", () => {
     expect(body.register.methodTotals.CASH).toBe(50)
   })
 
-  it("atribuye efectivo a la caja donde se asentó el CashMovement y pagos sin asiento a la sucursal del documento", async () => {
+  it("atribuye efectivo, documentos y abonos de crédito a Cobrado por método de la sucursal correcta", async () => {
     mocks.auth.mockResolvedValue(staff("ADMIN"))
     mocks.cashRegisterFindFirst.mockResolvedValue({
       id: "reg-a", businessId: "biz-test", branchId: "b1", status: "OPEN",
@@ -461,6 +461,9 @@ describe("GET /api/caja — Cobrado por método", () => {
     mocks.paymentGroupBy.mockResolvedValue([
       { method: "CASH", _sum: { amount: 250 } },
       { method: "CARD", _sum: { amount: 400 } },
+      // Un abono de crédito por transferencia entra por el filtro de
+      // purpose/tag de sucursal verificado abajo.
+      { method: "TRANSFER", _sum: { amount: 150 } },
     ])
 
     const res = await caja(new Request("https://app.invalid/api/caja?branchId=b1"))
@@ -474,10 +477,13 @@ describe("GET /api/caja — Cobrado por método", () => {
           { sale: { branchId: "b1" } },
           { repairOrder: { currentBranchId: "b1" } },
           { encargo: { branchId: "b1" } },
+          // Abonos de crédito documentados: sin FK de documento/sucursal,
+          // el corte los atribuye por el tag estructurado de Payment.notes.
+          { purpose: "CREDIT_PAYMENT", notes: { contains: "[branch:b1]" } },
         ],
       },
     ])
     const body = await res.json()
-    expect(body.register.methodTotals).toEqual({ CASH: 250, CARD: 400, TRANSFER: 0, CREDIT: 0 })
+    expect(body.register.methodTotals).toEqual({ CASH: 250, CARD: 400, TRANSFER: 150, CREDIT: 0 })
   })
 })

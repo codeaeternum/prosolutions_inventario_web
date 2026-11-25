@@ -101,6 +101,19 @@ export function formatBusinessDateTime(instant: Date | string, timeZone: string 
   return new Date(instant).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short", timeZone })
 }
 
+/**
+ * Fecha y hora numéricas "YYYY-MM-DD HH:MM" en la zona del negocio — el
+ * formato de las exportaciones CSV. Va fijada a BUSINESS_TIME_ZONE a
+ * propósito: los getters locales de Date (o el ISO UTC) leen la zona del
+ * PROCESO, que en el contenedor es UTC y desfasa la hora ~6 h respecto a lo
+ * que el taller espera ver en Excel.
+ */
+export function formatBusinessDateTimeNumeric(instant: Date | string, timeZone: string = BUSINESS_TIME_ZONE): string {
+  const parts = wallClockFormatter(timeZone).formatToParts(new Date(instant))
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? "00"
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`
+}
+
 const SHORT_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**

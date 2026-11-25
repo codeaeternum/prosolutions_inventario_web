@@ -94,6 +94,10 @@ async function reverseReservationDebt(tx: Transaction, reservation: Reservation)
 const actionSchema = z.object({
   action: z.enum(["cancel", "reject", "approve", "verify_deposit", "pay", "complete", "deliver", "expire"]),
   finalPaymentMethod: z.enum(["EFECTIVO", "TARJETA", "TRANSFERENCIA", "CREDIT"]).optional(),
+  // Folio SPEI/clave de rastreo de la liquidación por transferencia. Se guarda
+  // en Payment.reference — antes ese campo cargaba el id de la reserva y la
+  // transferencia quedaba confirmada sin rastro bancario.
+  reference: z.string().trim().max(50).optional(),
   adminNotes: z.string().max(1000).optional(),
 })
 export type ReservationAction = z.infer<typeof actionSchema>
@@ -103,6 +107,28 @@ export type ReservationAction = z.infer<typeof actionSchema>
 // web guarda "TRANSFER"/"STORE"/"CREDIT" del alta.
 const DELIVERY_METHOD: Record<string, PaymentMethod> = { EFECTIVO: "CASH", TARJETA: "CARD", TRANSFERENCIA: "TRANSFER", CREDIT: "CREDIT" }
 const DEPOSIT_METHOD: Record<string, PaymentMethod> = { STORE: "CASH", TRANSFER: "TRANSFER", CREDIT: "CREDIT", ...DELIVERY_METHOD }
+
+/** Liga documental reserva → venta sin schema: nota interna exacta de la Sale. */
+const reservationSaleNote = (reservationId: string) => `Entrega de reserva #${reservationId}`
+
+/**
+ * La entrega reciente se localiza por Sale.note (exacto, sin falsos positivos
+ * por prefijo). Las ventas anteriores a este enlace solo tenían el id de la
+ * reserva en Payment.reference; se conserva ese fallback para reintentos de
+ * documentos históricos.
+ */
+async function findDeliveredSaleId(tx: Transaction, businessId: string, reservationId: string) {
+  const documented = await tx.sale.findFirst({
+    where: { businessId, note: reservationSaleNote(reservationId) },
+    select: { id: true },
+  })
+  if (documented) return documented.id
+  const legacy = await tx.payment.findFirst({
+    where: { businessId, purpose: "RESERVATION", reference: reservationId, saleId: { not: null } },
+    select: { saleId: true },
+  })
+  return legacy?.saleId ?? null
+}
 
 export async function changeReservation(db: PrismaClient, actorId: string | null, businessId: string, id: string, raw: unknown) {
   const input = actionSchema.parse(raw)
@@ -122,17 +148,13 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
     if (reservation.status === target) {
       // Reintento de una entrega que SÍ hizo commit (timeout del cliente tras
       // grabar): antes devolvía saleId:null aunque la venta ya existiera, y
-      // el mostrador no podía reimprimir el documento. El enlace
-      // reserva→venta vive en Payment.reference+purpose (la Sale no tiene
-      // reservationId), así que se recupera desde ahí. Una reserva de total
-      // $0 no genera Payment — en ese caso saleId sigue en null.
+      // el mostrador no podía reimprimir el documento. El enlace actual
+      // reserva→venta vive en Sale.note (la Sale no tiene reservationId);
+      // Payment.reference+purpose queda como fallback para ventas históricas
+      // anteriores a esa ligadura.
       let saleId: string | null = null
       if (target === "COMPLETED") {
-        const delivered = await tx.payment.findFirst({
-          where: { businessId, purpose: "RESERVATION", reference: id, saleId: { not: null } },
-          select: { saleId: true },
-        })
-        saleId = delivered?.saleId ?? null
+        saleId = await findDeliveredSaleId(tx, businessId, id)
       }
       return { reservation, changed: false, requiresRefund: target === "CANCELLED" && reservation.depositPaid, saleId }
     }
@@ -169,6 +191,11 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       const method = reservation.paymentMethod === "CREDIT" ? "CREDIT" : input.finalPaymentMethod
       if (reservation.paymentMethod === "CREDIT" && input.finalPaymentMethod && input.finalPaymentMethod !== "CREDIT") throw new BusinessError("Registra el abono en Crédito; entregar no cambia una deuda a otro medio.", 409)
       if (dueCents > 0 && !method) throw new BusinessError("Selecciona el medio de pago al entregar.")
+      // Una liquidación por transferencia sin folio se confirmaba al instante
+      // y después no podía cuadrarse contra el estado de cuenta.
+      if (method === "TRANSFERENCIA" && dueCents > 0 && (input.reference ?? "").length < 4) {
+        throw new BusinessError("Captura la referencia bancaria de la transferencia (mínimo 4 caracteres).", 400)
+      }
       const branch = await resolveBranch(tx, reservation.branchId, businessId)
       let cashIn: { id: string } | null = null
       if (method === "CREDIT" && reservation.paymentMethod !== "CREDIT") {
@@ -194,6 +221,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       const sale = await tx.sale.create({ data: {
         businessId, number, branchId: branch.id, sellerId: actorId!, customerId: reservation.userId,
         kind: workshopSale ? "WORKSHOP" : "RETAIL", status: "COMPLETED", total: reservation.totalPrice, discountCents: 0,
+        // Liga exacta reserva → documento para reintentos: libera Payment.reference
+        // para el folio bancario real de la liquidación (especialmente SPEI).
+        note: reservationSaleNote(id),
       } })
       await tx.saleItem.create({ data: {
         businessId, saleId: sale.id, productId: reservation.productId, quantity: reservation.quantity,
@@ -206,8 +236,9 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       } })
       // Un Payment por cada bolsa de dinero que realmente se movió: el
       // anticipo verificado (transferencia con comprobante, cobrada antes) y
-      // el saldo cobrado al entregar. `reference` apunta a la reserva — es la
-      // ligadura sin tocar el esquema.
+      // el saldo cobrado al entregar. La ligadura reserva → venta vive en
+      // Sale.note; en la liquidación, Payment.reference queda reservado al
+      // folio bancario capturado (obligatorio en transferencia).
       if (reservation.depositPaid && paidCents > 0) {
         await tx.payment.create({ data: {
           businessId, saleId: sale.id, purpose: "RESERVATION", reference: reservation.id,
@@ -218,7 +249,10 @@ export async function changeReservation(db: PrismaClient, actorId: string | null
       }
       if (dueCents > 0 && method) {
         await tx.payment.create({ data: {
-          businessId, saleId: sale.id, purpose: "RESERVATION", reference: reservation.id,
+          businessId, saleId: sale.id, purpose: "RESERVATION",
+          // Transferencia: el folio SPEI exacto. Efectivo/tarjeta sin folio
+          // capturado conservan el id histórico de la reserva por compatibilidad.
+          reference: input.reference ?? reservation.id,
           method: DELIVERY_METHOD[method], amount: amount(dueCents), status: "CONFIRMED",
           cashMovementId: cashIn?.id ?? null,
           createdById: actorId!, notes: `Liquidación de reserva #${id}`,

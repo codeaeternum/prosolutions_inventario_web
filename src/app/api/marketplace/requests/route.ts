@@ -49,6 +49,23 @@ const createSchema = z.object({
 
 const requestInclude = marketplaceRequestInclude
 
+/**
+ * Vista segura para el comprador en POST. Los recibos idempotentes creados
+ * antes de la proyección acotada pueden contener retailPrice/decidedBy en
+ * JSON; aunque el dominio ya los omite en altas nuevas, aquí se recorta
+ * también cualquier replay histórico.
+ */
+function buyerFacingRequest(request: unknown) {
+  const safe = { ...(request as Record<string, unknown>) }
+  delete safe.decidedBy
+  if (safe.product && typeof safe.product === "object") {
+    const product = { ...(safe.product as Record<string, unknown>) }
+    delete product.retailPrice
+    safe.product = product
+  }
+  return safe
+}
+
 // GET /api/marketplace/requests?status=&direction=
 // Solicitudes de piezas de talleres aliados. PENDING primero, luego recientes.
 // Una cuenta WORKSHOP solo ve las solicitudes que ella misma registró.
@@ -253,7 +270,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(
-      { request: result.request, deduplicated: result.deduplicated, encargo: result.encargo },
+      { request: buyerFacingRequest(result.request), deduplicated: result.deduplicated, encargo: result.encargo },
       // 200 en dedupe o replay de recibo (recurso existente); 201 en alta real.
       { status: result.deduplicated || alreadyRecorded ? 200 : 201 }
     )

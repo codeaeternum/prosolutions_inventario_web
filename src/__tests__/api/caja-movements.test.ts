@@ -162,6 +162,7 @@ describe("aislamiento y filtros", () => {
       { sale: { branchId: "b-9" } },
       { repairOrder: { currentBranchId: "b-9" } },
       { encargo: { branchId: "b-9" } },
+      { purpose: "CREDIT_PAYMENT", notes: { contains: "[branch:b-9]" } },
     ])
     const supWhere = mocks.supplierPaymentFindMany.mock.calls[0][0].where
     expect(supWhere.OR).toEqual([{ purchaseId: null }, { purchase: { branchId: "b-9" } }])
@@ -247,6 +248,35 @@ describe("normalización de las cuatro fuentes", () => {
     expect(byKind["cred-debt"].href).toBe("/admin/tickets/venta/sale-9")
     expect(byKind["cred-rev"].kind).toBe("CREDIT_REVERSAL")
     expect(byKind["cred-rev"].amountCents).toBe(20000)
+  })
+
+  it("un abono de crédito ya documentado como Payment no sale duplicado como CreditMovement", async () => {
+    const taggedNotes = "Abono de Taller Ruiz · [credit-movement:cred-1] · [branch:b-1]"
+    const documented = payment({
+      id: "pay-credit",
+      purpose: "CREDIT_PAYMENT",
+      method: "TRANSFER",
+      reference: "SPEI-9988",
+      notes: taggedNotes,
+      saleId: null,
+      sale: null,
+    })
+    mocks.paymentFindMany.mockImplementation((args: { where?: { purpose?: string } }) =>
+      Promise.resolve(args.where?.purpose === "CREDIT_PAYMENT" ? [{ notes: taggedNotes }] : [documented]))
+    mocks.creditMovementFindMany.mockResolvedValue([credit()])
+
+    const body = await (await get()).json()
+    const ids = body.movements.map((m: { id: string }) => m.id)
+    expect(ids).toContain("pay-credit")
+    expect(ids).not.toContain("cred-1")
+    const row = body.movements.find((m: { id: string }) => m.id === "pay-credit")
+    expect(row).toMatchObject({
+      kind: "PAYMENT", method: "TRANSFER", reference: "SPEI-9988", branchId: "b-1", amountCents: 120000,
+    })
+    expect(row.description).toContain("abono de crédito")
+    expect(row.description).toContain("Abono de Taller Ruiz")
+    expect(row.description).not.toContain("[credit-movement:")
+    expect(row.description).not.toContain("[branch:")
   })
 
   it("marca duplicatesCash en abonos de crédito y pagos a proveedor ya asentados en caja", async () => {

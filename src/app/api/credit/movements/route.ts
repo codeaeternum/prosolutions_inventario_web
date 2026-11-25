@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession, requireAuth, requireModule } from "@/lib/api-auth"
 import { businessIdOf } from "@/lib/tenant"
 import { creditAgingByUser } from "@/lib/credit-aging"
+import { businessMonthKey, zonedTimeToUtc } from "@/lib/business-time"
 import { prisma } from "@/lib/prisma"
 
 const NO_STORE = { "Cache-Control": "private, no-store" } as const
@@ -17,9 +18,12 @@ export async function GET(req: NextRequest) {
     const businessId = businessIdOf(getSession(adminResult)!)
     const q = searchParams.get("q")?.trim() ?? ""
 
-    const firstDayOfMonth = new Date()
-    firstDayOfMonth.setDate(1)
-    firstDayOfMonth.setHours(0, 0, 0, 0)
+    // "Pagos del mes" se mide en el mes operativo del negocio, no en el mes
+    // UTC del proceso: en producción el servidor corre en UTC y un abono de
+    // la tarde del día 1 MX ya cae en el día 2 UTC / o viceversa al cerrar
+    // el mes.
+    const [businessYear, businessMonth] = businessMonthKey(new Date()).split("-").map(Number)
+    const firstDayOfMonth = zonedTimeToUtc(businessYear, businessMonth, 1)
 
     const [totalDebtAgg, activeClients, monthPaymentsAgg, debtors, movements, business] =
       await Promise.all([

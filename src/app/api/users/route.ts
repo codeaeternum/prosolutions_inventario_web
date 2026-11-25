@@ -162,6 +162,12 @@ export async function POST(req: Request) {
         { status: 400 }
       )
     }
+    // Normalización igual que el signup (/api/signup): el unique de
+    // User.email es case-sensitive en Postgres, así que "Ana@Taller.mx" y
+    // "ana@taller.mx" eran dos cuentas distintas — y el login, que compara en
+    // crudo, solo encontraba una de ellas. El dup-check y el create usan el
+    // correo ya normalizado.
+    const cleanEmail = email.trim().toLowerCase()
 
     if (typeof password !== "string" || password.length < 8) {
       return NextResponse.json(
@@ -230,7 +236,7 @@ export async function POST(req: Request) {
 
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
-      where: { email },
+      where: { email: cleanEmail },
     })
 
     if (existingUser) {
@@ -254,7 +260,7 @@ export async function POST(req: Request) {
       data: {
         businessId,
         name: cleanName,
-        email,
+        email: cleanEmail,
         password: hashedPassword,
         role: cleanRole,
         // El tipo de cliente lo decide un ADMIN (TECHNICIAN/STORE abren

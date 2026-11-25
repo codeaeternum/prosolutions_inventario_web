@@ -12,6 +12,7 @@ Backup automático nocturno de PostgreSQL y los volúmenes de archivos, corriend
 | **Tarea programada** | `ProSolutions-Backup`, diaria a las **03:30** (`StartWhenAvailable`: si el PC estaba apagado, corre al encender) |
 | **Registro** | `scripts\register-backup-task.ps1` (una sola vez, PowerShell elevado) |
 | **Artefactos** | pg_dump custom-format + tar.gz por volumen, retención **14 días** |
+| **Espejo offsite** | copia de cada corrida en `F:\prosolutions-backups` (segundo disco físico), misma retención |
 | **Estado** | `D:\Backups\prosolutions\last-backup-status.json` tras cada corrida |
 
 Qué respalda cada noche:
@@ -71,9 +72,48 @@ D:\Backups\prosolutions\
   "uploads":  { "...": "..." },
   "proofs":   { "...": "..." },
   "evidence": { "...": "..." },
+  "offsite":  { "enabled": true, "files": 4, "bytes": 12582912, "ok": true, "error": null },
   "finishedAt": "2026-01-15T03:31:12"
 }
 ```
+
+---
+
+## Espejo en segundo disco (`F:\prosolutions-backups`)
+
+`D:` y `C:` del N5 son SSDs distintos y `F:` es el HDD de 4 TB: el backup que solo vive en `D:` muere con el SSD. Por eso el script replica **los artefactos de cada corrida** a un segundo disco físico al terminar, controlado por el parámetro `-OffsiteRoot` (default `F:\prosolutions-backups`; cadena vacía lo desactiva).
+
+Cómo funciona:
+
+1. Misma estructura de subcarpetas que el origen: `F:\prosolutions-backups\db\`, `\uploads\`, `\payment-proofs\`, `\repair-evidence\`. Solo copia los artefactos de la corrida en curso que quedaron `ok` (no rsync completo — el espejo se construye corrida a corrida).
+2. **Misma retención que el origen** (14 días por tipo, conservando siempre los 3 más nuevos por carpeta) y bajo la misma condición de seguridad: solo purga cuando el dump DB de la corrida quedó verificado — una racha de fallos nunca deja el espejo sin copias.
+3. Si el disco `F:` no existe, el backup principal **no falla** por ello: el espejo se omite con advertencia y queda `offsite.ok:false` + `offsite.error` en el status. Pero una copia que muere a mitad (disco lleno, permisos) **sí** marca la corrida con error — una copia espejo que falla en silencio durante semanas es peor que una alerta.
+4. El resultado viaja en `last-backup-status.json` como `offsite: { enabled, files, bytes, ok, error }` y la app lo expone saneado en `GET /api/admin/backup-status` (campo `offsite`; las rutas del host nunca se filtran).
+
+La tarea programada corre el script **sin `-OffsiteRoot` explícito**, así que usa el default `F:\prosolutions-backups` — que es justo lo que se quiere en el N5. Para cambiar la raíz espejo o desactivarla (`-OffsiteRoot ""`) en corridas manuales, pasa el parámetro directo al script; para cambiarlo en la tarea hay que editar la acción registrada (register-backup-task.ps1 hoy solo propaga `-BackupRoot`):
+
+```powershell
+# Manual con otra raíz espejo, o sin espejo:
+powershell -ExecutionPolicy Bypass -File .\scripts\backup-n5.ps1 -OffsiteRoot "E:\respaldo-espejo"
+powershell -ExecutionPolicy Bypass -File .\scripts\backup-n5.ps1 -OffsiteRoot ""
+```
+
+### Restaurar desde el espejo
+
+Es idéntico a restaurar desde `D:\Backups\prosolutions` — mismo nombre de archivo, solo cambia la raíz. Sirve cuando el SSD de `D:` murió o el artefacto del origen está corrupto:
+
+```powershell
+# DB: copiar el dump del espejo al contenedor y restaurar (igual que la sección "Cómo restaurar")
+docker cp "F:\prosolutions-backups\db\20260115-0330.pgdump" prosolutions-db:/tmp/restore.pgdump
+docker exec prosolutions-db pg_restore -U prosolutions -d prosolutions_db --clean --if-exists --no-owner /tmp/restore.pgdump
+docker exec prosolutions-db rm /tmp/restore.pgdump
+
+# Volúmenes: montar la carpeta del ESPEJO en vez de la del origen
+docker run --rm -v prosolutions_uploads:/data -v F:/prosolutions-backups/uploads:/backup `
+  alpine sh -c "rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf /backup/uploads-20260115-0330.tar.gz -C /data"
+```
+
+Ojo: el restore-drill semanal verifica el `.pgdump` del **origen** (`D:`), no el espejo — si quieres validar un dump del espejo, corre `verify-backup-restore.ps1 -DumpFile "F:\prosolutions-backups\db\<archivo>.pgdump"` a mano.
 
 ---
 

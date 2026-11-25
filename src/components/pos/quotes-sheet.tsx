@@ -37,6 +37,9 @@ interface QuotesSheetProps {
 export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey, hasTicket }: QuotesSheetProps) {
     const [documents, setDocuments] = useState<PosDocumentSummary[]>([])
     const [loading, setLoading] = useState(false)
+    // Error de red persistente con reintento: un catch que solo vaciaba la
+    // lista se disfrazaba de "no hay cotizaciones".
+    const [loadError, setLoadError] = useState<string | null>(null)
     // "Ahora" se fotografía al cargar: Date.now() en render viola react-hooks/purity.
     const [nowMs, setNowMs] = useState<number | null>(null)
     const [resumingId, setResumingId] = useState<string | null>(null)
@@ -49,6 +52,7 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
 
     const load = useCallback(async () => {
         setLoading(true)
+        setLoadError(null)
         try {
             const params = new URLSearchParams({ status: "DRAFT", kind: "QUOTE" })
             if (branchId) params.set("branchId", branchId)
@@ -57,9 +61,9 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
             if (!res.ok) throw new Error(data?.error || "No se pudieron cargar")
             setDocuments(data?.documents ?? [])
             setNowMs(Date.now())
-        } catch (error) {
+        } catch {
             setDocuments([])
-            toast.error(error instanceof Error ? error.message : "No se pudieron cargar las cotizaciones")
+            setLoadError("No se pudieron cargar las cotizaciones. Revisa tu conexión y vuelve a intentar.")
         } finally {
             setLoading(false)
         }
@@ -142,6 +146,13 @@ export function QuotesSheet({ open, onOpenChange, branchId, onResume, refreshKey
                     </SheetHeader>
                     {loading && documents.length === 0 ? (
                         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                    ) : loadError ? (
+                        <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                            <p className="text-sm text-destructive">{loadError}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+                                Reintentar
+                            </Button>
+                        </div>
                     ) : documents.length === 0 ? (
                         <p className="py-16 text-center text-sm text-muted-foreground">No hay cotizaciones pendientes en esta sucursal</p>
                     ) : (

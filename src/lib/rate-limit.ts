@@ -7,6 +7,50 @@ const MAX_KEYS = 10000
 // vez, para no pagar un barrido por cada request que llega con el mapa lleno.
 const EVICTION_BATCH = Math.ceil(MAX_KEYS * 0.05)
 
+// Scopes cuyas llaves JAMÁS se evictan por saturación: los bloqueos de login
+// (par IP+cuenta y cuenta), la verificación de altas, el seguimiento legacy
+// por folio, el reset de contraseña y la asistencia de kiosco. Sin esto un
+// atacante sembraba llaves basura (verify con identificadores arbitrarios,
+// folios inventados de seguimiento) hasta llenar el mapa, y la evicción de
+// "los más viejos" se llevaba los castigos legítimos — el rate limit quedaba
+// fail-open justo donde más importa. Se comparan por prefijo: "login" cubre
+// "login-account" y "login-account-ip"; "pwd-reset" cubre "pwd-reset-ip", etc.
+const CRITICAL_SCOPE_PREFIXES = ["login", "verify", "seguimiento-legacy", "password-reset", "pwd-reset", "asistencia"]
+
+function isCriticalScope(prefix: string): boolean {
+  return CRITICAL_SCOPE_PREFIXES.some(p => prefix === p || prefix.startsWith(`${p}-`))
+}
+
+/** La llave del mapa es `${prefix}:${identifier}`; el prefijo va antes del primer ":". */
+function isCriticalKey(key: string): boolean {
+  const colon = key.indexOf(":")
+  return isCriticalScope(colon === -1 ? key : key.slice(0, colon))
+}
+
+/**
+ * Admisión de una llave NUEVA cuando el mapa puede estar lleno. Las entradas
+ * no críticas se evictan primero (las más viejas: el Map preserva orden de
+ * inserción); las críticas se saltan y sobreviven hasta su expiración natural.
+ * Si todo lo evictable se acabó y el mapa sigue lleno, la llave nueva de un
+ * scope NO crítico se rechaza (fail-closed) y la crítica se acepta aunque el
+ * mapa exceda MAX_KEYS — sus ventanas expiran solas y la limpieza de cada
+ * llamada las recoge; perder un bloqueo de login es peor que un exceso
+ * acotado y transitorio de memoria. Devuelve false solo para scopes no
+ * críticos sin espacio.
+ */
+function admitNewKey(prefix: string): boolean {
+  if (store.size < MAX_KEYS) return true
+  let evicted = 0
+  for (const oldest of store.keys()) {
+    if (evicted >= EVICTION_BATCH || store.size < MAX_KEYS) break
+    if (isCriticalKey(oldest)) continue
+    store.delete(oldest)
+    evicted++
+  }
+  if (store.size < MAX_KEYS) return true
+  return isCriticalScope(prefix)
+}
+
 // Bitácora en memoria de rechazos (429) por scope: vive en el proceso, así
 // que se resetea con cada reinicio/deploy — observabilidad ligera para
 // /platform/health, no persistencia.
@@ -48,8 +92,11 @@ export function getRateLimitStats(): RateLimitStats {
 
 /**
  * Single desktop process limiter. Expired keys are removed on each call.
- * Fail-open on saturation: a full Map must not take down login/signup for
- * everyone, so the oldest keys are evicted to make room instead of rejecting.
+ * Saturación del mapa (ver admitNewKey): las entradas no críticas se evictan
+ * primero, así que un flood de llaves basura no tira los bloqueos de
+ * login/verify/pwd-reset/asistencia; y si el mapa se llena de puro crítico,
+ * las llaves nuevas no críticas se rechazan (fail-closed) en vez de evictar
+ * los castigos de seguridad.
  */
 export function checkAndRecord(prefix: string, identifier: string, windowMs = WINDOW_MS, maxAttempts = 10): boolean {
   const now = Date.now()
@@ -64,14 +111,9 @@ export function checkAndRecord(prefix: string, identifier: string, windowMs = WI
     current.attempts++
     return true
   }
-  if (store.size >= MAX_KEYS) {
-    // Map preserva orden de inserción: los primeros son los más viejos.
-    let evicted = 0
-    for (const oldest of store.keys()) {
-      if (evicted >= EVICTION_BATCH || store.size < MAX_KEYS) break
-      store.delete(oldest)
-      evicted++
-    }
+  if (!admitNewKey(prefix)) {
+    recordDenied(prefix, now)
+    return false
   }
   store.set(key, { attempts: 1, expires: now + windowMs })
   return true
@@ -103,14 +145,9 @@ export function recordFailure(prefix: string, identifier: string, windowMs = WIN
     current.attempts++
     return
   }
-  if (store.size >= MAX_KEYS) {
-    let evicted = 0
-    for (const oldest of store.keys()) {
-      if (evicted >= EVICTION_BATCH || store.size < MAX_KEYS) break
-      store.delete(oldest)
-      evicted++
-    }
-  }
+  // Sin espacio para scopes no críticos: el fallo simplemente no se registra
+  // (nunca pasa con login/verify/pwd-reset — admitNewKey los admite siempre).
+  if (!admitNewKey(prefix)) return
   store.set(key, { attempts: 1, expires: now + windowMs })
 }
 
@@ -136,14 +173,9 @@ export function recordFailureBackoff(
   for (const [key, value] of store) if (value.expires <= now) store.delete(key)
   const key = `${prefix}:${identifier}`
   const current = store.get(key)
-  if (!current && store.size >= MAX_KEYS) {
-    let evicted = 0
-    for (const oldest of store.keys()) {
-      if (evicted >= EVICTION_BATCH || store.size < MAX_KEYS) break
-      store.delete(oldest)
-      evicted++
-    }
-  }
+  // Llave nueva sin espacio para scopes no críticos: no se registra el fallo.
+  // El par (IP, cuenta) del login es crítico — siempre entra (ver admitNewKey).
+  if (!current && !admitNewKey(prefix)) return
   const attempts = (current?.attempts ?? 0) + 1
   const cycle = Math.floor((attempts - 1) / stepAttempts)
   const windowMs = Math.min(baseWindowMs * 2 ** cycle, maxWindowMs)

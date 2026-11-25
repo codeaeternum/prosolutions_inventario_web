@@ -4,6 +4,7 @@ import { getSession, requireModule, assertOperationBranch } from "@/lib/api-auth
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { sell } from "@/lib/domain/sales"
+import { BusinessError } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
 import { marketplaceRequestInclude } from "@/lib/domain/marketplace"
 
@@ -27,12 +28,15 @@ const requestInclude = marketplaceRequestInclude
 // proveedor, por eso un EMPLOYEE con el módulo no basta (la UI ya ocultaba
 // los botones; ahora la API coincide).
 // La aprobación es un acuerdo comercial: NO descuenta inventario.
-// FULFILL sí genera la venta (sell) a precio de taller — con idempotencyKey
-// derivado de la solicitud, reintentar nunca duplica la venta — y luego marca
-// la solicitud como FULFILLED ligada a esa venta (saleId).
-// Recuperaciones: REJECT también libera una APPROVED sin venta (una aprobada
-// sin stock/precio ya no queda wedge) y APPROVE sobre una FULFILLED cuya
-// venta quedó VOIDED la devuelve a APPROVED para surtirla de nuevo.
+// FULFILL sí genera la venta (sell) a precio de taller. La llave se deriva
+// de la solicitud + timestamp de ESTA aprobación: los reintentos del intento
+// comparten recibo, pero anular la venta y reactivar la solicitud produce una
+// venta nueva. La ligadura FULFILLED/saleId corre en commitHook dentro de la
+// MISMA transacción de sell(): si un REJECT concurrente gana la fila, venta,
+// stock, pagos y recibo se revierten juntos.
+// Recuperaciones: REJECT también libera una APPROVED sin venta vigente (una
+// aprobada sin stock/precio ya no queda wedge) y APPROVE sobre una FULFILLED
+// cuya venta quedó VOIDED la devuelve a APPROVED para surtirla de nuevo.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -144,10 +148,17 @@ export async function PATCH(
       const deniedBranch = await assertOperationBranch(session, branchId)
       if (deniedBranch) return deniedBranch
 
+      // Llave por INTENTO DE APROBACIÓN: decidedAt cambia cada vez que la
+      // solicitud se aprueba/reactiva. Todos los reintentos de ESTE intento
+      // comparten la venta (mismo recibo), pero anularla y reaprobarla genera
+      // una llave nueva — jamás se reutiliza el recibo de una venta VOIDED.
+      const approvalStamp = existing.decidedAt instanceof Date ? existing.decidedAt.getTime() : "legacy"
+      const fulfillKey = `mkt-fulfill-${existing.id}-${approvalStamp}`
+
       let result: Awaited<ReturnType<typeof sell>>
       try {
         result = await sell(prisma, actorId, businessId, {
-          idempotencyKey: `mkt-fulfill-${existing.id}`,
+          idempotencyKey: fulfillKey,
           items: [{ productId: existing.productId, quantity: existing.qty }],
           payments: [{ method: paymentMethod, ...(reference ? { reference } : {}) }],
           customerId: saleCustomerId,
@@ -156,45 +167,40 @@ export async function PATCH(
           // Documento "nota de venta a taller": el surtido del mercado B2B
           // siempre es venta a taller aunque el comprador sea walk-in.
           workshopSale: true,
+        }, {
+          commitHook: async (tx, committed) => {
+            // La ligadura de la solicitud corre en la MISMA transacción
+            // serializable que sale/stock/pagos. Si un REJECT concurrente
+            // ganó primero (o alguien reactivó la solicitud después de la
+            // lectura), este update cuenta 0 y toda la venta se revierte.
+            const updated = await tx.marketplaceRequest.updateMany({
+              where: {
+                id,
+                businessId,
+                status: "APPROVED",
+                // Nunca sobrescribe una venta vigente: solo una solicitud sin
+                // documento o con el documento viejo ya VOIDED puede surtirse.
+                OR: [
+                  { saleId: null },
+                  { sale: { is: { status: "VOIDED" } } },
+                ],
+                decidedAt: existing.decidedAt,
+              },
+              data: {
+                status: "FULFILLED",
+                decidedById: actorId,
+                decidedAt: new Date(),
+                decisionNote: decisionNote || null,
+                saleId: committed.sale.id,
+              },
+            })
+            if (updated.count !== 1) {
+              throw new BusinessError("La solicitud ya fue decidida.", 409)
+            }
+          },
         })
       } catch (error) {
         return businessFailure(error)
-      }
-
-      // Guard de estado: si otro admin la decidió en paralelo, la venta ya
-      // existía por idempotencia pero la solicitud no se toca dos veces.
-      const updated = await prisma.marketplaceRequest.updateMany({
-        where: { id, businessId, status: "APPROVED" },
-        data: {
-          status: "FULFILLED",
-          decidedById: actorId,
-          decidedAt: new Date(),
-          decisionNote: decisionNote || null,
-          saleId: result.sale.id,
-        },
-      })
-      if (updated.count !== 1) {
-        // Carrera: si quedó FULFILLED ligada a ESTA misma venta (mismo
-        // idempotencyKey → misma venta), el surtido ya se confirmó — el
-        // reintento reporta éxito en vez de un 409 fantasma.
-        const current = await prisma.marketplaceRequest.findUnique({
-          where: { id },
-          select: { status: true, saleId: true },
-        })
-        if (current?.status === "FULFILLED" && current.saleId === result.sale.id) {
-          const request = await prisma.marketplaceRequest.findUniqueOrThrow({
-            where: { id },
-            include: requestInclude,
-          })
-          return NextResponse.json(
-            { request, saleNumber: result.sale.number, idempotent: true },
-            { headers: NO_STORE }
-          )
-        }
-        return NextResponse.json(
-          { error: "La solicitud ya fue decidida." },
-          { status: 409, headers: NO_STORE }
-        )
       }
 
       const request = await prisma.marketplaceRequest.findUniqueOrThrow({
@@ -233,10 +239,24 @@ export async function PATCH(
       }
     } else {
       // ---- REJECT: PENDING -> REJECTED; también desde APPROVED mientras no
-      // haya venta ligada — una aprobada que ya no se puede surtir no queda
-      // wedge para siempre.
+      // exista una venta vigente — una aprobada que ya no se puede surtir no
+      // queda wedge para siempre, pero un documento cobrado jamás se pisa.
+      if (existing.saleId && existing.sale && existing.sale.status !== "VOIDED") {
+        return NextResponse.json(
+          { error: "La solicitud ya tiene una venta vigente; anula esa venta antes de rechazarla." },
+          { status: 409, headers: NO_STORE }
+        )
+      }
       const updated = await prisma.marketplaceRequest.updateMany({
-        where: { id, businessId, saleId: null, status: { in: ["PENDING", "APPROVED"] } },
+        where: {
+          id,
+          businessId,
+          status: { in: ["PENDING", "APPROVED"] },
+          OR: [
+            { saleId: null },
+            { sale: { is: { status: "VOIDED" } } },
+          ],
+        },
         data: {
           status: "REJECTED",
           decidedById: actorId,

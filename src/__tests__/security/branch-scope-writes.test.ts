@@ -265,6 +265,7 @@ describe("admin/tickets/corte/[id] — corte de caja acotado", () => {
           { sale: { branchId: "b1" } },
           { repairOrder: { currentBranchId: "b1" } },
           { encargo: { branchId: "b1" } },
+          { purpose: "CREDIT_PAYMENT", notes: { contains: "[branch:b1]" } },
         ],
       },
     ])

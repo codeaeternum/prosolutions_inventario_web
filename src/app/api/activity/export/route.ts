@@ -4,6 +4,7 @@ import { businessIdOf } from "@/lib/tenant"
 import { businessFailure } from "@/lib/domain/http"
 import { fetchActivityFeed, parseDateParam, type ActivityItem } from "@/lib/activity"
 import { csvCell } from "@/lib/csv"
+import { checkAndRecord } from "@/lib/rate-limit"
 
 /**
  * GET /api/activity/export — la misma bitácora de /api/activity como CSV
@@ -40,7 +41,17 @@ export async function GET(req: Request) {
   try {
     const auth = await requireAdmin()
     if (auth.error) return auth.error
-    const businessId = businessIdOf(getSession(auth)!)
+    const session = getSession(auth)!
+    const businessId = businessIdOf(session)
+
+    // La bitácora completa del negocio es el dato más sensible que se exporta:
+    // mismo bucket que /api/export — 10 descargas por hora por usuario.
+    if (!checkAndRecord("export", session.user.id, 60 * 60 * 1000, 10)) {
+      return NextResponse.json(
+        { error: "Demasiadas exportaciones. Espera antes de descargar de nuevo." },
+        { status: 429, headers: { "Retry-After": "3600" } },
+      )
+    }
 
     const sp = new URL(req.url).searchParams
     const sourceParam = sp.get("source")?.trim()

@@ -147,6 +147,9 @@ export function SalesReturnsSheet({
 }: SalesReturnsSheetProps) {
     const [sales, setSales] = useState<SaleRecord[]>([])
     const [loading, setLoading] = useState(false)
+    // Error de red persistente con reintento: un catch que solo vaciaba la
+    // lista se disfrazaba de "no hay tickets".
+    const [loadError, setLoadError] = useState<string | null>(null)
     const [page, setPage] = useState(1)
     const [totalPages, setTotalPages] = useState(1)
     const [searchQuery, setSearchQuery] = useState(initialQuery ?? "")
@@ -181,6 +184,7 @@ export function SalesReturnsSheet({
     const load = useCallback(async (targetPage = 1, query = debouncedQuery) => {
         const requestId = ++requestRef.current
         setLoading(true)
+        setLoadError(null)
         try {
             const params = new URLSearchParams({ page: String(targetPage) })
             if (branchId) params.set("branchId", branchId)
@@ -193,10 +197,10 @@ export function SalesReturnsSheet({
             setSales(data?.sales ?? [])
             setPage(data?.page ?? targetPage)
             setTotalPages(data?.totalPages ?? 1)
-        } catch (error) {
+        } catch {
             if (requestRef.current !== requestId) return
             setSales([])
-            toast.error(error instanceof Error ? error.message : "No se pudieron cargar los tickets")
+            setLoadError("No se pudieron cargar los tickets. Revisa tu conexión y vuelve a intentar.")
         } finally {
             if (requestRef.current === requestId) setLoading(false)
         }
@@ -431,6 +435,13 @@ export function SalesReturnsSheet({
                     {loading && sales.length === 0 ? (
                         <div className="flex justify-center py-16">
                             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : loadError ? (
+                        <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                            <p className="text-sm text-destructive">{loadError}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={() => void load(page)} disabled={loading}>
+                                Reintentar
+                            </Button>
                         </div>
                     ) : filteredSales.length === 0 ? (
                         <p className="py-16 text-center text-sm text-muted-foreground">

@@ -13,10 +13,10 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 | **OS** | Microsoft Windows 11 Pro (10.0.26200) |
 | **RAM** | ~30 GB |
 | **Docker** | 29.2.0 / Docker Compose v5.0.2 |
-| **Tailscale** | IP `100.124.116.70` (`galindoasc-1`, usuario `dgali`) |
+| **Tailscale** | IP `100.124.116.70` (usuario `dgali`) |
 | **Ethernet (LAN)** | 192.168.1.195 |
 | **Ruta proyecto (workspace)** | `D:\Proyectos_Sincronizados\prosolutions_inventario_web` |
-| **Ruta usada por deploy.ps1 -Remote** | `D:\Projectos\prosolutions_inventario_web` |
+| **Ruta de deploy (la que sincroniza deploy-n5.sh por SSH)** | `D:\Projectos\prosolutions_inventario_web` |
 
 ---
 
@@ -51,7 +51,7 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 
 | Puerto en el host | Servicio | Contenedor | Notas |
 |-------------------|----------|------------|--------|
-| **3005** | Web + API (Next.js) | `prosolutions-app` | Mapeo `3005:3000`. Cloudflare Tunnel apunta aquí. |
+| **3005** | Web + API (Next.js) | `prosolutions-app` | Publicado solo en `127.0.0.1` y la IP LAN (`APP_BIND_IP`). Cloudflare Tunnel NO usa este puerto: llega por la red interna (`app:3000`). |
 | **—** | PostgreSQL 16 | `prosolutions-db` | YA NO publica puerto al host (`ports` vacío / PortBindings {}): solo accesible por app/bot via `prosolutions-network` como `db:5432`. |
 
 **Importante:** Si despliegas **otra aplicación** en el mismo N5 (ej. AeternaSuite), usa puertos distintos para evitar conflictos, por ejemplo:
@@ -65,10 +65,12 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 
 | Dominio público | Origen (URL interna en Cloudflare) |
 |-----------------|-------------------------------------|
-| **https://reficio.app** | `http://host.docker.internal:3005` |
+| **https://reficio.app** | `http://app:3000` |
 
-- Si **cloudflared** corre **dentro de Docker** en el N5, `host.docker.internal:3005` es correcto.
-- Si **cloudflared** corre **en el host** (Windows), en la config del tunnel usa `http://127.0.0.1:3005` o `http://localhost:3005`.
+- **Verificado:** el contenedor `cloudflared_tunnel` está conectado a la red interna de Docker `prosolutions_prosolutions-network` y alcanza la app por el **nombre del servicio** del compose: `http://app:3000` (el nombre de contenedor `prosolutions-app:3000` también resuelve en esa red). La config del tunnel se edita en el dashboard de Cloudflare (Zero Trust → Networks → Tunnels), no en el N5.
+- Cualquier doc que diga `host.docker.internal:3005` está **mal**: el compose publica el 3005 solo en loopback y en la IP LAN del taller — la red interna es el camino garantizado y el que usa el túnel hoy.
+- El 3005 del host (loopback + LAN) existe para acceso directo del taller y pruebas, no para Cloudflare.
+- Si algún día **cloudflared** corriera en el host (hoy corre en Docker), el origen sería `http://127.0.0.1:3005`.
 
 ---
 
@@ -82,26 +84,69 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 
 ## Variables de entorno (ProSolutions)
 
-Definidas en Portainer (stack) o en `.env` si usas `docker compose` por CLI:
+Se definen en `.env.docker` (deploy por CLI/script) o en las *Environment variables* del stack de Portainer. El compose las valida con `${VAR:?}`: **si falta cualquiera de las obligatorias el despliegue falla al validar, no arranca con defaults**.
 
-| Variable | Obligatoria | Descripción |
-|----------|-------------|-------------|
-| `NEXTAUTH_SECRET` | Sí | Clave para JWT/sesiones. Mismo valor que `AUTH_SECRET`. |
-| `NEXTAUTH_URL` | Sí | URL pública, ej. `https://reficio.app` |
-| `TELEGRAM_BOT_TOKEN` | Sí (si usas bot) | Token del bot de Telegram |
-| `DATABASE_URL` | No (en compose) | Ya viene en el YAML para `app` y `bot` (postgresql://prosolutions:...@db:5432/prosolutions_db) |
-| `POSTGRES_*` | No (en compose) | User/password/DB definidos en el servicio `db` |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` | No | Web push (opcional) |
-| `CRON_SECRET` | No | Protección del endpoint de reservas expiradas |
+Obligatorias (`${...:?}` en docker-compose.yml):
 
-La lista completa y comentada está en `.env.docker.example` (raíz del repo) — copiarla a `.env.docker` y rellenar.
+| Variable | Descripción |
+|----------|-------------|
+| `DATABASE_URL` | `postgresql://prosolutions:<POSTGRES_PASSWORD>@db:5432/prosolutions_db` — apunta a la red interna (`db`), no a localhost |
+| `POSTGRES_PASSWORD` | Password del servicio `db`; debe coincidir con la de `DATABASE_URL` |
+| `NEXTAUTH_SECRET` | Clave para JWT/sesiones (`openssl rand -base64 32`); el compose la copia también a `AUTH_SECRET` |
+| `NEXTAUTH_URL` | URL pública, ej. `https://reficio.app` |
+| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram |
+| `CRON_SECRET` | Secreto de los endpoints `/api/cron/*` |
+
+Además **`TRUST_PROXY_SECRET` es obligatorio en producción** (aunque el compose la admite vacía mientras termina la oleada): candado de los headers de IP de proxy — sin él, cualquier equipo de la LAN puede forjar `CF-Connecting-IP` y esquivar el rate limit por cliente. Pasos de alta en `.env.docker.example`.
+
+Opcionales relevantes: `APP_BIND_IP` (default `192.168.1.195`), `DEVICE_SECRET_KEY`, `RESEND_API_KEY`/`RESEND_FROM`, `ALLOWED_ORIGINS`, retenciones `*_RETENTION_DAYS`, `PG_POOL_MAX`. La lista completa y comentada está en `.env.docker.example` (raíz del repo) — copiarla a `.env.docker` y rellenar.
 
 ---
 
-## Despliegue (todo desde el N5 Pro)
+## Despliegue
 
-- **En el N5:** En la carpeta del proyecto ejecutar `.\deploy-n5.ps1` (o el legacy `.\deploy.ps1`). Hace build y up en esta máquina; no hace falta Portainer ni pasos manuales. Requiere `.env.docker` en la misma carpeta (no `.env` — ese apunta a localhost y es solo de desarrollo).
-- **Desde otro PC (opcional):** `.\deploy.ps1 -Remote` hace push a GitHub y deploy vía SSH al N5. O desde Mac/Linux: `./deploy-n5.sh`.
+**Canónico:** `./deploy-n5.sh` desde el Mac (push + dispara `deploy-n5.ps1` en el N5 por SSH) o `powershell -ExecutionPolicy Bypass -File .\deploy-n5.ps1` directo en el N5. **`deploy.ps1` está DEPRECATED** — no usarlo. Toda la lógica vive en `deploy-n5.ps1`; el procedimiento completo y el rollback por tag SHA están en **PORTAINER-STACK.md**.
+
+### Instalación desde cero en un host nuevo (runbook)
+
+`docker compose up -d` a secas **NO es un deploy válido**: sin los volúmenes external creados falla el up, sin migraciones la app no arranca (el preflight la tira) y sin orden la app puede promoverse contra un esquema viejo. El orden real es:
+
+```powershell
+# 0) Clonar el repo y crear .env.docker (copia .env.docker.example y rellena
+#    TODAS las obligatorias de la tabla de arriba + TRUST_PROXY_SECRET).
+
+# 1) Los CUATRO volúmenes external son obligatorios — sin cualquiera de ellos
+#    el up falla. 'docker volume create' es idempotente y acepta UN volumen
+#    por llamada:
+docker volume create prosolutions_postgres_data
+docker volume create prosolutions_uploads
+docker volume create prosolutions_payment_proofs
+docker volume create prosolutions_repair_evidence
+
+# 2) Build de las imágenes (incluida la de migraciones, perfil migrate):
+$env:GIT_SHA = (git rev-parse --short HEAD)
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
+
+# 3) DB primero y esperarla healthy — el servicio migrate la exige
+#    (depends_on: service_healthy):
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d db
+docker inspect prosolutions-db --format '{{.State.Health.Status}}'   # debe decir healthy
+
+# 4) Migraciones ANTES de promover la app — en BD vacía crean todo el esquema:
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker --profile migrate run --rm migrate
+
+# 5) Recién ahora, app y bot:
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
+
+# 6) Verificar salud real (la app responde 503 hasta que el esquema está listo):
+docker inspect prosolutions-app --format '{{.State.Health.Status}}'  # healthy (hasta ~150 s)
+```
+
+`deploy-n5.ps1` ejecuta exactamente esta secuencia y aborta si el paso de migraciones falla — usarlo en vez de repetirla a mano.
+
+### Acceso directo LAN (taller)
+
+La app se publica en `127.0.0.1:3005` y `${APP_BIND_IP}:3005` (default `192.168.1.195`). Cloudflare llega por la red interna de Docker (`app:3000`, ver la sección del túnel) y no depende de ese puerto.
 
 ### Migraciones en BD ya existente (N5)
 

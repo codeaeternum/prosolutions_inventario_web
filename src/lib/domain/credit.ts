@@ -1,6 +1,11 @@
 import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
-import { actor, addDebt, amount, BusinessError, cents, openRegister, operation, operationKeySchema } from "./operations"
+import { actor, addDebt, amount, BusinessError, cents, openRegister, operation, operationKeySchema, resolveBranch } from "./operations"
+import {
+  CREDIT_PAYMENT_PURPOSE,
+  creditPaymentBranchTag,
+  creditPaymentMovementTag,
+} from "./cash"
 
 const schema = z.object({
   idempotencyKey: operationKeySchema, userId: z.string().min(1), amount: z.number(), notes: z.string().max(500).optional(),
@@ -40,12 +45,40 @@ export async function changeCredit(db: PrismaClient, actorId: string, businessId
     if (value > balance) throw new BusinessError("El abono supera la deuda. No se registró dinero ni se cambió el saldo.", 409)
     const collector = await actor(tx, actorId, "staff", businessId)
     const register = input.paymentMethod === "EFECTIVO" ? await openRegister(tx, input.branchId ?? collector.homeBranchId, businessId) : null
+    // En efectivo la sucursal real es la del cajón; en tarjeta/transferencia
+    // no hay cajón físico, así que se atribuye a la sucursal operativa
+    // explícita/base del cobrador para que "Cobrado por método" pueda
+    // conciliarla. Es el mejor vínculo posible sin schema branchId en Payment.
+    const collectionBranchId = register?.branchId ?? (await resolveBranch(tx, input.branchId ?? collector.homeBranchId, businessId)).id
     const movement = await tx.creditMovement.create({ data: {
       businessId: user.businessId, userId: user.id, type: "PAYMENT", amount: amount(value), referenceType: "MANUAL",
       notes: [input.notes, `Medio: ${input.paymentMethod}`, input.reference ? `Ref: ${input.reference}` : null].filter(Boolean).join(" · "),
     } })
     await tx.user.update({ where: { id: user.id }, data: { creditBalance: amount(balance - value) } })
-    if (register) await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "IN", amount: amount(value), referenceType: "CREDIT_PAYMENT", referenceId: movement.id, description: `Abono de cliente #${user.id}` } })
-    return { creditBalance: amount(balance - value), movementId: movement.id }
+    const cashIn = register
+      ? await tx.cashMovement.create({ data: { businessId, registerId: register.id, userId: actorId, type: "IN", amount: amount(value), referenceType: "CREDIT_PAYMENT", referenceId: movement.id, description: `Abono de cliente #${user.id}` } })
+      : null
+    // Comprobante estructurado del dinero. CreditMovement sigue siendo el
+    // asiento de deuda; Payment es lo que entienden los cortes/métodos. El
+    // vínculo cashMovementId evita duplicar el efectivo (el pago no aparece
+    // como fila adicional en el feed de pagos).
+    const methodMap = { EFECTIVO: "CASH", TARJETA: "CARD", TRANSFERENCIA: "TRANSFER" } as const
+    const payment = await tx.payment.create({ data: {
+      businessId,
+      purpose: CREDIT_PAYMENT_PURPOSE,
+      method: methodMap[input.paymentMethod],
+      amount: amount(value),
+      status: "CONFIRMED",
+      reference: input.reference ?? null,
+      cashMovementId: cashIn?.id ?? null,
+      createdById: actorId,
+      notes: [
+        `Abono de ${user.name}`,
+        input.notes,
+        creditPaymentMovementTag(movement.id),
+        creditPaymentBranchTag(collectionBranchId),
+      ].filter(Boolean).join(" · "),
+    } })
+    return { creditBalance: amount(balance - value), movementId: movement.id, paymentId: payment.id }
   })
 }

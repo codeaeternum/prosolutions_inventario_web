@@ -29,7 +29,10 @@ function isUniqueViolation(error: unknown): boolean {
 
 const registerSchema = z
   .object({
-    name: z.string().min(1, "El nombre es requerido").max(200),
+    // El nombre viaja a bitácora, notificaciones y tickets: mismo saneo que
+    // signerName de cotizaciones — sin saltos de línea ni <>& (inyección en
+    // mensajes y exportaciones). El trim además evita que "   " pase min(1).
+    name: z.string().trim().min(1, "El nombre es requerido").max(200).regex(/^[^\r\n<>&]*$/, "El nombre no admite saltos ni <>&"),
     email: z.string().email().optional().or(z.literal("")),
     phone: z.string().max(50).optional().or(z.literal("")),
     password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),

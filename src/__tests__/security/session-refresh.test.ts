@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { JWT } from "@auth/core/jwt"
 
 /**
@@ -199,5 +199,89 @@ describe("authorize applies a per-account attempt limit (SEC-07)", () => {
     mocks.findFirst.mockResolvedValueOnce({ ...adminRow, password: null })
     expect(await authorize({ identifier: "nopass@test.invalid", password: "secret" })).toBeNull()
     expect(mocks.bcryptCompare).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("tope de 10 h para sesiones superadmin (S5)", () => {
+  const opRow = { ...adminRow, id: "op-1", isSuperAdmin: true }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+  })
+
+  afterEach(() => { vi.useRealTimers() })
+
+  it("el login estampa superAdminIat y la sesión muere pasadas 10 h aunque la cookie siga viva", async () => {
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    const token = await jwtCallback({ token: {} as JWT, user: { id: opRow.id } })
+    expect(token).not.toBeNull()
+    expect(typeof token!.superAdminIat).toBe("number")
+
+    // 9 h 59 min después: la sesión sigue viva.
+    vi.advanceTimersByTime(10 * 60 * 60 * 1000 - 60_000)
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    expect(await jwtCallback({ token: token! })).not.toBeNull()
+
+    // Pasado el tope de 10 h: cae a null como cualquier otra revocación.
+    vi.advanceTimersByTime(2 * 60_000)
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    expect(await jwtCallback({ token: token! })).toBeNull()
+  })
+
+  it("los refrescos intermedios NO reinician el reloj de 10 h", async () => {
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    const token = (await jwtCallback({ token: {} as JWT, user: { id: opRow.id } }))!
+
+    // Opera 5 h, refresca (sigue vivo) y luego espera otras 5 h + 1 min:
+    // en total 10 h + 1 min desde el login — la sesión ya no sirve aunque
+    // el refresh de las 5 h esté "reciente".
+    vi.advanceTimersByTime(5 * 60 * 60 * 1000)
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    const refreshed = (await jwtCallback({ token }))!
+    expect(refreshed).not.toBeNull()
+    expect(refreshed.superAdminIat).toBe(token.superAdminIat) // arranque original conservado
+
+    vi.advanceTimersByTime(5 * 60 * 60 * 1000 + 60_000)
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    expect(await jwtCallback({ token: refreshed })).toBeNull()
+  })
+
+  it("una sesión de staff normal NO se toca a las 10 h", async () => {
+    mocks.findUnique.mockResolvedValueOnce(adminRow)
+    const token = (await jwtCallback({ token: {} as JWT, user: { id: adminRow.id } }))!
+    expect(token.superAdminIat ?? null).toBeNull()
+
+    vi.advanceTimersByTime(20 * 60 * 60 * 1000)
+    mocks.findUnique.mockResolvedValueOnce(adminRow)
+    expect(await jwtCallback({ token })).not.toBeNull()
+  })
+
+  it("elevar la cuenta a superadmin a media sesión arranca la ventana en ese momento", async () => {
+    mocks.findUnique.mockResolvedValueOnce(adminRow)
+    const token = (await jwtCallback({ token: {} as JWT, user: { id: adminRow.id } }))!
+
+    // 2 h después la cuenta se eleva a operador: la sesión sobrevive y la
+    // ventana de 10 h corre desde la elevación (la cookie vieja no traía claim).
+    vi.advanceTimersByTime(2 * 60 * 60 * 1000)
+    mocks.findUnique.mockResolvedValueOnce({ ...adminRow, isSuperAdmin: true })
+    const elevated = (await jwtCallback({ token }))!
+    expect(elevated).not.toBeNull()
+    expect(typeof elevated.superAdminIat).toBe("number")
+
+    vi.advanceTimersByTime(10 * 60 * 60 * 1000 + 60_000)
+    mocks.findUnique.mockResolvedValueOnce({ ...adminRow, isSuperAdmin: true })
+    expect(await jwtCallback({ token: elevated })).toBeNull()
+  })
+
+  it("si el operador es degradado, el tope deja de aplicar", async () => {
+    mocks.findUnique.mockResolvedValueOnce(opRow)
+    const token = (await jwtCallback({ token: {} as JWT, user: { id: opRow.id } }))!
+
+    vi.advanceTimersByTime(11 * 60 * 60 * 1000)
+    // Ya sin privilegios de plataforma: la sesión vuelve a la póliza normal.
+    mocks.findUnique.mockResolvedValueOnce({ ...opRow, isSuperAdmin: false })
+    expect(await jwtCallback({ token })).not.toBeNull()
   })
 })

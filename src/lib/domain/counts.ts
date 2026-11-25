@@ -92,13 +92,27 @@ export async function setCountItems(db: PrismaClient, actorId: string, businessI
 const actionSchema = z.object({ idempotencyKey: operationKeySchema })
 
 /**
- * Aplica el conteo: por cada producto con diferencia ajusta el stock de la
- * sucursal al valor contado (absoluto), mueve Product.stock por la diferencia
- * real y deja un InventoryMovement ADJUSTMENT auditado.
+ * Aplica el conteo: por cada producto con varianza ajusta el stock de la
+ * sucursal de forma RELATIVA, mueve Product.stock por la misma diferencia y
+ * deja un InventoryMovement ADJUSTMENT auditado.
  *
- * La diferencia se calcula contra el stock VIVO al aplicar (pudo moverse por
- * ventas/traspasos durante la captura); expectedQty se re-sincroniza a ese
- * valor para que el registro siempre satisfaga diff = countedQty - expectedQty.
+ * La varianza es la capturada en su momento: delta = countedQty − expectedQty
+ * (expectedQty es la foto del sistema AL CAPTURAR y ya no se re-sincroniza —
+ * queda como registro histórico de contra qué se comparó lo físico). El ajuste
+ * se aplica sobre el stock VIVO al aplicar: newQty = stockVigente + delta.
+ *
+ * Por qué relativo y no absoluto: entre captura y aplicación pueden ocurrir
+ * ventas, recepciones o traspasos legítimos. Si el conteo cuadraba al capturar
+ * (delta 0) no hay merma que ajustar y esos movimientos se conservan — fijar
+ * countedQty como absoluto "resucitaría" piezas vendidas en el interim. La
+ * varianza sí se conserva: una merma de 2 detectada al capturar sigue siendo
+ * una merma de 2 aunque el stock se mueva antes de aplicar.
+ *
+ * Guard de consistencia física: si el delta llevaría la existencia a negativo
+ * (BranchStock_quantity_nonnegative lo prohíbe además en BD), la captura y los
+ * movimientos posteriores se contradicen — la operación falla con 409 para que
+ * el usuario vuelva a capturar ese producto con la existencia actual (la
+ * recaptura renueva expectedQty y con él la base del delta).
  */
 export async function applyCount(db: PrismaClient, actorId: string, businessId: string, countId: string, raw: unknown) {
   const input = actionSchema.parse(raw)
@@ -107,7 +121,7 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
   const result = await operation(db, { key: input.idempotencyKey, actorId, businessId, kind: "COUNT_APPLY", permission: "staff", payload: { countId } }, async tx => {
     const count = await tx.inventoryCount.findFirst({
       where: { id: countId, businessId },
-      include: { items: true, branch: { select: { id: true, name: true } } },
+      include: { items: { include: { product: { select: { name: true } } } }, branch: { select: { id: true, name: true } } },
     })
     if (!count) throw new BusinessError("Conteo no encontrado.", 404)
     if (count.status !== "OPEN") throw new BusinessError("El conteo ya no está abierto.", 409)
@@ -126,23 +140,30 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
     const folio = countFolio(count.number)
     const movements = []
     for (const item of count.items) {
+      // Varianza de la captura: countedQty contra lo que el sistema decía EN
+      // ESE momento. Sin varianza no hay nada que ajustar — aunque el stock se
+      // haya movido después por operación normal, esos movimientos son legítimos.
+      const delta = item.countedQty - item.expectedQty
+      if (delta === 0) continue
       const stock = await tx.branchStock.findUnique({
         where: { productId_branchId: { productId: item.productId, branchId: count.branchId } },
         select: { quantity: true },
       })
       const current = stock?.quantity ?? 0
-      if (current !== item.expectedQty) {
-        await tx.inventoryCountItem.update({ where: { id: item.id }, data: { expectedQty: current } })
+      const newQty = current + delta
+      if (newQty < 0) {
+        throw new BusinessError(
+          `"${item.product.name}": el faltante del conteo (${delta}) excede la existencia vigente (${current}); hubo ventas o movimientos después de capturar que el conteo no explica. Vuelve a capturar ese producto antes de aplicar.`,
+          409,
+        )
       }
-      const diff = item.countedQty - current
-      if (diff === 0) continue
       adjustedProductIds.push(item.productId)
       await tx.branchStock.upsert({
         where: { productId_branchId: { productId: item.productId, branchId: count.branchId } },
-        create: { businessId, productId: item.productId, branchId: count.branchId, quantity: item.countedQty },
-        update: { quantity: item.countedQty },
+        create: { businessId, productId: item.productId, branchId: count.branchId, quantity: newQty },
+        update: { quantity: newQty },
       })
-      const updated = await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: diff } } })
+      const updated = await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: delta } } })
       movements.push(await tx.inventoryMovement.create({
         data: {
           businessId,
@@ -151,11 +172,11 @@ export async function applyCount(db: PrismaClient, actorId: string, businessId: 
           // El enum de BD solo tiene ADJUSTMENT; la dirección queda en el
           // delta de previousStock/newStock y en notes.
           type: "ADJUSTMENT",
-          quantity: Math.abs(diff),
-          previousStock: updated.stock - diff,
+          quantity: Math.abs(delta),
+          previousStock: updated.stock - delta,
           newStock: updated.stock,
           reason: `Conteo físico ${folio}`,
-          notes: `Contado ${item.countedQty}; sistema ${current} (${diff > 0 ? "+" : ""}${diff}).`,
+          notes: `Contado ${item.countedQty} vs ${item.expectedQty} en sistema al capturar (${delta > 0 ? "+" : ""}${delta}); existencia ${current} → ${newQty} al aplicar.`,
           businessVersion: 1,
           branchId: count.branchId,
         },

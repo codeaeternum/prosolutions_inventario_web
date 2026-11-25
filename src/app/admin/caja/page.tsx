@@ -12,6 +12,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { formatPrice, formatDate } from "@/lib/utils"
@@ -127,6 +137,18 @@ export function cajaTurnoView(state: { loading: boolean; loadError: boolean; has
     return state.hasRegister ? "open" : "closed"
 }
 
+/** Umbral de confirmación explícita del cierre de turno (helper puro para
+ *  pruebas): |diferencia| > $500 o > 20% del esperado — lo que ocurra
+ *  primero. El porcentaje solo aplica con esperado positivo (con esperado
+ *  $0 manda el absoluto). Debajo del umbral se asume error menor de conteo
+ *  y el cierre fluye directo; encima, el cajero debe confirmar en un
+ *  diálogo aparte que sabe con cuánto descuadre está cerrando — el corte
+ *  es irreversible y un faltante así no debe colarse con un solo click. */
+export function cajaCloseNeedsDiffConfirm(diffCents: number, expectedCents: number): boolean {
+    const abs = Math.abs(diffCents)
+    return abs > 50_000 || (expectedCents > 0 && abs * 5 > expectedCents)
+}
+
 /** Importe capturado en pesos → centavos; null cuando no es un monto válido (≥0, ≤2 decimales). */
 function parseMoneyCents(value: string): number | null {
     if (value.trim() === "") return null
@@ -197,6 +219,14 @@ function CajaPanel() {
     const [manualClose, setManualClose] = useState(false)
     const [manualAmount, setManualAmount] = useState("")
     const [closeNotes, setCloseNotes] = useState("")
+    // Al abrir el corte se re-consulta la caja: mientras el esperado no está
+    // fresco el confirmar se bloquea — la diferencia en vivo no debe brincar
+    // a media captura sin aviso ni permitir un cierre contra datos obsoletos.
+    const [closeRefreshing, setCloseRefreshing] = useState(false)
+    // Confirmación explícita cuando el cierre queda con una diferencia grande
+    // (umbral abajo): el corte es irreversible y un faltante/sobrante así no
+    // debe colarse con un solo click.
+    const [diffConfirmOpen, setDiffConfirmOpen] = useState(false)
 
     // Versión de la última consulta de caja: una respuesta tardía de una
     // sucursal anterior nunca pisa los datos de la seleccionada ahora.
@@ -330,9 +360,21 @@ function CajaPanel() {
     const liveDifferenceCents = countedCents - expectedCents
     const manualCents = parseMoneyCents(manualAmount) ?? 0
     const manualDifferenceCents = manualCents - expectedCents
+    // Al menos una denominación capturada (aunque sea un "0" explícito — un
+    // cajón realmente vacío se declara capturando 0). Sin esto el cierre con
+    // el conteo intacto en blanco registraba un faltante falso irreversible.
+    const denomCaptured = Object.values(denomCounts).some(v => v.trim() !== "")
+    const closeDiffCents = manualClose ? manualDifferenceCents : liveDifferenceCents
+    // Confirmación explícita arriba del umbral (cajaCloseNeedsDiffConfirm).
+    const absCloseDiffCents = Math.abs(closeDiffCents)
+    const closeNeedsDiffConfirm = cajaCloseNeedsDiffConfirm(closeDiffCents, expectedCents)
 
-    const handleClose = async () => {
+    const handleClose = async (skipDiffConfirm = false) => {
         if (inFlight.current || !register) return
+        if (!skipDiffConfirm && closeNeedsDiffConfirm) {
+            setDiffConfirmOpen(true)
+            return
+        }
         // Sin conteo, el cierre clásico solo manda el monto capturado.
         const payload: Record<string, unknown> = manualClose
             ? { action: "CLOSE", amount: manualCents / 100, description: closeNotes.trim() || undefined }
@@ -678,7 +720,15 @@ function CajaPanel() {
                             type="button"
                             variant="destructive"
                             className="w-full"
-                            onClick={() => { setCloseOpen(true); void fetchRegister() }}
+                            onClick={() => {
+                                setCloseOpen(true)
+                                // El esperado se re-consulta al abrir el corte:
+                                // mientras llega, el diálogo avisa y el
+                                // confirmar queda bloqueado (nada de cerrar
+                                // contra un esperado obsoleto).
+                                setCloseRefreshing(true)
+                                void fetchRegister().finally(() => setCloseRefreshing(false))
+                            }}
                             disabled={submitting || (!isAdmin && register.openedById !== userId)}
                             title={!isAdmin && register.openedById !== userId ? "Solo un administrador o quien abrió el turno puede cerrarlo" : undefined}
                         >
@@ -865,7 +915,13 @@ function CajaPanel() {
 
                             <div className="rounded-lg border p-3 space-y-1.5 text-sm" aria-live="polite">
                                 <div className="flex justify-between"><span className="text-muted-foreground">Total contado</span><span className="font-bold">{formatPrice(countedCents / 100)}</span></div>
-                                <div className="flex justify-between"><span className="text-muted-foreground">Esperado en sistema</span><span className="font-medium">{formatPrice(expectedCents / 100)}</span></div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-muted-foreground">Esperado en sistema</span>
+                                    <span className="font-medium flex items-center gap-1.5">
+                                        {closeRefreshing && <Badge variant="secondary" className="text-[10px] font-normal gap-1"><Loader2 className="h-3 w-3 animate-spin" />Actualizando…</Badge>}
+                                        {formatPrice(expectedCents / 100)}
+                                    </span>
+                                </div>
                                 <div className="flex justify-between items-center border-t pt-1.5">
                                     <span className="text-muted-foreground">Diferencia</span>
                                     {differenceBadge(liveDifferenceCents)}
@@ -879,7 +935,13 @@ function CajaPanel() {
                                 <Input id="caja-close-manual-amount" type="number" min="0" step="0.01" inputMode="decimal" value={manualAmount} onChange={e => setManualAmount(e.target.value)} />
                             </div>
                             <div className="rounded-lg border p-3 space-y-1.5 text-sm" aria-live="polite">
-                                <div className="flex justify-between"><span className="text-muted-foreground">Esperado en sistema</span><span className="font-medium">{formatPrice(expectedCents / 100)}</span></div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-muted-foreground">Esperado en sistema</span>
+                                    <span className="font-medium flex items-center gap-1.5">
+                                        {closeRefreshing && <Badge variant="secondary" className="text-[10px] font-normal gap-1"><Loader2 className="h-3 w-3 animate-spin" />Actualizando…</Badge>}
+                                        {formatPrice(expectedCents / 100)}
+                                    </span>
+                                </div>
                                 <div className="flex justify-between items-center border-t pt-1.5">
                                     <span className="text-muted-foreground">Diferencia</span>
                                     {differenceBadge(manualDifferenceCents)}
@@ -901,18 +963,70 @@ function CajaPanel() {
                         {manualClose ? "Contar por denominaciones" : "Capturar el total sin conteo"}
                     </button>
 
+                    {/* El cierre exige conteo capturado y esperado fresco: un
+                        cierre con el conteo en blanco grababa un faltante falso
+                        permanente, y uno a medio refetch cuadraba contra datos
+                        obsoletos. */}
+                    {!manualClose && !denomCaptured && (
+                        <p className="text-xs text-muted-foreground">
+                            Captura al menos una denominación para poder cerrar — si el cajón quedó vacío, captura un 0 explícito.
+                        </p>
+                    )}
+                    {closeRefreshing && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Actualizando el esperado en sistema…
+                        </p>
+                    )}
                     <Button
                         type="button"
                         variant="destructive"
                         className="w-full"
-                        onClick={handleClose}
-                        disabled={submitting || (manualClose && parseMoneyCents(manualAmount) === null)}
+                        onClick={() => void handleClose()}
+                        disabled={
+                            submitting
+                            || closeRefreshing
+                            || (manualClose && parseMoneyCents(manualAmount) === null)
+                            || (!manualClose && !denomCaptured)
+                        }
                     >
                         {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                         {submitting ? "Cerrando…" : "Confirmar cierre de caja"}
                     </Button>
                 </DialogContent>
             </Dialog>
+
+            {/* Confirmación de diferencia grande: el corte es irreversible y
+                un faltante/sobrante arriba del umbral (>$500 o >20% del
+                esperado) no debe colarse con un solo click. */}
+            <AlertDialog open={diffConfirmOpen} onOpenChange={open => { if (!open && !submitting) setDiffConfirmOpen(false) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            {closeDiffCents > 0 ? "Cierre con sobrante" : "Cierre con faltante"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Vas a cerrar la caja con {closeDiffCents > 0 ? "un sobrante" : "un faltante"} de{" "}
+                            <span className="font-semibold">{formatPrice(absCloseDiffCents / 100)}</span>{" "}
+                            (contado {formatPrice((manualClose ? manualCents : countedCents) / 100)} contra esperado {formatPrice(expectedCents / 100)}).
+                            El cierre no se puede deshacer — si no cuadra, anota el motivo en las notas del corte. ¿Confirmas?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={submitting}>Revisar conteo</AlertDialogCancel>
+                        <AlertDialogAction
+                            variant="destructive"
+                            disabled={submitting}
+                            onClick={() => {
+                                setDiffConfirmOpen(false)
+                                void handleClose(true)
+                            }}
+                        >
+                            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Cerrar con diferencia
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </Tabs>
     )
 }

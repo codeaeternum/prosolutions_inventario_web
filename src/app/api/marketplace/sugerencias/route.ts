@@ -63,7 +63,7 @@ export async function GET(req: Request) {
       select: {
         id: true,
         name: true,
-        retailPrice: true,
+        // Nunca retailPrice: es el precio interno/mostrador del proveedor.
         wholesalePrice: true,
         stock: true,
         marketVisibility: true,
@@ -83,7 +83,6 @@ export async function GET(req: Request) {
       return {
         id: p.id,
         name: p.name,
-        retailPrice: p.retailPrice,
         wholesalePrice: p.wholesalePrice,
         marketVisibility: p.marketVisibility,
         business: p.business,

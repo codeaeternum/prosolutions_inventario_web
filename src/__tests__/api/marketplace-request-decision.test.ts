@@ -89,7 +89,10 @@ describe("REJECT desde APPROVED", () => {
     const res = await PATCH(patchReq({ action: "REJECT", decisionNote: "Ya no hay" }), params)
     expect(res.status).toBe(200)
     expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ saleId: null, status: { in: ["PENDING", "APPROVED"] } }),
+      where: expect.objectContaining({
+        status: { in: ["PENDING", "APPROVED"] },
+        OR: expect.arrayContaining([{ saleId: null }, { sale: { is: { status: "VOIDED" } } }]),
+      }),
       data: expect.objectContaining({ status: "REJECTED", decisionNote: "Ya no hay" }),
     }))
   })
@@ -110,7 +113,8 @@ describe("FULFILL", () => {
     const res = await PATCH(patchReq({ action: "FULFILL", paymentMethod: "CREDITO" }), params)
     expect(res.status).toBe(200)
     expect(mocks.sell).toHaveBeenCalledWith(expect.anything(), "u-admin", BIZ,
-      expect.objectContaining({ customerId: "w-local", priceTier: "wholesale", workshopSale: true }))
+      expect.objectContaining({ customerId: "w-local", priceTier: "wholesale", workshopSale: true }),
+      expect.objectContaining({ commitHook: expect.any(Function) }))
   })
 
   it("solicitante WORKSHOP de OTRO tenant exige cuenta local explícita", async () => {
@@ -131,14 +135,78 @@ describe("FULFILL", () => {
     const res = await PATCH(patchReq({ action: "FULFILL", paymentMethod: "EFECTIVO", customerId: "w-local" }), params)
     expect(res.status).toBe(200)
     expect(mocks.sell).toHaveBeenCalledWith(expect.anything(), "u-admin", BIZ,
-      expect.objectContaining({ customerId: "w-local" }))
+      expect.objectContaining({ customerId: "w-local" }),
+      expect.objectContaining({ commitHook: expect.any(Function) }))
   })
 
   it("la venta del surtido siempre se documenta como venta a taller", async () => {
     const res = await PATCH(patchReq({ action: "FULFILL", paymentMethod: "EFECTIVO" }), params)
     expect(res.status).toBe(200)
     expect(mocks.sell).toHaveBeenCalledWith(expect.anything(), "u-admin", BIZ,
-      expect.objectContaining({ workshopSale: true }))
+      expect.objectContaining({ workshopSale: true }),
+      expect.objectContaining({ commitHook: expect.any(Function) }))
+  })
+
+  it("la llave de idempotencia es por intento de aprobación: reactivar tras anular no reutiliza la venta VOIDED", async () => {
+    const firstApproval = new Date("2026-01-10T15:00:00.000Z")
+    const secondApproval = new Date("2026-01-12T15:00:00.000Z")
+    mocks.findRequest
+      .mockResolvedValueOnce(approvedRequest({ decidedAt: firstApproval }))
+      .mockResolvedValueOnce(approvedRequest({ decidedAt: secondApproval }))
+
+    await PATCH(patchReq({ action: "FULFILL", paymentMethod: "EFECTIVO" }), params)
+    await PATCH(patchReq({ action: "FULFILL", paymentMethod: "EFECTIVO" }), params)
+
+    const keys = mocks.sell.mock.calls.map(call => call[3].idempotencyKey)
+    expect(keys).toEqual([
+      `mkt-fulfill-mr-1-${firstApproval.getTime()}`,
+      `mkt-fulfill-mr-1-${secondApproval.getTime()}`,
+    ])
+    expect(keys[0]).not.toBe("mkt-fulfill-mr-1")
+    expect(keys[1]).not.toBe(keys[0])
+  })
+
+  it("el commitHook liga la solicitud dentro de la venta y aborta si ya fue decidida", async () => {
+    const decidedAt = new Date("2026-01-10T15:00:00.000Z")
+    mocks.findRequest.mockResolvedValue(approvedRequest({ decidedAt }))
+    const res = await PATCH(patchReq({ action: "FULFILL", paymentMethod: "EFECTIVO", decisionNote: "Entregada" }), params)
+    expect(res.status).toBe(200)
+    const options = mocks.sell.mock.calls[0][4]
+
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 })
+    await options.commitHook(
+      { marketplaceRequest: { updateMany } },
+      { sale: { id: "sale-1", number: 42 } },
+    )
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: "mr-1",
+        status: "APPROVED",
+        decidedAt,
+        OR: expect.arrayContaining([{ saleId: null }, { sale: { is: { status: "VOIDED" } } }]),
+      }),
+      data: expect.objectContaining({ status: "FULFILLED", saleId: "sale-1", decisionNote: "Entregada" }),
+    }))
+
+    // count 0 significa que un REJECT/APPROVE concurrente ganó la fila: el
+    // error sale de la transacción de sell() y revierte la venta completa.
+    updateMany.mockResolvedValue({ count: 0 })
+    await expect(options.commitHook(
+      { marketplaceRequest: { updateMany } },
+      { sale: { id: "sale-1", number: 42 } },
+    )).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("REJECT con una venta vigente ligada responde 409 sin tocar la solicitud", async () => {
+    mocks.findRequest.mockResolvedValue(approvedRequest({
+      status: "APPROVED", saleId: "sale-1",
+      sale: { id: "sale-1", number: 42, status: "COMPLETED" },
+    }))
+    const res = await PATCH(patchReq({ action: "REJECT" }), params)
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toContain("venta vigente")
+    expect(mocks.updateMany).not.toHaveBeenCalled()
   })
 
   it("reintentar una solicitud ya FULFILLED con venta vigente devuelve éxito idempotente", async () => {
