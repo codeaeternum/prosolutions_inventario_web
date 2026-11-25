@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache"
 import { prisma } from "@/lib/prisma"
 import { isValidSlug } from "@/lib/slug-rules"
 
@@ -108,6 +109,36 @@ export async function listDirectoryBusinesses(): Promise<DirectoryBusiness[]> {
       b.counts.products - a.counts.products || a.name.localeCompare(b.name, "es")
     )
 }
+
+export type LandingDirectoryBusiness = Pick<DirectoryBusiness, "name" | "slug" | "category" | "logoUrl">
+
+/**
+ * Selección ligera para la landing: LIMIT en BD y caché compartida por 5 min.
+ * Orden alfabético estable: evita contar todos los productos para seis tarjetas.
+ * Los slugs inválidos se descartan defensivamente (pueden quedar menos tarjetas).
+ */
+export const listLandingDirectoryBusinesses = unstable_cache(
+  async (limit = 6): Promise<LandingDirectoryBusiness[]> => {
+    const take = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 6
+    if (take === 0) return []
+
+    const businesses = await prisma.business.findMany({
+      where: { isActive: true, showInDirectory: true },
+      select: { name: true, slug: true, category: true, logoUrl: true },
+      orderBy: [{ name: "asc" }, { slug: "asc" }],
+      take,
+    })
+
+    return businesses.filter(b => isValidSlug(b.slug)).map(b => ({
+      name: publicText(b.name) ?? "Negocio",
+      slug: b.slug,
+      category: b.category,
+      logoUrl: publicLogo(b.logoUrl),
+    }))
+  },
+  ["landing-directory-businesses-v1"],
+  { revalidate: 300 },
+)
 
 export const DIRECTORY_SEARCH_MIN = 2
 export const DIRECTORY_SEARCH_LIMIT = 50

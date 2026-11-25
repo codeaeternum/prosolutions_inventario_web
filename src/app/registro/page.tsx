@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   title: "Crea tu negocio",
   description:
     "Registra tu taller o tienda en Reficio: panel de administración, vitrina pública, mercado de refacciones y rastreo de reparaciones para tus clientes.",
-  robots: { index: false, follow: false },
+  robots: { index: true, follow: true },
 }
 
 const highlights = [

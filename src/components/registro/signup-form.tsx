@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { signIn } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -53,6 +54,8 @@ type SignupResult = {
   verification?: {
     emailSent: boolean
     telegramUrl: string | null
+    /** true = la cuenta quedó PENDING y debe verificar un canal para entrar. */
+    required: boolean
   }
   urls: {
     home: string
@@ -159,14 +162,51 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
         return
       }
       if (data.slug && data.urls) {
-        // Siguiente paso: verificar el contacto (correo / teléfono vía Telegram).
-        // El deep-link viaja como ?tg= — ese link ES el canal de entrega del código.
-        const params = new URLSearchParams({
-          identifier: form.email.trim().toLowerCase(),
-          sent: data.verification?.emailSent ? "1" : "0",
-        })
-        if (data.verification?.telegramUrl) params.set("tg", data.verification.telegramUrl)
-        router.push(`/verificar?${params.toString()}`)
+        const emailNorm = form.email.trim().toLowerCase()
+        // verification.required (API): sin RESEND_API_KEY el alta nace APPROVED
+        // y no hay código que esperar — el flujo sigue al panel. Con
+        // verificación la cuenta queda PENDING y /verificar es el siguiente paso.
+        const required = data.verification?.required === true
+
+        // Auto-login con las credenciales recién capturadas (signIn client-side
+        // de NextAuth: nada sensible se expone). PENDING sí puede iniciar sesión
+        // — solo REJECTED se rechaza — así que también corre cuando hay
+        // verificación: con sesión /verificar muestra estado y reenvío.
+        let signedIn = false
+        try {
+          const login = await signIn("credentials", {
+            identifier: emailNorm,
+            password: form.password,
+            redirect: false,
+          })
+          signedIn = !login?.error
+        } catch {
+          signedIn = false
+        }
+
+        if (required) {
+          // El deep-link viaja como ?tg= — ese link ES el canal de entrega del
+          // código. ?required=1 conserva el copy "tu negocio se activa al
+          // verificar" aunque el auto-login haya fallado y no haya sesión.
+          const params = new URLSearchParams({
+            identifier: emailNorm,
+            sent: data.verification?.emailSent ? "1" : "0",
+            required: "1",
+          })
+          if (data.verification?.telegramUrl) params.set("tg", data.verification.telegramUrl)
+          router.push(`/verificar?${params.toString()}`)
+          router.refresh()
+          return
+        }
+
+        if (signedIn) {
+          // Alta directa (APPROVED): directo al panel vía /post-login.
+          router.push("/post-login")
+          router.refresh()
+          return
+        }
+
+        // Sin auto-login: pantalla de éxito con salida clara a /login.
         setResult({ slug: data.slug, urls: data.urls, verification: data.verification })
       } else {
         setError("Respuesta inesperada del servidor")
@@ -225,13 +265,14 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
           </div>
           <CardTitle className="text-2xl">Tu negocio está listo</CardTitle>
           <CardDescription>
-            Ya puedes entrar a tu panel con el correo y la contraseña que registraste.
+            Tu cuenta quedó creada. Inicia sesión con el correo y la contraseña
+            que registraste para entrar a tu panel.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button className="w-full" size="lg" asChild>
-            <Link href={result.urls.admin}>
-              Ir a mi panel
+            <Link href="/login">
+              Iniciar sesión
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
@@ -285,7 +326,9 @@ export function SignupForm({ signupEnabled }: { signupEnabled: boolean }) {
         <p className="text-lg font-bold tracking-tight mb-1">Reficio</p>
         <CardTitle className="text-2xl">Crea tu negocio</CardTitle>
         <CardDescription>
-          Registra tu taller o tienda y obtén tu panel y vitrina pública al instante.
+          Registra tu taller o tienda: tu negocio se crea al instante y tu
+          vitrina queda en línea. Si te pedimos verificar tu contacto, lo
+          activas con el código que te enviamos.
         </CardDescription>
       </CardHeader>
 

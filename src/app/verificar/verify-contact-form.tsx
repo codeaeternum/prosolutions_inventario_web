@@ -312,6 +312,18 @@ export function VerifyContactForm({ initialIdentifier, sent, telegramUrl, accoun
               ? "Tu negocio se activa al verificar tu correo o tu teléfono por Telegram — basta con un canal."
               : "Verificar tu contacto es opcional y no bloquea tu cuenta: solo activa las notificaciones y la insignia de confianza."}
           </p>
+
+          {/* Escape permanente: quien ya verificó (o prefiere reenviar el
+              código con sesión) siempre tiene salida al login. Antes solo
+              aparecía tras consumir el código — callejón sin salida si el
+              correo jamás llegó. Una cuenta PENDING sí puede iniciar sesión
+              y, ya adentro, reenviar el código desde esta misma pantalla. */}
+          <p className="text-xs text-muted-foreground text-center">
+            ¿Ya verificaste tu cuenta o necesitas reenviar el código?{" "}
+            <Link href="/login" className="font-medium text-primary hover:underline">
+              Inicia sesión
+            </Link>
+          </p>
         </CardFooter>
       </form>
     </Card>

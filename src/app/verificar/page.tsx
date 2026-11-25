@@ -19,11 +19,15 @@ export const dynamic = "force-dynamic"
 export default async function VerificarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ identifier?: string; sent?: string; tg?: string }>
+  searchParams: Promise<{ identifier?: string; sent?: string; tg?: string; required?: string }>
 }) {
   const params = await searchParams
   const identifierParam = (params.identifier ?? "").slice(0, 120)
   const sent = params.sent === "1"
+  // El signup marca required=1 cuando el alta quedó PENDING: conserva el copy
+  // "tu negocio se activa al verificar" aunque el auto-login no haya corrido
+  // y no haya sesión. Con sesión manda el status real de la cuenta.
+  const requiredParam = params.required === "1"
   // El deep-link solo se acepta si apunta a t.me (viene del signup o de /api/verify/start).
   const telegramUrl =
     typeof params.tg === "string" && params.tg.startsWith("https://t.me/") ? params.tg : null
@@ -53,7 +57,9 @@ export default async function VerificarPage({
           telegramUrl={telegramUrl}
           // El alta de /api/signup queda PENDING hasta verificar un canal:
           // para ese usuario la verificación sí es requisito de acceso.
-          requiresVerification={account?.status === "PENDING" && account?.role === "ADMIN"}
+          requiresVerification={
+            requiredParam || (account?.status === "PENDING" && account?.role === "ADMIN")
+          }
           account={
             account
               ? {

@@ -45,8 +45,28 @@ test.describe("páginas públicas — smoke", () => {
       page.getByRole("link", { name: "Iniciar sesión" }).first(),
     ).toHaveAttribute("href", "/login")
     await expect(
-      page.getByRole("link", { name: "Crear mi negocio" }).first(),
+      page.getByRole("link", { name: "Crear mi negocio gratis", exact: true }).first(),
     ).toHaveAttribute("href", "/registro")
+
+    const heroCta = page.locator('section[aria-labelledby="hero-title"]').getByRole("link", {
+      name: "Crear mi negocio gratis", exact: true,
+    })
+    await expect(heroCta).toBeVisible()
+    const viewport = page.viewportSize()
+    if (viewport && viewport.width < 640) {
+      const bounds = await heroCta.boundingBox()
+      expect(bounds, "el CTA principal tiene dimensiones").not.toBeNull()
+      expect(bounds!.y + bounds!.height, "el CTA del hero cabe en el primer viewport móvil").toBeLessThanOrEqual(viewport.height)
+      await expect(page.locator("header").getByRole("link", { name: "Iniciar sesión" })).toBeHidden()
+    }
+    await expect(page.locator("#flujo ol > li")).toHaveCount(7)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+    await expect(page.locator("#faq details")).toHaveCount(7)
+    const freeQuestion = page.locator("#faq details").filter({ hasText: "¿Es gratis de verdad?" })
+    await freeQuestion.locator("summary").click()
+    await expect(freeQuestion.locator("p")).toBeVisible()
+    await expect(freeQuestion.locator("p")).toContainText("$0")
+    await expect(page.getByRole("link", { name: "Ver una vitrina real", exact: true }).first()).toHaveAttribute("href", /^\/(?!registro)/)
 
     await expectCleanPage(page, watch)
     await attachConsoleErrors(page, watch, testInfo)
