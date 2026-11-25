@@ -4,8 +4,8 @@
   "description": "Órdenes de reparación, inventario por sucursal, punto de venta y catálogo web.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#E53935",
+  "background_color": "#7C3AED",
+  "theme_color": "#7C3AED",
   "orientation": "portrait-primary",
   "icons": [
     {

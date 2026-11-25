@@ -1,8 +1,9 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { CheckCircle2, Wrench } from "lucide-react"
+import { CheckCircle2} from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { SignupForm } from "@/components/registro/signup-form"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 /**
  * /registro — Alta pública de empresas (multi-tenant).
@@ -41,7 +42,7 @@ export default function RegistroPage() {
         />
         <div className="relative flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-            <Wrench className="h-6 w-6" />
+            <ReficioMark className="h-6 w-6" />
           </div>
           <div>
             <p className="text-xl font-bold leading-tight">Reficio</p>

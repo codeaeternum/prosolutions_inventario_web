@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Eye, EyeOff, CheckCircle, Store, ShoppingBag, Mail, Phone, ChevronDown, Wrench } from "lucide-react"
+import { Loader2, Eye, EyeOff, CheckCircle, Store, ShoppingBag, Mail, Phone, ChevronDown} from "lucide-react"
 import { cn } from "@/lib/utils"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 // Lista de dominios de correo populares para autocompletado
 const emailDomains = [
@@ -270,7 +271,7 @@ export default function RegisterPage() {
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <Wrench className="h-7 w-7" />
+              <ReficioMark className="h-7 w-7" />
             </div>
           </div>
           <p className="text-lg font-bold tracking-tight mb-1">Reficio</p>

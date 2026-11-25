@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import { signOut, useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { CheckCircle2, Clock, Loader2, LogOut, RefreshCw, Wrench } from "lucide-react"
+import { CheckCircle2, Clock, Loader2, LogOut, RefreshCw} from "lucide-react"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 export function PendingCard({ alreadyApproved }: { alreadyApproved: boolean }) {
   const router = useRouter()
@@ -43,7 +44,7 @@ export function PendingCard({ alreadyApproved }: { alreadyApproved: boolean }) {
         <CardHeader>
           <div className="flex justify-center mb-2">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <Wrench className="h-7 w-7" />
+              <ReficioMark className="h-7 w-7" />
             </div>
           </div>
           <p className="text-lg font-bold tracking-tight mb-4">Reficio</p>
@@ -84,7 +85,7 @@ export function PendingCard({ alreadyApproved }: { alreadyApproved: boolean }) {
         <CardHeader>
           <div className="flex justify-center mb-2">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <Wrench className="h-7 w-7" />
+              <ReficioMark className="h-7 w-7" />
             </div>
           </div>
           <p className="text-lg font-bold tracking-tight mb-4">Reficio</p>

@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Wrench } from "lucide-react"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 const productLinks = [
   { href: "#producto", label: "Producto" },
@@ -20,7 +20,7 @@ export function LandingFooter() {
         <div className="grid gap-8 sm:grid-cols-[2fr_1fr_1fr] items-start">
           <Link href="/" className="flex items-center gap-2">
             <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
-              <Wrench className="h-4 w-4 text-primary-foreground" />
+              <ReficioMark className="h-4 w-4 text-primary-foreground" />
             </div>
             <span className="font-bold tracking-tight">Reficio</span>
             <span className="text-sm text-muted-foreground">· reficio.app</span>

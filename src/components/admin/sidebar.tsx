@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { BusinessKind } from "@/generated/prisma/client"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 interface NavItem {
   name: string
@@ -255,7 +256,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
             <div className="flex h-16 shrink-0 items-center justify-between px-6 border-b">
               <div className="flex items-center gap-2">
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <Wrench className="h-5 w-5" />
+                  <ReficioMark className="h-5 w-5" />
                 </div>
                 <div className="flex flex-col">
                   <span className="font-bold text-lg leading-tight">Reficio</span>
@@ -380,7 +381,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
         <div className={cn("flex grow flex-col gap-y-5 overflow-y-auto border-r bg-card", collapsed ? "px-3" : "px-6")}>
           <div className={cn("flex h-16 shrink-0 items-center gap-2 border-b", collapsed && "justify-center")}>
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Wrench className="h-5 w-5" />
+              <ReficioMark className="h-5 w-5" />
             </div>
             {!collapsed && (
               <div className="flex flex-col min-w-0">

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Genera iconos PWA en public/icons/ a partir de public/logo.jpg.
+ * Genera iconos PWA en public/icons/ a partir de public/brand/reficio-icon.svg.
  * Uso: node scripts/generate-pwa-icons.mjs
  * Requiere: npm install --save-dev sharp
  */
@@ -11,7 +11,7 @@ import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, "..")
-const source = join(root, "public", "logo.jpg")
+const source = join(root, "public", "brand", "reficio-icon.svg")
 const outDir = join(root, "public", "icons")
 
 const sizes = [72, 96, 128, 144, 152, 192, 384, 512]
@@ -19,8 +19,8 @@ const sizes = [72, 96, 128, 144, 152, 192, 384, 512]
 async function main() {
   try {
     await mkdir(outDir, { recursive: true })
-    const buffer = await sharp(source)
-      .resize(512, 512, { fit: "cover" })
+    const buffer = await sharp(source, { density: 400 })
+      .resize(512, 512)
       .png()
       .toBuffer()
 

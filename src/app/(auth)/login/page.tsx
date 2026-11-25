@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Eye, EyeOff, Mail, Phone, ChevronDown, Wrench } from "lucide-react"
+import { Loader2, Eye, EyeOff, Mail, Phone, ChevronDown} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { safeRedirectPath } from "@/lib/safe-redirect"
+import { ReficioMark } from "@/components/brand/reficio-mark"
 
 // Lista de ladas de países
 const countryCodes = [
@@ -139,7 +140,7 @@ export default function LoginPage() {
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <Wrench className="h-8 w-8" />
+              <ReficioMark className="h-8 w-8" />
             </div>
           </div>
           <p className="text-lg font-bold tracking-tight mb-1">Reficio</p>
