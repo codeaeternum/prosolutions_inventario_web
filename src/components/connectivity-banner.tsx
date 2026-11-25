@@ -43,6 +43,10 @@ const BOTTOM_NAV_PREFIXES = ["/admin", "/catalogo", "/carrito", "/mis-reservas",
  *
  * Se monta UNA vez en el layout raíz: cubre admin, vitrina, tienda del
  * cliente, login, /aliado y /platform sin montajes por shell.
+ *
+ * z-80 (banda banner de la escala en globals.css): visible incluso sobre
+ * sheets/diálogos abiertos — "los cambios no se guardarán" es información
+ * crítica justo cuando el cajero tiene el cobro abierto.
  */
 export function ConnectivityBanner() {
   const router = useRouter()
@@ -114,7 +118,7 @@ export function ConnectivityBanner() {
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-x-0 z-[70] flex justify-center px-4",
+        "pointer-events-none fixed inset-x-0 z-80 flex justify-center px-4",
         aboveBottomNav
           ? "bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:bottom-6"
           : "bottom-4 sm:bottom-6",

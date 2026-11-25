@@ -32,9 +32,15 @@ async function linkTelegram() {
             }
         } else {
             // Vincular a admin
+            const adminEmail = 'admin@prosolutions.com'
+            const admin = await prisma.user.findFirst({
+                where: { email: { equals: adminEmail, mode: 'insensitive' } },
+                select: { id: true }
+            })
+            if (!admin) throw new Error(`No existe la cuenta semilla ${adminEmail}`)
             await prisma.user.update({
-                where: { email: 'admin@prosolutions.com' },
-                data: { telegramId: '1070427489' }
+                where: { id: admin.id },
+                data: { telegramId: '1070427489', email: adminEmail }
             })
             console.log('✅ Telegram vinculado a admin!')
         }

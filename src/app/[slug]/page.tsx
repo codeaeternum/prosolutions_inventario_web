@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { headers } from "next/headers"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import {
@@ -129,9 +130,13 @@ async function BusinessLanding({ target }: { target: BusinessTarget }) {
         </Button>
       }
     >
-      {/* JSON-LD LocalBusiness: escapamos "<" por defensiva (datos de BD). */}
+      {/* JSON-LD LocalBusiness: escapamos "<" por defensiva (datos de BD).
+          El nonce explícito cubre el caso de browsers que apliquen script-src
+          también a data-blocks no ejecutables (la mayoría no lo hace, pero el
+          atributo es inerte y la CSP enforce del proxy lo permite sin costo). */}
       <script
         type="application/ld+json"
+        nonce={(await headers()).get("x-nonce") ?? undefined}
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
         }}

@@ -11,8 +11,9 @@ import { changeCredit } from "@/lib/domain/credit"
  * deuda, pero el dinero también queda como Payment CONFIRMED para que
  * "Cobrado por método" pueda conciliarlo. En efectivo el Payment se liga al
  * CashMovement ya existente (una sola entrada de cajón); en tarjeta/SPEI el
- * folio queda en reference y la sucursal operativa en el tag estructurado de
- * notes (deuda técnica documentada: no hay columna branchId en Payment).
+ * folio queda en reference. El asiento de deuda y la sucursal operativa van
+ * en las columnas creditMovementId/branchId — los tags de notes fueron la
+ * convención transitoria de Oleada 45, migrada en payment_credit_branch.
  */
 const BIZ = "biz-credit-test"
 const collector = {
@@ -95,9 +96,12 @@ describe("changeCredit PAYMENT documenta el dinero", () => {
     expect(created.payments[0]).toMatchObject({
       purpose: "CREDIT_PAYMENT", method: "CASH", amount: 200, status: "CONFIRMED",
       cashMovementId: "cash-1", createdById: collector.id,
+      creditMovementId: "cm-1", branchId: "branch-1",
     })
-    expect(created.payments[0].notes).toContain("[credit-movement:cm-1]")
-    expect(created.payments[0].notes).toContain("[branch:branch-1]")
+    // Las ligaduras son columnas: notes queda solo con texto humano.
+    expect(created.payments[0].notes).toBe("Abono de Taller Ruiz")
+    expect(created.payments[0].notes).not.toContain("[credit-movement:")
+    expect(created.payments[0].notes).not.toContain("[branch:")
   })
 
   it("transferencia: no toca caja, conserva folio SPEI y atribuye la sucursal operativa", async () => {
@@ -112,10 +116,11 @@ describe("changeCredit PAYMENT documenta el dinero", () => {
     expect(created.payments[0]).toMatchObject({
       purpose: "CREDIT_PAYMENT", method: "TRANSFER", amount: 125.5,
       reference: "SPEI-9988", cashMovementId: null,
+      creditMovementId: "cm-1", branchId: "branch-1",
     })
     expect(created.payments[0].notes).toContain("Abono de Taller Ruiz")
     expect(created.payments[0].notes).toContain("Abono parcial")
-    expect(created.payments[0].notes).toContain("[branch:branch-1]")
+    expect(created.payments[0].notes).not.toContain("[branch:")
     // El asiento de crédito conserva el rastro legible para la ficha del cliente.
     expect(created.credit[0].notes).toContain("Medio: TRANSFERENCIA")
     expect(created.credit[0].notes).toContain("Ref: SPEI-9988")

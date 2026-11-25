@@ -155,9 +155,17 @@ export async function GET(req: Request) {
             { sale: { branchId: branchScope } },
             { repairOrder: { currentBranchId: branchScope } },
             { encargo: { branchId: branchScope } },
-            // Abonos de crédito: sin FK documental ni columna de sucursal, el
-            // alcance usa el tag estructurado escrito por domain/credit.
-            ...scopedBranchIds.map(id => ({ purpose: CREDIT_PAYMENT_PURPOSE, notes: { contains: creditPaymentBranchTag(id) } })),
+            // Abonos de crédito: la sucursal de cobro es la columna branchId
+            // (migración payment_credit_branch). El tag de notes sobrevive
+            // como fallback solo para filas sin columna — las cobradas por el
+            // código viejo durante la ventana del deploy.
+            ...scopedBranchIds.map(id => ({
+              purpose: CREDIT_PAYMENT_PURPOSE,
+              OR: [
+                { branchId: id },
+                { branchId: null, notes: { contains: creditPaymentBranchTag(id) } },
+              ],
+            })),
           ],
         }
       : {}
@@ -196,6 +204,8 @@ export async function GET(req: Request) {
           sale: { select: { id: true, number: true, branchId: true, branch: { select: { name: true } } } },
           repairOrder: { select: { id: true, number: true, currentBranchId: true, currentBranch: { select: { name: true } } } },
           encargo: { select: { id: true, branchId: true, branch: { select: { name: true } } } },
+          // Sucursal de cobro de los abonos de crédito (columna directa).
+          branch: { select: { name: true } },
           createdBy: { select: { name: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -218,17 +228,22 @@ export async function GET(req: Request) {
         orderBy: { createdAt: "desc" },
         take,
       }),
-      // Ligaduras Payment ↔ CreditMovement de abonos nuevos. Se consultan
-      // sin recorte de sucursal porque su única función es evitar duplicar el
-      // MISMO abono en el ledger de crédito y en el comprobante Payment.
+      // Ligaduras Payment ↔ CreditMovement de abonos documentados. Se
+      // consultan sin recorte de sucursal porque su única función es evitar
+      // duplicar el MISMO abono en el ledger de crédito y en el comprobante
+      // Payment. El vínculo es la columna creditMovementId; el tag de notes
+      // queda como fallback para filas de la ventana del deploy sin columna.
       prisma.payment.findMany({
         where: {
           businessId,
           createdAt: { gte: since },
           purpose: CREDIT_PAYMENT_PURPOSE,
-          notes: { contains: "[credit-movement:" },
+          OR: [
+            { creditMovementId: { not: null } },
+            { creditMovementId: null, notes: { contains: "[credit-movement:" } },
+          ],
         },
-        select: { notes: true },
+        select: { creditMovementId: true, notes: true },
         take: MAX_TAKE,
       }),
       getOrderFolioDigits(businessId),
@@ -252,7 +267,7 @@ export async function GET(req: Request) {
     const inCash = new Set(cashSeats.map(row => row.referenceId))
     const documentedCreditPayments = new Set(
       creditPaymentDocs
-        .map(row => creditPaymentMovementFromNotes(row.notes))
+        .map(row => row.creditMovementId ?? creditPaymentMovementFromNotes(row.notes))
         .filter((id): id is string => Boolean(id)),
     )
     // El CreditMovement es el asiento de deuda y el Payment es el comprobante
@@ -280,9 +295,12 @@ export async function GET(req: Request) {
         duplicatesCash: false,
       })),
       ...payments.map(p => {
-        const creditBranchId = p.purpose === CREDIT_PAYMENT_PURPOSE ? creditPaymentBranchFromNotes(p.notes) : null
+        // Abonos de crédito: la columna branchId manda; el tag de notes es el
+        // fallback de las filas de la ventana del deploy que no tienen columna.
+        const creditBranchId = p.purpose === CREDIT_PAYMENT_PURPOSE ? (p.branchId ?? creditPaymentBranchFromNotes(p.notes)) : null
+        const creditBranchName = p.purpose === CREDIT_PAYMENT_PURPOSE ? (p.branch?.name ?? null) : null
         const branchIdOf = p.sale?.branchId ?? p.repairOrder?.currentBranchId ?? p.encargo?.branchId ?? creditBranchId
-        const branchName = p.sale?.branch?.name ?? p.repairOrder?.currentBranch?.name ?? p.encargo?.branch?.name ?? null
+        const branchName = p.sale?.branch?.name ?? p.repairOrder?.currentBranch?.name ?? p.encargo?.branch?.name ?? creditBranchName
         const documentRef = p.sale
           ? `V-${p.sale.number}`
           : p.repairOrder

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next"
+import { headers } from "next/headers"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -79,6 +80,11 @@ export default async function RootLayout({
 }>) {
   const session = await auth()
   const canAccessAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "EMPLOYEE"
+  // CSP enforce (src/proxy.ts): el script anti-FOUC que next-themes renderiza
+  // inline es JS ejecutable — sin el nonce del request la política lo
+  // bloquearía y el tema quedaría mal aplicado en el primer paint. Next no
+  // lo noncea automáticamente porque lo emite un componente de terceros.
+  const nonce = (await headers()).get("x-nonce") ?? undefined
 
   return (
     <html lang="es" suppressHydrationWarning>
@@ -90,6 +96,7 @@ export default async function RootLayout({
             defaultTheme="system"
             enableSystem
             disableTransitionOnChange
+            nonce={nonce}
           >
             <CurrencyProvider>
               <CartProvider>

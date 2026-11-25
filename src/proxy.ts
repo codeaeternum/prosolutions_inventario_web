@@ -28,23 +28,115 @@ function ensureRequestId(req: NextRequest): string {
   return id
 }
 
-/** Headers del request clonados con el x-request-id garantizado (para upstream). */
-function requestHeadersWithId(req: NextRequest): Headers {
+// --- CSP con nonce por request (enforcement real) --------------------------
+// Patrón oficial de Next 16 (docs: content-security-policy): el proxy genera
+// un nonce impredecible por request, lo publica en `x-nonce` (para que el
+// root layout lo pase a next-themes y la página [slug] al JSON-LD) y en el
+// header Content-Security-Policy del request UPSTREAM — el renderer de Next
+// lo parsea (server/app-render/get-script-nonce-from-header) y estampa ese
+// nonce en TODOS los scripts que emite: bootstrap de React, chunks de la
+// página, payload RSC (self.__next_f) y metadatos. La respuesta final lleva
+// el MISMO valor como header Content-Security-Policy enforce.
+//
+// A diferencia de x-request-id, un x-nonce entrante JAMÁS se honra: el nonce
+// debe ser impredecible y controlado solo por el servidor — proxy() lo
+// borra y regenera al inicio de cada request, antes de cualquier rama.
+//
+// Decisiones de la política (ver también el test security/headers):
+//  · strict-dynamic sin 'unsafe-inline': viable porque TODA ruta HTML es
+//    dinámica (el root layout hace await auth() → hasta /_not-found sale ƒ
+//    en el build; la única ruta estática, /opengraph-image, es un PNG sin
+//    scripts). El HTML estático build-time no podría recibir nonce — aquí
+//    no existe. Los chunks que el runtime webpack carga en runtime heredan
+//    la confianza del script nonced que los carga (verificado en Chromium:
+//    navegación cliente sin violaciones); 'self' queda de fallback para
+//    browsers pre-CSP3.
+//  · style-src conserva 'unsafe-inline': los atributos style de React no
+//    admiten nonce y CSP3 ignora 'unsafe-inline' en cuanto hay un nonce en
+//    la misma directiva — poner nonce aquí ROMPERÍA los inline styles.
+//  · connect-src 'self' (antes 'self' https:): no hay fetch/EventSource/
+//    beacon cliente a hosts externos — Telegram y Resend son server-side.
+//    Cerrar https: elimina el canal de exfiltración más ancho de la CSP.
+//  · img-src sin el https: amplio del report-only: el único host externo
+//    real es tile.openstreetmap.org (mapa del directorio en /mercado —
+//    Leaflet carga los tiles como <img>). blob:/data: cubren previews
+//    (createObjectURL) y QR impresos; qrserver del remotePatterns de
+//    next.config no tiene uso en src/. Cerrar https: elimina la vía de
+//    exfiltración por <img> inyectada salvo hacia ese host de tiles.
+//  · fonts self-hosteadas por next/font en build: nada de googleapis/gstatic.
+//  · worker-src 'self' explícito: el SW (/sw.js) caería por fallback a
+//    script-src, donde strict-dynamic invalida los host-sources en CSP3.
+//  · SIN upgrade-insecure-requests: el taller opera en LAN HTTP plano
+//    (http://192.168.1.195:3005) y la directiva rompería todo subrecurso.
+//  · Cloudflare Insights fuera: verificado en prod que el beacon NO se
+//    inyecta (no hay Web Analytics auto-inject en la zona). Si algún día
+//    se activa, el beacon quedará bloqueado por strict-dynamic — tradeoff
+//    aceptado: analítica menor vs. cierre de la superficie de scripts.
+//  · 'unsafe-eval' solo en desarrollo: React lo usa para reconstruir stacks
+//    de errores server en el overlay; en producción ni React ni Next evalúan.
+const NONCE_HEADER = "x-nonce"
+const CSP_HEADER = "content-security-policy"
+
+/** Lee el nonce ya fijado en el request o genera/fija uno nuevo. */
+function ensureNonce(req: NextRequest): string {
+  const existing = req.headers.get(NONCE_HEADER)
+  if (existing) return existing
+  // UUID pelado: 122 bits de azar y solo chars válidos en nonce-source
+  // (CSP admite [A-Za-z0-9+/_-]; el regex de Next también los acepta).
+  const nonce = crypto.randomUUID()
+  try { req.headers.set(NONCE_HEADER, nonce) } catch { /* headers inmutables: ver nota de ensureRequestId */ }
+  return nonce
+}
+
+function cspForNonce(nonce: string): string {
+  const isDev = process.env.NODE_ENV === "development"
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data: blob: https://tile.openstreetmap.org`,
+    "font-src 'self'",
+    // ws: solo en dev: el HMR de Turbopack abre un websocket same-origin y
+    // browsers viejos no tratan 'self' como cubridor de ws/wss. En prod no
+    // hay websockets (las notificaciones en vivo son SSE, same-origin).
+    `connect-src 'self'${isDev ? " ws:" : ""}`,
+    "worker-src 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ")
+}
+
+function cspFor(req: NextRequest): string {
+  return cspForNonce(ensureNonce(req))
+}
+
+/** Headers del request clonados para upstream: x-request-id + x-nonce + CSP. */
+function upstreamHeaders(req: NextRequest): Headers {
   const headers = new Headers(req.headers)
   headers.set(REQUEST_ID_HEADER, ensureRequestId(req))
+  headers.set(NONCE_HEADER, ensureNonce(req))
+  // El renderer extrae el nonce parseando ESTE header en el request —
+  // no basta x-nonce (server/app-render/get-script-nonce-from-header).
+  headers.set(CSP_HEADER, cspFor(req))
   return headers
 }
 
-/** Sella cualquier respuesta con el x-request-id del request y la devuelve. */
+/** Sella cualquier respuesta con x-request-id y la CSP enforce del request. */
 function stampWithId<T extends Response>(req: NextRequest, res: T): T {
-  try { res.headers.set(REQUEST_ID_HEADER, ensureRequestId(req)) } catch { /* respuesta inmutable: no romper el request por telemetría */ }
+  try {
+    res.headers.set(REQUEST_ID_HEADER, ensureRequestId(req))
+    res.headers.set(CSP_HEADER, cspFor(req))
+  } catch { /* respuesta inmutable: no romper el request por telemetría */ }
   return res
 }
 
-/** NextResponse.next() con propagación del id en request (upstream) y response. */
+/** NextResponse.next() con id+nonce+CSP en request (upstream) y response. */
 function nextWithId(req: NextRequest): NextResponse {
-  const res = NextResponse.next({ request: { headers: requestHeadersWithId(req) } })
+  const res = NextResponse.next({ request: { headers: upstreamHeaders(req) } })
   res.headers.set(REQUEST_ID_HEADER, ensureRequestId(req))
+  res.headers.set(CSP_HEADER, cspFor(req))
   return res
 }
 // ------------------------------------------------------------------------------
@@ -168,7 +260,7 @@ const authHandler = auth((req) => {
     if (!req.auth?.user || req.auth.user.status !== "APPROVED") return stampWithId(req, new NextResponse(null, { status: 401, headers: { "Cache-Control": "private, no-store" } }))
     const target = req.nextUrl.clone()
     target.pathname = `/api/payment-proofs/${pathname.slice("/uploads/payments/".length)}`
-    return stampWithId(req, NextResponse.rewrite(target, { request: { headers: requestHeadersWithId(req) } }))
+    return stampWithId(req, NextResponse.rewrite(target, { request: { headers: upstreamHeaders(req) } }))
   }
   // Proof images must never be cached or fetched without the authenticated file handler.
   if (lowerPathname === "/_next/image") {
@@ -186,6 +278,12 @@ const authHandler = auth((req) => {
 // (páginas, /uploads/payments, /_next/image) va por authHandler → auth().
 export async function proxy(req: NextRequest, event: NextFetchEvent) {
   ensureRequestId(req) // una sola vez por request: todas las ramas derivan el mismo id
+  // Un x-nonce mandado por el cliente no se honra jamás (a diferencia del
+  // request-id, que sí es correlación legítima del edge): se borra y se
+  // genera uno servidor-side antes de cualquier rama — todo uso posterior
+  // (ensureNonce en helpers, clone de next-auth) ve el mismo valor propio.
+  try { req.headers.delete(NONCE_HEADER) } catch { /* headers inmutables: degradación ya documentada arriba */ }
+  ensureNonce(req)
   const pathname = req.nextUrl.pathname
   if (pathname.startsWith("/api/")) {
     // GET/HEAD/OPTIONS son lecturas o preflight CORS: la barrera actual ya

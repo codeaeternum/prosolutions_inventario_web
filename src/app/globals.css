@@ -9,6 +9,55 @@
    Acento de marca: violeta (hue ~262).
    ========================================== */
 
+/* ==========================================
+   ESCALA DE Z-INDEX (única fuente de verdad)
+   ------------------------------------------
+   Tailwind v4 genera z-<número> para cualquier entero, así que la escala vive
+   en los className como valores literales de estas bandas — NO inventar valores
+   fuera de ellas ni reintroducir z-[arbitrarios] sueltos. Se usan números y no
+   tokens semánticos (--z-index-*) porque tailwind-merge sí resuelve conflictos
+   entre z numéricos (z-70 vs z-[110] en overrides de className) y no entre
+   clases semánticas.
+
+   0–9     base            Contenido en-flujo: badges sobre imágenes, mapa leaflet.
+   10–19   sticky-in-page  Headers de tabla y barras sticky DENTRO de paneles o
+                           diálogos (z-10). Nunca compiten con el chrome global.
+   20–29   popover-in-page Autocompletes/dropdowns anclados a inputs en el flujo
+                           de página (z-20). Dentro de un diálogo el stacking es
+                           local al diálogo, así que no necesitan más.
+   30–39   — reservado —
+   40–49   fixed-page      Barras de acción fijas/sticky de página (barra de ticket
+                           del POS, pill de selección de stock, CTA del carrito) y
+                           el sidebar de escritorio (z-40). Por diseño quedan POR
+                           DEBAJO de la nav móvil: se compensan en posición con
+                           bottom-[calc(4rem+env(safe-area-inset-bottom,0px))].
+   50–54   chrome          Bottom-nav admin móvil, mobile-nav de la tienda y
+                           headers sticky de página/shells (z-50). Empates en esta
+                           banda se resuelven por orden de DOM (el header va después
+                           del sidebar en admin-shell).
+   55–59   chrome-float    Disparadores flotantes sobre el chrome: el botón
+                           hamburguesa (z-55), que descansa sobre el header sticky.
+   60–64   menu-backdrop   Click-catchers fixed inset-0 de menús no modales (z-60):
+                           cubren también la nav — un toque fuera cierra el menú
+                           en vez de navegar o activar otra cosa.
+   65–69   menu            Contenido de esos menús no modales (z-65): notificaciones,
+                           acciones de fila, menú compartir.
+   70–79   overlay         UNA sola capa (z-70) para TODOS los overlays Radix:
+                           sheet/dialog/alert-dialog/select/dropdown-menu, sus
+                           backdrops y el drawer móvil del sidebar. Al compartir
+                           capa, el orden de montaje de los portales (el último
+                           abre encima) resuelve los overlays anidados — un z
+                           partido backdrop/contenido invertiría el dimming en
+                           diálogos abiertos sobre sheets. SIEMPRE por encima de
+                           la nav: un sheet/modal abierto la tapa (es modal).
+   80–89   banner          Avisos de sistema que deben verse incluso sobre
+                           overlays: connectivity-banner, pwa install/update (z-80).
+   90–99   — reservado —
+   100+    topmost         Guided tour (105), command palette (110), hint de
+                           secuencia de teclas (120), skip-link. Sonner pinta sus
+                           toasts con su propio z-index máximo de fábrica.
+   ========================================== */
+
 :root {
   color-scheme: light;
 

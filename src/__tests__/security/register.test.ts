@@ -85,6 +85,28 @@ describe("POST /api/auth/register", () => {
     expect(mocks.createUser).not.toHaveBeenCalled()
   })
 
+  it("normaliza el correo antes de buscar duplicados y de guardarlo", async () => {
+    const res = await register(postReq({ ...validBody, email: "Cliente@Correo.MX" }))
+    expect(res.status).toBe(200)
+    expect(mocks.findUserByPhone).toHaveBeenCalledWith({
+      where: { email: { equals: "cliente@correo.mx", mode: "insensitive" } },
+      select: { id: true },
+    })
+    expect(mocks.createUser).toHaveBeenCalledWith({
+      data: expect.objectContaining({ email: "cliente@correo.mx" }),
+    })
+  })
+
+  it("rechaza el correo si una fila legacy difiere solo por mayúsculas", async () => {
+    mocks.findUserByPhone.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+      Promise.resolve("email" in where ? { id: "u-legacy-email" } : null),
+    )
+    const res = await register(postReq({ ...validBody, email: "cliente@correo.mx" }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe("No se pudo completar el registro con esos datos")
+    expect(mocks.createUser).not.toHaveBeenCalled()
+  })
+
   it("un correo que existe en OTRO tenant (P2002) responde el mismo 409 genérico", async () => {
     mocks.createUser.mockRejectedValue({ code: "P2002", meta: { target: ["email"] } })
     const res = await register(postReq({ ...validBody, email: "taken@otro-tenant.mx" }))

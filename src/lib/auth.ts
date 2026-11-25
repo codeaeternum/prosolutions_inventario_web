@@ -5,7 +5,7 @@ import { prisma } from "./prisma"
 import { authConfig } from "./auth.config"
 import { refreshSessionToken } from "./session-policy"
 import { getClientIp, loginAttemptAllowed, recordLoginFailure } from "./rate-limit"
-import { normalizePhone } from "./utils"
+import { emailEqualsInsensitive, normalizeEmail, normalizePhone } from "./utils"
 // Hash bcrypt válido (cost 10) para igualar tiempos cuando la cuenta no existe
 // o no tiene contraseña configurada y evitar enumeración por timing.
 export const DUMMY_BCRYPT_HASH = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
@@ -45,8 +45,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           throw new Error("Credenciales inválidas")
         }
 
-        const identifier = credentials.identifier.trim()
-        const phoneNorm = !identifier.includes("@") ? normalizePhone(identifier) : ""
+        const rawIdentifier = credentials.identifier.trim()
+        const isEmail = rawIdentifier.includes("@")
+        // El correo canónico es minúsculas: sin esto "Admin@X.com" pasaba el
+        // rate-limit en minúsculas pero buscaba la fila en case-sensitive y
+        // la cuenta parecía inexistente. Las filas legacy con mayúsculas se
+        // alcanzan con igualdad insensible más abajo.
+        const identifier = isEmail ? normalizeEmail(rawIdentifier) : rawIdentifier
+        const phoneNorm = !isEmail ? normalizePhone(identifier) : ""
         const rateKey = (phoneNorm || identifier).toLowerCase()
 
         // Anti lockout-DoS: el contador de fallos vive por par (IP, cuenta)
@@ -66,7 +72,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const user = await prisma.user.findFirst({
           where: {
             OR: [
-              { email: identifier },
+              // Postgres compara el unique case-sensitive; mode insensitive
+              // también alcanza cuentas legacy guardadas como "Admin@X.com".
+              { email: emailEqualsInsensitive(identifier) },
               { phone: identifier },
               ...(phoneNorm && phoneNorm !== identifier ? [{ phone: phoneNorm }] : []),
             ]

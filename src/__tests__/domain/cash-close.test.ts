@@ -136,7 +136,13 @@ describe("registerPaymentWhere", () => {
             { sale: { branchId: "branch-1" } },
             { repairOrder: { currentBranchId: "branch-1" } },
             { encargo: { branchId: "branch-1" } },
-            { purpose: "CREDIT_PAYMENT", notes: { contains: "[branch:branch-1]" } },
+            {
+              purpose: "CREDIT_PAYMENT",
+              OR: [
+                { branchId: "branch-1" },
+                { branchId: null, notes: { contains: "[branch:branch-1]" } },
+              ],
+            },
           ],
         },
       ],

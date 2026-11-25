@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Loader2, Building2, Package, Users, Wrench, Wallet } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface Branch {
   id: string
@@ -169,11 +170,11 @@ export function SucursalesPanel() {
       </div>
 
       {branches.length === 0 && (
-        <Card>
-          <CardContent className="py-10 text-center text-muted-foreground">
-            No hay sucursales registradas.
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Building2}
+          title="No hay sucursales registradas"
+          description="Crea la primera con el botón de arriba — cada sucursal lleva su propio stock, caja y reservas."
+        />
       )}
     </div>
   )

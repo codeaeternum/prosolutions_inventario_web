@@ -76,7 +76,7 @@ async function run() {
       const nextValue = command === "--grant"
       await client.query("BEGIN")
       const res = await client.query(
-        `UPDATE "User" SET "isSuperAdmin" = $1, "updatedAt" = NOW() WHERE LOWER(email) = $2 RETURNING id, name, email, role, "isSuperAdmin", "businessId"`,
+        `UPDATE "User" SET "isSuperAdmin" = $1, "updatedAt" = NOW() WHERE LOWER(TRIM(email)) = $2 RETURNING id, name, email, role, "isSuperAdmin", "businessId"`,
         [nextValue, email]
       )
       if (res.rowCount === 0) {
@@ -149,7 +149,7 @@ async function run() {
       }
 
       const hash = await bcrypt.hash(password, 12)
-      const existing = await client.query(`SELECT id FROM "User" WHERE LOWER(email) = $1 LIMIT 1`, [email])
+      const existing = await client.query(`SELECT id FROM "User" WHERE LOWER(TRIM(email)) = $1 LIMIT 1`, [email])
       if (existing.rowCount > 0) {
         await client.query(
           `UPDATE "User"

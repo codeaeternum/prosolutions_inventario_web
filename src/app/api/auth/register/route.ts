@@ -6,7 +6,7 @@ import { getDefaultBusinessId } from "@/lib/settings"
 import { businessIdForSlug } from "@/lib/tenant-resolution"
 import { sendNotificationToAdmins } from "@/app/api/notifications/stream/route"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
-import { normalizePhone } from "@/lib/utils"
+import { emailEqualsInsensitive, normalizeEmail, normalizePhone } from "@/lib/utils"
 
 /**
  * Anti-oráculo cross-tenant: el duplicado LOCAL (400 + "Este correo/teléfono
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
       )
     }
     const { name, email, phone, password, customerType: requestedType, slug, businessSlug } = parseResult.data
-    const emailOrNull = email?.trim() || null
+    const emailOrNull = normalizeEmail(email) || null
     // User.phone es único GLOBAL: se guarda normalizado (últimos 10 dígitos)
     // para que "+52 811 234 5678" y "811 234 5678" choquen en vez de evadirlo.
     const phoneOrNull = normalizePhone(phone) || null
@@ -92,8 +92,13 @@ export async function POST(req: Request) {
     }
 
     if (emailOrNull) {
-      const existingByEmail = await prisma.user.findUnique({
-        where: { email: emailOrNull, businessId },
+      // User.email es único GLOBAL. Se busca case-insensitive (no solo el
+      // tenant): una fila legacy "Cliente@X.com" en cualquier negocio también
+      // reclama el correo. Como local y cross-tenant responden el mismo 409
+      // genérico, esta búsqueda global no reabre el oráculo de arriba.
+      const existingByEmail = await prisma.user.findFirst({
+        where: { email: emailEqualsInsensitive(emailOrNull) },
+        select: { id: true },
       })
       if (existingByEmail) {
         return NextResponse.json({ error: DUPLICATE_REGISTRATION_ERROR }, { status: 409 })

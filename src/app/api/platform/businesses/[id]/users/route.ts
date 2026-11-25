@@ -4,6 +4,7 @@ import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord } from "@/lib/rate-limit"
+import { emailEqualsInsensitive, normalizeEmail } from "@/lib/utils"
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -48,7 +49,7 @@ export async function POST(req: Request, { params }: Params) {
     )
   }
 
-  const emailNorm = parsed.data.email.trim().toLowerCase()
+  const emailNorm = normalizeEmail(parsed.data.email)
 
   try {
     const [business, existingEmail, branch] = await Promise.all([
@@ -56,7 +57,7 @@ export async function POST(req: Request, { params }: Params) {
         where: { id: businessId },
         select: { id: true, name: true, slug: true },
       }),
-      prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
+      prisma.user.findFirst({ where: { email: emailEqualsInsensitive(emailNorm) }, select: { id: true } }),
       prisma.branch.findFirst({
         where: { businessId, isActive: true },
         orderBy: { createdAt: "asc" },

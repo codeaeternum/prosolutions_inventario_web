@@ -176,6 +176,11 @@ describe("POST /api/auth/password-reset/request", () => {
       ok: true,
       message: "Si la cuenta existe, enviamos un código de 6 dígitos.",
     })
+    expect(mocks.userFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        email: { equals: "usuario@taller.mx", mode: "insensitive" },
+      }),
+    }))
     expect(mocks.issueVerificationCode).toHaveBeenCalledWith(expect.anything(), {
       userId: "u-1",
       businessId: BIZ,

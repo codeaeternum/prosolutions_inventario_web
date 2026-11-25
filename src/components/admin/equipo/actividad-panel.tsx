@@ -17,7 +17,9 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Activity,
 } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -643,14 +645,20 @@ export function ActividadPanel({ initialActorId = null, initialActorName = null 
                 Reintentar
               </Button>
             </div>
-          ) : items.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-10 text-center">
-              Sin actividad registrada en el periodo
-            </p>
           ) : filteredItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-10 text-center">
-              Nada de lo cargado coincide con “{searchQuery.trim()}”
-            </p>
+            // items vacío ⇒ filteredItems también: un solo EmptyState con
+            // copy según la causa (genuino del periodo vs. búsqueda).
+            items.length === 0 ? (
+              <EmptyState
+                icon={Activity}
+                title="Sin actividad registrada en el periodo"
+                description="Las acciones del equipo — ventas, altas, cambios de configuración — van a aparecer aquí."
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground py-10 text-center">
+                Nada de lo cargado coincide con “{searchQuery.trim()}”
+              </p>
+            )
           ) : (
             <>
               <ol className="relative ml-3 sm:ml-4 space-y-6 border-l border-border">

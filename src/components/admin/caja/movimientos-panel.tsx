@@ -16,6 +16,7 @@ import {
     Loader2,
     RefreshCw,
 } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 /**
  * «Movimientos»: rastro unificado del dinero para auditoría dentro del centro
@@ -259,14 +260,16 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                         <p>{error}</p>
                         <Button variant="outline" size="sm" onClick={() => void load()}>Reintentar</Button>
                     </div>
-                ) : movements.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                        Sin movimientos de dinero en los últimos {days} días.
-                    </p>
                 ) : filtered.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                        Sin movimientos que coincidan con el filtro seleccionado.
-                    </p>
+                    // movements vacío ⇒ filtered también: un solo EmptyState
+                    // con copy según la causa (patrón del historial de inventario).
+                    <EmptyState
+                        icon={ArrowLeftRight}
+                        title="Sin movimientos"
+                        description={movements.length === 0
+                            ? `No hubo movimientos de dinero en los últimos ${days} días — las ventas en efectivo, abonos y pagos a proveedores van a aparecer aquí.`
+                            : "Ningún movimiento coincide con el filtro seleccionado — prueba con otra familia."}
+                    />
                 ) : (
                     <>
                     {/* Vista móvil: tarjetas — la tabla de 8 columnas no cabe en <768px */}

@@ -249,16 +249,20 @@ async function main() {
   console.log('')
 
   // Create admin user
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@prosolutions.com'
-  const superAdminEmail = process.env.SUPERADMIN_EMAIL || 'admin@reficio.app'
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@prosolutions.com').trim().toLowerCase()
+  const superAdminEmail = (process.env.SUPERADMIN_EMAIL || 'admin@reficio.app').trim().toLowerCase()
 
   // Las contraseñas solo se exigen cuando la cuenta se CREA por primera vez:
   // no hay default (el fallback admin123 dejaba la instalación abierta a
   // cualquiera que conociera el correo semilla). En corridas contra una BD ya
   // sembrada el upsert no toca el password y las variables pueden omitirse.
+  // Las búsquedas de identidad del seed son case-insensitive: una fila legacy
+  // "Admin@Prosolutions.com" es la misma cuenta canónica, no una excusa para
+  // crear un duplicado case-variant (Postgres compara el unique en sensible).
+  const emailFilter = (email: string) => ({ equals: email, mode: 'insensitive' as const })
   const [adminRow, superAdminRow] = await Promise.all([
-    prisma.user.findUnique({ where: { email: adminEmail }, select: { id: true } }),
-    prisma.user.findUnique({ where: { email: superAdminEmail }, select: { id: true } }),
+    prisma.user.findFirst({ where: { email: emailFilter(adminEmail) }, select: { id: true } }),
+    prisma.user.findFirst({ where: { email: emailFilter(superAdminEmail) }, select: { id: true } }),
   ])
   const adminPassword = resolveSeedPassword(process.env.ADMIN_PASSWORD, 'ADMIN_PASSWORD', adminEmail, !!adminRow)
   const superAdminPassword = resolveSeedPassword(process.env.SUPERADMIN_PASSWORD, 'SUPERADMIN_PASSWORD', superAdminEmail, !!superAdminRow)
@@ -282,20 +286,23 @@ async function main() {
 
   console.log(`Business: ${business.id}`)
 
-  const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: { isSuperAdmin: false },
-    create: {
-      businessId: business.id,
-      email: adminEmail,
-      password: hashedPassword,
-      name: 'Administrador',
-      role: UserRole.ADMIN,
-      isSuperAdmin: false,
-      customerType: CustomerType.NORMAL,
-      status: UserStatus.APPROVED,
-    },
-  })
+  const admin = adminRow
+    ? await prisma.user.update({
+        where: { id: adminRow.id },
+        data: { isSuperAdmin: false, email: adminEmail },
+      })
+    : await prisma.user.create({
+        data: {
+          businessId: business.id,
+          email: adminEmail,
+          password: hashedPassword,
+          name: 'Administrador',
+          role: UserRole.ADMIN,
+          isSuperAdmin: false,
+          customerType: CustomerType.NORMAL,
+          status: UserStatus.APPROVED,
+        },
+      })
 
   console.log(`Admin: ${admin.email}`)
 
@@ -315,25 +322,28 @@ async function main() {
 
   console.log(`Platform Operator Business: ${operatorBusiness.id}`)
 
-  const superAdmin = await prisma.user.upsert({
-    where: { email: superAdminEmail },
-    // El update NO re-eleva: antes re-concedía isSuperAdmin/role/status en
-    // cada corrida, así que un operador degradado o suspendido a propósito
-    // recuperaba acceso total a plataforma con el siguiente seed. La elevación
-    // solo aplica en el create inicial; después se administra con
-    // scripts/manage-superadmin.mjs o la consola /platform.
-    update: {},
-    create: {
-      businessId: operatorBusiness.id,
-      email: superAdminEmail,
-      password: superAdminHashedPassword,
-      name: 'Operador Reficio',
-      role: UserRole.ADMIN,
-      isSuperAdmin: true,
-      customerType: CustomerType.NORMAL,
-      status: UserStatus.APPROVED,
-    },
-  })
+  // El update NO re-eleva: antes re-concedía isSuperAdmin/role/status en
+  // cada corrida, así que un operador degradado o suspendido a propósito
+  // recuperaba acceso total a plataforma con el siguiente seed. La elevación
+  // solo aplica en el create inicial; después se administra con
+  // scripts/manage-superadmin.mjs o la consola /platform.
+  const superAdmin = superAdminRow
+    ? await prisma.user.update({
+        where: { id: superAdminRow.id },
+        data: { email: superAdminEmail },
+      })
+    : await prisma.user.create({
+        data: {
+          businessId: operatorBusiness.id,
+          email: superAdminEmail,
+          password: superAdminHashedPassword,
+          name: 'Operador Reficio',
+          role: UserRole.ADMIN,
+          isSuperAdmin: true,
+          customerType: CustomerType.NORMAL,
+          status: UserStatus.APPROVED,
+        },
+      })
 
   console.log(`Superadmin: ${superAdmin.email}`)
 

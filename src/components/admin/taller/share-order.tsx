@@ -158,10 +158,10 @@ export function ShareRepairOrder({ folio, phone, trackingToken, className, quote
           <button
             type="button"
             aria-label="Cerrar menú"
-            className="fixed inset-0 z-40 cursor-default"
+            className="fixed inset-0 z-60 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div role="menu" ref={menuRef} onKeyDown={onMenuKeyDown} className="absolute right-0 z-50 mt-2 w-44 rounded-lg border bg-popover p-1 shadow-md">
+          <div role="menu" ref={menuRef} onKeyDown={onMenuKeyDown} className="absolute right-0 z-65 mt-2 w-44 rounded-lg border bg-popover p-1 shadow-md">
             <button type="button" role="menuitem" className={itemClass} onClick={() => shareWhatsApp(message())}>
               <MessageCircle className="h-4 w-4" />
               WhatsApp

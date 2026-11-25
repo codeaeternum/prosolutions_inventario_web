@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma"
 import { listPlatformBusinesses } from "@/lib/platform"
 import { checkAndRecord } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
-import { generateSlug, normalizePhone } from "@/lib/utils"
+import { emailEqualsInsensitive, generateSlug, normalizeEmail, normalizePhone } from "@/lib/utils"
 import { SUGGESTED_SERVICES } from "@/lib/workshop-service-suggestions"
 
 const createBusinessSchema = z.object({
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
   }
 
   const { businessName, slug: rawSlug, businessKind, adminName, email, phone, password } = parsed.data
-  const emailNorm = email.trim().toLowerCase()
+  const emailNorm = normalizeEmail(email)
   const phoneOrNull = normalizePhone(phone) || null
 
   const requestedSlug = normalizeSlug(typeof rawSlug === "string" ? rawSlug : "")
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   try {
     const [existingSlug, existingEmail] = await Promise.all([
       prisma.business.findUnique({ where: { slug: baseSlug }, select: { id: true } }),
-      prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
+      prisma.user.findFirst({ where: { email: emailEqualsInsensitive(emailNorm) }, select: { id: true } }),
     ])
     if (existingSlug) {
       return NextResponse.json({ error: "Ese slug ya está en uso por otro negocio." }, { status: 409 })

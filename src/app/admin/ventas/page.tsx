@@ -598,12 +598,13 @@ export default function VentasPage() {
 
             <ShortcutHints />
 
-            {/* Ticket como barra inferior en pantallas angostas. Flota sobre
-                la bottom-nav del admin (h-16 + safe-area, z-[90]): pegada a
-                bottom-0 la nav tapaba el botón y el cajero no podía abrir el
-                ticket para cobrar. La nav ya absorbe el safe-area del iPhone,
-                así que la barra no repite ese padding (mismo criterio que la
-                barra pegajosa de taller/recibir). */}
+            {/* Ticket como barra inferior en pantallas angostas. Es una barra
+                fija de página (z-40, por debajo de la bottom-nav z-50 según la
+                escala de globals.css) compensada en posición: pegada a bottom-0
+                la nav tapaba el botón y el cajero no podía abrir el ticket para
+                cobrar. La nav ya absorbe el safe-area del iPhone, así que la
+                barra no repite ese padding (mismo criterio que la barra
+                pegajosa de taller/recibir). */}
             <div className="lg:hidden fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] z-40 border-t bg-background/95 backdrop-blur p-3">
                 <Button className="w-full h-12" onClick={() => setShowMobileCart(true)} disabled={cart.length === 0}>
                     <ReceiptText className="h-5 w-5 mr-2" />
@@ -611,11 +612,11 @@ export default function VentasPage() {
                 </Button>
             </div>
             <Sheet open={showMobileCart} onOpenChange={setShowMobileCart}>
-                {/* pb extra bajo lg: los sheets/dialogs del repo van en z-50 y
-                    la bottom-nav en z-[90] — la nav pinta ENCIMA del sheet en
-                    móvil, así que el pie (botón Cobrar) necesita reservar la
-                    banda de la nav para no quedar tapado tras ella. */}
-                <SheetContent side="bottom" className="max-h-[85dvh] p-4 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:pb-4">
+                {/* El sheet (z-70) ya pinta POR ENCIMA de la bottom-nav — es
+                    modal y la cubre — así que el pie (botón Cobrar) no necesita
+                    reservar la banda de la nav; solo el safe-area del iPhone
+                    para que el indicador de gestos no se monte sobre el pie. */}
+                <SheetContent side="bottom" className="max-h-[85dvh] p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
                     <SheetHeader className="pb-2"><SheetTitle className="sr-only">Ticket</SheetTitle></SheetHeader>
                     <CartPanel {...panelProps} variant="plain" />
                 </SheetContent>

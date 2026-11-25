@@ -1,11 +1,7 @@
 import type { PrismaClient } from "@/generated/prisma/client"
 import { z } from "zod"
 import { actor, addDebt, amount, BusinessError, cents, openRegister, operation, operationKeySchema, resolveBranch } from "./operations"
-import {
-  CREDIT_PAYMENT_PURPOSE,
-  creditPaymentBranchTag,
-  creditPaymentMovementTag,
-} from "./cash"
+import { CREDIT_PAYMENT_PURPOSE } from "./cash"
 
 const schema = z.object({
   idempotencyKey: operationKeySchema, userId: z.string().min(1), amount: z.number(), notes: z.string().max(500).optional(),
@@ -48,7 +44,7 @@ export async function changeCredit(db: PrismaClient, actorId: string, businessId
     // En efectivo la sucursal real es la del cajón; en tarjeta/transferencia
     // no hay cajón físico, así que se atribuye a la sucursal operativa
     // explícita/base del cobrador para que "Cobrado por método" pueda
-    // conciliarla. Es el mejor vínculo posible sin schema branchId en Payment.
+    // conciliarla. Va en la columna Payment.branchId (antes tag en notes).
     const collectionBranchId = register?.branchId ?? (await resolveBranch(tx, input.branchId ?? collector.homeBranchId, businessId)).id
     const movement = await tx.creditMovement.create({ data: {
       businessId: user.businessId, userId: user.id, type: "PAYMENT", amount: amount(value), referenceType: "MANUAL",
@@ -71,13 +67,14 @@ export async function changeCredit(db: PrismaClient, actorId: string, businessId
       status: "CONFIRMED",
       reference: input.reference ?? null,
       cashMovementId: cashIn?.id ?? null,
+      // Ligadura estructurada: el asiento de deuda y la sucursal de cobro son
+      // columnas reales — los tags [credit-movement:…]/[branch:…] en notes
+      // fueron la convención transitoria de Oleada 45 y los pagos históricos
+      // quedaron migrados en payment_credit_branch.
+      creditMovementId: movement.id,
+      branchId: collectionBranchId,
       createdById: actorId,
-      notes: [
-        `Abono de ${user.name}`,
-        input.notes,
-        creditPaymentMovementTag(movement.id),
-        creditPaymentBranchTag(collectionBranchId),
-      ].filter(Boolean).join(" · "),
+      notes: [`Abono de ${user.name}`, input.notes].filter(Boolean).join(" · "),
     } })
     return { creditBalance: amount(balance - value), movementId: movement.id, paymentId: payment.id }
   })

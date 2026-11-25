@@ -9,6 +9,7 @@ import { recordAudit } from "@/lib/audit"
 import { checkAndRecord } from "@/lib/rate-limit"
 import bcrypt from "bcryptjs"
 import { UserRole } from "@/generated/prisma/client"
+import { emailEqualsInsensitive } from "@/lib/utils"
 
 const VALID_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const
 const VALID_ROLES = ["ADMIN", "EMPLOYEE", "CUSTOMER", "WORKSHOP"] as const
@@ -235,8 +236,11 @@ export async function POST(req: Request) {
     }
 
     // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: cleanEmail },
+    // El unique de Postgres es case-sensitive; la búsqueda insensible impide
+    // duplicar una fila legacy "Ana@Taller.mx" al crear la canónica minúscula.
+    const existingUser = await prisma.user.findFirst({
+      where: { email: emailEqualsInsensitive(cleanEmail) },
+      select: { id: true },
     })
 
     if (existingUser) {

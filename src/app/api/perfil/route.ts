@@ -3,7 +3,7 @@ import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { requireAuth } from "@/lib/api-auth"
 import { checkAndRecord } from "@/lib/rate-limit"
-import { normalizePhone } from "@/lib/utils"
+import { emailEqualsInsensitive, normalizePhone } from "@/lib/utils"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendVerificationEmail } from "@/lib/mailer"
 import { buildTelegramVerifyUrl, sendTelegramMessage } from "@/lib/telegram"
@@ -147,8 +147,8 @@ export async function PATCH(req: Request) {
 
     // User.email y User.phone son únicos GLOBALES (no por negocio).
     if (emailChanged && nextEmail) {
-      const taken = await prisma.user.findUnique({
-        where: { email: nextEmail },
+      const taken = await prisma.user.findFirst({
+        where: { email: emailEqualsInsensitive(nextEmail), id: { not: userId } },
         select: { id: true },
       })
       if (taken && taken.id !== userId) {

@@ -347,6 +347,14 @@ describe.skipIf(!enabled)("PostgreSQL serializable business operations", () => {
     await changeCredit(db, admin, biz, "DEBT", { userId: customer, amount: 30, idempotencyKey: key() })
     const paid = await changeCredit(db, admin, biz, "PAYMENT", { userId: customer, amount: 10, branchId: branchB, idempotencyKey: key() })
     expect((await db.cashMovement.findFirstOrThrow({ where: { referenceId: paid.movementId } })).registerId).toBe(registerB.id)
+    // Ligadura estructurada (payment_credit_branch): el comprobante apunta al
+    // asiento de deuda y a la sucursal de cobro con columnas reales — sin
+    // tags máquina en notes.
+    const doc = await db.payment.findUniqueOrThrow({ where: { id: paid.paymentId } })
+    expect(doc.creditMovementId).toBe(paid.movementId)
+    expect(doc.branchId).toBe(branchB)
+    expect(doc.notes).not.toContain("[credit-movement:")
+    expect(doc.notes).not.toContain("[branch:")
     await changeCash(db, admin, biz, { action: "CLOSE", registerId: registerB.id, amount: 60, branchId: branchB, idempotencyKey: key() })
   })
 

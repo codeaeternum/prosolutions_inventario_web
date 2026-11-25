@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -17,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Plus, Loader2, Pencil, Trash2, Layers } from "lucide-react"
+import { Plus, Loader2, Pencil, Trash2, Layers, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/admin/empty-state"
@@ -187,16 +186,15 @@ export function ModelsPanel({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {brands.length === 0 && (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-muted-foreground mb-4">
-              Primero debes crear al menos una marca
-            </p>
-            <Button asChild>
-              <Link href="/admin/productos?tab=clasificacion&sub=marcas">Ir a Marcas</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Smartphone}
+          title="Primero debes crear al menos una marca"
+          description="Los modelos se asocian a una marca — registra la primera en el catálogo de marcas."
+          action={{
+            label: "Ir a Marcas",
+            href: "/admin/productos?tab=clasificacion&sub=marcas",
+          }}
+        />
       )}
 
       {showForm && brands.length > 0 && (

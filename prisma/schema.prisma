@@ -547,6 +547,10 @@ model CreditMovement {
 
   createdAt DateTime @default(now())
 
+  // Comprobante(s) de dinero del abono (purpose = CREDIT_PAYMENT): el
+  // CreditMovement es el asiento de deuda y el Payment el rastro del dinero.
+  payments Payment[]
+
   @@index([userId])
   @@index([businessId, createdAt])
   @@index([businessId, userId, createdAt])
@@ -748,6 +752,9 @@ model Branch {
   purchases         Purchase[]
   inventoryCounts   InventoryCount[]
   encargos          Encargo[]
+  // Abonos de crédito cobrados en esta sucursal sin cajón de por medio
+  // (tarjeta/transferencia); los de efectivo se atribuyen vía cashMovement.
+  payments          Payment[]
   createdAt         DateTime            @default(now())
 
   @@unique([businessId, name])
@@ -895,6 +902,15 @@ model Payment {
   reference      String? // folio/autorización de la terminal o SPEI
   cashMovementId String?       @unique // asiento de caja cuando method = CASH
   cashMovement   CashMovement? @relation(fields: [cashMovementId], references: [id], onDelete: SetNull)
+  // Abonos de crédito (purpose = CREDIT_PAYMENT): vínculo estructurado al
+  // asiento de deuda y a la sucursal de cobro. Reemplazan los tags máquina
+  // [credit-movement:<id>] / [branch:<id>] que la convención de Oleada 45
+  // escribía en notes; la migración payment_credit_branch los pobló. SetNull:
+  // el comprobante de dinero sobrevive aunque el asiento o la sucursal se borren.
+  creditMovementId String?
+  creditMovement   CreditMovement? @relation(fields: [creditMovementId], references: [id], onDelete: SetNull)
+  branchId         String?
+  branch           Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdById    String
   createdBy      User          @relation("PaymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   notes          String?
@@ -903,6 +919,8 @@ model Payment {
   @@index([saleId])
   @@index([repairOrderId])
   @@index([encargoId])
+  @@index([creditMovementId])
+  @@index([branchId])
   @@index([method, createdAt])
   @@index([businessId])
 }
@@ -1431,10 +1449,12 @@ model InventoryCount {
   @@index([businessId, status])
 }
 
-// Producto capturado dentro de una sesión de conteo. expectedQty es lo que el
-// sistema tenía registrado (BranchStock) al capturar; si el stock se mueve
-// antes de aplicar, se re-sincroniza al aplicar para que el ajuste registrado
-// siempre sea countedQty - expectedQty.
+// Producto capturado dentro de una sesión de conteo. expectedQty es la foto
+// histórica de lo que el sistema tenía registrado (BranchStock) AL CAPTURAR:
+// ya NO se re-sincroniza al aplicar (Oleada 45) — la varianza es la capturada
+// (delta = countedQty - expectedQty) y se aplica de forma RELATIVA sobre el
+// stock vivo, así las ventas/recepciones del interim no se resucitan ni se
+// pierden (ver applyCount en src/lib/domain/counts.ts).
 model InventoryCountItem {
   id          String         @id @default(cuid())
   businessId  String

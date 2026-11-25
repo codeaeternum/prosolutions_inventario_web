@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   userFindUnique: vi.fn(),
+  userFindFirst: vi.fn(),
   userUpdate: vi.fn(),
   platformEventCreate: vi.fn(),
   transaction: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: mocks.userFindUnique,
+      findFirst: mocks.userFindFirst,
       update: mocks.userUpdate,
     },
     platformEvent: {
@@ -65,6 +67,7 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
       isSuperAdmin: true,
     })
     mocks.platformEventCreate.mockResolvedValue({ id: "ev-1" })
+    mocks.userFindFirst.mockResolvedValue(null)
   })
 
   it("rate limit: responde 429 con Retry-After sin tocar la base", async () => {
@@ -177,5 +180,26 @@ describe("PATCH /api/platform/users/[id] — gestión de permiso isSuperAdmin", 
         },
       }),
     })
+  })
+
+  it("normaliza el correo editado y bloquea variantes legacy de mayúsculas ya ocupadas", async () => {
+    const ok = await PATCH(patchReq({ email: "DUENO@Taller.MX" }), {
+      params: Promise.resolve({ id: "u-target" }),
+    })
+    expect(ok.status).toBe(200)
+    expect(mocks.userFindFirst).toHaveBeenCalledWith({
+      where: {
+        email: { equals: "dueno@taller.mx", mode: "insensitive" },
+        id: { not: "u-target" },
+      },
+      select: { id: true },
+    })
+    expect(mocks.userUpdate.mock.calls.at(-1)?.[0].data.email).toBe("dueno@taller.mx")
+
+    mocks.userFindFirst.mockResolvedValue({ id: "u-otro" })
+    const dup = await PATCH(patchReq({ email: "dueno@taller.mx" }), {
+      params: Promise.resolve({ id: "u-target" }),
+    })
+    expect(dup.status).toBe(409)
   })
 })

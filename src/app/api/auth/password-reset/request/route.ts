@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
-import { normalizePhone } from "@/lib/utils"
+import { emailEqualsInsensitive, normalizePhone } from "@/lib/utils"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendPasswordResetEmail } from "@/lib/mailer"
 import { escapeTelegramHtml, sendTelegramMessage } from "@/lib/telegram"
@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       const slug = parsed.data.businessSlug?.trim().toLowerCase() || undefined
       const where = {
         ...(isEmail
-          ? { email: normId }
+          ? { email: emailEqualsInsensitive(normId) }
           : {
               OR: [
                 { phone: normId },

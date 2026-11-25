@@ -6,6 +6,7 @@ import { checkAndRecord } from "@/lib/rate-limit"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendVerificationEmail } from "@/lib/mailer"
 import { buildTelegramVerifyUrl } from "@/lib/telegram"
+import { normalizeEmail } from "@/lib/utils"
 
 /**
  * POST /api/verify/start — el usuario autenticado pide (re)verificar su correo
@@ -86,13 +87,14 @@ export async function POST(req: Request) {
       if (user.emailVerifiedAt) {
         return NextResponse.json({ ok: true, alreadyVerified: true, emailSent: false })
       }
+      const emailNorm = normalizeEmail(user.email)
       const { code } = await issueVerificationCode(prisma, {
         userId: user.id,
         businessId: user.businessId,
-        identifier: user.email,
+        identifier: emailNorm,
         channel: "EMAIL",
       })
-      const result = await sendVerificationEmail(user.email, code, user.business.name)
+      const result = await sendVerificationEmail(emailNorm, code, user.business.name)
       return NextResponse.json({ ok: true, emailSent: result.sent, reason: result.sent ? undefined : result.reason })
     }
 

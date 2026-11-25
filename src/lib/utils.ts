@@ -81,6 +81,21 @@ export function normalizePhone(phone: string | null | undefined): string {
 }
 
 /**
+ * Forma canónica de un correo de cuenta: sin espacios extremos y en minúsculas.
+ * User.email es único case-sensitive en Postgres, así que TODA escritura debe
+ * pasar por aquí; las búsquedas de identidad usan además comparación
+ * insensible para alcanzar filas legacy capturadas con mayúsculas.
+ */
+export function normalizeEmail(email: string | null | undefined): string {
+  return (email ?? "").trim().toLowerCase()
+}
+
+/** Filtro Prisma de igualdad case-insensitive para User.email legacy/canónico. */
+export function emailEqualsInsensitive(email: string) {
+  return { equals: normalizeEmail(email), mode: "insensitive" as const }
+}
+
+/**
  * Enmascara un teléfono para listados donde el número no le toca al lector:
  * conserva los primeros 2 y los últimos 4 dígitos ("8112345678" →
  * "81****5678") — suficiente para reconocer el contacto sin exponerlo.

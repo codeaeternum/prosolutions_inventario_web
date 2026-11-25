@@ -1,39 +1,37 @@
 # Estado de npm audit
 
-Resumen del último `npm audit` (2026-11-08, `npm audit --audit-level=high` local) y acciones tomadas o pendientes.
+Resumen del último `npm audit` local (**2026-11-25**) y acciones tomadas o pendientes.
 
 ## Acciones realizadas
 
-- **Next.js**: Actualizado a `16.4.5` (parche que corrige DoS en Image Optimizer, deserialización RSC y consumo de memoria en PPR). Las vulnerabilidades en el rango 15.6–16.1.4 quedan cubiertas con esta versión.
-- **Aviso PWA**: Implementado banner de “Nueva versión disponible – Recargar” cuando el service worker toma control de una nueva versión (`PwaUpdateBanner`).
-- **next-pwa**: Ya no es dependencia del proyecto (la PWA se resolvió con service worker propio); sus advisories vía workbox dejaron de aplicar.
+- **Next.js**: ya está en `16.4.x` (línea parcheada frente a los advisories previos de Image Optimizer/RSC/PPR).
+- **next-pwa**: ya no es dependencia del proyecto (PWA con service worker propio); sus advisories vía workbox no aplican.
+- **2026-11-25 — `npm audit fix` (sin `--force`)**: actualizó la cadena dev `typescript-eslint`/`@typescript-eslint/*` de `8.70.0` a `8.74.0` y dependencias auxiliares (`ignore`, minimatch resuelto en esa cadena). Esto eliminó los 6 advisories moderados de `@typescript-eslint/*`/`typescript-eslint` por `minimatch`.
 - **CI**: `npm audit --audit-level=high` corre como paso informativo en `.github/workflows/ci.yml` (no rompe el pipeline, deja el aviso visible en cada corrida).
 
-## Vulnerabilidades pendientes (resumen al 2026-11-08)
+## Estado actual (2026-11-25)
 
-`20 vulnerabilities (2 low, 14 moderate, 4 high)` en dependencias directas e indirectas. No se ha ejecutado `npm audit fix --force` para evitar cambios con impacto (major) sin revisión.
+`7 vulnerabilities (4 moderate, 3 high)` después del fix no-breaking.
 
-| Origen | Severidad | Notas |
-|--------|-----------|--------|
-| **undici** | High | Varios advisories (DoS, cache poisoning, TLS). Transitiva; `npm audit fix` la resuelve sin breaking. |
-| **body-parser** | High | DoS por trailing bytes en cuerpo comprimido. Transitiva; fix sin breaking. |
-| **systeminformation** | High | Path traversal / prototype pollution / command injection (Windows). Transitiva; fix sin breaking. |
-| **vite** (vía vitest) | High | Advisories de dev-server (launch-editor, fs.allow). Solo afecta tooling de desarrollo; fix sale del rango declarado (requiere `--force`). |
-| **@vitest/mocker** (vía vitest) | Moderate | Code injection por registro manual de mocks. Dev only. |
-| **deepmerge / ts-morph** (vía shadcn CLI) | Moderate | Prototype poisoning. Solo en la CLI de scaffolding, no en runtime. |
-| **ip-address, minimatch** | Moderate | DoS; transitivas de tooling (eslint/typescript-eslint). |
+| Origen | Severidad | Estado / decisión |
+|--------|-----------|-------------------|
+| **effect → @prisma/config → prisma 7.10.1** | High (ReDoS en `Schema.TemplateLiteral`) | Pendiente. `npm audit fix --force` propondría **bajar a prisma 6.12.0**, un downgrade major incompatible con el pin actual Prisma 7; no se aplica. Revisar cuando Prisma publique una línea 7.x con `effect` corregido. Impacto acotado a CLI/tooling de Prisma, no al runtime web. |
+| **minimatch → @ts-morph/common → ts-morph → shadcn** | Moderate (DoS por globparts amplification) | Pendiente. El fix automático propone **bajar shadcn a 1.0.0**, breaking/no deseado; no se aplica. Impacto acotado a la CLI de scaffolding `shadcn` en desarrollo, no al runtime de producción. |
 
-## Recomendaciones
+Ya no aparecen los advisories previos de `typescript-eslint` ni los `high` antiguos de `undici`, `body-parser` o `systeminformation` en el árbol actual.
 
-1. Ejecutar `npm audit` y `npm audit fix` (sin `--force`) de forma periódica — con eso salen hoy las tres transitivas `high` sin breaking (undici, body-parser, systeminformation).
-2. Revisar uso de **xlsx**: se instala como tarball desde el CDN de SheetJS (no del registry), así que `npm audit` no levanta advisories sobre ella; mantener la política de usarla solo con datos controlados por el backend y planear reemplazo a mediano plazo.
-3. Dependencias solo de **desarrollo** (vitest/vite, shadcn, eslint): menor impacto en producción; actualizar cuando sea posible sin romper flujos (p. ej. `vitest@5.1.x` corrige el advisory de @vitest/mocker).
+## Política operativa
+
+1. Ejecutar `npm audit` periódicamente y `npm audit fix` **sin `--force`** cuando solo produzca updates semver compatibles.
+2. No usar `npm audit fix --force` sin revisión: hoy sus dos “fixes” son downgrades/majors (`prisma@6.12.0`, `shadcn@1.0.0`) y no son aceptables como cambio automático.
+3. **xlsx** se instala como tarball desde el CDN de SheetJS, así que `npm audit` no levanta advisories sobre ella; mantener la política de usarla solo con datos controlados por backend y planear reemplazo a mediano plazo.
+4. Las vulnerabilidades restantes son de dependencias de desarrollo/CLI. No hay evidencia de exposición directa en el runtime Next.js de producción, pero conviene actualizar cuando exista una línea compatible.
 
 ## Comandos útiles
 
 ```bash
 npm audit
 npm audit --audit-level=high
-npm audit fix
-npm audit fix --force   # Solo tras revisar breaking changes
+npm audit fix          # Solo fixes semver-compatibles
+npm audit fix --force  # NO ejecutar sin revisar breaking changes/downgrades
 ```

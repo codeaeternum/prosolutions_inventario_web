@@ -148,6 +148,14 @@ docker inspect prosolutions-app --format '{{.State.Health.Status}}'  # healthy (
 
 La app se publica en `127.0.0.1:3005` y `${APP_BIND_IP}:3005` (default `192.168.1.195`). Cloudflare llega por la red interna de Docker (`app:3000`, ver la sección del túnel) y no depende de ese puerto.
 
+**Postura de seguridad:**
+
+- El acceso operativo normal del mostrador debe ser `https://reficio.app` (TLS real terminado por Cloudflare). El puerto LAN es una vía de contingencia/diagnóstico, no el camino preferido.
+- `http://192.168.1.195:3005` es HTTP plano: credenciales, cookies y datos del POS viajan en claro dentro de la red local. Aceptable solo como contingencia controlada en una LAN de confianza; si el taller crece o entran equipos ajenos, aislar POS/invitados en VLAN o red separada.
+- **Limitación actual importante:** en producción `NEXTAUTH_URL=https://reficio.app`. NextAuth reescribe internamente el origen de `/api/auth/*` con esa URL y emite la cookie como `__Secure-authjs.session-token` + atributo `Secure` aunque el login se haya intentado desde la IP LAN. Los navegadores modernos no aceptan/no devuelven cookies `Secure` en HTTP plano fuera de localhost, por lo que **hoy el login directo por `http://<lan-ip>:3005` no establece una sesión usable**. El endpoint POS `/api/auth/switch` sí decide por request (`authjs.session-token` no-Secure en HTTP), pero requiere una sesión previa y no resuelve el arranque en frío.
+- Contingencia manual si cae Internet/Cloudflare y hay que operar por LAN: cambiar temporalmente `NEXTAUTH_URL=http://192.168.1.195:3005` en `.env.docker`, recrear `app` (`docker compose ... up -d --force-recreate app`) y operar solo desde la LAN. Al restaurarse Internet, volver `NEXTAUTH_URL=https://reficio.app` y recrear `app`. Registrar el cambio en bitácora operativa; no dejar esa configuración como permanente.
+- **Decisión sobre `scripts/setup-lan-tls.ps1`:** no se crea. Terminar TLS correctamente para la LAN exige emitir/confiar una CA local o certificado en cada terminal, añadir reverse proxy/binding delante del contenedor y mantener renovación/convivencia con Cloudflare; un script improvisado daría falsa sensación de seguridad o se rompería en las PCs del taller. La ruta soportada es HTTPS público de Cloudflare; si se requiere TLS LAN permanente, diseñarlo como proyecto aparte (CA interna + proxy documentado).
+
 ### Migraciones en BD ya existente (N5)
 
 El historial arranca con `20250309000000_baseline`, que crea el esquema inicial completo. Si la BD ya tenía tablas (creadas con `db push` antes de existir migraciones), `migrate deploy` falla con **P3005** (schema not empty). Con backup verificado en la mano:

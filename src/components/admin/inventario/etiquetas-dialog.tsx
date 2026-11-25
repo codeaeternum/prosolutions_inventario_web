@@ -246,13 +246,19 @@ function EtiquetasBody({ products, onClose }: { products: EtiquetaProduct[]; onC
                     <div class="labels">
                         ${labelsHtml}
                     </div>
-                    <script>
-                        window.onload = function() { window.print(); window.close(); }
-                    </script>
                 </body>
                 </html>
             `)
                 printWindow.document.close()
+                // Sin <script> inline en el documento escrito: la ventana
+                // about:blank hereda la CSP del opener (enforce, sin
+                // 'unsafe-inline' para scripts) y lo bloquearía. El listener
+                // se registra desde aquí — el JS corre en el realm del opener,
+                // que no está sujeto a la CSP de la ventana hija.
+                printWindow.addEventListener("load", () => {
+                    printWindow.print()
+                    printWindow.close()
+                })
             })
             .catch(() => toast.error("No se pudieron generar los códigos QR"))
             .finally(() => setPrinting(false))

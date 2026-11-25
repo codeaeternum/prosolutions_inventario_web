@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   branchCreate: vi.fn(),
   branchFindFirst: vi.fn(),
   userFindUnique: vi.fn(),
+  userFindFirst: vi.fn(),
   userCreate: vi.fn(),
   systemSettingsCreate: vi.fn(),
   workshopServiceCreateMany: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     user: {
       findUnique: mocks.userFindUnique,
+      findFirst: mocks.userFindFirst,
       create: mocks.userCreate,
     },
     systemSettings: {
@@ -74,6 +76,7 @@ describe("POST /api/platform/businesses & /api/platform/businesses/[id]/users", 
     )
     mocks.businessFindUnique.mockResolvedValue(null)
     mocks.userFindUnique.mockResolvedValue(null)
+    mocks.userFindFirst.mockResolvedValue(null)
     mocks.businessCreate.mockResolvedValue({ id: "biz-new", name: "Taller Norte", slug: "taller-norte" })
     mocks.branchCreate.mockResolvedValue({ id: "br-new" })
     mocks.branchFindFirst.mockResolvedValue({ id: "br-1" })

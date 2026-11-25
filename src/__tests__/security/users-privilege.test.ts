@@ -251,7 +251,7 @@ describe("POST /api/users — empleado con módulo usuarios", () => {
 
   it("puede crear CUSTOMER pero módulos, PIN, tipo y estatus se fuerzan a defaults", async () => {
     mocks.auth.mockResolvedValue(manager())
-    mocks.userFindUnique.mockResolvedValue(null) // correo libre
+    mocks.userFindFirst.mockResolvedValue(null) // correo libre
     mocks.branchCount.mockResolvedValue(1)
     const res = await createUser(postReq(newUserPayload({
       role: "CUSTOMER",
@@ -298,13 +298,24 @@ describe("POST /api/users — empleado con módulo usuarios", () => {
 
   it("normaliza el correo (trim + minúsculas) en el dup-check y en el create", async () => {
     mocks.auth.mockResolvedValue(admin())
-    mocks.userFindUnique.mockResolvedValue(null) // correo libre
+    mocks.userFindFirst.mockResolvedValue(null) // correo libre
     const res = await createUser(postReq(newUserPayload({ email: "  NUEVO@Test.MX  " })))
     expect(res.status).toBe(200)
     // El unique de User.email es case-sensitive en Postgres: sin esta
     // normalización "NUEVO@Test.MX" y "nuevo@test.mx" eran dos cuentas.
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({ where: { email: "nuevo@test.mx" } })
+    expect(mocks.userFindFirst).toHaveBeenCalledWith({
+      where: { email: { equals: "nuevo@test.mx", mode: "insensitive" } },
+      select: { id: true },
+    })
     expect(mocks.userCreate.mock.calls[0][0].data.email).toBe("nuevo@test.mx")
+  })
+
+  it("el dup-check alcanza una fila legacy que difiere solo por mayúsculas", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindFirst.mockResolvedValue({ id: "u-legacy" })
+    const res = await createUser(postReq(newUserPayload({ email: "nuevo@test.mx" })))
+    expect(res.status).toBe(400)
+    expect(mocks.userCreate).not.toHaveBeenCalled()
   })
 
   it("rol inválido del body es 400 (admin)", async () => {

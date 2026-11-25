@@ -157,14 +157,16 @@ export function NotificationsDropdown({ enabled = true }: { enabled?: boolean } 
 
       {isOpen && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop: z-60 (banda menu-backdrop de la escala en globals.css)
+              — cubre también la bottom-nav, así un toque fuera cierra el menú
+              en vez de navegar con el menú abierto. */}
           <div
-            className="fixed inset-0 z-40"
+            className="fixed inset-0 z-60"
             onClick={() => setIsOpen(false)}
           />
 
-          {/* Dropdown */}
-          <div className="absolute right-0 sm:right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm bg-background border rounded-lg shadow-lg z-50 overflow-hidden left-1/2 -translate-x-1/2 sm:left-auto sm:translate-x-0">
+          {/* Dropdown: z-65 (banda menu), sobre su backdrop. */}
+          <div className="absolute right-0 sm:right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm bg-background border rounded-lg shadow-lg z-65 overflow-hidden left-1/2 -translate-x-1/2 sm:left-auto sm:translate-x-0">
             {/* Header */}
             <div className="flex items-center justify-between p-3 border-b bg-muted/30">
               <h3 className="font-semibold">Notificaciones</h3>

@@ -4,6 +4,7 @@ import { z } from "zod"
 import { requireSuperAdmin } from "@/lib/api-auth"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord } from "@/lib/rate-limit"
+import { emailEqualsInsensitive, normalizeEmail } from "@/lib/utils"
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -100,10 +101,33 @@ export async function PATCH(req: Request, { params }: Params) {
       ? await bcrypt.hash(parsed.data.newPassword, 12)
       : undefined
 
+    const nextEmail =
+      parsed.data.email !== undefined
+        ? parsed.data.email
+          ? normalizeEmail(parsed.data.email)
+          : null
+        : undefined
+
+    if (nextEmail) {
+      // El unique de Postgres es case-sensitive: el P2002 no dispararía si ya
+      // existe "Ana@Taller.mx" y aquí llega la forma canónica minúscula. Esta
+      // verificación insensible conserva una sola cuenta lógica por correo.
+      const taken = await prisma.user.findFirst({
+        where: { email: emailEqualsInsensitive(nextEmail), id: { not: target.id } },
+        select: { id: true },
+      })
+      if (taken) {
+        return NextResponse.json(
+          { error: "Ese correo electrónico ya está registrado en otra cuenta." },
+          { status: 409 }
+        )
+      }
+    }
+
     const updateData = {
       ...(parsed.data.isSuperAdmin !== undefined ? { isSuperAdmin: parsed.data.isSuperAdmin } : {}),
       ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
-      ...(parsed.data.email !== undefined ? { email: parsed.data.email ? parsed.data.email.trim().toLowerCase() : null } : {}),
+      ...(nextEmail !== undefined ? { email: nextEmail } : {}),
       ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
       ...(passwordHash !== undefined ? { password: passwordHash } : {}),
     }

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { formatPrice, formatDay } from "@/lib/utils"
 import { CalendarDays, ExternalLink, Loader2 } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 interface WeekRegister {
     id: string
@@ -67,7 +68,15 @@ export function WeekPanel(props: { branchId: string; refreshKey: number }) {
             </div>
         )
     }
-    if (registers.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">Sin cortes en los últimos 7 días.</p>
+    if (registers.length === 0) {
+        return (
+            <EmptyState
+                icon={CalendarDays}
+                title="Sin cortes en los últimos 7 días"
+                description="Cuando el cajero cierre su turno, el corte con esperado, declarado y diferencia va a aparecer aquí."
+            />
+        )
+    }
 
     return (
         <div className="space-y-3">

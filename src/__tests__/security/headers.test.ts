@@ -62,14 +62,14 @@ describe("next.config headers() — endurecimiento global", () => {
     expect(pp).toMatch(/geolocation=\(\s*\)/)
   })
 
-  it("emite CSP en modo report-only (nunca enforce: no romper inline de Next)", async () => {
+  it("NO emite CSP desde el config: la enforce con nonce la pone el proxy", async () => {
     const h = headerMap((await rules()).find(r => r.source === "/:path*")!)
-    const csp = h.get("content-security-policy-report-only")
-    expect(csp).toBeDefined()
-    expect(csp).toContain("default-src 'self'")
-    expect(csp).toContain("frame-ancestors 'self'")
-    // Jamás la versión enforce mientras convivan scripts inline de Next/Turbopack.
+    // La CSP es por-request (nonce) y necesita estar en el REQUEST upstream
+    // para que el renderer la parsee — imposible desde headers() estáticos.
+    // Si el config la fijara además del proxy, la respuesta llevaría DOS
+    // headers CSP y el browser aplicaría la intersección (rompiendo todo).
     expect(h.has("content-security-policy")).toBe(false)
+    expect(h.has("content-security-policy-report-only")).toBe(false)
   })
 
   it("HSTS solo en producción (en LAN :3005 es HTTP plano)", async () => {
@@ -91,6 +91,138 @@ describe("next.config headers() — endurecimiento global", () => {
       expect(rule, `falta regla para ${source}`).toBeDefined()
       expect(headerMap(rule!).get("cache-control")).toBe("private, no-store")
     }
+  })
+})
+
+// ─── Capa 1b: CSP enforce con nonce por request (src/proxy.ts) ───────────
+// La política sale del proxy, no del config: nonce impredecible por request,
+// inyectado en el request upstream (de ahí lo parsea el renderer de Next para
+// estamparlo en sus scripts) y en la respuesta como header enforce.
+
+const proxyMocks = vi.hoisted(() => ({ getAuthRedirect: vi.fn(), sessionHandler: vi.fn() }))
+// Mismo patrón que security/api-origin.test.ts: auth(handler) devuelve el
+// handler espiado sin sesión — aquí solo interesa la cadena de headers.
+vi.mock("@/lib/auth", () => ({
+  auth: (arg?: unknown) => {
+    if (typeof arg !== "function") return null
+    proxyMocks.sessionHandler.mockImplementation(arg as (req: unknown) => unknown)
+    return proxyMocks.sessionHandler
+  },
+}))
+vi.mock("@/lib/auth.config", () => ({ getAuthRedirect: proxyMocks.getAuthRedirect }))
+
+import { NextRequest } from "next/server"
+import { proxy } from "@/proxy"
+
+const runProxy = (req: NextRequest): Promise<Response> => (proxy as any)(req)
+const proxyReq = (path: string, method = "GET", headers: Record<string, string> = {}) =>
+  new NextRequest(`https://reficio.app${path}`, { method, headers })
+
+const nonceOf = (csp: string) => csp.match(/'nonce-([^']+)'/)?.[1] ?? null
+
+describe("proxy — Content-Security-Policy enforce con nonce", () => {
+  beforeEach(() => {
+    proxyMocks.getAuthRedirect.mockReturnValue(null)
+    proxyMocks.sessionHandler.mockClear()
+  })
+
+  it("emite Content-Security-Policy enforce (y ya no report-only)", async () => {
+    const res = await runProxy(proxyReq("/api/sales"))
+    const csp = res.headers.get("content-security-policy")
+    expect(csp, "falta el header enforce").toBeTruthy()
+    expect(res.headers.has("content-security-policy-report-only")).toBe(false)
+    expect(csp).toContain("default-src 'self'")
+    expect(csp).toContain("frame-ancestors 'self'")
+    expect(csp).toContain("base-uri 'self'")
+    expect(csp).toContain("form-action 'self'")
+    expect(csp).toContain("object-src 'none'")
+  })
+
+  it("script-src usa nonce + strict-dynamic, sin unsafe-inline ni unsafe-eval", async () => {
+    const res = await runProxy(proxyReq("/api/sales"))
+    const csp = res.headers.get("content-security-policy")!
+    const scriptSrc = csp.split(";").map(d => d.trim()).find(d => d.startsWith("script-src"))!
+    expect(scriptSrc).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'/)
+    expect(scriptSrc).not.toContain("'unsafe-inline'")
+    // NODE_ENV=test se comporta como producción: React no evalúa fuera de dev.
+    expect(scriptSrc).not.toContain("'unsafe-eval'")
+    expect(nonceOf(csp)).toBeTruthy()
+  })
+
+  it("el nonce es único por request y consistente entre upstream y response", async () => {
+    const resA = await runProxy(proxyReq("/api/sales"))
+    const resB = await runProxy(proxyReq("/api/sales"))
+    const cspA = resA.headers.get("content-security-policy")!
+    const cspB = resB.headers.get("content-security-policy")!
+    expect(nonceOf(cspA)).not.toBe(nonceOf(cspB))
+
+    // El renderer de Next parsea el CSP del REQUEST upstream para estampar
+    // el nonce en sus scripts: si no coincide con el de la respuesta,
+    // ningún script ejecuta. x-middleware-request-* es como Next serializa
+    // los headers upstream que el proxy fijó.
+    const upstreamCsp = resA.headers.get("x-middleware-request-content-security-policy")
+    expect(upstreamCsp).toBe(cspA)
+    const upstreamNonce = resA.headers.get("x-middleware-request-x-nonce")
+    expect(upstreamNonce).toBe(nonceOf(cspA))
+  })
+
+  it("jamás honra un x-nonce enviado por el cliente", async () => {
+    const res = await runProxy(proxyReq("/api/sales", "GET", { "x-nonce": "nonce-del-atacante" }))
+    const csp = res.headers.get("content-security-policy")!
+    expect(nonceOf(csp)).toBeTruthy()
+    expect(nonceOf(csp)).not.toBe("nonce-del-atacante")
+    expect(csp).not.toContain("nonce-del-atacante")
+  })
+
+  it("sellan la CSP tanto las páginas (vía auth) como los 403 de la barrera CSRF", async () => {
+    const page = await runProxy(proxyReq("/admin"))
+    expect(nonceOf(page.headers.get("content-security-policy") ?? "")).toBeTruthy()
+
+    const denied = await runProxy(proxyReq("/api/sales", "POST", {
+      origin: "https://evil.com", "sec-fetch-site": "cross-site",
+    }))
+    expect(denied.status).toBe(403)
+    expect(nonceOf(denied.headers.get("content-security-policy") ?? "")).toBeTruthy()
+  })
+
+  it("style-src conserva unsafe-inline (atributos style de React no admiten nonce)", async () => {
+    const res = await runProxy(proxyReq("/api/sales"))
+    const csp = res.headers.get("content-security-policy")!
+    const styleSrc = csp.split(";").map(d => d.trim()).find(d => d.startsWith("style-src"))!
+    expect(styleSrc).toContain("'unsafe-inline'")
+    // Un nonce en style-src haría que CSP3 IGNORE unsafe-inline y rompería
+    // todos los style attributes — no debe estar.
+    expect(styleSrc).not.toContain("nonce-")
+  })
+
+  it("connect-src queda en 'self' y worker-src cubre el service worker", async () => {
+    const res = await runProxy(proxyReq("/api/sales"))
+    const csp = res.headers.get("content-security-policy")!
+    expect(csp).toContain("connect-src 'self';")
+    // Sin el https: amplio del report-only: era el canal de exfiltración
+    // más ancho de la política y no hay fetch cliente a hosts externos.
+    expect(csp).not.toContain("connect-src 'self' https:")
+    // worker-src explícito: con strict-dynamic el fallback a script-src
+    // invalidaría los host-sources y ahogaría el registro de /sw.js.
+    expect(csp).toContain("worker-src 'self'")
+    // LAN del taller es HTTP plano: upgrade-insecure-requests rompería todo.
+    expect(csp).not.toContain("upgrade-insecure-requests")
+  })
+
+  it("img-src cubre los tiles de OpenStreetMap sin abrir https: amplio", async () => {
+    const res = await runProxy(proxyReq("/api/sales"))
+    const csp = res.headers.get("content-security-policy")!
+    const imgSrc = csp.split(";").map(d => d.trim()).find(d => d.startsWith("img-src"))!
+    // /mercado monta Leaflet con tiles de OSM (mercado-map-inner.tsx) —
+    // sin este host el mapa queda en blanco. Es el ÚNICO host externo de
+    // imágenes que usa la app (logos/productos son /uploads, mismo origen;
+    // previews y QR impresos van por blob:/data:).
+    expect(imgSrc).toContain("https://tile.openstreetmap.org")
+    expect(imgSrc).toContain("data:")
+    expect(imgSrc).toContain("blob:")
+    // El https: amplio (scheme-only, cualquier host) era la vía de
+    // exfiltración por <img> inyectada: como token pelado no debe volver.
+    expect(imgSrc.split(/\s+/)).not.toContain("https:")
   })
 })
 

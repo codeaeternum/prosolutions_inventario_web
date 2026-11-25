@@ -447,11 +447,11 @@ export function HistorialMovimientos({ productId, productName, onClearProduct }:
                 {isActionsOpen && (
                     <>
                         {/* Overlay to close on click outside */}
-                        <div className="fixed inset-0 z-40" aria-hidden="true" onClick={close} />
+                        <div className="fixed inset-0 z-60" aria-hidden="true" onClick={close} />
                         <div
                             role="menu"
                             aria-label="Acciones del movimiento"
-                            className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]"
+                            className="absolute right-0 top-full mt-1 z-65 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]"
                             onKeyDown={(e) => { if (e.key === "Escape") close() }}
                         >
                             {/* Print Ticket */}

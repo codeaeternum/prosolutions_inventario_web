@@ -477,9 +477,16 @@ describe("GET /api/caja — Cobrado por método", () => {
           { sale: { branchId: "b1" } },
           { repairOrder: { currentBranchId: "b1" } },
           { encargo: { branchId: "b1" } },
-          // Abonos de crédito documentados: sin FK de documento/sucursal,
-          // el corte los atribuye por el tag estructurado de Payment.notes.
-          { purpose: "CREDIT_PAYMENT", notes: { contains: "[branch:b1]" } },
+          // Abonos de crédito documentados: el corte los atribuye por la
+          // columna Payment.branchId; el tag de notes es fallback legacy
+          // solo para filas sin columna (ventana del deploy).
+          {
+            purpose: "CREDIT_PAYMENT",
+            OR: [
+              { branchId: "b1" },
+              { branchId: null, notes: { contains: "[branch:b1]" } },
+            ],
+          },
         ],
       },
     ])

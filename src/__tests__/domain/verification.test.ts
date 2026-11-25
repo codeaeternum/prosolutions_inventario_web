@@ -138,6 +138,21 @@ describe("issueVerificationCode", () => {
     expect(JSON.stringify(rows[0])).not.toContain(code)
   })
 
+  it("canoniza identificadores de correo al emitir y al consumir", async () => {
+    const { db, rows } = fakeDb()
+    const { code } = await issueVerificationCode(db, {
+      userId: "u-case",
+      identifier: "  Persona@Correo.COM  ",
+      channel: "EMAIL",
+    })
+    expect(rows[0].identifier).toBe("persona@correo.com")
+    const consumed = await consumeVerificationCode(db, {
+      identifier: "PERSONA@correo.com",
+      code,
+    })
+    expect(consumed.userId).toBe("u-case")
+  })
+
   it("invalida códigos vigentes previos del mismo identifier+purpose", async () => {
     const { db, rows } = fakeDb()
     await issueVerificationCode(db, { identifier: "a@b.com", channel: "EMAIL" })

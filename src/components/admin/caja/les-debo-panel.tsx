@@ -25,6 +25,7 @@ import { useCurrency } from "@/components/currency-provider"
 import { csvCell } from "@/lib/csv"
 import { formatDate, formatDay } from "@/lib/utils"
 import { CalendarClock, Download, ExternalLink, Loader2, Search, Truck } from "lucide-react"
+import { EmptyState } from "@/components/admin/empty-state"
 
 /** Shape de GET /api/suppliers/balances (domain/supplier-payments.supplierBalances). */
 interface SupplierBalance {
@@ -314,7 +315,11 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                             <Button variant="outline" size="sm" onClick={() => void fetchAll()}>Reintentar</Button>
                         </div>
                     ) : rows.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-8">Sin deuda con proveedores.</p>
+                        <EmptyState
+                            icon={Truck}
+                            title="Sin deuda con proveedores"
+                            description="Cuando registres compras a crédito o devoluciones por compensar, los saldos con cada proveedor van a aparecer aquí."
+                        />
                     ) : (
                         <>
                             <div className="flex flex-col sm:flex-row sm:items-center gap-3">

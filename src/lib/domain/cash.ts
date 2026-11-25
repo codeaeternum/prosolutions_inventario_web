@@ -23,11 +23,15 @@ export function denominationsTotalCents(denoms: Record<string, number>): number 
 export type CashMovementLike = { type: "IN" | "OUT"; amount: number; payment?: { method: string; amount: number } | null }
 
 /**
- * Ligaduras de un abono de crédito documentado como Payment. Payment no tiene
- * columna de sucursal ni FK a CreditMovement y el schema no puede tocarse en
- * esta corrección; los tags van al final de Payment.notes con formato
- * máquina estable y se ocultan al presentar el movimiento. Es deuda técnica
- * explícita: el reemplazo correcto son columnas creditMovementId/branchId.
+ * Ligaduras de un abono de crédito documentado como Payment. Desde la
+ * migración payment_credit_branch el writer (domain/credit) usa las columnas
+ * reales Payment.creditMovementId / Payment.branchId y ya NO emite tags.
+ * Los tags máquina al final de Payment.notes fueron la convención transitoria
+ * de Oleada 45: los pagos históricos quedaron migrados a columnas, pero los
+ * cobrados por el código viejo durante la ventana del deploy (el backfill ya
+ * había corrido) conservan solo el tag — por eso los readers de sucursal/
+ * movimiento mantienen el fallback legacy y la presentación sigue recortando
+ * los tags al mostrar.
  */
 export const CREDIT_PAYMENT_PURPOSE = "CREDIT_PAYMENT"
 export const creditPaymentMovementTag = (creditMovementId: string) => `[credit-movement:${creditMovementId}]`
@@ -90,8 +94,10 @@ export function expectedCashCents(initialAmount: number, movements: CashMovement
  *     crédito): no tocan ningún cajón físico y se acotan a la sucursal del
  *     documento (`sale.branchId` / `repairOrder.currentBranchId` /
  *     `encargo.branchId`), igual que en `/api/caja/movements`; los abonos de
- *     crédito no tienen documento FK y usan el tag estructurado de sucursal
- *     en Payment.notes hasta que exista una columna real.
+ *     crédito no tienen documento FK de venta/orden/encargo y usan su propia
+ *     columna `Payment.branchId` — con fallback al tag legacy de notes para
+ *     los pagos cobrados durante la ventana del deploy (ver el bloque junto
+ *     a creditPaymentBranchTag).
  */
 export function registerPaymentWhere(
   businessId: string,
@@ -112,11 +118,19 @@ export function registerPaymentWhere(
                 { repairOrder: { currentBranchId: register.branchId } },
                 { encargo: { branchId: register.branchId } },
                 // Abonos de crédito: no tienen documento FK; la sucursal de
-                // cobro va en el tag estructurado de notes (deuda técnica
-                // documentada junto a creditPaymentBranchTag).
+                // cobro es la columna branchId. El tag de notes queda como
+                // fallback legacy para los abonos cobrados por el código
+                // viejo durante la ventana del deploy (post-backfill), que
+                // nunca recibieron columna.
                 {
                   purpose: CREDIT_PAYMENT_PURPOSE,
-                  notes: { contains: creditPaymentBranchTag(register.branchId) },
+                  OR: [
+                    { branchId: register.branchId },
+                    // Solo filas SIN columna (pre-migración): un abono nuevo
+                    // con branchId poblado no puede reatribuirse escribiendo
+                    // texto tipo tag en las notas del cobrador.
+                    { branchId: null, notes: { contains: creditPaymentBranchTag(register.branchId) } },
+                  ],
                 },
               ],
             },

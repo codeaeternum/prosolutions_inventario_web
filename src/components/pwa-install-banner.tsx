@@ -58,7 +58,7 @@ export function PwaInstallBanner() {
 
   return (
     <div
-      className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 right-0 z-50 border-t bg-card px-4 py-3 shadow-lg safe-area-bottom sm:left-auto sm:right-4 sm:max-w-sm sm:rounded-xl"
+      className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 right-0 z-80 border-t bg-card px-4 py-3 shadow-lg safe-area-bottom sm:left-auto sm:right-4 sm:max-w-sm sm:rounded-xl"
       role="banner"
       aria-label="Instalar app"
     >

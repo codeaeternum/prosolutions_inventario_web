@@ -64,22 +64,12 @@ const nextConfig: NextConfig = {
         value: "max-age=31536000; includeSubDomains; preload",
       })
     }
-    // CSP en modo report-only: no bloquea, solo reporta. Ajustar y pasar a enforce cuando esté estable.
-    const cspReportOnly = [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com", // 'unsafe-eval' fuera: Next 16 no lo necesita en prod (quedaba por compat vieja). Beacon de Cloudflare Insights (analítica del túnel); pendiente migrar a nonces para quitar también 'unsafe-inline'
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https:",
-      "connect-src 'self' https:",
-      "frame-ancestors 'self'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; ")
-    securityHeaders.push({
-      key: "Content-Security-Policy-Report-Only",
-      value: cspReportOnly,
-    })
+    // La CSP NO vive aquí: es enforce con nonce por request y la emite el
+    // proxy (src/proxy.ts) — necesita el header en el REQUEST upstream para
+    // que el renderer estampe el nonce en sus scripts, algo imposible desde
+    // la capa estática de headers(). Fijarla también aquí produciría DOS
+    // headers CSP en la respuesta y el browser aplicaría la intersección
+    // (rompiendo los scripts nonced). Test: security/headers.test.ts.
     return [
       { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-store" }] },
       // Comprobantes de pago son objetos privados: nunca permitir caché pública, sea cual sea el handler.

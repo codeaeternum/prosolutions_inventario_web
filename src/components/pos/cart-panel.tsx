@@ -39,7 +39,7 @@ function CartLine({ item, workshopActive, processing, flashNonce, touchSize, onU
     processing: boolean
     /** >0 = acaba de agregarse; el key={nonce} re-anima en altas repetidas. */
     flashNonce: number
-    /** Botones +/- de 44px: en el Sheet móvil el dedo manda, no el ratón. */
+    /** Botones +/−/× de 44px: en el Sheet móvil el dedo manda, no el ratón. */
     touchSize?: boolean
     onUpdateQuantity: (productId: string, delta: number) => void
     onRemove: (productId: string) => void
@@ -97,7 +97,7 @@ function CartLine({ item, workshopActive, processing, flashNonce, touchSize, onU
             </div>
             <p className="w-20 text-right text-sm font-bold tabular-nums">{formatPrice(price * item.quantity)}</p>
             <Button
-                variant="ghost" size="icon-xs"
+                variant="ghost" size={iconSize}
                 className="text-destructive hover:text-destructive"
                 onClick={() => onRemove(item.product.id)}
                 disabled={processing}

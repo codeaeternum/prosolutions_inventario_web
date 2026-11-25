@@ -4,7 +4,7 @@ import { z } from "zod"
 import { prisma } from "@/lib/prisma"
 import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { isValidSlug, normalizeSlug } from "@/lib/slug-rules"
-import { generateSlug, normalizePhone } from "@/lib/utils"
+import { emailEqualsInsensitive, generateSlug, normalizeEmail, normalizePhone } from "@/lib/utils"
 import { SUGGESTED_SERVICES } from "@/lib/workshop-service-suggestions"
 import { issueVerificationCode } from "@/lib/verification"
 import { sendVerificationEmail } from "@/lib/mailer"
@@ -116,7 +116,7 @@ export async function POST(req: Request) {
     }
 
     const { businessName, slug: rawSlug, adminName, email, phone, password, businessKind } = parseResult.data
-    const emailNorm = email.trim().toLowerCase()
+    const emailNorm = normalizeEmail(email)
     // User.phone es único GLOBAL: se guarda normalizado (últimos 10 dígitos)
     // para que "+52 811 234 5678" y "811 234 5678" choquen en vez de evadirlo.
     const phoneOrNull = normalizePhone(phone) || null
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
     // se compara normalizado en memoria — filas legacy guardadas como "+52…" no
     // empatan con la búsqueda exacta (volumen de piloto, cf. customers.ts).
     const [existingEmail, phoneCandidates] = await Promise.all([
-      prisma.user.findUnique({ where: { email: emailNorm }, select: { id: true } }),
+      prisma.user.findFirst({ where: { email: emailEqualsInsensitive(emailNorm) }, select: { id: true } }),
       phoneOrNull
         ? prisma.user.findMany({ where: { phone: { not: null } }, select: { phone: true } })
         : Promise.resolve([]),

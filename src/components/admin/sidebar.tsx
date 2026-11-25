@@ -217,13 +217,17 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
 
   return (
     <>
-      {/* Mobile menu button - visible in header area */}
+      {/* Mobile menu button - visible in header area. z-55 (banda
+          chrome-float de la escala en globals.css): flota sobre el header
+          sticky (z-50) pero queda cubierto por cualquier overlay Radix
+          (z-70) — antes iba en z-[100] y pintaba ENCIMA de sheets y
+          diálogos abiertos. */}
       <Button
         variant="outline"
         size="icon"
         aria-label="Abrir menú de navegación"
         aria-expanded={mobileMenuOpen}
-        className="fixed top-4 left-4 z-[100] lg:hidden bg-background shadow-md"
+        className="fixed top-4 left-4 z-55 lg:hidden bg-background shadow-md"
         onClick={() => setMobileMenuOpen(true)}
       >
         <Menu className="h-5 w-5" />
@@ -234,7 +238,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
           de la página, todo nativo (mismo patrón que ui/sheet.tsx). */}
       <DialogPrimitive.Root open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-[100] bg-black/50 lg:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+          <DialogPrimitive.Overlay className="fixed inset-0 z-70 bg-black/50 lg:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
           <DialogPrimitive.Content
             aria-describedby={undefined}
             onOpenAutoFocus={(event) => {
@@ -245,7 +249,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
                 .querySelector<HTMLElement>("nav a")
                 ?.focus()
             }}
-            className="fixed inset-y-0 left-0 z-[100] w-72 bg-card border-r lg:hidden flex flex-col data-[state=open]:animate-in data-[state=open]:slide-in-from-left data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left duration-300 ease-in-out"
+            className="fixed inset-y-0 left-0 z-70 w-72 bg-card border-r lg:hidden flex flex-col data-[state=open]:animate-in data-[state=open]:slide-in-from-left data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left duration-300 ease-in-out"
           >
             <DialogPrimitive.Title className="sr-only">Menú</DialogPrimitive.Title>
             <div className="flex h-16 shrink-0 items-center justify-between px-6 border-b">
@@ -328,8 +332,12 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      {/* Mobile Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-[90] lg:hidden bg-background border-t safe-area-bottom">
+      {/* Mobile Bottom Navigation Bar. z-50: banda chrome de la escala en
+          globals.css — las barras fijas de página (z-40) quedan por debajo
+          y los overlays Radix (z-70) la tapan al abrirse, que es lo correcto
+          para un modal. Antes iba en z-[90] y pintaba ENCIMA del borde
+          inferior de cualquier sheet/diálogo (z-50) en móvil. */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-background border-t safe-area-bottom">
         <nav className="flex items-center justify-around h-16 px-2">
           {visibleBottomBarItems.map((item) => {
             const isActive = isNavItemActive(pathname, item.href)

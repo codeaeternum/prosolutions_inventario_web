@@ -416,12 +416,19 @@ export function PublicProfileCard() {
 <body>
   <h1>${name}</h1>
   <p class="label">${label}</p>
-  <img src="${dataUrl}" alt="Código QR — ${label}" onload="setTimeout(function(){window.print()},60)">
+  <img src="${dataUrl}" alt="Código QR — ${label}">
   <code>${escapeHtml(url)}</code>
   <p class="hint">Escanea con la cámara de tu teléfono</p>
 </body>
 </html>`)
     win.document.close()
+    // El onload inline del <img> quedaría bloqueado por la CSP enforce que
+    // about:blank hereda del opener (los handlers inline jamás admiten
+    // nonce). Se imprime desde aquí cuando la ventana termina de cargar —
+    // este JS corre en el realm del opener, fuera del alcance de esa CSP.
+    win.addEventListener("load", () => {
+      setTimeout(() => win.print(), 60)
+    })
   }
 
   return (

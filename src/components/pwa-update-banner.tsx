@@ -35,7 +35,7 @@ export function PwaUpdateBanner() {
 
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-[60] flex items-center justify-between gap-3 bg-primary px-4 py-2.5 text-primary-foreground shadow-md safe-area-top"
+      className="fixed top-0 left-0 right-0 z-80 flex items-center justify-between gap-3 bg-primary px-4 py-2.5 text-primary-foreground shadow-md safe-area-top"
       role="alert"
       aria-live="polite"
     >

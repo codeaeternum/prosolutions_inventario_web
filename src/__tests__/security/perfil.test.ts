@@ -171,15 +171,22 @@ describe("PATCH /api/perfil", () => {
     )
   })
 
-  it("correo ya registrado en otra cuenta → 409 sin escribir", async () => {
+  it("correo ya registrado en otra cuenta → 409 sin escribir, incluso con variante de mayúsculas legacy", async () => {
     mocks.auth.mockResolvedValue(session("u-dupe"))
-    // Primer findUnique trae al usuario actual; el segundo (por email) al dueño del correo.
-    mocks.userFindUnique.mockImplementation((args: { where: Record<string, unknown> }) =>
-      Promise.resolve("email" in args.where ? { id: "u-otro" } : dbUser("u-dupe"))
-    )
+    mocks.userFindUnique.mockResolvedValue(dbUser("u-dupe"))
+    // El dup-check case-insensitive encuentra al dueño aunque la fila se
+    // hubiera guardado como OCUPADO@correo.com antes de la canonicalización.
+    mocks.userFindFirst.mockResolvedValue({ id: "u-otro" })
 
-    const res = await PATCH(patchReq({ email: "ocupado@correo.com" }))
+    const res = await PATCH(patchReq({ email: "Ocupado@Correo.com" }))
     expect(res.status).toBe(409)
+    expect(mocks.userFindFirst).toHaveBeenCalledWith({
+      where: {
+        email: { equals: "ocupado@correo.com", mode: "insensitive" },
+        id: { not: "u-dupe" },
+      },
+      select: { id: true },
+    })
     expect(mocks.userUpdate).not.toHaveBeenCalled()
     expect(mocks.codeCreate).not.toHaveBeenCalled()
   })

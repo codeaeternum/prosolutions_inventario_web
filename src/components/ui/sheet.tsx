@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils"
 // Como Sheet, Dialog y AlertDialog son todos Radix, la pila de capas de
 // DismissableLayer resuelve Escape/dismiss solo en la capa superior: un
 // diálogo abierto encima del sheet ya no lo cierra por accidente.
+// z-70 en overlay Y contenido: la banda "overlay" de la escala documentada
+// en globals.css — una sola capa compartida para que el orden de montaje de
+// los portales resuelva los anidados (un diálogo sobre un sheet dimea al
+// sheet completo), siempre por encima de la bottom-nav (z-50).
 
 function Sheet({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
     return <DialogPrimitive.Root data-slot="sheet" {...props} />
@@ -52,14 +56,14 @@ const SheetContent = React.forwardRef<
     <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
             data-slot="sheet-overlay"
-            className="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+            className="fixed inset-0 z-70 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
         />
         <DialogPrimitive.Content
             ref={ref}
             data-slot="sheet-content"
             aria-describedby={undefined}
             className={cn(
-                "fixed z-50 bg-background p-6 shadow-lg transition ease-in-out duration-300 overflow-y-auto max-h-[90dvh] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+                "fixed z-70 bg-background p-6 shadow-lg transition ease-in-out duration-300 overflow-y-auto max-h-[90dvh] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
                 sideClasses[side],
                 (side === "bottom" || side === "top") && "touch-pan-y",
                 className

@@ -143,6 +143,20 @@ describe("authorize applies a per-account attempt limit (SEC-07)", () => {
     expect(user).toMatchObject({ id: adminRow.id, role: "ADMIN", status: "APPROVED" })
   })
 
+  it("normaliza el correo del login y lo busca case-insensitive (filas legacy incluidas)", async () => {
+    mocks.findFirst.mockResolvedValue({ ...adminRow, email: "Admin@Test.Invalid" })
+    mocks.bcryptCompare.mockResolvedValue(true)
+    const user = await authorize({ identifier: "  ADMIN@test.INVALID  ", password: "secret" })
+    expect(user).toMatchObject({ id: adminRow.id })
+    expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([
+          { email: { equals: "admin@test.invalid", mode: "insensitive" } },
+        ]),
+      }),
+    }))
+  })
+
   it("users of a suspended business get a clear error, not a silent rejection", async () => {
     mocks.findFirst.mockResolvedValue({ ...adminRow, business: { isActive: false } })
     mocks.bcryptCompare.mockResolvedValue(true)
@@ -183,7 +197,7 @@ describe("authorize applies a per-account attempt limit (SEC-07)", () => {
     expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         OR: [
-          { email: "+52 55 1234 5678" },
+          { email: { equals: "+52 55 1234 5678", mode: "insensitive" } },
           { phone: "+52 55 1234 5678" },
           { phone: "5512345678" },
         ],

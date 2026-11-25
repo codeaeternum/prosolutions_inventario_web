@@ -1,6 +1,6 @@
 import { createHash, randomInt } from "node:crypto"
 import type { PrismaClient, VerificationChannel, VerificationCode } from "@/generated/prisma/client"
-import { normalizePhone } from "./utils"
+import { normalizeEmail, normalizePhone } from "./utils"
 
 /**
  * Verificación de contacto post-registro (correo/teléfono/Telegram).
@@ -35,6 +35,16 @@ function hashCode(code: string): string {
 }
 
 /**
+ * Los identificadores de correo se persisten en su forma canónica. Los OTP
+ * expiran en minutos, así que basta normalizar al emitir/consumir: no hace
+ * falta mantener aliases case-variant en la tabla transitoria.
+ */
+function normalizeVerificationIdentifier(identifier: string): string {
+  const trimmed = identifier.trim()
+  return trimmed.includes("@") ? normalizeEmail(trimmed) : trimmed
+}
+
+/**
  * Emite un código de 6 dígitos para `identifier` (correo o teléfono).
  * Invalida (marca consumedAt) cualquier código vigente previo del mismo
  * identifier+purpose, sin importar el canal: solo un código activo a la vez.
@@ -51,18 +61,19 @@ export async function issueVerificationCode(
   },
 ): Promise<{ code: string; expiresAt: Date }> {
   const purpose = input.purpose ?? VERIFICATION_DEFAULT_PURPOSE
+  const identifier = normalizeVerificationIdentifier(input.identifier)
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0")
   const expiresAt = new Date(Date.now() + VERIFICATION_CODE_TTL_MS)
 
   await db.verificationCode.updateMany({
-    where: { identifier: input.identifier, purpose, consumedAt: null },
+    where: { identifier, purpose, consumedAt: null },
     data: { consumedAt: new Date() },
   })
   await db.verificationCode.create({
     data: {
       userId: input.userId ?? null,
       businessId: input.businessId ?? null,
-      identifier: input.identifier,
+      identifier,
       channel: input.channel,
       codeHash: hashCode(code),
       purpose,
@@ -112,11 +123,12 @@ export async function consumeVerificationCode(
   const purpose = input.purpose ?? VERIFICATION_DEFAULT_PURPOSE
   const code = input.code.trim()
   const digest = hashCode(code)
+  const identifier = input.identifier ? normalizeVerificationIdentifier(input.identifier) : undefined
 
-  const row = input.identifier
+  const row = identifier
     ? await db.verificationCode.findFirst({
         where: {
-          identifier: input.identifier,
+          identifier,
           purpose,
           consumedAt: null,
           // Los deep-link codes de verificación solo los consume el bot (ver
@@ -155,7 +167,7 @@ export async function consumeVerificationCode(
     throw new VerificationError("EXPIRED", "El código expiró")
   }
   // En la ruta sin identifier el codeHash ya empataba en el where.
-  if (input.identifier && row.codeHash !== digest) {
+  if (identifier && row.codeHash !== digest) {
     await db.verificationCode.update({
       where: { id: row.id },
       data: { attempts: { increment: 1 } },
