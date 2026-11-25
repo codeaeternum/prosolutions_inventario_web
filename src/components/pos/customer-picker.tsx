@@ -15,6 +15,8 @@ interface CustomerPickerProps {
     /** Solo clientes con línea de crédito autorizada (cobro CREDITO). */
     requiresCredit?: boolean
     placeholder?: string
+    /** id del input de búsqueda para asociarlo a un Label externo (htmlFor). */
+    id?: string
 }
 
 interface RawUser {
@@ -38,7 +40,7 @@ function toCustomer(u: RawUser): PosCustomer {
 }
 
 /** Buscador de cliente del ticket: crédito, apartados y notas a taller lo comparten. */
-export function CustomerPicker({ value, onChange, disabled, requiresCredit, placeholder }: CustomerPickerProps) {
+export function CustomerPicker({ value, onChange, disabled, requiresCredit, placeholder, id }: CustomerPickerProps) {
     // El picker convive dos veces en el POS (panel y diálogo): id generado.
     const inputId = useId()
     const [query, setQuery] = useState("")
@@ -112,7 +114,7 @@ export function CustomerPicker({ value, onChange, disabled, requiresCredit, plac
         <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-                id={inputId}
+                id={id ?? inputId}
                 name="customer-search"
                 // Enter aquí busca cliente, no confirma el cobro del diálogo padre.
                 data-pos-no-enter

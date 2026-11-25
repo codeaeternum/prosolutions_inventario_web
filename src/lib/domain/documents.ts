@@ -4,6 +4,7 @@ import { actor, amount, BusinessError, cents, itemsSchema, mergeItems, operation
 import { channelOfPaymentMethod, checkSalePayments, commitSale, METHOD_MAP, METHODS, paymentInput, refund, settlePayments, settleSalePayments, type MethodInput, type SettledPayment } from "./sales"
 import { encargoQuotedLineCents, prepareEncargoForSaleTx, settleEncargoInSaleTx } from "./encargos"
 import { nextSaleNumber } from "./tenant-sequence"
+import { BUSINESS_TIME_ZONE } from "../business-time"
 import { collectLowStockIds, syncLowStockAlerts } from "../low-stock"
 
 // Documentos vivos del mostrador sobre el mismo modelo Sale:
@@ -346,7 +347,7 @@ export async function payDocument(db: PrismaClient, actorId: string, businessId:
     // ADMIN, nunca automática.
     if (sale.expiresAt && sale.expiresAt.getTime() <= Date.now()) {
       if (collector.role !== "ADMIN") {
-        const fecha = sale.expiresAt.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })
+        const fecha = sale.expiresAt.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric", timeZone: BUSINESS_TIME_ZONE })
         throw new BusinessError(`El apartado venció el ${fecha}; pide autorización al administrador para seguir cobrando.`, 409)
       }
     }

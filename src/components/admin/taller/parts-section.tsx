@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { partFormIsDirty } from "@/lib/workshop-form"
+import { formatCents } from "@/lib/utils"
 import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
 
 export type WorkshopPartStatus = "REQUESTED" | "APPROVED" | "REJECTED"
@@ -50,7 +51,7 @@ const statusMeta: Record<WorkshopPartStatus, { label: string; variant: "warning"
     APPROVED: { label: "Autorizada", variant: "success" },
     REJECTED: { label: "Rechazada", variant: "destructive" },
 }
-const money = (cents: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100)
+const money = formatCents
 const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
 const emptyForm = { description: "", qty: "1", cost: "", price: "" }
 

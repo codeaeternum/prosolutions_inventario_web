@@ -23,15 +23,14 @@ const mocks = vi.hoisted(() => ({
   branchCount: vi.fn(),
   branchFindUnique: vi.fn(),
   businessFindFirst: vi.fn(),
-  reservationFindMany: vi.fn(),
-  reservationCount: vi.fn(),
-  paymentCount: vi.fn(),
   auditCreate: vi.fn(),
 }))
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth, handlers: { GET: vi.fn(), POST: vi.fn() } }))
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  // El DELETE corre su guarda + delete dentro de transaction() (serializable):
+  // $transaction recibe el work y lo ejecuta contra el mismo cliente mockeado.
+  const client = {
     user: {
       findUnique: mocks.userFindUnique,
       findFirst: mocks.userFindFirst,
@@ -43,11 +42,11 @@ vi.mock("@/lib/prisma", () => ({
     },
     branch: { count: mocks.branchCount, findUnique: mocks.branchFindUnique },
     business: { findFirst: mocks.businessFindFirst },
-    reservation: { findMany: mocks.reservationFindMany, count: mocks.reservationCount },
-    payment: { count: mocks.paymentCount },
     auditEvent: { create: mocks.auditCreate },
-  },
-}))
+    $transaction: (work: (tx: unknown) => unknown) => work(client),
+  }
+  return { prisma: client }
+})
 // recordAudit apagado (la alerta Telegram es fire-and-forget); diffChanges y
 // listText quedan reales porque el PATCH los usa para armar el evento.
 vi.mock("@/lib/audit", async (importActual) => {
@@ -101,9 +100,6 @@ beforeEach(() => {
   mocks.userUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...updatedRow(), ...data }))
   mocks.userCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "new-1", createdAt: new Date(), ...data }))
   mocks.userDelete.mockResolvedValue({})
-  mocks.reservationFindMany.mockResolvedValue([])
-  mocks.reservationCount.mockResolvedValue(0)
-  mocks.paymentCount.mockResolvedValue(0)
   mocks.auditCreate.mockResolvedValue({})
 })
 
@@ -374,9 +370,10 @@ describe("DELETE /api/users/[id]", () => {
     expect(mocks.userFindUnique).not.toHaveBeenCalled() // el guard corre antes de la BD
   })
 
-  it("admin sí elimina dentro de su negocio", async () => {
+  it("admin sí elimina dentro de su negocio cuando la cuenta está limpia", async () => {
     mocks.auth.mockResolvedValue(admin())
-    mocks.userFindUnique.mockResolvedValue({ role: "CUSTOMER", name: "Cliente" })
+    // Sin historial (_count en ceros): usuario recién creado por error.
+    mocks.userFindUnique.mockResolvedValue({ role: "CUSTOMER", name: "Cliente", _count: {} })
     const res = await deleteUser(delReq(), params("u-2"))
     expect(res.status).toBe(200)
     expect(mocks.userDelete).toHaveBeenCalledWith({ where: { id: "u-2", businessId: BIZ } })
@@ -388,5 +385,72 @@ describe("DELETE /api/users/[id]", () => {
     expect(res.status).toBe(400)
     expect((await res.json()).error).toMatch(/eliminar tu propia cuenta/)
     expect(mocks.userDelete).not.toHaveBeenCalled()
+  })
+
+  it("un usuario que no existe (o es de otro negocio) responde 404", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue(null)
+    const res = await deleteUser(delReq(), params("u-x"))
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toMatch(/no encontrado/)
+    expect(mocks.userDelete).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ creditMovements: 3 }, "3 movimiento\\(s\\) de crédito"],
+    [{ reservations: 2 }, "2 reserva\\(s\\) o encargo\\(s\\)"],
+    [{ salesMade: 5 }, "5 venta\\(s\\)"],
+    [{ salesAsCustomer: 1 }, "1 venta\\(s\\)"],
+    [{ paymentsMade: 4 }, "4 pago\\(s\\)"],
+    [{ auditEvents: 9 }, "9 evento\\(s\\) de historial"],
+    [{ clockEvents: 7 }, "7 checada\\(s\\) de asistencia"],
+    [{ createdRepairs: 2 }, "2 registro\\(s\\) de taller"],
+    [{ cashRegistersOpened: 1 }, "1 movimiento\\(s\\) de caja"],
+    [{ purchases: 2 }, "2 registro\\(s\\) de inventario"],
+  ])(
+    "con historial (%o) responde 409 pidiendo suspender — el ledger no se borra",
+    async (count, msg) => {
+      mocks.auth.mockResolvedValue(admin())
+      mocks.userFindUnique.mockResolvedValue({ role: "CUSTOMER", name: "Cliente", _count: count })
+      const res = await deleteUser(delReq(), params("u-2"))
+      expect(res.status).toBe(409)
+      const json = await res.json()
+      expect(json.error).toMatch(new RegExp(msg))
+      expect(json.error).toMatch(/Suspende la cuenta/)
+      // Nada se borró: el delete ni siquiera llegó a la BD.
+      expect(mocks.userDelete).not.toHaveBeenCalled()
+    }
+  )
+
+  it("la guarda cubre las FKs Cascade que quemaban el ledger silenciosamente", async () => {
+    // CreditMovement, Reservation y ClockEvent son onDelete: Cascade — antes
+    // el delete físico se llevaba la deuda del cliente y la asistencia.
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue({
+      role: "CUSTOMER",
+      name: "Cliente",
+      _count: { creditMovements: 1, clockEvents: 2 },
+    })
+    const res = await deleteUser(delReq(), params("u-2"))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/crédito.*asistencia|movimiento\(s\) de crédito, 2 checada/)
+    expect(mocks.userDelete).not.toHaveBeenCalled()
+  })
+
+  it("una FK Restrict que escape la guarda (P2003/P2014) responde 409, nunca 500", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue({ role: "EMPLOYEE", name: "Caja", _count: {} })
+    mocks.userDelete.mockRejectedValue(Object.assign(new Error("FK violation"), { code: "P2003" }))
+    const res = await deleteUser(delReq(), params("u-2"))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/registros vinculados/)
+  })
+
+  it("un usuario que desaparece a mitad del delete (P2025) responde 404", async () => {
+    mocks.auth.mockResolvedValue(admin())
+    mocks.userFindUnique.mockResolvedValue({ role: "CUSTOMER", name: "Cliente", _count: {} })
+    mocks.userDelete.mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }))
+    const res = await deleteUser(delReq(), params("u-2"))
+    expect(res.status).toBe(404)
   })
 })

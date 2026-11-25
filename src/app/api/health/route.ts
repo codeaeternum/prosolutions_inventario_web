@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { promises as fs } from "node:fs"
+import { timingSafeEqual } from "node:crypto"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { paymentProofDirectory } from "@/lib/payment-proofs"
@@ -9,7 +10,6 @@ export const dynamic = "force-dynamic"
 // Mínimo de espacio libre en el volumen de comprobantes: por debajo de esto
 // las subidas de evidencia/comprobantes empiezan a fallar a mitad de operación.
 const MIN_FREE_BYTES = 500 * 1024 * 1024
-const GIGABYTE = 1024 * 1024 * 1024
 
 interface DiskHealth {
   ok: boolean
@@ -22,13 +22,14 @@ interface DiskHealth {
 /**
  * Salud del storage de comprobantes de pago (PAYMENT_PROOFS_DIR — el mismo
  * path que usa writePaymentProof). Un statfs + access es barato (~µs, sin
- * I/O de datos): seguro correrlo en cada healthcheck.
+ * I/O de datos), pero junto a las ~10 queries de schema era un amplificador
+ * gratis para cualquier anónimo: ahora solo corre en la rama profunda.
  *
  * Se hace mkdir -p primero — igual que writePaymentProof — porque el
  * directorio puede no existir antes del primer upload (volumen recién
  * montado); lo que se mide es "¿podría escribirse ahora?", no "¿existe ya?".
- * El path absoluto NO se devuelve: el endpoint es público y no hace falta
- * filtrar la estructura del filesystem para monitorearlo.
+ * El path absoluto NO se devuelve: aunque la rama profunda exige sesión o
+ * secreto, no hace falta filtrar la estructura del filesystem.
  */
 async function checkProofsDisk(): Promise<DiskHealth> {
   const directory = paymentProofDirectory()
@@ -44,23 +45,50 @@ async function checkProofsDisk(): Promise<DiskHealth> {
   }
 }
 
-export async function GET() {
+/**
+ * ¿La request pide el chequeo profundo Y demuestra ser interna? Exige
+ * `?deep=1` (o `true`) + el CRON_SECRET por `Authorization: Bearer` o
+ * `x-cron-secret` con timingSafeEqual — mismo patrón que /api/cron/*: un
+ * monitoreo externo (Uptime-Kuma, cron del host) puede sondear disco+schema
+ * sin sesión; un anónimo con `?deep` pelado recibe la rama liviana igual.
+ */
+function deepAuthorized(req: Request): boolean {
+  const deep = new URL(req.url).searchParams.get("deep")
+  if (deep !== "1" && deep !== "true") return false
+  const expected = process.env.CRON_SECRET
+  if (!expected) return false
+  const provided =
+    req.headers.get("authorization")?.replace(/^Bearer /, "") ??
+    req.headers.get("x-cron-secret") ??
+    ""
+  const a = Buffer.from(expected)
+  const b = Buffer.from(provided)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+export async function GET(req: Request) {
   const timestamp = new Date().toISOString()
   const headers = { "Cache-Control": "no-store" }
-  const disk = await checkProofsDisk()
-  // El healthcheck es público (Docker/monitoring solo miran el status) y los
-  // bytes exactos del volumen son telemetría interna: anónimos reciben los GB
-  // redondeados; con sesión se conserva el valor exacto para diagnóstico.
+
   // auth() fuera de contexto de request (tests, healthcheck sin cookies)
   // simplemente no encuentra sesión.
   const session = await auth().catch(() => null)
-  const diskOut = session?.user
-    ? disk
-    : {
-        ok: disk.ok,
-        writable: disk.writable,
-        freeGb: disk.freeBytes === null ? null : Math.round(disk.freeBytes / GIGABYTE),
-      }
+
+  // Rama liviana para anónimos: el healthcheck de Docker la golpea cada 30 s
+  // (wget --spider solo mira el status → esto le basta) y antes cada GET
+  // ejecutaba mkdir+statfs+~10 queries sin auth ni rate-limit — un
+  // amplificador gratis para cualquier peer de la LAN. La salud profunda
+  // (disco + schema) solo sale con sesión o con ?deep + CRON_SECRET, y el
+  // monitoreo de plataforma vive en /api/platform/health.
+  if (!session?.user && !deepAuthorized(req)) {
+    return NextResponse.json({ status: "ok", ok: true, timestamp }, { headers })
+  }
+
+  const disk = await checkProofsDisk()
+  // Los bytes exactos del volumen son telemetría interna: la rama profunda
+  // solo corre con sesión o con el secreto interno (?deep), así que aquí ya
+  // no hace falta el redondeo a GB que se aplicaba al anónimo — el anónimo
+  // recibe la rama liviana sin disco ni schema.
   try {
     // Validate critical tables and the required migration, without exposing records.
     const [failedMigrations] = await prisma.$transaction([
@@ -79,7 +107,7 @@ export async function GET() {
     ])
     if (Array.isArray(failedMigrations) && failedMigrations.length > 0) {
       return NextResponse.json(
-        { status: "degraded", ok: false, schema: "migration_failed", disk: diskOut, timestamp },
+        { status: "degraded", ok: false, schema: "migration_failed", disk, timestamp },
         { status: 503, headers },
       )
     }
@@ -87,14 +115,14 @@ export async function GET() {
       // Disco lleno o no escribible: el schema puede estar listo pero las
       // subidas de comprobantes/evidencias fallarían — el servicio no está sano.
       return NextResponse.json(
-        { status: "degraded", ok: false, schema: "ready", disk: diskOut, timestamp },
+        { status: "degraded", ok: false, schema: "ready", disk, timestamp },
         { status: 503, headers },
       )
     }
-    return NextResponse.json({ status: "ok", ok: true, schema: "ready", disk: diskOut, timestamp }, { headers })
+    return NextResponse.json({ status: "ok", ok: true, schema: "ready", disk, timestamp }, { headers })
   } catch {
     return NextResponse.json(
-      { status: "degraded", ok: false, schema: "unavailable", disk: diskOut, timestamp },
+      { status: "degraded", ok: false, schema: "unavailable", disk, timestamp },
       { status: 503, headers },
     )
   }

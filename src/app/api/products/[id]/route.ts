@@ -6,11 +6,11 @@ import { businessIdOf } from "@/lib/tenant"
 import { resolvePublicBusinessId } from "@/lib/tenant-resolution"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, releaseStock, takeStock, transaction } from "@/lib/domain/operations"
-import { ACTIVE_RESERVATIONS, TERMINAL_RESERVATIONS } from "@/lib/domain/reservations"
+import { isPriceValue } from "@/lib/domain/products"
+import { ACTIVE_RESERVATIONS } from "@/lib/domain/reservations"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { diffChanges, money, recordAudit } from "@/lib/audit"
 import { normalizeProductName } from "@/lib/utils"
-import { deleteOrphanedPaymentProofs } from "@/lib/payment-proofs"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 
@@ -165,10 +165,13 @@ export async function PUT(
         { status: 400 }
       )
     }
+    // La regla de precio es la compartida del dominio (isPriceValue en
+    // lib/domain/products): ≥ 0, tope y MÁXIMO dos decimales — un tercer
+    // decimal deja la pieza incobrable (cents() lo exige en cada checkout).
     const parsedRetail = parseFloat(retailPrice)
-    if (!Number.isFinite(parsedRetail) || parsedRetail < 0) {
+    if (!isPriceValue(parsedRetail)) {
       return NextResponse.json(
-        { error: "El precio público es requerido" },
+        { error: "El precio público debe ser ≥ 0 y tener máximo dos decimales" },
         { status: 400 }
       )
     }
@@ -178,9 +181,9 @@ export async function PUT(
       wholesalePrice === undefined || wholesalePrice === null || wholesalePrice === ""
         ? parsedRetail
         : parseFloat(wholesalePrice)
-    if (!Number.isFinite(parsedWholesale) || parsedWholesale < 0) {
+    if (!isPriceValue(parsedWholesale)) {
       return NextResponse.json(
-        { error: "El precio de taller no es válido" },
+        { error: "El precio de taller debe ser ≥ 0 y tener máximo dos decimales" },
         { status: 400 }
       )
     }
@@ -274,11 +277,23 @@ export async function PUT(
     const parsedCostPrice = !isAdmin
       ? existingProduct.costPrice
       : (costPrice != null && costPrice !== "") ? parseFloat(costPrice) : null
+    if (isAdmin && parsedCostPrice !== null && !isPriceValue(parsedCostPrice)) {
+      return NextResponse.json(
+        { error: "El precio de costo debe ser ≥ 0 y tener máximo dos decimales" },
+        { status: 400 }
+      )
+    }
     // internalPrice ausente conserva el valor actual; "" o null lo limpian
     // (la pieza vuelve a cobrarse al público en órdenes propias).
     const parsedInternalPrice = internalPrice === undefined
       ? existingProduct.internalPrice
       : (internalPrice != null && internalPrice !== "") ? parseFloat(internalPrice) : null
+    if (internalPrice !== undefined && parsedInternalPrice !== null && !isPriceValue(parsedInternalPrice)) {
+      return NextResponse.json(
+        { error: "El precio de taller propio debe ser ≥ 0 y tener máximo dos decimales" },
+        { status: 400 }
+      )
+    }
     // Publicar al mercado es decisión del dueño: si un empleado manda el
     // campo se ignora y se conserva la visibilidad actual.
     const parsedVisibility = !isAdmin || marketVisibility === undefined
@@ -532,10 +547,15 @@ export async function DELETE(
       return NextResponse.json({ error: stockError(existingProduct.stock) }, { status: 409 })
     }
 
-    // Eliminar en transacción serializable — devuelve las URLs de
-    // comprobantes de las reservas purgadas para limpiar sus archivos tras
-    // el commit, más el stock vigente al borrar (para la bitácora de force).
-    let proofUrls: (string | null)[]
+    // Eliminar en transacción serializable. Resultado posible:
+    // - `deactivated`: el producto tiene HISTORIAL (movimientos de inventario
+    //   o reservas en cualquier estado) — el delete se convierte en
+    //   desactivación (isActive=false) y el ledger queda intacto. Borrarlo
+    //   quemaría la historia de existencias; apagarlo lo saca del catálogo y
+    //   del POS conservando el rastro.
+    // - `deactivated: false`: producto virgen (alta por error, sin un solo
+    //   movimiento ni reserva) → borrado físico real, nada que preservar.
+    let deactivated: boolean
     let stockRemoved = 0
     try {
       const txResult = await transaction(prisma, async tx => {
@@ -563,35 +583,33 @@ export async function DELETE(
           throw new BusinessError(stockError(liveStock), 409)
         }
 
-        // Eliminar relaciones de modelos
+        // Historial del producto: un InventoryMovement o cualquier reserva
+        // (viva o terminal) ya es pasado que preservar. ?force solo salta la
+        // guarda de existencias — nunca autoriza quemar el ledger.
+        const [movements, reservations] = await Promise.all([
+          tx.inventoryMovement.count({ where: { productId: id, businessId } }),
+          tx.reservation.count({ where: { productId: id, businessId } }),
+        ])
+        if (movements > 0 || reservations > 0) {
+          await tx.product.update({
+            where: { id, businessId },
+            data: { isActive: false },
+          })
+          return { deactivated: true, stockRemoved: liveStock }
+        }
+
+        // Producto sin historial: borrado real. Sus ProductModel cuelgan de
+        // la FK Cascade pero se eliminan explícito (mismo patrón previo).
         await tx.productModel.deleteMany({
           where: { productId: id, businessId },
         })
-
-        // Eliminar movimientos de inventario
-        await tx.inventoryMovement.deleteMany({
-          where: { productId: id, businessId },
-        })
-
-        // Eliminar reservas SOLO en estado terminal: la historia se purga,
-        // nunca una reserva viva con anticipo o deuda a crédito. Antes se
-        // recolectan sus comprobantes para limpiar el archivo post-commit.
-        const proofUrls = (await tx.reservation.findMany({
-          where: { productId: id, businessId, status: { in: [...TERMINAL_RESERVATIONS] } },
-          select: { paymentProofUrl: true },
-        })).map(row => row.paymentProofUrl)
-        await tx.reservation.deleteMany({
-          where: { productId: id, businessId, status: { in: [...TERMINAL_RESERVATIONS] } },
-        })
-
-        // Eliminar producto
         await tx.product.delete({
           where: { id, businessId },
         })
 
-        return { proofUrls, stockRemoved: liveStock }
+        return { deactivated: false, stockRemoved: liveStock }
       })
-      proofUrls = txResult.proofUrls
+      deactivated = txResult.deactivated
       stockRemoved = txResult.stockRemoved
     } catch (error) {
       if (error instanceof BusinessError) {
@@ -614,27 +632,33 @@ export async function DELETE(
     await recordAudit(prisma, {
       businessId,
       actorId: session.user.id,
-      action: "PRODUCT_DELETE",
+      action: deactivated ? "PRODUCT_UPDATE" : "PRODUCT_DELETE",
       entity: "product",
       entityId: id,
       entityName: existingProduct.name,
-      summary: stockRemoved > 0
-        ? `Eliminó forzado "${existingProduct.name}" con ${stockRemoved} en existencia · Precio ${money(existingProduct.retailPrice)}`
-        : `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
-      // Con force y stock>0 la bitácora asienta cuántas piezas se llevaron:
-      // las BranchStock desaparecieron en cascade con el producto.
-      ...(stockRemoved > 0 ? { changes: { stock: { before: stockRemoved, after: 0 } } } : {}),
+      summary: deactivated
+        ? `Desactivó "${existingProduct.name}" en lugar de eliminarlo · conserva su historial${stockRemoved > 0 ? ` y ${stockRemoved} en existencia` : ""}`
+        : stockRemoved > 0
+          ? `Eliminó forzado "${existingProduct.name}" con ${stockRemoved} en existencia · Precio ${money(existingProduct.retailPrice)}`
+          : `Eliminó "${existingProduct.name}" · Precio ${money(existingProduct.retailPrice)}`,
+      // Desactivación: el diff antes→después del flag; force con stock>0: la
+      // bitácora asienta cuántas piezas se llevaron (sus BranchStock
+      // desaparecieron en cascade con el producto).
+      ...(deactivated
+        ? { changes: { activo: { before: existingProduct.isActive, after: false } } }
+        : stockRemoved > 0
+          ? { changes: { stock: { before: stockRemoved, after: 0 } } }
+          : {}),
     })
 
-    // Post-delete: las fotos /uploads/products/* quedaban huérfanas en disco.
-    // Fuera de la tx — si el borrado de un archivo falla el delete ya pasó.
-    await unlinkProductImages(existingProduct.images)
-    // Lo mismo con los comprobantes de anticipo de las reservas purgadas: el
-    // archivo solo se borra si ya ninguna reserva ni pago lo referencia (un
-    // comprobante de carrito puede cubrir otras reservas que siguen vivas).
-    await deleteOrphanedPaymentProofs(prisma, proofUrls)
+    if (!deactivated) {
+      // Post-delete: las fotos /uploads/products/* quedaban huérfanas en
+      // disco. Fuera de la tx — si el borrado de un archivo falla el delete
+      // ya pasó. En desactivación el producto sigue vivo con sus fotos.
+      await unlinkProductImages(existingProduct.images)
+    }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, deactivated })
   } catch (error) {
     console.error("Error deleting product:", error)
     return NextResponse.json(

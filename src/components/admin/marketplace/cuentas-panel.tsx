@@ -734,11 +734,11 @@ export function CuentasPanel() {
                     <table className="mt-2 w-full text-sm">
                       <thead>
                         <tr className="border-b border-zinc-300 text-left text-xs uppercase tracking-wide text-zinc-500">
-                          <th className="py-1.5 pr-3 font-medium">Folio</th>
-                          <th className="py-1.5 pr-3 font-medium">Recibida</th>
-                          <th className="py-1.5 pr-3 font-medium">Exigible</th>
-                          <th className="py-1.5 pr-3 text-right font-medium">Días</th>
-                          <th className="py-1.5 text-right font-medium">Convenio</th>
+                          <th scope="col" className="py-1.5 pr-3 font-medium">Folio</th>
+                          <th scope="col" className="py-1.5 pr-3 font-medium">Recibida</th>
+                          <th scope="col" className="py-1.5 pr-3 font-medium">Exigible</th>
+                          <th scope="col" className="py-1.5 pr-3 text-right font-medium">Días</th>
+                          <th scope="col" className="py-1.5 text-right font-medium">Convenio</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -775,10 +775,10 @@ export function CuentasPanel() {
                   <table className="mt-2 w-full text-sm text-zinc-600">
                     <thead>
                       <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                        <th className="py-1.5 pr-3 font-medium">Folio</th>
-                        <th className="py-1.5 pr-3 font-medium">Recibida</th>
-                        <th className="py-1.5 pr-3 font-medium">Trabajo</th>
-                        <th className="py-1.5 text-right font-medium">Convenio</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Folio</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Recibida</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Trabajo</th>
+                        <th scope="col" className="py-1.5 text-right font-medium">Convenio</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -804,10 +804,10 @@ export function CuentasPanel() {
                   <table className="mt-2 w-full text-sm text-zinc-600">
                     <thead>
                       <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                        <th className="py-1.5 pr-3 font-medium">Folio</th>
-                        <th className="py-1.5 pr-3 font-medium">Recibida</th>
-                        <th className="py-1.5 pr-3 font-medium">Pagada</th>
-                        <th className="py-1.5 text-right font-medium">Convenio</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Folio</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Recibida</th>
+                        <th scope="col" className="py-1.5 pr-3 font-medium">Pagada</th>
+                        <th scope="col" className="py-1.5 text-right font-medium">Convenio</th>
                       </tr>
                     </thead>
                     <tbody>

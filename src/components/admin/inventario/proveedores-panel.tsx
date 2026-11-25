@@ -407,13 +407,13 @@ export function ProveedoresPanel() {
                                 <table className="w-full min-w-[560px] text-sm">
                                     <thead>
                                         <tr className="border-b text-xs text-muted-foreground">
-                                            <th className="px-2 py-1.5 text-left font-medium">Proveedor</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">Al día</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">1-15</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">16-30</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">31-60</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">60+</th>
-                                            <th className="px-2 py-1.5 text-right font-medium">Total</th>
+                                            <th scope="col" className="px-2 py-1.5 text-left font-medium">Proveedor</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">Al día</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">1-15</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">16-30</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">31-60</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">60+</th>
+                                            <th scope="col" className="px-2 py-1.5 text-right font-medium">Total</th>
                                         </tr>
                                     </thead>
                                     <tbody>

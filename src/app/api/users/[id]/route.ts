@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma"
 import { resolveWorkshopSlug } from "../slug-utils"
 import { MODULES } from "@/lib/access"
 import { diffChanges, listText, recordAudit } from "@/lib/audit"
-import { deleteOrphanedPaymentProofs } from "@/lib/payment-proofs"
+import { BusinessError, transaction } from "@/lib/domain/operations"
 import bcrypt from "bcryptjs"
 
 // Restricciones de acceso del staff: lista vacía = sin restricción.
@@ -35,6 +35,76 @@ const paySchema = z.object({
   payRateCents: z.number().int().min(0).max(10_000_000).nullable().optional(),
   commissionPct: z.number().min(0).max(100).nullable().optional(),
 })
+
+// Relaciones del User que cuentan como historial: los Cascade pierden datos
+// al borrar la cuenta (crédito, reservas, checadas) y los Restrict abortan
+// el delete con P2003 → 500. Fuera quedan solo las efímeras que sí pueden
+// irse con la cuenta (códigos de verificación, lecturas de notificaciones).
+const USER_HISTORY_COUNT = {
+  creditMovements: true,
+  reservations: true,
+  encargosAsCustomer: true,
+  encargosCreated: true,
+  encargosResolved: true,
+  salesMade: true,
+  salesAsCustomer: true,
+  paymentsMade: true,
+  supplierPayments: true,
+  auditEvents: true,
+  businessOperations: true,
+  assignedRepairs: true,
+  createdRepairs: true,
+  deliveredRepairs: true,
+  customerRepairs: true,
+  repairParts: true,
+  repairPartsDecided: true,
+  repairEvents: true,
+  repairPhotos: true,
+  cashRegistersOpened: true,
+  cashRegistersClosed: true,
+  cashMovements: true,
+  cashRequestsRequested: true,
+  cashRequestsDecided: true,
+  purchases: true,
+  inventoryCounts: true,
+  shoppingItemsCreated: true,
+  shoppingItemsResolved: true,
+  movements: true,
+  priceChanges: true,
+  marketplaceRequested: true,
+  marketplaceDecided: true,
+  clockEvents: true,
+} as const
+
+/** Frases "N <tipo>" de la razón por la que la cuenta no puede borrarse. */
+function userHistoryBlockers(counts: Partial<Record<keyof typeof USER_HISTORY_COUNT, number>> = {}): string[] {
+  const n = (key: keyof typeof USER_HISTORY_COUNT) => counts[key] ?? 0
+  const buckets: Array<[number, string]> = [
+    [n("creditMovements"), "movimiento(s) de crédito"],
+    [n("reservations") + n("encargosAsCustomer") + n("encargosCreated") + n("encargosResolved"), "reserva(s) o encargo(s)"],
+    [n("salesMade") + n("salesAsCustomer"), "venta(s)"],
+    [n("paymentsMade") + n("supplierPayments"), "pago(s)"],
+    [
+      n("assignedRepairs") + n("createdRepairs") + n("deliveredRepairs") + n("customerRepairs") +
+      n("repairParts") + n("repairPartsDecided") + n("repairEvents") + n("repairPhotos"),
+      "registro(s) de taller",
+    ],
+    [
+      n("cashRegistersOpened") + n("cashRegistersClosed") + n("cashMovements") +
+      n("cashRequestsRequested") + n("cashRequestsDecided"),
+      "movimiento(s) de caja",
+    ],
+    [
+      n("purchases") + n("inventoryCounts") + n("shoppingItemsCreated") + n("shoppingItemsResolved") +
+      n("movements") + n("priceChanges"),
+      "registro(s) de inventario",
+    ],
+    [n("marketplaceRequested") + n("marketplaceDecided"), "solicitud(es) del mercado"],
+    [n("clockEvents"), "checada(s) de asistencia"],
+    [n("auditEvents") + n("businessOperations"), "evento(s) de historial"],
+  ]
+  return buckets.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`)
+}
 
 export async function PATCH(
   req: Request,
@@ -371,21 +441,51 @@ export async function DELETE(
     }
 
     const businessId = businessIdOf(session)
-    const target = await prisma.user.findUnique({ where: { id, businessId }, select: { role: true, name: true } })
 
-    // La FK Reservation.userId es Cascade: borrar la cuenta se lleva también
-    // sus reservas — se recolectan sus comprobantes para limpiar archivos
-    // post-commit (solo si ya ninguna otra fila los referencia).
-    const proofUrls = (await prisma.reservation.findMany({
-      where: { userId: id, businessId, paymentProofUrl: { not: null } },
-      select: { paymentProofUrl: true },
-    })).map(row => row.paymentProofUrl)
-
-    await prisma.user.delete({
-      where: { id, businessId },
-    })
-
-    await deleteOrphanedPaymentProofs(prisma, proofUrls)
+    // Una cuenta con historial NUNCA se borra: CreditMovement, Reservation y
+    // ClockEvent cuelgan del usuario con onDelete: Cascade (borrar la cuenta
+    // quemaría el ledger financiero y la asistencia) y una quincena de
+    // relaciones más son Restrict (el delete caía en P2003 → 500). El _count
+    // se lee DENTRO de la tx serializable: un movimiento nacido a mitad del
+    // delete aborta con el mismo 409, no se lleva nada en cascade.
+    let deleted: { name: string; role: string }
+    try {
+      deleted = await transaction(prisma, async tx => {
+        const target = await tx.user.findUnique({
+          where: { id, businessId },
+          select: { name: true, role: true, _count: { select: USER_HISTORY_COUNT } },
+        })
+        if (!target) throw new BusinessError("Usuario no encontrado", 404)
+        const blockers = userHistoryBlockers(target._count)
+        if (blockers.length > 0) {
+          throw new BusinessError(
+            `No se puede eliminar a "${target.name}": tiene ${blockers.join(", ")}. Suspende la cuenta en su lugar.`,
+            409,
+          )
+        }
+        await tx.user.delete({ where: { id, businessId } })
+        return target
+      })
+    } catch (error) {
+      if (error instanceof BusinessError) {
+        return NextResponse.json({ error: error.message }, { status: error.status })
+      }
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code: unknown }).code)
+        : ""
+      // La guarda cubre todas las FKs conocidas; una nueva relación Restrict
+      // futura aborta el delete y aun así responde 409, nunca 500.
+      if (code === "P2003" || code === "P2014") {
+        return NextResponse.json(
+          { error: "No se puede eliminar: la cuenta tiene registros vinculados. Suspende la cuenta en su lugar." },
+          { status: 409 },
+        )
+      }
+      if (code === "P2025") {
+        return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
+      }
+      throw error
+    }
 
     await recordAudit(prisma, {
       businessId,
@@ -393,8 +493,8 @@ export async function DELETE(
       action: "USER_DELETE",
       entity: "user",
       entityId: id,
-      entityName: target?.name ?? null,
-      summary: `Eliminó al usuario "${target?.name ?? id}"${target ? ` · Rol ${target.role}` : ""}`,
+      entityName: deleted.name,
+      summary: `Eliminó al usuario "${deleted.name}" · Rol ${deleted.role}`,
     })
 
     return NextResponse.json({ success: true })

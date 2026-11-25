@@ -121,15 +121,17 @@ const DISCOUNT_REASON_PRESETS = [
     "Cortesía",
 ] as const
 
-function MethodSelect({ value, onChange, disabled, methods }: {
+function MethodSelect({ value, onChange, disabled, methods, id }: {
     value: PosPaymentMethod
     onChange: (method: PosPaymentMethod) => void
     disabled?: boolean
     methods: PosPaymentMethodOption[]
+    /** id del trigger para asociarlo a un Label externo (htmlFor). */
+    id?: string
 }) {
     return (
         <Select value={value} onValueChange={v => onChange(v as PosPaymentMethod)}>
-            <SelectTrigger disabled={disabled}>
+            <SelectTrigger id={id} disabled={disabled}>
                 <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -651,11 +653,12 @@ function CheckoutForm({
                     {/* Cliente: obligatorio en apartado/crédito, opcional en lo demás. */}
                     {(docType === "LAYAWAY" || docType === "QUOTE" || usesCredit || customer) && (
                         <div className="space-y-1.5">
-                            <Label>
+                            <Label htmlFor="pos-customer">
                                 Cliente{docType === "LAYAWAY" ? " *" : ""}
                                 {usesCredit && !customer ? " *" : ""}
                             </Label>
                             <CustomerPicker
+                                id="pos-customer"
                                 value={customer}
                                 onChange={(c) => {
                                     onCustomerChange(c)
@@ -746,10 +749,10 @@ function CheckoutForm({
 
                     {isSale && (payableCents > 0 || !encargo) && !splitMode && (
                         <div className="space-y-2">
-                            <Label>Método de pago</Label>
+                            <Label htmlFor="pos-payment-method">Método de pago</Label>
                             <div className="flex gap-2">
                                 <div className="flex-1">
-                                    <MethodSelect value={paymentMethod} onChange={setPaymentMethod} disabled={processing} methods={saleMethods} />
+                                    <MethodSelect id="pos-payment-method" value={paymentMethod} onChange={setPaymentMethod} disabled={processing} methods={saleMethods} />
                                 </div>
                                 <Button type="button" variant="outline" disabled={processing} onClick={() => {
                                     setSplitMode(true)

@@ -13,7 +13,7 @@ Documento de referencia para no equivocarse al desplegar esta u otras apps en el
 | **OS** | Microsoft Windows 11 Pro (10.0.26200) |
 | **RAM** | ~30 GB |
 | **Docker** | 29.2.0 / Docker Compose v5.0.2 |
-| **Tailscale** | IP `100.106.83.19` (usuario `dgali`) |
+| **Tailscale** | IP `100.124.116.70` (`galindoasc-1`, usuario `dgali`) |
 | **Ethernet (LAN)** | 192.168.1.195 |
 | **Ruta proyecto (workspace)** | `D:\Proyectos_Sincronizados\prosolutions_inventario_web` |
 | **Ruta usada por deploy.ps1 -Remote** | `D:\Projectos\prosolutions_inventario_web` |
@@ -100,7 +100,7 @@ La lista completa y comentada está en `.env.docker.example` (raíz del repo) �
 
 ## Despliegue (todo desde el N5 Pro)
 
-- **En el N5:** En la carpeta del proyecto ejecutar `.\deploy.ps1` o `.\deploy-n5.ps1`. Hace build y up en esta máquina; no hace falta Portainer ni pasos manuales. Requiere `.env` en la misma carpeta.
+- **En el N5:** En la carpeta del proyecto ejecutar `.\deploy-n5.ps1` (o el legacy `.\deploy.ps1`). Hace build y up en esta máquina; no hace falta Portainer ni pasos manuales. Requiere `.env.docker` en la misma carpeta (no `.env` — ese apunta a localhost y es solo de desarrollo).
 - **Desde otro PC (opcional):** `.\deploy.ps1 -Remote` hace push a GitHub y deploy vía SSH al N5. O desde Mac/Linux: `./deploy-n5.sh`.
 
 ### Migraciones en BD ya existente (N5)

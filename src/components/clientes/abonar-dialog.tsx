@@ -150,8 +150,9 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label>Monto del Abono</Label>
+            <Label htmlFor="abono-amount">Monto del Abono</Label>
             <Input
+              id="abono-amount"
               type="number"
               min="0.01"
               step="0.01"
@@ -233,8 +234,9 @@ export function AbonarDialog({ open, onOpenChange, user, onSuccess }: AbonarDial
             </div>
           )}
           <div className="space-y-2">
-            <Label>Notas (opcional)</Label>
+            <Label htmlFor="abono-notes">Notas (opcional)</Label>
             <Textarea
+              id="abono-notes"
               placeholder="Ej: Referencia o aclaración del abono"
               value={notes}
               disabled={loading}

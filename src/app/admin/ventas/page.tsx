@@ -505,7 +505,7 @@ export default function VentasPage() {
                 <div className="flex items-center gap-2">
                     {visibleBranches.length > 1 && (
                         <Select value={activeBranchId} onValueChange={setBranchId}>
-                            <SelectTrigger className="w-[160px]"><SelectValue placeholder="Sucursal" /></SelectTrigger>
+                            <SelectTrigger className="w-[160px]" aria-label="Sucursal"><SelectValue placeholder="Sucursal" /></SelectTrigger>
                             <SelectContent>{visibleBranches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent>
                         </Select>
                     )}

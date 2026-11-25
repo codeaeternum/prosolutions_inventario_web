@@ -220,7 +220,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                 </span>
                             ) : branches.length > 1 && (
                                 <Select value={branchId} onValueChange={setBranchId}>
-                                    <SelectTrigger className="w-[170px]">
+                                    <SelectTrigger className="w-[170px]" aria-label="Sucursal del lote">
                                         <SelectValue placeholder="Sucursal" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -285,7 +285,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                         </div>
                                         <div className="sm:col-span-3">
                                             <Select value={item.type} onValueChange={v => updateItem(item.id, { type: v })}>
-                                                <SelectTrigger className="h-9">
+                                                <SelectTrigger className="h-9" aria-label={`Tipo de movimiento de ${item.product.name}`}>
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -313,7 +313,7 @@ export default function MovimientosInventario({ lockedBranchId }: { lockedBranch
                                         {item.type === "TRANSFER" && (
                                             <div className="sm:col-span-12 -mt-1">
                                                 <Select value={item.toBranchId ?? ""} onValueChange={v => updateItem(item.id, { toBranchId: v })}>
-                                                    <SelectTrigger className="h-9 max-w-xs">
+                                                    <SelectTrigger className="h-9 max-w-xs" aria-label={`Sucursal destino de ${item.product.name}`}>
                                                         <SelectValue placeholder="Sucursal destino…" />
                                                     </SelectTrigger>
                                                     <SelectContent>

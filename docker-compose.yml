@@ -48,6 +48,31 @@ services:
       RESEND_FROM: ${RESEND_FROM:-Reficio <noreply@reficio.app>}
       # Cifrado del PIN/patrón de equipos; si falta se deriva de NEXTAUTH_SECRET.
       DEVICE_SECRET_KEY: ${DEVICE_SECRET_KEY:-}
+      # --- Opcionales que el código lee (defaults en código si se omiten) ---
+      # Se listan EXPLÍCITAMENTE en vez de `env_file: .env.docker`: un
+      # env_file (1) rompería los stacks de Portainer desplegados desde el
+      # repo git — .env.docker está gitignored y no existe en el checkout —
+      # y (2) inyectaría al contenedor toda variable que se añada al archivo
+      # en el futuro (superficie de secretos visible en `docker inspect`).
+      # Orígenes extra permitidos para requests mutadores (defensa Origin).
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Username del bot (sin @) para deep-links t.me/<bot>?start=verify_*.
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      # Tope del pool pg de Prisma (src/lib/prisma.ts; default 20).
+      PG_POOL_MAX: ${PG_POOL_MAX:-20}
+      # Retenciones/purgas: las corren los cron /api/cron/* de este servicio
+      # y el bot (defaults y clamps en event-retention.ts y
+      # pending-signup-purge.ts / delegation-reconcile.ts).
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
+      PLATFORM_RETENTION_DAYS: ${PLATFORM_RETENTION_DAYS:-365}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
+      DIRECTORY_RETENTION_DAYS: ${DIRECTORY_RETENTION_DAYS:-180}
+      SIGNUP_PENDING_PURGE_DAYS: ${SIGNUP_PENDING_PURGE_DAYS:-30}
+      PENDING_CUSTOMER_TTL_DAYS: ${PENDING_CUSTOMER_TTL_DAYS:-30}
+      DELEGATION_RECONCILE_STALE_DAYS: ${DELEGATION_RECONCILE_STALE_DAYS:-30}
+      # Secreto compartido para confiar en headers de proxy entrantes
+      # (oleada en curso; vacío = feature apagada).
+      TRUST_PROXY_SECRET: ${TRUST_PROXY_SECRET:-}
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs
@@ -68,6 +93,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bot
+      args:
+        # Paridad con la imagen app: APP_BUILD_SHA queda horneado en la imagen.
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: prosolutions-bot
     restart: unless-stopped
     mem_limit: 512m
@@ -82,6 +110,19 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Define the existing bot token}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       PAYMENT_PROOFS_DIR: /app/storage/payment-proofs
+      # El bot corre las purgas de retención a diario (purgeOldEvents,
+      # purgePendingSignups y reconcileDelegations en src/bot/index.ts) —
+      # mismas vars opcionales que app, con los mismos defaults de código.
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
+      PLATFORM_RETENTION_DAYS: ${PLATFORM_RETENTION_DAYS:-365}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
+      DIRECTORY_RETENTION_DAYS: ${DIRECTORY_RETENTION_DAYS:-180}
+      SIGNUP_PENDING_PURGE_DAYS: ${SIGNUP_PENDING_PURGE_DAYS:-30}
+      PENDING_CUSTOMER_TTL_DAYS: ${PENDING_CUSTOMER_TTL_DAYS:-30}
+      DELEGATION_RECONCILE_STALE_DAYS: ${DELEGATION_RECONCILE_STALE_DAYS:-30}
+      # Heartbeat que verifica el healthcheck de abajo (find /tmp/bot-alive):
+      # si se cambia aquí hay que actualizar el test del healthcheck también.
+      BOT_HEARTBEAT_FILE: ${BOT_HEARTBEAT_FILE:-/tmp/bot-alive}
     volumes:
       - uploads:/app/public/uploads
       - payment_proofs:/app/storage/payment-proofs

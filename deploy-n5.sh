@@ -9,7 +9,7 @@ set -e  # Exit on any error
 # --- CONFIGURACIÓN DEL N5 PRO ---
 # Alias configurado en ~/.ssh/config con llave prosolutions_galindoasc_ed25519
 SSH_TARGET="${SSH_TARGET:-galindoasc-desktop}"
-REMOTE_HOST="100.106.83.19"
+REMOTE_HOST="100.124.116.70"
 
 # Colores
 RED='\033[0;31m'
@@ -107,6 +107,10 @@ Write-Host ('>>> Construyendo imagenes (incluida la de migraciones) [build ' + \
 docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build
 if (\$LASTEXITCODE -ne 0) { exit 1 }
 
+# Tag inmutable por SHA junto a :latest — permite rollback sin rebuild con
+# APP_IMAGE=prosolutions-app:<sha> (ver PORTAINER-STACK.md, 'Rollback por tag SHA').
+foreach (\$img in @('prosolutions-app','prosolutions-bot','prosolutions-migrate')) { docker tag \"\${img}:latest\" \"\${img}:\$env:GIT_SHA\" }
+
 # Los volumenes son external (docker-compose.yml): un 'up' en host limpio
 # falla si no existen. 'docker volume create' es idempotente (no-op si ya
 # estan), asi que se aseguran antes de cada up sin tocar datos existentes.
@@ -145,6 +149,9 @@ if (\$botStatus -ne 'running') {
     docker logs prosolutions-bot --tail 40
     exit 1
 }
+
+# Limpieza de imagenes dangling; los tags :<sha> se conservan para rollback.
+docker image prune -f | Out-Null
 
 Write-Host '>>> Estado de contenedores:'
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'

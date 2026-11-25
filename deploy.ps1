@@ -2,6 +2,13 @@
 # Pensado para ejecutar EN EL N5 PRO (donde está Cursor y el proyecto).
 # Por defecto: build + migraciones (migrate deploy) + up en esta máquina. Sin SSH, sin Portainer manual.
 # Opción -Remote: desde otro PC, push a GitHub y deploy vía SSH al N5.
+#
+# *** LEGACY ***
+# Este script queda como respaldo historico. Para el deploy completo usa
+# deploy-n5.ps1 (en el N5) o deploy-n5.sh (desde Mac/Linux via SSH): ambos
+# usan .env.docker, etiquetan imagenes por SHA para rollback, hacen
+# health-poll de la app y ordenan migraciones antes de promover.
+# El modo -Remote sigue funcionando pero es minimo viable (sin health-poll).
 
 param(
     [switch]$Remote  # Solo si estás en otro PC: push y deploy vía SSH al N5
@@ -9,18 +16,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 $REMOTE_USER = "dgali"
-$REMOTE_HOST = "100.106.83.19"
+$REMOTE_HOST = "100.124.116.70"
 $REMOTE_PATH = "D:\Projectos\prosolutions_inventario_web"
 
 # Por defecto: modo local (estamos en el N5)
 if (-not $Remote) {
     Write-Host "[N5] Build, migracion y up en esta maquina..." -ForegroundColor Cyan
-    if (-not (Test-Path ".env")) { Write-Host "Falta .env en la carpeta del proyecto." -ForegroundColor Red; exit 1 }
+    # El despliegue usa .env.docker (no .env): .env es para desarrollo local
+    # con DATABASE_URL a localhost; .env.docker apunta a la red interna (db).
+    if (-not (Test-Path ".env.docker")) { Write-Host "Falta .env.docker en la carpeta del proyecto (copia .env.docker.example)." -ForegroundColor Red; exit 1 }
+    $envFile = ".env.docker"
 
     # 1) Build de todas las imagenes, incluida la de migraciones (perfil migrate).
     # GIT_SHA queda horneado en la imagen como APP_BUILD_SHA (consola /platform).
     $env:GIT_SHA = (git rev-parse --short HEAD)
-    docker compose -f docker-compose.yml --profile migrate build --no-cache
+    docker compose -f docker-compose.yml --env-file $envFile --profile migrate build --no-cache
     if ($LASTEXITCODE -ne 0) { exit 1 }
 
     # 2) DB primero; luego migraciones ANTES de promover app/bot.
@@ -29,16 +39,16 @@ if (-not $Remote) {
     # 'docker volume create' acepta UN solo volumen por llamada.
     foreach ($vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create $vol | Out-Null }
     if ($LASTEXITCODE -ne 0) { exit 1 }
-    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file $envFile up -d db
     if ($LASTEXITCODE -ne 0) { exit 1 }
-    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file $envFile --profile migrate run --rm migrate
     if ($LASTEXITCODE -ne 0) {
         Write-Host "La migracion fallo. No se promueve la app nueva; revisa el error arriba." -ForegroundColor Red
         exit 1
     }
 
     # 3) Promover solo app y bot (db ya corre).
-    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
+    docker compose -f docker-compose.portainer.yml -p prosolutions --env-file $envFile up -d --force-recreate app bot
     if ($LASTEXITCODE -ne 0) { exit 1 }
 
     # 4) Esperar readiness real: /api/health responde 503 hasta que el esquema esta listo.
@@ -65,18 +75,22 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  ProSolutions - Deploy (push + N5)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# 1) Subir a GitHub si hay cambios
-Write-Host "[1/4] Subiendo a GitHub..." -ForegroundColor Yellow
+# 1) Subir a GitHub si hay cambios (la rama ACTIVA, no siempre main:
+# este repo despliega desde deploy-secfix2 mientras dure la oleada).
+$branch = (git rev-parse --abbrev-ref HEAD).Trim()
+if (-not $branch -or $branch -eq "HEAD") {
+    Write-Host "HEAD detached: no se puede determinar la rama a desplegar." -ForegroundColor Red
+    exit 1
+}
+Write-Host "[1/4] Subiendo a GitHub (rama $branch)..." -ForegroundColor Yellow
 $hasChanges = $false
 if (git status --porcelain) { $hasChanges = $true }
 if ($hasChanges) {
     git add -A
     git commit -m "deploy: $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>$null
-    git push origin main
-    if ($LASTEXITCODE -ne 0) { Write-Host "Error en push." -ForegroundColor Red; exit 1 }
-} else {
-    Write-Host "Sin cambios para commitear." -ForegroundColor Gray
 }
+git push origin "HEAD:$branch"
+if ($LASTEXITCODE -ne 0) { Write-Host "Error en push." -ForegroundColor Red; exit 1 }
 
 # 2) Conexión al N5
 Write-Host "[2/4] Conectando al N5 ($REMOTE_HOST)..." -ForegroundColor Yellow
@@ -96,24 +110,25 @@ if (-not (Test-Path -LiteralPath `$path)) {
     Set-Location -LiteralPath `$parent
     git clone https://github.com/codeaeternum/prosolutions_inventario_web.git
     Set-Location -LiteralPath `$path
-    Write-Host 'Repo clonado. Crea .env en el N5 en ' `$path ' y vuelve a ejecutar deploy.'
+    Write-Host 'Repo clonado. Crea .env.docker en el N5 en ' `$path ' y vuelve a ejecutar deploy.'
     exit 1
 }
 Set-Location -LiteralPath `$path
-if (-not (Test-Path '.env')) { Write-Host 'Falta .env en el N5 en ' `$path; exit 1 }
+if (-not (Test-Path '.env.docker')) { Write-Host 'Falta .env.docker en el N5 en ' `$path; exit 1 }
 git fetch --all
-git reset --hard origin/main
+git checkout $branch
+git reset --hard "origin/$branch"
 git clean -fd
 `$env:GIT_SHA = (git rev-parse --short HEAD)
-docker compose -f docker-compose.yml --profile migrate build --no-cache
+docker compose -f docker-compose.yml --env-file .env.docker --profile migrate build --no-cache
 if (`$LASTEXITCODE -ne 0) { exit 1 }
 foreach (`$vol in @('prosolutions_postgres_data','prosolutions_uploads','prosolutions_payment_proofs','prosolutions_repair_evidence')) { docker volume create `$vol | Out-Null }
 if (`$LASTEXITCODE -ne 0) { exit 1 }
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d db
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d db
 if (`$LASTEXITCODE -ne 0) { exit 1 }
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env --profile migrate run --rm migrate
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker --profile migrate run --rm migrate
 if (`$LASTEXITCODE -ne 0) { Write-Host 'Migracion fallo; app no promovida.'; exit 1 }
-docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env up -d --force-recreate app bot
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
 if (`$LASTEXITCODE -ne 0) { exit 1 }
 Write-Host 'Contenedores actualizados. Esperando health...'
 Start-Sleep -Seconds 15

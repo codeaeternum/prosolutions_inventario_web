@@ -35,6 +35,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Credenciales del pilot E2E que lee scripts/e2e-pilot.sh — nunca versionar
+# (e2e/.env.pilot ya cae bajo .env*; los *.env sin punto inicial no).
+e2e/pilot.env
+pilot.env
 # Los *.example sí se versionan: son la plantilla documentada de variables.
 !.env.example
 !.env.docker.example

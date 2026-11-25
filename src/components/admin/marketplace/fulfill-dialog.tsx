@@ -177,12 +177,12 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
       </div>
 
       <div className="space-y-1.5">
-        <Label>Método de pago *</Label>
+        <Label htmlFor="mful-method">Método de pago *</Label>
         <Select
           value={paymentMethod}
           onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
         >
-          <SelectTrigger>
+          <SelectTrigger id="mful-method">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -209,11 +209,11 @@ function FulfillForm({ request, onClose, onFulfilled, formatPrice }: FulfillForm
       )}
 
       <div className="space-y-1.5">
-        <Label>
+        <Label htmlFor="mful-account">
           Cuenta de taller {needsAccount ? "*" : "(opcional)"}
         </Label>
         <Select value={customerId} onValueChange={setCustomerId}>
-          <SelectTrigger>
+          <SelectTrigger id="mful-account">
             <SelectValue placeholder="Sin cuenta ligada" />
           </SelectTrigger>
           <SelectContent>

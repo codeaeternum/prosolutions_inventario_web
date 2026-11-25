@@ -26,6 +26,10 @@ La conexión está **forzada** en los tests a `127.0.0.1:55433/hardening` con us
 RUN_DATABASE_TESTS=1 npx vitest run --project integration
 ```
 
+## En CI
+
+El workflow `.github/workflows/ci.yml` corre estas pruebas en el job `integration`: levanta `postgres:16-alpine` como service container (mismas credenciales del fixture: `audit`/`hardening` en el puerto host `55433`), aplica `npx prisma migrate deploy` y ejecuta `RUN_DATABASE_TESTS=1 npx vitest run --project integration`.
+
 - El proyecto `integration` corre **archivo por archivo** (`fileParallelism: false`)
   porque todas comparten la misma base: en paralelo chocan las transacciones
   serializables y agotan los reintentos de `operation()`.

@@ -38,7 +38,7 @@ import { DeviceModelsImportDialog } from "@/components/admin/taller/import-model
 import { WorkshopConfigEditor } from "@/components/admin/configuracion/taller-config"
 import { DEFAULT_EQUIPMENT_TYPES } from "@/components/admin/configuracion/editable-list"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
-import { cn } from "@/lib/utils"
+import { cn, formatCents } from "@/lib/utils"
 
 // Precio específico del servicio: deviceModelId (modelo exacto) XOR
 // equipmentType (tipo genérico); gana sobre priceCents al recibir el equipo.
@@ -65,7 +65,7 @@ const emptyModelForm: DeviceModelForm = { brand: "", model: "", code: "", type: 
 const DEVICE_MODEL_TYPES = ["SMARTPHONE", "TABLET", "LAPTOP", "CONSOLA", "SMARTWATCH", "TV", "PANTALLA", "OTRO"]
 
 const emptyForm: ServiceForm = { name: "", price: "", equipmentType: "", description: "" }
-const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
+const money = formatCents
 
 function equipmentIcon(type: string | null): LucideIcon {
   const value = (type ?? "").toLowerCase()

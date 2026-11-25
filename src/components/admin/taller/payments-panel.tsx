@@ -14,6 +14,7 @@ import {
 } from "@/lib/workshop-money"
 import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { CollapsibleSection } from "@/components/admin/taller/collapsible-section"
+import { formatCents } from "@/lib/utils"
 
 export type WorkshopPayment = {
   id: string; amount: number; method: string; purpose: string | null
@@ -38,7 +39,8 @@ export const emptySettleForm: SettleForm = { method: "", deliveredTo: "", delive
 export const emptyRefundForm: RefundForm = { amount: "", method: "", note: "", reference: "" }
 
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
-const money = (value: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(value / 100)
+// Los importes de esta pantalla viajan en centavos (workshop-money).
+const money = formatCents
 const date = (value: string) => new Date(value).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })
 const methodLabels: Record<string, string> = { CASH: "Efectivo", CARD: "Tarjeta", TRANSFER: "Transferencia" }
 const purposeLabels: Record<string, string> = { ADVANCE: "Anticipo", ABONO: "Abono", SETTLEMENT: "Liquidación", REFUND: "Reembolso" }

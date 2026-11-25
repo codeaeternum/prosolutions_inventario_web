@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { checkAndRecord, checkOnly, getClientIp, getRateLimitStats, recordFailure } from "@/lib/rate-limit"
+import { checkAndRecord, checkOnly, getClientIp, getRateLimitStats, loginAttemptAllowed, recordFailure, recordLoginFailure } from "@/lib/rate-limit"
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs() })
 describe("login throttling", () => {
   it("does not trust user supplied forwarding headers on desktop/direct access", () => {
@@ -81,5 +81,86 @@ describe("login throttling", () => {
     expect(checkOnly("login-account", "u@test.mx", 2)).toBe(false)
     vi.advanceTimersByTime(1001)
     expect(checkOnly("login-account", "u@test.mx", 2)).toBe(true)
+  })
+})
+
+describe("TRUST_PROXY_SECRET — candado de los headers de proxy", () => {
+  it("con secreto configurado, solo honra los headers si x-origin-secret coincide", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "true")
+    vi.stubEnv("TRUST_PROXY_SECRET", "s3cret-origen")
+    const forged = { headers: { "cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "198.51.100.7" } }
+    // Sin el header del proxy: la IP forjada no abre bucket — cae al
+    // compartido "direct-clients" (la LAN :3005 no puede spoofear).
+    expect(getClientIp(new Request("https://app.invalid", forged))).toBe("direct-clients")
+    // Con el secreto correcto (lo inyecta la Transform Rule de Cloudflare):
+    // vuelve a mandar la cadena CF-Connecting-IP → XFF → X-Real-IP.
+    expect(getClientIp(new Request("https://app.invalid", {
+      headers: { "cf-connecting-ip": "203.0.113.9", "x-origin-secret": "s3cret-origen" },
+    }))).toBe("203.0.113.9")
+    // Secreto incorrecto: tampoco.
+    expect(getClientIp(new Request("https://app.invalid", {
+      headers: { "cf-connecting-ip": "203.0.113.9", "x-origin-secret": "nope" },
+    }))).toBe("direct-clients")
+    // Tras el gate, la preferencia de headers se conserva (XFF si no hay CF).
+    expect(getClientIp(new Request("https://app.invalid", {
+      headers: { "x-forwarded-for": "198.51.100.7", "x-origin-secret": "s3cret-origen" },
+    }))).toBe("198.51.100.7")
+  })
+
+  it("sin secreto configurado conserva el comportamiento y avisa una sola vez", async () => {
+    vi.resetModules() // el flag de "ya avisé" vive en el módulo
+    vi.stubEnv("TRUST_PROXY_HEADERS", "true")
+    vi.stubEnv("TRUST_PROXY_SECRET", "")
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const fresh = await import("@/lib/rate-limit")
+      const req = () => new Request("https://app.invalid", { headers: { "cf-connecting-ip": "203.0.113.9" } })
+      expect(fresh.getClientIp(req())).toBe("203.0.113.9") // comportamiento previo
+      fresh.getClientIp(req())
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0][0]).toContain("TRUST_PROXY_SECRET")
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})
+
+describe("login lockout por par (IP, cuenta) — anti lockout-DoS", () => {
+  it("los fallos del atacante solo bloquean su (IP, cuenta), no a la víctima", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const victim = `victim-${Math.random()}@test.mx`
+    // 10 fallos contra la cuenta de la víctima desde la IP del atacante…
+    for (let i = 0; i < 10; i++) recordLoginFailure("6.6.6.6", victim)
+    // …agotan el bucket del atacante (él queda fuera)…
+    expect(loginAttemptAllowed("6.6.6.6", victim)).toBe(false)
+    // …pero la víctima conserva sus intentos desde su propia IP: el par no
+    // se comparte — antes el bucket era solo la cuenta y quedaba bloqueada.
+    expect(loginAttemptAllowed("203.0.113.7", victim)).toBe(true)
+  })
+
+  it("el techo por cuenta (más alto) frena el stuffing distribuido", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const acct = `acct-${Math.random()}@test.mx`
+    // 50 fallos desde 50 IPs distintas llenan el bucket por cuenta.
+    for (let i = 0; i < 50; i++) recordLoginFailure(`10.9.9.${i}`, acct)
+    expect(loginAttemptAllowed("10.9.9.200", acct)).toBe(false)
+    // Pero 10 desde una sola IP no bastan (aunque el atacante rotara IP,
+    // cada par nuevo sigue contando contra la cuenta hasta el techo).
+    const other = `other-${Math.random()}@test.mx`
+    for (let i = 0; i < 10; i++) recordLoginFailure("6.6.6.6", other)
+    expect(loginAttemptAllowed("203.0.113.9", other)).toBe(true)
+  })
+
+  it("backoff exponencial: insistir sobre el par bloqueado estira su ventana", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-11T12:00:00Z"))
+    const id = `bk-${Math.random()}@test.mx`
+    for (let i = 0; i < 10; i++) recordLoginFailure("6.6.6.6", id)
+    // El intento #11 ya bloqueado rearma la ventana ×2 (~30 min desde ahora).
+    expect(loginAttemptAllowed("6.6.6.6", id)).toBe(false)
+    vi.advanceTimersByTime(16 * 60 * 1000)
+    // Pasada la ventana base de 15 min seguiría fuera: el backoff ganó.
+    expect(loginAttemptAllowed("6.6.6.6", id)).toBe(false)
+    // La víctima en otra IP jamás se vio afectada.
+    expect(loginAttemptAllowed("203.0.113.8", id)).toBe(true)
   })
 })

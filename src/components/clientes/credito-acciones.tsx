@@ -110,8 +110,9 @@ export function EditarLimiteDialog({ open, onOpenChange, user, onSuccess }: Cred
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label>Nuevo límite</Label>
+            <Label htmlFor="credit-limit-input">Nuevo límite</Label>
             <Input
+              id="credit-limit-input"
               type="number"
               min="0"
               step="0.01"
@@ -227,8 +228,9 @@ export function CargoManualDialog({ open, onOpenChange, user, onSuccess }: Credi
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label>Monto del cargo</Label>
+            <Label htmlFor="cargo-amount">Monto del cargo</Label>
             <Input
+              id="cargo-amount"
               type="number"
               min="0.01"
               step="0.01"
@@ -250,8 +252,9 @@ export function CargoManualDialog({ open, onOpenChange, user, onSuccess }: Credi
             )}
           </div>
           <div className="space-y-2">
-            <Label>Nota del cargo</Label>
+            <Label htmlFor="cargo-notes">Nota del cargo</Label>
             <Textarea
+              id="cargo-notes"
               placeholder="Ej: Cargo por servicio, ajuste o reposición"
               value={notes}
               disabled={loading}

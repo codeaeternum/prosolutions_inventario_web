@@ -26,6 +26,11 @@ export interface TurnoDia {
   open?: boolean
 }
 
+/** Tope de filas por fuente (bitácora, operaciones, checadas): acota la
+ *  memoria del barrido de 60 días. 50k eventos ≈ 830/día — muy por encima de
+ *  lo que mueve un mostrador real. */
+const TURNOS_ROW_CAP = 50_000
+
 /**
  * Turnos: cuando el empleado tiene eventos de checador (ClockEvent) en el
  * rango, su jornada sale de pares IN→OUT reales (lib/asistencia). Sin
@@ -42,12 +47,18 @@ export async function getTurnos(businessId: string, dias = 14): Promise<TurnoDia
     prisma.auditEvent.findMany({
       where: { businessId, createdAt: { gte: desde } },
       select: { actorId: true, action: true, createdAt: true },
-      orderBy: { createdAt: "asc" },
+      // desc + take: bajo el tope quedan los eventos RECIENTES (un negocio
+      // muy activo puede superar la cota en 60 días; lo que se pierde es la
+      // cola más vieja, no la jornada de esta semana). El orden no importa:
+      // el bucket agrupa por actor+día comparando timestamps.
+      orderBy: { createdAt: "desc" },
+      take: TURNOS_ROW_CAP,
     }),
     prisma.businessOperation.findMany({
       where: { businessId, createdAt: { gte: desde } },
       select: { actorId: true, kind: true, createdAt: true },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: "desc" },
+      take: TURNOS_ROW_CAP,
     }),
     prisma.user.findMany({
       where: { businessId },
@@ -56,7 +67,8 @@ export async function getTurnos(businessId: string, dias = 14): Promise<TurnoDia
     prisma.clockEvent.findMany({
       where: { businessId, at: { gte: desde } },
       select: { id: true, userId: true, type: true, at: true, branchId: true },
-      orderBy: { at: "asc" },
+      orderBy: { at: "desc" },
+      take: TURNOS_ROW_CAP,
     }),
   ])
 

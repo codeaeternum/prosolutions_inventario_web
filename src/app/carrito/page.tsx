@@ -291,13 +291,18 @@ function CartView() {
                 {/* Reservation Type & Checkout */}
                 <Card id="checkout" className="border-primary/20 shadow-md scroll-mt-20">
                     <CardContent className="p-4 space-y-4">
-                        <h3 className="font-semibold">Tipo de Reserva</h3>
-                        <div className={`grid gap-3 ${creditInfo ? "grid-cols-3" : "grid-cols-2"}`}>
+                        <h2 id="tipo-reserva-titulo" className="font-semibold">Tipo de Reserva</h2>
+                        <div
+                            className={`grid gap-3 ${creditInfo ? "grid-cols-3" : "grid-cols-2"}`}
+                            role="radiogroup"
+                            aria-labelledby="tipo-reserva-titulo"
+                        >
                             <div
                                 className={`border rounded-lg p-3 cursor-pointer transition-colors ${reservationType === "TEMPORARY" ? "bg-primary/5 border-primary ring-1 ring-primary" : "hover:bg-muted/50"}`}
-                                role="button"
+                                role="radio"
                                 tabIndex={loading || proofUploading ? -1 : 0}
-                                aria-pressed={reservationType === "TEMPORARY"}
+                                aria-checked={reservationType === "TEMPORARY"}
+                                aria-disabled={loading || proofUploading || undefined}
                                 onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !loading && !proofUploading) { event.preventDefault(); setReservationType("TEMPORARY") } }}
                                 onClick={() => { if (!loading && !proofUploading) setReservationType("TEMPORARY") }}
                             >
@@ -307,9 +312,10 @@ function CartView() {
                             </div>
                             <div
                                 className={`border rounded-lg p-3 cursor-pointer transition-colors ${reservationType === "DEPOSIT" ? "bg-primary/5 border-primary ring-1 ring-primary" : "hover:bg-muted/50"}`}
-                                role="button"
+                                role="radio"
                                 tabIndex={loading || proofUploading ? -1 : 0}
-                                aria-pressed={reservationType === "DEPOSIT"}
+                                aria-checked={reservationType === "DEPOSIT"}
+                                aria-disabled={loading || proofUploading || undefined}
                                 onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !loading && !proofUploading) { event.preventDefault(); setReservationType("DEPOSIT") } }}
                                 onClick={() => { if (!loading && !proofUploading) setReservationType("DEPOSIT") }}
                             >
@@ -320,9 +326,10 @@ function CartView() {
                             {creditInfo && creditInfo.creditLimit != null && creditInfo.creditLimit > 0 && (
                                 <div
                                     className={`border rounded-lg p-3 cursor-pointer transition-colors ${reservationType === "CREDIT" ? "bg-primary/5 border-primary ring-1 ring-primary" : "hover:bg-muted/50"}`}
-                                    role="button"
+                                    role="radio"
                                 tabIndex={loading || proofUploading ? -1 : 0}
-                                aria-pressed={reservationType === "CREDIT"}
+                                aria-checked={reservationType === "CREDIT"}
+                                aria-disabled={loading || proofUploading || undefined}
                                 onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !loading && !proofUploading) { event.preventDefault(); setReservationType("CREDIT") } }}
                                 onClick={() => { if (!loading && !proofUploading) setReservationType("CREDIT") }}
                                 >

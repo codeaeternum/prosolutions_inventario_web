@@ -22,16 +22,37 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
 // queda protegido: la app solo los llama same-origin.
 const ORIGIN_EXEMPT_PREFIXES = ["/api/auth/", "/api/cron/", "/api/reservations/check-expiring"]
 
-// Hosts cuyo Origin se acepta: el propio de la request (incluye puerto en dev),
-// el de NEXTAUTH_URL (URL pública canónica — cubre requests que entran por un
-// host interno pero traen el Origin público) y ALLOWED_ORIGINS en CSV.
+// Hosts cuyo Origin se acepta: el de NEXTAUTH_URL (URL pública canónica —
+// cubre requests que entran por un host interno pero traen el Origin
+// público), el origen LAN del taller y ALLOWED_ORIGINS en CSV.
+// El Host de la request YA NO cuenta: en un DNS-rebinding el navegador
+// mandaría Origin == Host del atacante y pasaría la barrera — la allowlist
+// se deriva solo de configuración, nunca del propio request.
+// Única excepción: fuera de producción (next dev, tests) se acepta el
+// propio host para no romper el flujo local — el rebinding no aplica en
+// loopback.
 function allowedOriginHosts(req: NextRequest): Set<string> {
   const hosts = new Set<string>()
-  const own = req.headers.get("host") ?? req.nextUrl.host
-  if (own) hosts.add(own.toLowerCase())
+  if (process.env.NODE_ENV !== "production") {
+    const own = req.headers.get("host") ?? req.nextUrl.host
+    if (own) hosts.add(own.toLowerCase())
+  }
   try {
     if (process.env.NEXTAUTH_URL) hosts.add(new URL(process.env.NEXTAUTH_URL).host.toLowerCase())
   } catch { /* NEXTAUTH_URL malformada no tumba la barrera */ }
+  // Origen LAN del taller: la app se publica en http://<APP_BIND_IP>:3005
+  // (bind del compose) y los formularios del taller postean con ese Origin.
+  // APP_BIND_IP no viaja al contenedor como env: el default replica el del
+  // compose (192.168.1.195); si cambia el bind hay que definir la env en el
+  // contenedor o añadir el host a ALLOWED_ORIGINS.
+  const lanIp = (process.env.APP_BIND_IP ?? "").trim().replace(/^\[|\]$/g, "") || "192.168.1.195"
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(lanIp)) {
+    hosts.add(`${lanIp}:3005`)
+  } else if (lanIp.includes(":")) {
+    hosts.add(`[${lanIp}]:3005`) // IPv6 literal con puerto va entre corchetes
+  }
+  // Un APP_BIND_IP que no sea IP no abre ningún origen extra: un typo en la
+  // env no debe convertirse en una entrada de la allowlist.
   for (const entry of (process.env.ALLOWED_ORIGINS ?? "").split(",")) {
     const value = entry.trim()
     if (!value) continue

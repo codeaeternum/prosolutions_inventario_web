@@ -221,9 +221,9 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                     </div>
                     {branches.length > 1 && (
                         <div className="w-full sm:w-44 space-y-1">
-                            <Label className="text-xs">Sucursal</Label>
+                            <Label htmlFor="mov-sucursal" className="text-xs">Sucursal</Label>
                             <Select value={branch} onValueChange={setBranch}>
-                                <SelectTrigger>
+                                <SelectTrigger id="mov-sucursal">
                                     <SelectValue placeholder="Todas" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -236,9 +236,9 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                         </div>
                     )}
                     <div className="w-full sm:w-36 space-y-1">
-                        <Label className="text-xs">Periodo</Label>
+                        <Label htmlFor="mov-periodo" className="text-xs">Periodo</Label>
                         <Select value={String(days)} onValueChange={v => setDays(parseInt(v, 10))}>
-                            <SelectTrigger>
+                            <SelectTrigger id="mov-periodo">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -312,14 +312,14 @@ export function MovimientosPanel({ branches }: { branches: { id: string; name: s
                         <table className="w-full min-w-[860px] text-sm">
                             <thead>
                                 <tr className="border-b text-xs text-muted-foreground">
-                                    <th className="px-2 py-1.5 text-left font-medium">Fecha</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Tipo</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Sucursal</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Actor</th>
-                                    <th className="px-2 py-1.5 text-right font-medium">Monto</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Método</th>
-                                    <th className="px-2 py-1.5 text-left font-medium">Referencia</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Fecha</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Tipo</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Descripción</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Sucursal</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Actor</th>
+                                    <th scope="col" className="px-2 py-1.5 text-right font-medium">Monto</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Método</th>
+                                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Referencia</th>
                                 </tr>
                             </thead>
                             <tbody>

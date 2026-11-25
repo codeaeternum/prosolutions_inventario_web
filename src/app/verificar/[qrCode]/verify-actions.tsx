@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { CheckCircle, Loader2, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { formatPrice } from "@/lib/utils"
 
 interface VerifyActionsProps {
   paymentMethod: string | null
@@ -71,7 +72,7 @@ export function VerifyActions({
         </div>
       )}
 
-      {canComplete && !completed && paymentMethod !== "CREDIT" && due > 0 && <label className="block text-sm">Saldo por recibir: {new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(due)}
+      {canComplete && !completed && paymentMethod !== "CREDIT" && due > 0 && <label className="block text-sm">Saldo por recibir: {formatPrice(due)}
         <select className="mt-2 w-full rounded-md border bg-background p-2" aria-label="Medio de pago del saldo" value={finalPaymentMethod} disabled={completing} onChange={event => setFinalPaymentMethod(event.target.value)}>
           <option value="">Selecciona el medio de pago</option><option value="EFECTIVO">Efectivo</option><option value="TARJETA">Tarjeta</option><option value="TRANSFERENCIA">Transferencia</option>
         </select></label>}

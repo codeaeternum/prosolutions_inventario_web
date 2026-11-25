@@ -11,6 +11,7 @@ import {
   type Transaction,
 } from "@/lib/domain/operations"
 import { businessFailure } from "@/lib/domain/http"
+import { priceSchema } from "@/lib/domain/products"
 import { diffChanges, money, recordAudit, type AuditChanges } from "@/lib/audit"
 
 /**
@@ -41,15 +42,18 @@ type PricePatch = {
   costPrice?: number
 }
 
+// `set` RECHAZA precios con más de dos decimales (priceSchema compartido —
+// igual que el alta/edición): un ajuste que dejara 19.999 haría la pieza
+// imposible de cobrar. Mejor un 400 explícito que un redondeo silencioso.
 const setSchema = z.object({
-  retailPrice: z.number().min(0, "Precio al público debe ser ≥ 0").optional(),
-  wholesalePrice: z.number().min(0, "Precio aliado debe ser ≥ 0").optional(),
+  retailPrice: priceSchema("Precio al público").optional(),
+  wholesalePrice: priceSchema("Precio aliado").optional(),
   // Alias del precio aliado aceptado por el contrato del cliente.
-  allyPrice: z.number().min(0, "Precio aliado debe ser ≥ 0").optional(),
+  allyPrice: priceSchema("Precio aliado").optional(),
   // null = limpiar el precio de taller propio (fallback a retailPrice);
   // ausente = no tocarlo.
-  internalPrice: z.number().min(0, "Precio de taller propio debe ser ≥ 0").nullable().optional(),
-  costPrice: z.number().min(0, "Precio de costo debe ser ≥ 0").optional(),
+  internalPrice: priceSchema("Precio de taller propio").nullable().optional(),
+  costPrice: priceSchema("Precio de costo").optional(),
 })
 
 const bulkSchema = z

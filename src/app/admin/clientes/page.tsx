@@ -49,7 +49,7 @@ function ClientesHub() {
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Clientes</h2>
+        <h1 className="text-3xl font-bold tracking-tight">Clientes</h1>
         <p className="text-muted-foreground">{DESCRIPTIONS[tab]}</p>
       </div>
 

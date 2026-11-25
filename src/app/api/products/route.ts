@@ -9,6 +9,7 @@ import { checkAndRecord, getClientIp } from "@/lib/rate-limit"
 import { normalizeProductName } from "@/lib/utils"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, operation, operationKeySchema, releaseStock } from "@/lib/domain/operations"
+import { priceSchema } from "@/lib/domain/products"
 import { businessFailure } from "@/lib/domain/http"
 import { lowStockProducts, syncLowStockAlerts } from "@/lib/low-stock"
 import { money, recordAudit } from "@/lib/audit"
@@ -18,15 +19,17 @@ const createProductSchema = z
     name: z.string().min(1, "El nombre es requerido").max(500),
     description: z.string().max(2000).optional().nullable().default(""),
     barcode: z.string().max(100).optional().nullable().default(""),
-    retailPrice: z.coerce.number().min(0, "Precio al público debe ser ≥ 0"),
+    // priceSchema (lib/domain/products): ≥ 0 y MÁXIMO dos decimales — un
+    // tercer decimal rompería cents() en cada checkout.
+    retailPrice: priceSchema("Precio al público"),
     // Vacío/ausente = mismo que el público (evita que "" coercionee a 0 y la
     // pieza se ofrezca gratis a aliados).
     wholesalePrice: z.preprocess(
       (v) => (v === "" || v === null || v === undefined ? undefined : v),
-      z.coerce.number().min(0, "Precio de taller debe ser ≥ 0").optional()
+      priceSchema("Precio de taller").optional()
     ),
-    internalPrice: z.coerce.number().min(0, "Precio de taller propio debe ser ≥ 0").optional().nullable(),
-    costPrice: z.coerce.number().min(0, "Precio de costo debe ser ≥ 0").optional().nullable(),
+    internalPrice: priceSchema("Precio de taller propio").optional().nullable(),
+    costPrice: priceSchema("Precio de costo").optional().nullable(),
     stock: z.coerce.number().int().min(0).default(0),
     minStock: z.coerce.number().int().min(0).default(1),
     images: z.array(z.string().max(2000)).optional().default([]),
@@ -236,6 +239,8 @@ export async function POST(req: Request) {
         flat.fieldErrors.modelIds?.[0] ??
         flat.fieldErrors.retailPrice?.[0] ??
         flat.fieldErrors.wholesalePrice?.[0] ??
+        flat.fieldErrors.internalPrice?.[0] ??
+        flat.fieldErrors.costPrice?.[0] ??
         "Datos inválidos"
       return NextResponse.json({ error: msg }, { status: 400 })
     }

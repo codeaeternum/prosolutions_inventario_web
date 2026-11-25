@@ -3,8 +3,10 @@ import { assertOperationBranch, getSession, requireModule } from "@/lib/api-auth
 import { businessIdOf } from "@/lib/tenant"
 import { prisma } from "@/lib/prisma"
 import { BusinessError, releaseStock, takeStock, transaction } from "@/lib/domain/operations"
+import { isPriceValue } from "@/lib/domain/products"
 import { syncLowStockAlerts } from "@/lib/low-stock"
 import { recordAudit } from "@/lib/audit"
+import { readBoundedBody, requestWithBody } from "@/lib/bounded-body"
 
 // xlsx (~1 MB) se carga solo cuando este endpoint se usa, no en el bundle
 // común del servidor: el import estático lo arrastraba a cada cold start.
@@ -14,6 +16,9 @@ type XlsxModule = typeof import("xlsx")
 // corre su propia transacción serializable — 10 MB / 5,000 filas por tanda.
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const MAX_ROWS = 5_000
+// Margen para el framing multipart (boundary, headers de parte): el
+// Content-Length declara archivo + empaque, no solo el .xlsx.
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 const isBlankCell = (value: unknown) => value === undefined || value === null || String(value).trim() === ""
 
@@ -22,12 +27,15 @@ const isBlankCell = (value: unknown) => value === undefined || value === null ||
  * valor del producto). Devuelve null cuando el contenido no es usable: antes
  * `Number(x) || 0` convertía texto a 0 y dejaba pasar negativos, lo que
  * brincaba el producto en el POS al fallar cents().
+ * Con `money` además exige la regla de precio compartida (isPriceValue: ≥ 0,
+ * tope y MÁXIMO dos decimales) — un 19.999 importado sería incobrable.
  */
-function numericCell(value: unknown, opts: { integer?: boolean } = {}): number | undefined | null {
+function numericCell(value: unknown, opts: { integer?: boolean; money?: boolean } = {}): number | undefined | null {
   if (isBlankCell(value)) return undefined
   const n = typeof value === "number" ? value : Number(String(value).trim())
   if (!Number.isFinite(n) || n < 0) return null
   if (opts.integer && !Number.isInteger(n)) return null
+  if (opts.money && !isPriceValue(n)) return null
   return n
 }
 
@@ -167,6 +175,16 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
     try {
+        // Rechazo temprano por Content-Length: si el cuerpo completo ya supera
+        // el tope del Excel + framing, no hace falta buferarlo — formData()
+        // cargaba TODO el cuerpo en memoria y con chunked un POST gigante
+        // tumbaba el proceso por OOM. El chequeo de file.size sigue como
+        // guarda real para cuerpos sin header (mismo patrón que uploads).
+        const declared = Number(request.headers.get("content-length"))
+        if (Number.isFinite(declared) && declared > MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES) {
+            return NextResponse.json({ error: "El archivo supera el máximo de 10 MB" }, { status: 413 })
+        }
+
         const XLSX: XlsxModule = await import("xlsx")
         const result = await requireModule("inventario")
         if (result.error) return result.error
@@ -175,7 +193,18 @@ export async function POST(request: NextRequest) {
         const businessId = businessIdOf(session)
         const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { homeBranchId: true } })
 
-        const formData = await request.formData()
+        // Cota real del cuerpo: se cuentan los bytes del stream y se aborta
+        // (reader.cancel) al pasar el tope — Content-Length lo declara el
+        // cliente y falta con chunked, así que el guard de header de arriba
+        // es solo el rechazo temprano barato.
+        const bounded = await readBoundedBody(request, MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES)
+        if (!bounded.ok) {
+            return NextResponse.json(
+                { error: bounded.reason === "too_large" ? "El archivo supera el máximo de 10 MB" : "Archivo requerido" },
+                { status: bounded.reason === "too_large" ? 413 : 400 }
+            )
+        }
+        const formData = await requestWithBody(request, bounded.bytes).formData()
         const file = formData.get("file")
         const importBranchId = String(formData.get("branchId") || actor?.homeBranchId || "") || undefined
         // Los ajustes de stock de la importación caen a esta sucursal.
@@ -233,14 +262,14 @@ export async function POST(request: NextRequest) {
                 reject("sin nombre de producto")
                 return
             }
-            const retailPrice = numericCell(row["Precio Menudeo"])
+            const retailPrice = numericCell(row["Precio Menudeo"], { money: true })
             if (retailPrice === null) {
-                reject(`"Precio Menudeo" debe ser un número mayor o igual a 0`)
+                reject(`"Precio Menudeo" debe ser un número ≥ 0 con máximo dos decimales`)
                 return
             }
-            const wholesalePrice = numericCell(row["Precio Mayoreo"])
+            const wholesalePrice = numericCell(row["Precio Mayoreo"], { money: true })
             if (wholesalePrice === null) {
-                reject(`"Precio Mayoreo" debe ser un número mayor o igual a 0`)
+                reject(`"Precio Mayoreo" debe ser un número ≥ 0 con máximo dos decimales`)
                 return
             }
             const stock = numericCell(row["Stock"], { integer: true })

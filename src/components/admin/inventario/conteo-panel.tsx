@@ -410,7 +410,7 @@ export function ConteoPanel({ focusCountId, refreshKey = 0, onChanged }: ConteoP
                                 )}
                                 {openCounts.length > 1 && (
                                     <Select value={selectedId ?? ""} onValueChange={setActiveId}>
-                                        <SelectTrigger className="w-56">
+                                        <SelectTrigger className="w-56" aria-label="Conteo por sucursal">
                                             <SelectValue placeholder="Conteo por sucursal" />
                                         </SelectTrigger>
                                         <SelectContent>

@@ -1,25 +1,29 @@
 import { prisma } from "./prisma"
 
-let cachedBotUsername: string | null | undefined
+// Caché con TTL: el username casi nunca cambia, pero un cambio de bot o un
+// token nuevo no debe esperar un restart — a los 5 min se re-consulta (el
+// mismo patrón del caché de settings, con timestamp de expiración).
+const BOT_USERNAME_TTL_MS = 5 * 60 * 1000
+let cachedBotUsername: { value: string | null; expiresAt: number } | undefined
 
 /**
  * Username público del bot (sin @) para armar deep-links t.me/<bot>?start=…
  * Preferencia: env TELEGRAM_BOT_USERNAME; si no, se resuelve una vez con la
- * API getMe usando TELEGRAM_BOT_TOKEN y se cachea. null = no disponible (el
- * canal de verificación por Telegram queda deshabilitado sin romper nada).
+ * API getMe usando TELEGRAM_BOT_TOKEN y se cachea (TTL 5 min — éxitos y
+ * fallos por igual, así una caída de la API no recibe un getMe por llamada).
+ * null = no disponible (el canal de verificación por Telegram queda
+ * deshabilitado sin romper nada).
  */
 export async function getTelegramBotUsername(): Promise<string | null> {
-  if (cachedBotUsername !== undefined) return cachedBotUsername
+  if (cachedBotUsername && cachedBotUsername.expiresAt > Date.now()) return cachedBotUsername.value
+  const cache = (value: string | null) => {
+    cachedBotUsername = { value, expiresAt: Date.now() + BOT_USERNAME_TTL_MS }
+    return value
+  }
   const fromEnv = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "")
-  if (fromEnv) {
-    cachedBotUsername = fromEnv
-    return cachedBotUsername
-  }
+  if (fromEnv) return cache(fromEnv)
   const token = process.env.TELEGRAM_BOT_TOKEN
-  if (!token) {
-    cachedBotUsername = null
-    return null
-  }
+  if (!token) return cache(null)
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
       signal: AbortSignal.timeout(5000),
@@ -28,12 +32,11 @@ export async function getTelegramBotUsername(): Promise<string | null> {
       ok?: boolean
       result?: { username?: string }
     } | null
-    cachedBotUsername = res.ok && data?.ok && data.result?.username ? data.result.username : null
+    return cache(res.ok && data?.ok && data.result?.username ? data.result.username : null)
   } catch (error) {
     console.error("[telegram] getMe falló:", error)
-    cachedBotUsername = null
+    return cache(null)
   }
-  return cachedBotUsername
 }
 
 /**

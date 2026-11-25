@@ -457,9 +457,9 @@ export function LayawaysSheet({ open, onOpenChange, branchId, refreshKey, autoOp
                                 <span className="text-xl font-bold text-primary">{formatPrice(docBalance(payTarget))}</span>
                             </div>
                             <div className="space-y-1.5">
-                                <Label>Método de pago</Label>
+                                <Label htmlFor="layaway-pay-method">Método de pago</Label>
                                 <Select value={payMethod} onValueChange={v => setPayMethod(v as PosPaymentMethod)}>
-                                    <SelectTrigger disabled={paying}>
+                                    <SelectTrigger id="layaway-pay-method" disabled={paying}>
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>

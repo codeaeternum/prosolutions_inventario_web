@@ -8,6 +8,7 @@ import { orderTotalCents } from "@/lib/workshop-money"
 import { businessFailure } from "@/lib/domain/http"
 import { operation, operationKeySchema } from "@/lib/domain/operations"
 import { getBusinessSetting } from "@/lib/settings"
+import { businessDayKey, zonedTimeToUtc } from "@/lib/business-time"
 import { ORDER_FOLIO_DIGITS_KEY, parseFolioDigits, repairFolio, repairLabels } from "@/lib/workshop-labels"
 
 const boardStages: (keyof typeof repairLabels)[] = [
@@ -49,8 +50,12 @@ export async function GET(req: Request) {
     if (status && !Object.hasOwn(repairLabels, status)) return NextResponse.json({ error: "Estado inválido" }, { status: 400 })
     if (view && !["debt", "today", "overdue", "mine", "partner"].includes(view)) return NextResponse.json({ error: "Vista inválida" }, { status: 400 })
     const now = new Date()
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const dayEnd = new Date(dayStart.getTime() + 86400000)
+    // "Hoy" y "vencida" se deciden en el día del NEGOCIO (America/Mexico_City
+    // vía business-time): el servidor corre en UTC y su medianoche desfasa
+    // ~6 h las órdenes prometidas para hoy.
+    const [bizY, bizM, bizD] = businessDayKey(now).split("-").map(Number)
+    const dayStart = zonedTimeToUtc(bizY, bizM, bizD)
+    const dayEnd = zonedTimeToUtc(bizY, bizM, bizD + 1)
     const openStages = Object.keys(repairLabels).filter(s => !["DELIVERED", "CANCELLED"].includes(s))
     // Los alcances con OR (aliados y búsqueda) viajan dentro de AND para que
     // combinarlos no pise un OR con otro en el mismo nivel del where.

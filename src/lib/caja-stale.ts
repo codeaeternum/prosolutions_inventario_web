@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@/generated/prisma/client"
 import { prisma } from "@/lib/prisma"
+import { businessDayKey, zonedTimeToUtc } from "@/lib/business-time"
 
 /**
  * Cajas llevas >48 h abiertas: casi siempre es un cierre olvidado (el
@@ -12,7 +13,8 @@ import { prisma } from "@/lib/prisma"
  *
  * Dedup igual que los turnos largos (src/bot/commands/long-shift-alerts):
  * Notification del tenant con type "stale_register" y data.registerId; a lo
- * sumo UNA por día por caja (createdAt >= inicio del día en UTC). Sin cajas
+ * sumo UNA por día del negocio por caja (createdAt >= inicio del día en
+ * America/Mexico_City, no UTC). Sin cajas
  * viejas no se consulta ni se crea nada.
  */
 
@@ -45,9 +47,11 @@ export async function checkStaleRegisters(
   result.scanned = stale.length
   if (stale.length === 0) return result
 
-  // Inicio del día vigente: un segundo barrido hoy no vuelve a notificar;
-  // el de mañana sí (la caja sigue abierta — el olvido continúa).
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  // Inicio del día del NEGOCIO (America/Mexico_City), no del día UTC del
+  // servidor: un segundo barrido hoy no vuelve a notificar; el de mañana sí
+  // (la caja sigue abierta — el olvido continúa).
+  const [bizY, bizM, bizD] = businessDayKey(now).split("-").map(Number)
+  const dayStart = zonedTimeToUtc(bizY, bizM, bizD)
   for (const register of stale) {
     try {
       const already = await db.notification.findFirst({

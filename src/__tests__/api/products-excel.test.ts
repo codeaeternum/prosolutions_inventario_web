@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { NextRequest } from "next/server"
+import { NextRequest } from "next/server"
 
 /**
  * POST /api/products/excel — importación masiva de productos.
@@ -70,9 +70,11 @@ const session = () => ({ user: { id: "u-admin", role: "ADMIN", status: "APPROVED
 
 const post = (rows: Record<string, unknown>[], fileSize = 128) => {
   mocks.sheetToJson.mockReturnValue(rows)
-  const file = { name: "productos.xlsx", size: fileSize, arrayBuffer: async () => new ArrayBuffer(8) }
-  const formData = { get: (key: string) => (key === "file" ? file : null) }
-  return POST({ formData: async () => formData } as unknown as NextRequest)
+  // Request multipart REAL: la ruta ya no llama request.formData() directo —
+  // lee el stream acotado (readBoundedBody) y reparsea con requestWithBody.
+  const form = new FormData()
+  form.append("file", new File([new Uint8Array(fileSize)], "productos.xlsx"))
+  return POST(new NextRequest("https://app.invalid/api/products/excel", { method: "POST", body: form }))
 }
 
 beforeEach(() => {
@@ -124,9 +126,37 @@ describe("GET exportación", () => {
 })
 
 describe("límites del archivo", () => {
-  it("400 si el archivo supera 10 MB", async () => {
+  it("413 si el cuerpo supera 10 MB + framing (el stream acotado aborta antes del parse)", async () => {
     const res = await post([{ Nombre: "X" }], 11 * 1024 * 1024)
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(413)
+    expect(mocks.txProductCreate).not.toHaveBeenCalled()
+  })
+
+  it("413 por Content-Length antes de autenticar o leer el cuerpo", async () => {
+    const res = await POST(new NextRequest("https://app.invalid/api/products/excel", {
+      method: "POST",
+      headers: { "content-length": String(11 * 1024 * 1024) },
+    }))
+    expect(res.status).toBe(413)
+    expect(mocks.auth).not.toHaveBeenCalled()
+  })
+
+  it("413 cuando el stream supera el tope aunque el Content-Length mienta", async () => {
+    // Chunked o header mentiroso: el guard de header no aplica y el coto
+    // real lo pone readBoundedBody contando bytes del stream.
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(11 * 1024 * 1024))
+        controller.close()
+      },
+    })
+    const res = await POST(new NextRequest("https://app.invalid/api/products/excel", {
+      method: "POST",
+      headers: { "content-length": "100", "content-type": "multipart/form-data; boundary=x" },
+      body: stream,
+      duplex: "half",
+    }))
+    expect(res.status).toBe(413)
     expect(mocks.txProductCreate).not.toHaveBeenCalled()
   })
 
@@ -138,8 +168,10 @@ describe("límites del archivo", () => {
   })
 
   it("400 sin archivo", async () => {
-    const formData = { get: () => null }
-    const res = await POST({ formData: async () => formData } as unknown as NextRequest)
+    const res = await POST(new NextRequest("https://app.invalid/api/products/excel", {
+      method: "POST",
+      body: new FormData(),
+    }))
     expect(res.status).toBe(400)
   })
 })
@@ -147,6 +179,10 @@ describe("límites del archivo", () => {
 describe("validación por fila (sin coerción silenciosa)", () => {
   it.each([
     ["precio negativo", { Nombre: "A", "Precio Menudeo": -5 }],
+    // Máximo dos decimales (isPriceValue): un 19.999 importado sería
+    // incobrable — cents() lo rechaza en cada checkout.
+    ["precio con tres decimales", { Nombre: "A", "Precio Menudeo": 19.999 }],
+    ["mayoreo con tres decimales", { Nombre: "A", "Precio Mayoreo": 5.555 }],
     ["precio no numérico", { Nombre: "A", "Precio Menudeo": "abc" }],
     ["precio infinito", { Nombre: "A", "Precio Menudeo": "Infinity" }],
     ["mayoreo negativo", { Nombre: "A", "Precio Mayoreo": -1 }],

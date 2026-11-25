@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -104,6 +114,7 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
     const [payTarget, setPayTarget] = useState<DebtRow | null>(null)
     const [search, setSearch] = useState("")
     const [dueFilter, setDueFilter] = useState<DueFilter>("all")
+    const [voidTarget, setVoidTarget] = useState<PaymentRow | null>(null)
     const [voidingId, setVoidingId] = useState<string | null>(null)
 
     const fetchAll = useCallback(async (signal?: AbortSignal) => {
@@ -206,10 +217,9 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
     const supplierNames = useMemo(() => new Map(balances.map(b => [b.supplier.id, b.supplier.name])), [balances])
 
     // Anular un abono: DELETE /api/supplier-payments revierte saldo y caja
-    // (solo admin; la fila queda marcada, no borrada).
+    // (solo admin; la fila queda marcada, no borrada). La confirmación se
+    // pide con AlertDialog (monto + proveedor visibles), no window.confirm.
     const voidPayment = async (payment: PaymentRow) => {
-        const label = supplierNames.get(payment.supplierId) ?? "el proveedor"
-        if (!window.confirm(`¿Anular el abono de ${formatPrice(payment.amountCents / 100)} a ${label}? El saldo vuelve a quedar pendiente.`)) return
         setVoidingId(payment.id)
         try {
             const res = await fetch("/api/supplier-payments", {
@@ -343,15 +353,15 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                                     <table className="w-full min-w-[720px] text-sm">
                                         <thead>
                                             <tr className="border-b text-xs text-muted-foreground">
-                                                <th className="px-2 py-1.5 text-left font-medium">Proveedor</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">Saldo</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">Al día</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">1-15</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">16-30</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">31-60</th>
-                                                <th className="px-2 py-1.5 text-right font-medium">60+</th>
-                                                <th className="px-2 py-1.5 text-left font-medium">Vence</th>
-                                                <th className="px-2 py-1.5" />
+                                                <th scope="col" className="px-2 py-1.5 text-left font-medium">Proveedor</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">Saldo</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">Al día</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">1-15</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">16-30</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">31-60</th>
+                                                <th scope="col" className="px-2 py-1.5 text-right font-medium">60+</th>
+                                                <th scope="col" className="px-2 py-1.5 text-left font-medium">Vence</th>
+                                                <th scope="col" className="px-2 py-1.5" />
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -448,7 +458,7 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                                                 variant="ghost"
                                                 className="h-7 px-2 text-destructive"
                                                 disabled={voidingId === p.id}
-                                                onClick={() => void voidPayment(p)}
+                                                onClick={() => setVoidTarget(p)}
                                             >
                                                 {voidingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Anular"}
                                             </Button>
@@ -460,6 +470,37 @@ export function LesDeboPanel({ isAdmin }: { isAdmin: boolean }) {
                     </CardContent>
                 </Card>
             )}
+
+            {/* Confirmación destructiva de anulación: monto y proveedor visibles. */}
+            <AlertDialog open={voidTarget !== null} onOpenChange={o => { if (!o && voidingId === null) setVoidTarget(null) }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Anular este abono?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {voidTarget && (
+                                <>
+                                    Se anulará el abono de <span className="font-semibold">{formatPrice(voidTarget.amountCents / 100)}</span> a <span className="font-semibold">{supplierNames.get(voidTarget.supplierId) ?? "el proveedor"}</span>. El saldo vuelve a quedar pendiente.
+                                </>
+                            )}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={voidingId !== null}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            variant="destructive"
+                            disabled={voidingId !== null}
+                            onClick={() => {
+                                const payment = voidTarget
+                                setVoidTarget(null)
+                                if (payment) void voidPayment(payment)
+                            }}
+                        >
+                            {voidingId !== null ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            Anular abono
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Reutiliza el flujo de POST /api/supplier-payments (abono a OC o a cuenta general). Solo admin. */}
             {isAdmin && <PagoProveedorDialog

@@ -6,7 +6,9 @@
 # Qué hace:
 #   1) pg_dump -Fc dentro de prosolutions-db  -> <BackupRoot>\db\YYYYMMDD-HHmm.pgdump
 #   2) tar.gz de cada volumen de datos        -> <BackupRoot>\<tipo>\<tipo>-YYYYMMDD-HHmm.tar.gz
-#   3) Retención: borra artefactos con más de -RetentionDays días (por tipo)
+#   3) Retención: borra artefactos con más de -RetentionDays días (por tipo),
+#      SOLO si el dump DB de la corrida quedó verificado, y conservando
+#      siempre los -MinKeep (default 3) más nuevos por carpeta
 #   4) Escribe <BackupRoot>\last-backup-status.json con el resultado de cada paso
 #      y lo copia al volumen prosolutions_payment_proofs (la app lo expone en
 #      GET /api/admin/backup-status).
@@ -33,7 +35,11 @@ param(
     [string]$DbContainer = "prosolutions-db",
     # Imagen ligera usada para tar de volúmenes (se descarga sola la 1ª vez)
     [string]$TarImage = "alpine",
-    [int]$RetentionDays = 14
+    [int]$RetentionDays = 14,
+    # Safety floor de retencion: nunca borrar los N artefactos MAS NUEVOS de
+    # cada carpeta aunque superen la edad — una racha de fallos o un reloj
+    # mal configurado no debe dejar el disco sin ninguna copia.
+    [int]$MinKeep = 3
 )
 
 $ErrorActionPreference = "Stop"
@@ -230,20 +236,30 @@ try {
     }
 
     # ---------- 3) Retención: borrar artefactos más viejos que N días ----------
-    try {
-        $cutoff = (Get-Date).AddDays(-$RetentionDays)
-        $removed = 0
-        $dirs = @((Join-Path $BackupRoot "db")) + ($volumeJobs | ForEach-Object { Join-Path $BackupRoot $_.dir })
-        foreach ($d in $dirs) {
-            Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -lt $cutoff } |
-                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; $removed++ }
+    # Solo se purga si el dump DB de ESTA corrida quedo verificado
+    # ($status.db.verified): si pg_dump falla varias noches seguidas, una
+    # purga incondicional acabaria borrando el ultimo backup bueno. Ademas,
+    # en cada carpeta se conservan siempre los -MinKeep artefactos mas
+    # nuevos aunque excedan la edad (safety floor).
+    if (-not $status.db.verified) {
+        Write-Log "Retencion OMITIDA: el dump DB de esta corrida no quedo verificado; se conserva todo"
+    } else {
+        try {
+            $cutoff = (Get-Date).AddDays(-$RetentionDays)
+            $removed = 0
+            $dirs = @((Join-Path $BackupRoot "db")) + ($volumeJobs | ForEach-Object { Join-Path $BackupRoot $_.dir })
+            foreach ($d in $dirs) {
+                $files = @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+                $files | Select-Object -Skip $MinKeep |
+                    Where-Object { $_.LastWriteTime -lt $cutoff } |
+                    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; $removed++ }
+            }
+            if ($removed -gt 0) { Write-Log "Retencion: $removed archivo(s) de mas de $RetentionDays dias eliminados (min $MinKeep recientes por carpeta)" }
+            else { Write-Log "Retencion: nada que purgar (> $RetentionDays dias o dentro del minimo de $MinKeep)" }
+        } catch {
+            $script:hadFailure = $true
+            Write-Log "Retencion FALLO: $_"
         }
-        if ($removed -gt 0) { Write-Log "Retención: $removed archivo(s) de más de $RetentionDays días eliminados" }
-        else { Write-Log "Retención: nada que purgar (> $RetentionDays días)" }
-    } catch {
-        $script:hadFailure = $true
-        Write-Log "Retención FALLO: $_"
     }
 
     # ---------- 3b) Copia espejo en OTRO disco fisico ----------
@@ -276,10 +292,20 @@ try {
                     $status.offsite.bytes += (Get-Item -LiteralPath $dst).Length
                 }
                 Write-Log ("Copia espejo OK -> {0} ({1} archivo(s), {2:N1} MB)" -f $OffsiteRoot, $status.offsite.files, ($status.offsite.bytes / 1MB))
-                $cutoff = (Get-Date).AddDays(-$RetentionDays)
-                Get-ChildItem -LiteralPath $OffsiteRoot -Recurse -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.LastWriteTime -lt $cutoff } |
-                    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+                # Misma regla de retencion que el origen: solo purgar cuando
+                # el dump DB de esta corrida quedo verificado y conservando
+                # siempre los -MinKeep artefactos mas nuevos por carpeta.
+                if (-not $status.db.verified) {
+                    Write-Log "Retencion espejo OMITIDA: dump DB no verificado en esta corrida"
+                } else {
+                    $cutoff = (Get-Date).AddDays(-$RetentionDays)
+                    foreach ($d in $dirs) {
+                        $files = @(Get-ChildItem -LiteralPath (Join-Path $OffsiteRoot $d) -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+                        $files | Select-Object -Skip $MinKeep |
+                            Where-Object { $_.LastWriteTime -lt $cutoff } |
+                            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+                    }
+                }
             } catch {
                 $script:hadFailure = $true
                 $status.offsite.ok = $false

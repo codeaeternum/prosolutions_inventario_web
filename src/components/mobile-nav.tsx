@@ -69,6 +69,7 @@ export function MobileNav(props: MobileNavProps) {
                   : "text-muted-foreground hover:text-foreground"
               )}
               aria-label={isCart && totalItems > 0 ? `Carrito (${totalItems} producto${totalItems !== 1 ? "s" : ""})` : label}
+              aria-current={isActive ? "page" : undefined}
             >
               <Icon className="h-5 w-5" aria-hidden />
               <span className="text-[10px] font-medium">{label}</span>

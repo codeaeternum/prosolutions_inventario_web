@@ -57,6 +57,52 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
+  # Los *.integration.test.ts (serializables de dinero, 65 pruebas) solo
+  # corren contra la base fixture dedicada de docs/TESTS-INTEGRACION.md:
+  # user audit / db hardening en 127.0.0.1:55433 — los tests mismos se
+  # niegan a correr si DATABASE_URL apunta a otra cosa.
+  integration:
+    name: Integration tests (PostgreSQL fixture)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit-isolated-only
+          POSTGRES_DB: hardening
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d hardening"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://audit:audit-isolated-only@127.0.0.1:55433/hardening"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations to fixture DB
+        run: npx prisma migrate deploy
+
+      # fileParallelism:false (vitest.config.mts) ya corre archivo por
+      # archivo; RUN_DATABASE_TESTS=1 desbloquea el guard del fixture.
+      - name: Run integration tests
+        env:
+          RUN_DATABASE_TESTS: "1"
+        run: npx vitest run --project integration
+
   docker:
     name: Docker images build (no push)
     runs-on: ubuntu-latest
@@ -64,10 +110,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Ejercita el Dockerfile real de producción: npm ci + prisma generate
-      # + next build, exactamente lo que corre el stage builder en el N5.
-      - name: Build app builder stage
-        run: docker build --target builder -t prosolutions-ci-builder .
+      # Build COMPLETO del Dockerfile de producción (todos los stages hasta
+      # runner): construir solo --target builder dejaba sin ejercitar los
+      # COPY del standalone (.next/standalone, static, scripts/) — un COPY
+      # roto en runner hubiera pasado CI y roto el deploy en el N5.
+      - name: Build app image (all stages)
+        run: docker build -t prosolutions-ci-app .
 
       # Dockerfile.bot tiene sus propios COPY/CMD: un build que solo pasa por
       # el Dockerfile principal no cubre sus rutas (src acotado, bot:build,

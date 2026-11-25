@@ -3,6 +3,7 @@ import { Prisma } from '@/generated/prisma/client'
 import { z } from 'zod'
 import { getSession, requireModule } from '@/lib/api-auth'
 import { businessIdOf } from '@/lib/tenant'
+import { checkAndRecord } from '@/lib/rate-limit'
 
 // Límite Telegram ≈ 4096 chars; 2000 deja margen y evita muros de texto.
 const MAX_MESSAGE_CHARS = 2000
@@ -25,7 +26,18 @@ const bodySchema = z.object({
 export async function POST(req: NextRequest) {
     const result = await requireModule("notificaciones")
     if (result.error) return result.error
-    const businessId = businessIdOf(getSession(result)!)
+    const session = getSession(result)!
+    const businessId = businessIdOf(session)
+
+    // Mismo tope que notifications/send: cada POST abre hasta N sockets
+    // salientes a api.telegram.org — sin freno un staff podía martillear
+    // el bot (y quemar el rate-limit de Telegram para todos).
+    if (!checkAndRecord("notifications-telegram", session.user.id, 60_000, 20)) {
+        return NextResponse.json(
+            { error: 'Demasiadas notificaciones. Intenta en un minuto.' },
+            { status: 429 }
+        )
+    }
 
     try {
         const parsed = bodySchema.safeParse(await req.json().catch(() => null))

@@ -144,6 +144,18 @@ export async function POST(req: Request) {
       )
     }
 
+    // El nombre se guarda tal cual y aparece en auditoría, tickets y listados:
+    // acotado y saneado igual que jobTitle — sin trim un "  " pasaba el check
+    // de requerido y un nombre de 10 KB inflaba cada respuesta donde viaja.
+    const nameParsed = z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres").max(80, "El nombre no puede exceder 80 caracteres").safeParse(name)
+    if (!nameParsed.success) {
+      return NextResponse.json(
+        { error: nameParsed.error.issues[0]?.message ?? "Nombre inválido" },
+        { status: 400 }
+      )
+    }
+    const cleanName = nameParsed.data
+
     if (typeof email !== "string" || !z.email().safeParse(email.trim()).success) {
       return NextResponse.json(
         { error: "El correo electrónico no es válido" },
@@ -241,7 +253,7 @@ export async function POST(req: Request) {
     const user = await prisma.user.create({
       data: {
         businessId,
-        name,
+        name: cleanName,
         email,
         password: hashedPassword,
         role: cleanRole,

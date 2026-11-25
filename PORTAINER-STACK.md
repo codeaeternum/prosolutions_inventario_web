@@ -60,7 +60,7 @@ Si necesitas recuperar la configuración que tenías (nombre del stack, variable
 
 ### Desde el N5 por SSH (si tienes acceso)
 
-Con `ssh dgali@100.106.83.19` (o el usuario que uses):
+Con `ssh dgali@100.124.116.70` (o el usuario que uses):
 
 ```powershell
 # Ver contenedores en ejecución y sus env (PowerShell)
@@ -194,6 +194,26 @@ docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env u
 ```
 
 Los scripts `deploy.ps1` / `deploy-n5.ps1` / `deploy-n5.sh` ya hacen esto en ese orden y abortan si la migración falla.
+
+### Rollback por tag SHA (sin rebuild)
+
+Cada `deploy-n5.ps1` / `deploy-n5.sh` etiqueta las imágenes recién construidas con el SHA del commit — `prosolutions-app:<sha>`, `prosolutions-bot:<sha>`, `prosolutions-migrate:<sha>` — además de `:latest`. Los compose respetan `${APP_IMAGE:-prosolutions-app:latest}` (igual `BOT_IMAGE`/`MIGRATE_IMAGE`), así que volver a una build anterior **no requiere recompilar**:
+
+```powershell
+# En el N5, desde la carpeta del proyecto:
+docker image ls prosolutions-app        # elige el <sha> destino
+$env:APP_IMAGE = "prosolutions-app:<sha>"
+$env:BOT_IMAGE  = "prosolutions-bot:<sha>"
+docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
+# Tras verificar, quita las vars para volver a seguir :latest:
+Remove-Item Env:APP_IMAGE, Env:BOT_IMAGE
+```
+
+Si el esquema también retrocede, corre primero la imagen migrate del SHA destino: `MIGRATE_IMAGE=prosolutions-migrate:<sha>` + el `--profile migrate run --rm migrate` de arriba (cuidado: `migrate deploy` nunca deshace migraciones — solo aplica las pendientes; un rollback a esquema viejo que la app nueva ya migró exige restore del backup).
+
+En un stack de **Portainer**, añade `APP_IMAGE=prosolutions-app:<sha>` y `BOT_IMAGE=prosolutions-bot:<sha>` a las *Environment variables* del stack y redeploya; quítalas al terminar.
+
+**Limpieza de tags:** se acumula uno por deploy. `docker image ls prosolutions-app` para listarlos y `docker image rm prosolutions-app:<sha-viejo>` para podar (guarda siempre el tag en producción y el anterior como mínimo). `docker image prune -f` —que los scripts ya corren al final— solo elimina imágenes *dangling*, nunca las etiquetadas.
 
 ### BD vacía vs BD existente
 

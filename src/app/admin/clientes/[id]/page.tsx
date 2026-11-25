@@ -339,7 +339,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
           <Button variant="ghost" size="sm" asChild className="-ml-2 text-muted-foreground">
             <Link href="/admin/clientes"><ArrowLeft className="mr-1 h-4 w-4" />Clientes</Link>
           </Button>
-          <h2 className="text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
             {cliente.name}
             <TypeBadge type={cliente.customerType} />
             {cliente.status !== "APPROVED" && <Badge variant="outline">Sin aprobar</Badge>}
@@ -349,7 +349,7 @@ export default function Cliente360Page({ params }: { params: Promise<{ id: strin
             {cliente.emailVerifiedAt && (
               <Badge variant="success"><BadgeCheck className="mr-1 h-3 w-3" />Email verificado</Badge>
             )}
-          </h2>
+          </h1>
           <p className="text-muted-foreground">Cliente desde {formatDay(cliente.createdAt)}</p>
 
           {/* Contacto */}

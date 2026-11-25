@@ -30,6 +30,17 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host "Build OK." -ForegroundColor Green
+
+# Tag inmutable por SHA junto a :latest — rollback sin rebuild:
+#   APP_IMAGE=prosolutions-app:<sha> BOT_IMAGE=prosolutions-bot:<sha> ^
+#   docker compose -f docker-compose.portainer.yml -p prosolutions --env-file .env.docker up -d --force-recreate app bot
+# (los compose respetan ${APP_IMAGE:-prosolutions-app:latest}; ver
+# PORTAINER-STACK.md, seccion "Rollback por tag SHA"). Sin estos tags el
+# rollback exigiria reconstruir la version anterior.
+foreach ($img in @('prosolutions-app','prosolutions-bot','prosolutions-migrate')) {
+    docker tag "${img}:latest" "${img}:$($env:GIT_SHA)"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Aviso: no se pudo etiquetar ${img}:$($env:GIT_SHA)" -ForegroundColor Yellow }
+}
 Write-Host ""
 
 $stackName = "prosolutions"
@@ -82,6 +93,12 @@ if ($health -ne "healthy") {
     exit 1
 }
 Write-Host "Contenedores levantados y saludables." -ForegroundColor Green
+
+# Limpieza de imagenes dangling (capas del build anterior). Los tags :<sha>
+# se conservan a proposito para rollback — se acumulan uno por deploy; para
+# podarlos: docker image ls prosolutions-app  y  docker image rm <viejo>
+# (guarda siempre el tag en produccion y el anterior). Ver PORTAINER-STACK.md.
+docker image prune -f | Out-Null
 Write-Host ""
 
 # Estado final

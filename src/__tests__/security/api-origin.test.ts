@@ -118,6 +118,33 @@ describe("API Origin/Fetch-Metadata barrier (CSRF)", () => {
     expect(run(post("/api/sales", { origin: "https://other.example.com" })).status).toBe(403)
   })
 
+  it("in production the request Host is NOT an implicit allowlist entry (DNS-rebinding)", () => {
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("NEXTAUTH_URL", "https://reficio.app")
+    // Un Origin == Host ya no pasa por ser "propio": en rebinding el
+    // navegador mandaría exactamente eso — la allowlist sale solo de envs.
+    const rebound = run(new NextRequest("https://rebind.attacker.example/api/sales", {
+      method: "POST",
+      headers: { host: "rebind.attacker.example", origin: "https://rebind.attacker.example" },
+    }))
+    expect(rebound.status).toBe(403)
+    // Los orígenes configurados siguen entrando en producción.
+    expect(run(post("/api/sales", { origin: "https://reficio.app" })).status).toBe(200)
+  })
+
+  it("in production the workshop LAN origin is allowed by default and via APP_BIND_IP", () => {
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("NEXTAUTH_URL", "https://reficio.app")
+    // Default del compose (192.168.1.195): los formularios del taller
+    // postean a http://192.168.1.195:3005 y su Origin entra en la allowlist.
+    expect(run(post("/api/sales", { origin: "http://192.168.1.195:3005" })).status).toBe(200)
+    // Otro bind de LAN se deriva de APP_BIND_IP.
+    vi.stubEnv("APP_BIND_IP", "10.20.30.40")
+    expect(run(post("/api/sales", { origin: "http://10.20.30.40:3005" })).status).toBe(200)
+    // Pero un origen LAN distinto no es comodín: host no configurado → 403.
+    expect(run(post("/api/sales", { origin: "http://10.20.30.41:3005" })).status).toBe(403)
+  })
+
   it("never invokes the session handler for /api (no DB session lookup)", () => {
     // Mutables bloqueados y permitidos, y lecturas: ninguno debe tocar auth().
     run(post("/api/sales", { origin: "https://evil.com", "sec-fetch-site": "cross-site" }))

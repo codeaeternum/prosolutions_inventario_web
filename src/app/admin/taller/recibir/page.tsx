@@ -24,7 +24,7 @@ import { SignaturePad } from "@/components/admin/taller/signature-pad"
 import { getClientOperationKey, type ClientOperationKey } from "@/lib/client-operation-key"
 import { CONDITION_HINTS, deviceProfileFor } from "@/lib/device-profiles"
 import { resolveServicePrice } from "@/lib/service-pricing"
-import { formatAccessPattern, titleCaseName } from "@/lib/utils"
+import { formatAccessPattern, formatCents, titleCaseName } from "@/lib/utils"
 import { DEFAULT_FOLIO_DIGITS, DEFAULT_ORDER_PREFIX, clampFolioDigits, formatFolio } from "@/lib/workshop-labels"
 import { waMeHref } from "@/components/public/whatsapp-button"
 
@@ -46,7 +46,7 @@ const STEPS = ["Cliente", "Equipo", "Acceso y estado", "Entrega y cobro", "Resum
 const inputClass = "w-full rounded-lg border bg-background px-3 py-2 text-sm"
 const PHONE_PATTERN = /^[+\d\s()-]+$/
 const MAX_ADVANCE_AMOUNT = 999999
-const money = (cents: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(cents / 100)
+const money = formatCents
 
 const DEFAULT_EQUIPMENT_TYPES = ["Celular", "Tablet", "Laptop", "Computadora", "Consola", "Smartwatch", "Pantalla", "Impresora", "Otro"]
 const DEFAULT_LOCATIONS = ["Recepción", "Mesa 1", "Mesa 2", "Anaquel A", "Anaquel B"]

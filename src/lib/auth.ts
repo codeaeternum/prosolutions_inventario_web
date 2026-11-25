@@ -4,11 +4,8 @@ import bcrypt from "bcryptjs"
 import { prisma } from "./prisma"
 import { authConfig } from "./auth.config"
 import { refreshSessionToken } from "./session-policy"
-import { checkOnly, recordFailure } from "./rate-limit"
+import { getClientIp, loginAttemptAllowed, recordLoginFailure } from "./rate-limit"
 import { normalizePhone } from "./utils"
-
-const LOGIN_WINDOW_MS = 15 * 60 * 1000
-const LOGIN_MAX_FAILURES = 10
 // Hash bcrypt válido (cost 10) para igualar tiempos cuando la cuenta no existe
 // o no tiene contraseña configurada y evitar enumeración por timing.
 export const DUMMY_BCRYPT_HASH = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
@@ -43,7 +40,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         identifier: { label: "Email o Teléfono", type: "text" },
         password: { label: "Password", type: "password" }
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         if (typeof credentials?.identifier !== "string" || typeof credentials?.password !== "string" || !credentials.identifier.trim() || credentials.identifier.length > 254 || credentials.password.length > 1024) {
           throw new Error("Credenciales inválidas")
         }
@@ -52,9 +49,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const phoneNorm = !identifier.includes("@") ? normalizePhone(identifier) : ""
         const rateKey = (phoneNorm || identifier).toLowerCase()
 
+        // Anti lockout-DoS: el contador de fallos vive por par (IP, cuenta)
+        // — ver loginAttemptAllowed en rate-limit.ts. Un atacante que fuerza
+        // fallos contra una cuenta ajena solo llena SU bucket (comparte IP
+        // consigo, no con la víctima); el techo por cuenta, más alto, frena
+        // el stuffing distribuido. Backoff exponencial: insistir sobre el
+        // par bloqueado rearma su ventana ×2 por ciclo (15 min → 4 h máx).
+        // Un cliente sin IP confiable (LAN sin el secreto de proxy) comparte
+        // el bucket "direct-clients": apretado pero acotado.
+        const ip = getClientIp(request)
         // Account limit cannot be bypassed by a forged proxy header or encoded form field.
         // Solo los fallos incrementan el contador: un login legítimo no quema intentos.
-        if (!checkOnly("login-account", rateKey, LOGIN_MAX_FAILURES)) return null
+        if (!loginAttemptAllowed(ip, rateKey)) return null
 
         // Try to find user by email or phone (con su empresa para el chequeo de suspensión)
         const user = await prisma.user.findFirst({
@@ -72,7 +78,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // corre bcrypt contra un hash dummy para no revelar existencia por timing.
         if (!user || !user.password) {
           await bcrypt.compare(credentials.password as string, DUMMY_BCRYPT_HASH)
-          recordFailure("login-account", rateKey, LOGIN_WINDOW_MS)
+          recordLoginFailure(ip, rateKey)
           return null
         }
 
@@ -82,7 +88,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         )
 
         if (!passwordMatch) {
-          recordFailure("login-account", rateKey, LOGIN_WINDOW_MS)
+          recordLoginFailure(ip, rateKey)
           return null
         }
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link2, MessageCircle, Share2, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { cn, formatPrice } from "@/lib/utils"
 
 // Los links públicos se arman brandeados cuando el negocio tiene
 // business_slug: rastreo /<slug>/order-status y cotización
@@ -101,13 +101,11 @@ export function ShareRepairOrder({ folio, phone, trackingToken, className, quote
   const message = () =>
     `Hola, tu equipo ya está registrado con folio ${folio}. Rastrea su estado en este link: ${trackingUrl()}`
 
-  const mxn = (n: number) => n.toLocaleString("es-MX", { style: "currency", currency: "MXN" })
-
   const quoteMessage = () => {
     if (!quote) return ""
-    const lines = quote.lines.map(l => `• ${l.label}: ${mxn(l.amount)}`).join("\n")
+    const lines = quote.lines.map(l => `• ${l.label}: ${formatPrice(l.amount)}`).join("\n")
     const link = quote.token ? `\n\nRevisa y autoriza aquí: ${quoteUrl(quote.token)}` : ""
-    return `Cotización de reparación — ${folio}\nEquipo: ${quote.equipment}\n\n${lines}\n\nTotal estimado: ${mxn(quote.total)}\nVálida por 15 días. Si aparecen daños adicionales te avisamos antes de proceder.${link}`
+    return `Cotización de reparación — ${folio}\nEquipo: ${quote.equipment}\n\n${lines}\n\nTotal estimado: ${formatPrice(quote.total)}\nVálida por 15 días. Si aparecen daños adicionales te avisamos antes de proceder.${link}`
   }
 
   function shareWhatsApp(text: string) {

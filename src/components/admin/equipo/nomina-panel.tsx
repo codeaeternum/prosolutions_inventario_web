@@ -331,7 +331,7 @@ export function NominaPanel() {
             />
           </div>
           <Select value={preset} onValueChange={v => setPreset(v as Preset)}>
-            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[160px]" aria-label="Periodo"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="14d">Últimos 14 días</SelectItem>
               <SelectItem value="30d">Últimos 30 días</SelectItem>

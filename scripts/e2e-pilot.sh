@@ -17,11 +17,33 @@
 # los datos marcados "E2E-" se asumen desechables.
 #
 # La cuenta e2e-admin@prosolutions.local es exclusiva del pilot (ADMIN,
-# APPROVED) — su password vive solo aquí, no en docs ni en el repo de specs.
+# APPROVED) — su password NO se versiona: se lee de e2e/.env.pilot (o
+# pilot.env) o de la variable E2E_ADMIN_PASSWORD ya exportada.
 set -euo pipefail
 
 PILOT_PORT=3316
 PILOT_URL="http://localhost:${PILOT_PORT}"
+
+# Password del admin del pilot: primero la variable de entorno, luego un
+# archivo local NO versionado (KEY=VALUE plano; todos los nombres están en
+# .gitignore). Se parsea con grep/sed — nunca `source`, para no ejecutar
+# contenido arbitrario del archivo. Se resuelve ANTES de abrir el túnel.
+if [ -z "${E2E_ADMIN_PASSWORD:-}" ]; then
+  REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  for f in "$REPO_ROOT/e2e/.env.pilot" "$REPO_ROOT/e2e/pilot.env" "$REPO_ROOT/pilot.env"; do
+    if [ -f "$f" ]; then
+      E2E_ADMIN_PASSWORD=$(grep -E '^[[:space:]]*E2E_ADMIN_PASSWORD[[:space:]]*=' "$f" | head -1 | cut -d= -f2- | sed "s/^[[:space:]\"']*//;s/[[:space:]\"']*$//")
+      [ -n "$E2E_ADMIN_PASSWORD" ] && break
+    fi
+  done
+fi
+if [ -z "${E2E_ADMIN_PASSWORD:-}" ]; then
+  echo "[e2e-pilot] ERROR: falta la password del admin del pilot." >&2
+  echo "  Crea e2e/.env.pilot (NO versionado) con una línea:" >&2
+  echo "    E2E_ADMIN_PASSWORD=<password>" >&2
+  echo "  o expórtala en el entorno antes de correr el script." >&2
+  exit 1
+fi
 
 # ¿Ya responde el pilot en :3316? (stack local en OrbStack/Docker o un túnel
 # abierto a mano). Si no, lo abrimos con ssh -fN (BatchMode, alias del config).
@@ -44,7 +66,7 @@ echo "[e2e-pilot] pilot OK en ${PILOT_URL} — corriendo playwright"
 
 export E2E_BASE_URL="${E2E_BASE_URL:-${PILOT_URL}}"
 export E2E_ADMIN_EMAIL="e2e-admin@prosolutions.local"
-export E2E_ADMIN_PASSWORD='E2E-Pass-2026!'
+export E2E_ADMIN_PASSWORD
 export E2E_ALLOW_WRITES=1
 
 exec npx playwright test "$@"

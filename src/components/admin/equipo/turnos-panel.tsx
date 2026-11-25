@@ -139,7 +139,7 @@ export function TurnosPanel() {
             />
           </div>
           <Select value={dias} onValueChange={setDias}>
-            <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[130px]" aria-label="Periodo"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="7">7 días</SelectItem>
               <SelectItem value="14">14 días</SelectItem>

@@ -651,12 +651,12 @@ export function SalesReturnsSheet({
                                                 </div>
 
                                                 <div className="space-y-1.5">
-                                                    <Label className="text-xs">Método de reembolso</Label>
+                                                    <Label htmlFor={`return-method-${sale.id}`} className="text-xs">Método de reembolso</Label>
                                                     <Select
                                                         value={refundMethod}
                                                         onValueChange={v => setRefundMethod(v as PosPaymentMethod)}
                                                     >
-                                                        <SelectTrigger disabled={submitting} className="h-8 text-xs">
+                                                        <SelectTrigger id={`return-method-${sale.id}`} disabled={submitting} className="h-8 text-xs">
                                                             <SelectValue />
                                                         </SelectTrigger>
                                                         <SelectContent>

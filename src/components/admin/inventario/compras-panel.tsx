@@ -364,7 +364,7 @@ export function ComprasPanel({ onNeedsChanged }: ComprasPanelProps = {}) {
                     )}
                 </div>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full sm:w-44">
+                    <SelectTrigger className="w-full sm:w-44" aria-label="Estado">
                         <SelectValue placeholder="Estado" />
                     </SelectTrigger>
                     <SelectContent>

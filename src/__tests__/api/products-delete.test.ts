@@ -6,18 +6,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
  *
  * - El guard de reservas activas usa el set completo del dominio
  *   (PENDING, PENDING_PAYMENT, DEPOSIT_VERIFIED, APPROVED): una reserva viva
- *   a crédito o con anticipo bloquea el delete con 409 — borrarla dejaría la
- *   deuda del cliente apuntando a una fila inexistente.
+ *   a crédito o con anticipo bloquea con 409 — borrarla dejaría la deuda del
+ *   cliente apuntando a una fila inexistente.
  * - Con existencias (Product.stock > 0) bloquea con 409 salvo ?force=true:
  *   BranchStock es onDelete: Cascade y borrar con stock quema el costo de lo
  *   que queda en anaqueles. Force lo permite y el stock retirado queda
  *   asentado en la bitácora (changes.stock before→0).
+ * - CON HISTORIAL (cualquier InventoryMovement o cualquier Reservation, viva
+ *   o terminal) el delete se convierte en DESACTIVACIÓN: isActive=false y
+ *   el ledger queda intacto — la purga de movimientos/reservas destruía la
+ *   historia de existencias. ?force solo salta la guarda de stock, nunca
+ *   autoriza quemar el ledger.
+ * - Solo un producto virgen (sin un solo movimiento ni reserva) se borra
+ *   físicamente: no hay historial que preservar.
  * - El stock se RE-LEE dentro de la tx serializable: si entró mercancía
- *   entre la primera lectura y el commit, el reintento/la re-lectura ve la
- *   cifra vigente y bloquea igual.
- * - Solo las reservas TERMINALES se purgan con el producto; el delete se
- *   re-verifica dentro de la transacción por si una reserva nació entre el
- *   chequeo y el commit.
+ *   entre la primera lectura y el commit, la re-lectura ve la cifra vigente
+ *   y bloquea igual. El conteo de historial también va dentro: una reserva
+ *   nacida a mitad ya no cae en cascade silencioso.
  * - Una FK Restrict (SaleItem, MarketplaceRequest…) aborta con 409 pidiendo
  *   desactivar el producto en lugar de borrarlo.
  */
@@ -26,16 +31,13 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   productFindUnique: vi.fn(),
   productFindUniqueOrThrowTx: vi.fn(),
+  productUpdate: vi.fn(),
   productDelete: vi.fn(),
   productModelDeleteMany: vi.fn(),
-  inventoryMovementDeleteMany: vi.fn(),
+  inventoryMovementCount: vi.fn(),
+  // reservation.count corre dos veces por delete: primero el re-chequeo de
+  // activas dentro de la tx, luego el total (historial).
   reservationCount: vi.fn(),
-  reservationFindMany: vi.fn(),
-  reservationDeleteMany: vi.fn(),
-  // Referencias restantes fuera de la tx (barrido de comprobantes huérfanos):
-  // reservation.count del prisma global y payment.count.
-  reservationCountOuter: vi.fn(),
-  paymentCount: vi.fn(),
   auditCreate: vi.fn(),
   userFindUnique: vi.fn(),
   transaction: vi.fn(),
@@ -54,17 +56,14 @@ vi.mock("@/lib/audit-alerts", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     product: { findUnique: mocks.productFindUnique },
-    reservation: { count: mocks.reservationCountOuter },
-    payment: { count: mocks.paymentCount },
     auditEvent: { create: mocks.auditCreate },
     user: { findUnique: mocks.userFindUnique },
     $transaction: mocks.transaction,
   },
 }))
-// El DELETE desvincula las fotos /uploads/products/* del disco: unlink queda
-// mockeado para verificar qué rutas se borran (y cuáles jamás se tocan).
-// realpath se simula identidad para que el confinamiento de payment-proofs
-// resuelva dentro del root sin exigir que el directorio exista en disco.
+// El DELETE desvincula las fotos /uploads/products/* del disco SOLO en el
+// borrado físico: unlink queda mockeado para verificar qué rutas se borran
+// (y que en desactivación no se toca ninguna — el producto sigue vivo).
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>()
   return { ...actual, promises: { ...actual.promises, unlink: mocks.unlink, realpath: mocks.realpath } }
@@ -75,9 +74,13 @@ import { DELETE } from "@/app/api/products/[id]/route"
 // El tx que la ruta recibe dentro de $transaction.
 const tx = {
   productModel: { deleteMany: mocks.productModelDeleteMany },
-  inventoryMovement: { deleteMany: mocks.inventoryMovementDeleteMany },
-  reservation: { count: mocks.reservationCount, findMany: mocks.reservationFindMany, deleteMany: mocks.reservationDeleteMany },
-  product: { delete: mocks.productDelete, findUniqueOrThrow: mocks.productFindUniqueOrThrowTx },
+  inventoryMovement: { count: mocks.inventoryMovementCount },
+  reservation: { count: mocks.reservationCount },
+  product: {
+    delete: mocks.productDelete,
+    update: mocks.productUpdate,
+    findUniqueOrThrow: mocks.productFindUniqueOrThrowTx,
+  },
 }
 
 const session = (id = "u-admin", role = "ADMIN", extra: Record<string, unknown> = {}) => ({
@@ -88,6 +91,7 @@ const productRow = (reservations: unknown[] = [], images: string[] = [], stock =
   id: "p1",
   name: "Pantalla iPhone 11",
   retailPrice: 1200,
+  isActive: true,
   stock,
   images,
   reservations,
@@ -105,12 +109,9 @@ beforeEach(() => {
   mocks.productFindUnique.mockResolvedValue(productRow())
   mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 0 })
   mocks.reservationCount.mockResolvedValue(0)
-  mocks.reservationFindMany.mockResolvedValue([])
-  mocks.reservationCountOuter.mockResolvedValue(0)
-  mocks.paymentCount.mockResolvedValue(0)
-  mocks.reservationDeleteMany.mockResolvedValue({ count: 0 })
+  mocks.inventoryMovementCount.mockResolvedValue(0)
   mocks.productModelDeleteMany.mockResolvedValue({ count: 0 })
-  mocks.inventoryMovementDeleteMany.mockResolvedValue({ count: 0 })
+  mocks.productUpdate.mockResolvedValue({})
   mocks.productDelete.mockResolvedValue({})
   mocks.auditCreate.mockResolvedValue({})
   mocks.unlink.mockResolvedValue(undefined)
@@ -147,8 +148,8 @@ describe("reservas activas", () => {
       expect(json.error).toContain("desactiva")
       // Ni la tx ni el delete corrieron: reserva y deuda quedan intactas.
       expect(mocks.transaction).not.toHaveBeenCalled()
-      expect(mocks.reservationDeleteMany).not.toHaveBeenCalled()
       expect(mocks.productDelete).not.toHaveBeenCalled()
+      expect(mocks.productUpdate).not.toHaveBeenCalled()
     }
   )
 
@@ -161,13 +162,13 @@ describe("reservas activas", () => {
   })
 
   it("re-verifica dentro de la tx: una reserva creada durante el delete bloquea con 409", async () => {
-    mocks.reservationCount.mockResolvedValue(1)
+    mocks.reservationCount.mockResolvedValueOnce(1)
     const res = await del()
     expect(res.status).toBe(409)
     expect((await res.json()).error).toContain("reservas activas")
-    // La tx abortó: no se purgaron reservas ni se borró el producto.
-    expect(mocks.reservationDeleteMany).not.toHaveBeenCalled()
+    // La tx abortó: no se borró ni se desactivó el producto.
     expect(mocks.productDelete).not.toHaveBeenCalled()
+    expect(mocks.productUpdate).not.toHaveBeenCalled()
     expect(mocks.auditCreate).not.toHaveBeenCalled()
   })
 })
@@ -199,11 +200,14 @@ describe("guard de existencias", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled()
   })
 
-  it("?force=true borra con existencias y asienta el stock retirado en bitácora", async () => {
+  it("?force=true borra con existencias SOLO si el producto está virgen", async () => {
+    // stock 5 sin historial (conteos en 0): el borrado físico sigue vivo y el
+    // stock retirado se asienta en la bitácora.
     mocks.productFindUnique.mockResolvedValue(productRow([], [], 5))
     mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 5 })
     const res = await del("p1", true)
     expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, deactivated: false })
 
     const audit = mocks.auditCreate.mock.calls[0][0].data
     expect(audit.action).toBe("PRODUCT_DELETE")
@@ -219,29 +223,82 @@ describe("guard de existencias", () => {
     expect(audit.action).toBe("PRODUCT_DELETE")
     expect(audit.changes).toBeUndefined()
   })
+
+  it("?force con existencias E HISTORIAL desactiva: force nunca quema el ledger", async () => {
+    mocks.productFindUnique.mockResolvedValue(productRow([], [], 5))
+    mocks.productFindUniqueOrThrowTx.mockResolvedValue({ stock: 5 })
+    mocks.inventoryMovementCount.mockResolvedValue(3)
+    const res = await del("p1", true)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, deactivated: true })
+    // La mercancía y sus movimientos quedan registrados: nada se borra.
+    expect(mocks.productDelete).not.toHaveBeenCalled()
+    expect(mocks.productUpdate).toHaveBeenCalledWith({
+      where: { id: "p1", businessId: "biz-1" },
+      data: { isActive: false },
+    })
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit.action).toBe("PRODUCT_UPDATE")
+    expect(audit.summary).toContain("conserva su historial")
+    expect(audit.summary).toContain("5 en existencia")
+  })
 })
 
-describe("borrado exitoso", () => {
-  it("con solo reservas terminales borra el producto y purga SOLO las terminales", async () => {
-    // El include filtra activas: con pura historia COMPLETED/CANCELLED llega vacío.
+describe("historial → desactivación en lugar de borrado", () => {
+  it("producto con movimientos de inventario queda isActive=false y el ledger intacto", async () => {
+    mocks.inventoryMovementCount.mockResolvedValue(4)
     const res = await del()
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ success: true })
+    expect(await res.json()).toEqual({ success: true, deactivated: true })
 
-    expect(mocks.reservationDeleteMany).toHaveBeenCalledTimes(1)
-    const where = mocks.reservationDeleteMany.mock.calls[0][0].where
-    expect(where.productId).toBe("p1")
-    expect(where.businessId).toBe("biz-1")
-    expect(where.status.in).toEqual(
-      expect.arrayContaining(["COMPLETED", "CANCELLED", "REJECTED", "EXPIRED"])
-    )
-    for (const active of ["PENDING", "PENDING_PAYMENT", "DEPOSIT_VERIFIED", "APPROVED"]) {
-      expect(where.status.in).not.toContain(active)
-    }
+    expect(mocks.productUpdate).toHaveBeenCalledWith({
+      where: { id: "p1", businessId: "biz-1" },
+      data: { isActive: false },
+    })
+    // Nada de purga: ni producto, ni modelos, ni movimientos.
+    expect(mocks.productDelete).not.toHaveBeenCalled()
+    expect(mocks.productModelDeleteMany).not.toHaveBeenCalled()
+    expect(mocks.unlink).not.toHaveBeenCalled() // conserva sus fotos
+
+    const audit = mocks.auditCreate.mock.calls[0][0].data
+    expect(audit).toMatchObject({
+      businessId: "biz-1",
+      actorId: "u-admin",
+      action: "PRODUCT_UPDATE",
+      entity: "product",
+      entityId: "p1",
+      entityName: "Pantalla iPhone 11",
+      changes: { activo: { before: true, after: false } },
+    })
+    expect(audit.summary).toContain("Desactivó")
+    expect(audit.summary).toContain("conserva su historial")
+  })
+
+  it("producto con reservas terminales también se desactiva (la historia se conserva)", async () => {
+    // Primera llamada a reservation.count (activas) = 0; segunda (total) = 2.
+    mocks.reservationCount
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(2)
+    const res = await del()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, deactivated: true })
+    expect(mocks.productUpdate).toHaveBeenCalledWith({
+      where: { id: "p1", businessId: "biz-1" },
+      data: { isActive: false },
+    })
+    expect(mocks.productDelete).not.toHaveBeenCalled()
+  })
+})
+
+describe("borrado físico (producto virgen)", () => {
+  it("sin movimientos ni reservas borra el producto y sus ligas de modelos", async () => {
+    const res = await del()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, deactivated: false })
 
     expect(mocks.productModelDeleteMany).toHaveBeenCalledTimes(1)
-    expect(mocks.inventoryMovementDeleteMany).toHaveBeenCalledTimes(1)
     expect(mocks.productDelete).toHaveBeenCalledWith({ where: { id: "p1", businessId: "biz-1" } })
+    expect(mocks.productUpdate).not.toHaveBeenCalled()
 
     // Bitácora PRODUCT_DELETE con el nombre del producto.
     const audit = mocks.auditCreate.mock.calls[0][0].data
@@ -257,7 +314,7 @@ describe("borrado exitoso", () => {
 })
 
 describe("limpieza de archivos de imagen", () => {
-  it("desvincula del disco las fotos /uploads/products/* tras el delete", async () => {
+  it("desvincula del disco las fotos /uploads/products/* tras el borrado físico", async () => {
     mocks.productFindUnique.mockResolvedValue(
       productRow([], ["/uploads/products/a.jpg", "/uploads/products/b.webp"])
     )
@@ -274,6 +331,15 @@ describe("limpieza de archivos de imagen", () => {
     // El archivo se borra solo después de que la fila quedó eliminada.
     expect(mocks.unlink.mock.invocationCallOrder[0])
       .toBeGreaterThan(mocks.productDelete.mock.invocationCallOrder[0])
+  })
+
+  it("en desactivación NO borra las fotos: el producto sigue vivo con ellas", async () => {
+    mocks.inventoryMovementCount.mockResolvedValue(1)
+    mocks.productFindUnique.mockResolvedValue(productRow([], ["/uploads/products/a.jpg"]))
+    const res = await del()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ deactivated: true })
+    expect(mocks.unlink).not.toHaveBeenCalled()
   })
 
   it("solo el prefijo /uploads/products/ con nombre plano se borra (sin traversal ni externos)", async () => {
@@ -297,50 +363,7 @@ describe("limpieza de archivos de imagen", () => {
     mocks.productFindUnique.mockResolvedValue(productRow([], ["/uploads/products/a.jpg"]))
     const res = await del()
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ success: true })
-  })
-})
-
-describe("limpieza de comprobantes de reservas purgadas", () => {
-  it("borra el comprobante y su sidecar cuando ya ninguna fila los referencia", async () => {
-    mocks.reservationFindMany.mockResolvedValue([{ paymentProofUrl: "/api/payment-proofs/prueba.png" }])
-    const res = await del()
-    expect(res.status).toBe(200)
-
-    // La tx recolectó las URLs de las reservas terminales antes de purgarlas.
-    expect(mocks.reservationFindMany).toHaveBeenCalledTimes(1)
-    expect(mocks.reservationFindMany.mock.calls[0][0].select).toEqual({ paymentProofUrl: true })
-    // La verificación de referencias vivas consultó AMBAS tablas post-commit.
-    expect(mocks.reservationCountOuter).toHaveBeenCalled()
-    expect(mocks.paymentCount).toHaveBeenCalled()
-
-    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
-    expect(paths.some(p => p.endsWith("payment-proofs/prueba.png"))).toBe(true)
-    expect(paths.some(p => p.endsWith("payment-proofs/prueba.png.json"))).toBe(true)
-  })
-
-  it("conserva el archivo cuando otra reserva o un Payment aún lo referencian", async () => {
-    mocks.reservationFindMany.mockResolvedValue([{ paymentProofUrl: "/api/payment-proofs/compartido.png" }])
-    // El anticipo verificado copió el comprobante a Payment.proofUrl: el
-    // archivo sigue vivo aunque la reserva terminal se purgó.
-    mocks.paymentCount.mockResolvedValue(1)
-    const res = await del()
-    expect(res.status).toBe(200)
-    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
-    expect(paths.some(p => p.includes("compartido.png"))).toBe(false)
-  })
-
-  it("acepta el formato legado /uploads/payments/<archivo> y no toca URLs ajenas", async () => {
-    mocks.reservationFindMany.mockResolvedValue([
-      { paymentProofUrl: "/uploads/payments/legado.webp" },
-      { paymentProofUrl: "https://cdn.example.com/proof.png" },
-      { paymentProofUrl: null },
-    ])
-    const res = await del()
-    expect(res.status).toBe(200)
-    const paths = mocks.unlink.mock.calls.map(c => String(c[0]).replaceAll("\\", "/"))
-    expect(paths.some(p => p.endsWith("legado.webp"))).toBe(true)
-    expect(paths.some(p => p.includes("cdn.example.com"))).toBe(false)
+    expect(await res.json()).toEqual({ success: true, deactivated: false })
   })
 })
 

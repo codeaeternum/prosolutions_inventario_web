@@ -32,6 +32,11 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const search = searchParams.get("search")?.trim()
     const typeParam = searchParams.get("customerType")
+    // El filtro viaja crudo al enum de Prisma (`as CustomerType` no valida):
+    // un valor arbitrario terminaba en la query — 400 en vez de un cast ciego.
+    if (typeParam && !(Object.values(CustomerType) as string[]).includes(typeParam)) {
+      return NextResponse.json({ error: "Tipo de cliente inválido" }, { status: 400 })
+    }
     const conDeuda = searchParams.get("conDeuda") === "true"
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1)
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20", 10) || 20))

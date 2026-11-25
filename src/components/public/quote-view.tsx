@@ -19,7 +19,10 @@ function Row({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null
   return (
     <tr className="align-top">
-      <td className="py-0.5 pr-3 text-neutral-500 whitespace-nowrap">{label}:</td>
+      {/* Lista clave-valor: la etiqueta es el encabezado de su propia fila
+          (scope="row"), no una celda más. font-normal/text-left mantienen el
+          estilo que el th perdía al dejar de ser td. */}
+      <th scope="row" className="py-0.5 pr-3 text-left font-normal text-neutral-500 whitespace-nowrap">{label}:</th>
       <td className="py-0.5 font-medium">{value}</td>
     </tr>
   )
@@ -218,10 +221,10 @@ export function QuoteDocument({ order, businessName, token, folioDigits, validit
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-neutral-300 text-[10px] uppercase text-neutral-500">
-                    <th className="pb-1 text-left font-normal">Concepto</th>
-                    <th className="pb-1 text-center font-normal">Cant</th>
-                    <th className="pb-1 text-right font-normal">P. unitario</th>
-                    <th className="pb-1 text-right font-normal">Importe</th>
+                    <th scope="col" className="pb-1 text-left font-normal">Concepto</th>
+                    <th scope="col" className="pb-1 text-center font-normal">Cant</th>
+                    <th scope="col" className="pb-1 text-right font-normal">P. unitario</th>
+                    <th scope="col" className="pb-1 text-right font-normal">Importe</th>
                   </tr>
                 </thead>
                 <tbody>

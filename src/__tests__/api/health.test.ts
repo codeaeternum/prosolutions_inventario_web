@@ -1,16 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
- * GET /api/health — readiness de la app.
+ * GET /api/health — readiness de la app, en dos ramas:
  *
- * El endpoint valida dos cosas y reporta ambas en el cuerpo:
- *   - schema: las 10 consultas LIMIT 0 + la tabla _prisma_migrations sin
- *     migraciones fallidas (ready | migration_failed | unavailable).
- *   - disk: el directorio de comprobantes (PAYMENT_PROOFS_DIR) debe existir,
- *     ser escribible y tener >=500 MB libres — es el mismo path que usa
- *     writePaymentProof, así un disco lleno o un volumen sin permisos se
- *     detecta ANTES de que fallen las subidas.
- * Un disco degradado responde 503 aunque el schema esté listo.
+ *   - Rama liviana (anónimo): {status:"ok",ok,timestamp} sin tocar BD ni fs.
+ *     Es lo que golpea el healthcheck de Docker cada 30 s (wget --spider solo
+ *     mira el status) — antes cada GET ejecutaba mkdir+statfs+~10 queries
+ *     sin auth ni rate-limit: un amplificador gratis para cualquiera.
+ *   - Rama profunda (disco + schema): solo con sesión o con ?deep=1 +
+ *     CRON_SECRET (Authorization Bearer / x-cron-secret). Reporta el
+ *     directorio de comprobantes (>=500 MB libres) y las 10 consultas
+ *     LIMIT 0 + _prisma_migrations sin fallos.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -49,6 +49,11 @@ import { GET } from "@/app/api/health/route"
 const PLENTY = { bavail: 10_000_000, bsize: 4096 }
 const MIN_FREE = 500 * 1024 * 1024
 
+const req = (url = "https://app.invalid/api/health", headers: Record<string, string> = {}) =>
+  new Request(url, { headers })
+const withSession = () =>
+  mocks.auth.mockResolvedValue({ user: { id: "u1", role: "ADMIN", status: "APPROVED" } })
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.auth.mockResolvedValue(null) // llamada anónima (Docker healthcheck)
@@ -56,48 +61,72 @@ beforeEach(() => {
   mocks.mkdir.mockResolvedValue(undefined)
   mocks.statfs.mockResolvedValue(PLENTY)
   mocks.access.mockResolvedValue(undefined)
+  vi.stubEnv("CRON_SECRET", "test-cron-secret")
 })
+afterEach(() => { vi.unstubAllEnvs() })
 
-describe("GET /api/health", () => {
-  it("responde 200 con schema ready y métricas de disco REDONDEADAS al anónimo", async () => {
-    const res = await GET()
+describe("GET /api/health — rama liviana anónima", () => {
+  it("responde 200 ok sin tocar la base de datos ni el filesystem", async () => {
+    const res = await GET(req())
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.status).toBe("ok")
     expect(body.ok).toBe(true)
-    expect(body.schema).toBe("ready")
-    // El anónimo recibe GB redondeados: los bytes exactos del volumen son
-    // telemetría interna (revelan carga/rotación del storage).
-    expect(body.disk).toEqual({
-      ok: true,
-      writable: true,
-      freeGb: Math.round((PLENTY.bavail * PLENTY.bsize) / (1024 ** 3)),
-    })
-    expect("freeBytes" in body.disk).toBe(false)
-    expect("minFreeBytes" in body.disk).toBe(false)
-    expect(JSON.stringify(body)).not.toContain(String(PLENTY.bavail * PLENTY.bsize))
-    // El path del volumen no se expone en un endpoint público.
-    expect(JSON.stringify(body)).not.toContain("payment-proofs")
-    expect(mocks.statfs).toHaveBeenCalledWith("/app/storage/payment-proofs")
-    expect(mocks.access).toHaveBeenCalledWith("/app/storage/payment-proofs", 2) // W_OK
+    expect(body.timestamp).toBeDefined()
+    // La rama liviana no ejecuta ni el statfs/mkdir ni las 10 queries.
+    expect(mocks.statfs).not.toHaveBeenCalled()
+    expect(mocks.mkdir).not.toHaveBeenCalled()
+    expect(mocks.transaction).not.toHaveBeenCalled()
+    // Y no filtra telemetría interna (disco/schema) al anónimo.
+    expect("disk" in body).toBe(false)
+    expect("schema" in body).toBe(false)
   })
 
-  it("con sesión conserva freeBytes/minFreeBytes exactos para diagnóstico interno", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "u1", role: "ADMIN", status: "APPROVED" } })
-    const res = await GET()
+  it("?deep pelado (sin secreto) sigue en la rama liviana", async () => {
+    const res = await GET(req("https://app.invalid/api/health?deep=1"))
+    expect(res.status).toBe(200)
+    expect((await res.json()).status).toBe("ok")
+    expect(mocks.transaction).not.toHaveBeenCalled()
+    expect(mocks.statfs).not.toHaveBeenCalled()
+  })
+
+  it("?deep con secreto incorrecto también cae en la rama liviana", async () => {
+    const res = await GET(req("https://app.invalid/api/health?deep=1", { "x-cron-secret": "wrong" }))
+    expect(res.status).toBe(200)
+    expect(mocks.transaction).not.toHaveBeenCalled()
+  })
+
+  it("el check de Docker (wget --spider, sin headers ni sesión) recibe 200 barato", async () => {
+    const res = await GET(new Request("http://127.0.0.1:3000/api/health"))
+    expect(res.status).toBe(200)
+    expect(mocks.transaction).not.toHaveBeenCalled()
+  })
+})
+
+describe("GET /api/health — rama profunda con sesión", () => {
+  it("responde 200 con schema ready y métricas de disco exactas", async () => {
+    withSession()
+    const res = await GET(req())
     expect(res.status).toBe(200)
     const body = await res.json()
+    expect(body.status).toBe("ok")
+    expect(body.schema).toBe("ready")
     expect(body.disk).toMatchObject({
       ok: true,
       writable: true,
       freeBytes: PLENTY.bavail * PLENTY.bsize,
       minFreeBytes: MIN_FREE,
     })
+    // El path del volumen no se expone ni en la rama autenticada.
+    expect(JSON.stringify(body)).not.toContain("payment-proofs")
+    expect(mocks.statfs).toHaveBeenCalledWith("/app/storage/payment-proofs")
+    expect(mocks.access).toHaveBeenCalledWith("/app/storage/payment-proofs", 2) // W_OK
   })
 
-  it("una migración fallida sigue respondiendo 503 migration_failed (e incluye el disco)", async () => {
+  it("una migración fallida responde 503 migration_failed (e incluye el disco)", async () => {
+    withSession()
     mocks.transaction.mockResolvedValue([[{ migration_name: "20250101000000_stuck" }]])
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     const body = await res.json()
     expect(body.status).toBe("degraded")
@@ -106,48 +135,76 @@ describe("GET /api/health", () => {
   })
 
   it("la BD caída responde 503 schema unavailable", async () => {
+    withSession()
     mocks.transaction.mockRejectedValue(new Error("connection refused"))
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     expect((await res.json()).schema).toBe("unavailable")
   })
 
   it("menos de 500 MB libres degrada a 503 aunque el schema esté listo", async () => {
+    withSession()
     mocks.statfs.mockResolvedValue({ bavail: Math.floor((100 * 1024 * 1024) / 4096), bsize: 4096 })
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     const body = await res.json()
     expect(body.status).toBe("degraded")
     expect(body.schema).toBe("ready")
     expect(body.disk).toMatchObject({ ok: false, writable: true })
-    expect(body.disk.freeGb).toBe(0)
-    expect("freeBytes" in body.disk).toBe(false)
   })
 
   it("un directorio no escribible (access W_OK falla) degrada a 503", async () => {
+    withSession()
     mocks.access.mockRejectedValue(Object.assign(new Error("EACCES"), { code: "EACCES" }))
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     const body = await res.json()
-    expect(body.disk).toMatchObject({ ok: false, writable: false, freeGb: null })
+    expect(body.disk).toMatchObject({ ok: false, writable: false, freeBytes: null })
   })
 
   it("un statfs que falla (volumen desaparecido) degrada sin exponer el error", async () => {
+    withSession()
     mocks.mkdir.mockRejectedValue(Object.assign(new Error("EROFS"), { code: "EROFS" }))
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     const body = await res.json()
-    expect(body.disk).toMatchObject({ ok: false, writable: false, freeGb: null })
+    expect(body.disk).toMatchObject({ ok: false, writable: false, freeBytes: null })
     expect(JSON.stringify(body)).not.toContain("EROFS")
   })
 
   it("el disco degradado junto a la BD caída se reporta con schema unavailable", async () => {
+    withSession()
     mocks.statfs.mockResolvedValue({ bavail: 1, bsize: 4096 })
     mocks.transaction.mockRejectedValue(new Error("down"))
-    const res = await GET()
+    const res = await GET(req())
     expect(res.status).toBe(503)
     const body = await res.json()
     expect(body.schema).toBe("unavailable")
     expect(body.disk.ok).toBe(false)
+  })
+})
+
+describe("GET /api/health — rama profunda con ?deep + CRON_SECRET", () => {
+  it("x-cron-secret válido habilita el chequeo profundo sin sesión", async () => {
+    const res = await GET(req("https://app.invalid/api/health?deep=1", { "x-cron-secret": "test-cron-secret" }))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.schema).toBe("ready")
+    expect(body.disk.ok).toBe(true)
+    expect(mocks.transaction).toHaveBeenCalled()
+    expect(mocks.statfs).toHaveBeenCalled()
+  })
+
+  it("Authorization: Bearer también habilita el chequeo profundo", async () => {
+    const res = await GET(req("https://app.invalid/api/health?deep=true", { authorization: "Bearer test-cron-secret" }))
+    expect(res.status).toBe(200)
+    expect(mocks.transaction).toHaveBeenCalled()
+  })
+
+  it("sin CRON_SECRET configurado el secreto del request no sirve de nada", async () => {
+    vi.stubEnv("CRON_SECRET", "")
+    const res = await GET(req("https://app.invalid/api/health?deep=1", { "x-cron-secret": "test-cron-secret" }))
+    expect(res.status).toBe(200)
+    expect(mocks.transaction).not.toHaveBeenCalled()
   })
 })

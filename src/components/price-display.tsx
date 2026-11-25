@@ -19,12 +19,14 @@ interface PriceDisplayServerProps {
   className?: string
 }
 
+// Una instancia por módulo: Intl.NumberFormat es caro de construir y el
+// formato nunca cambia (MXN fijo).
+const mxnFormatter = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN",
+})
+
 export function PriceDisplayStatic({ price, className }: PriceDisplayServerProps) {
   // Esta versión siempre muestra en MXN (para server components)
-  const formatted = new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(price)
-
-  return <span className={className}>{formatted}</span>
+  return <span className={className}>{mxnFormatter.format(price)}</span>
 }

@@ -860,7 +860,7 @@ export function StockPanel({ viewer, branches, refreshKey = 0 }: StockPanelProps
                     value={categoryId || "ALL"}
                     onValueChange={(v) => setParams({ categoryId: v === "ALL" ? null : v, page: null })}
                 >
-                    <SelectTrigger className="w-full sm:w-48">
+                    <SelectTrigger className="w-full sm:w-48" aria-label="Categoría">
                         <SelectValue placeholder="Categoría" />
                     </SelectTrigger>
                     <SelectContent>

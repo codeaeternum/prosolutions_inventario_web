@@ -410,7 +410,7 @@ export function AsistenciaPanel() {
             />
           </div>
           <Select value={preset} onValueChange={v => setPreset(v as Preset)}>
-            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[150px]" aria-label="Periodo"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="hoy">Hoy</SelectItem>
               <SelectItem value="ayer">Ayer</SelectItem>

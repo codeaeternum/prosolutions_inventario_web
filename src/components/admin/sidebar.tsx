@@ -299,6 +299,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
                             <Link
                               href={item.href}
                               onClick={() => setMobileMenuOpen(false)}
+                              aria-current={isActive ? "page" : undefined}
                               className={cn(
                                 isActive
                                   ? "bg-primary/10 text-primary"
@@ -336,6 +337,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
               <Link
                 key={item.name}
                 href={item.href}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-lg transition-colors",
                   isActive
@@ -400,6 +402,7 @@ export function AdminSidebar({ user, hasPartner = false, businessKind, collapsed
                           <Link
                             href={item.href}
                             title={collapsed ? item.name : undefined}
+                            aria-current={isActive ? "page" : undefined}
                             className={cn(
                               isActive
                                 ? "bg-primary/10 text-primary"

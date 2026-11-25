@@ -8,13 +8,17 @@ interface CurrencyContextType {
 
 const CurrencyContext = createContext<CurrencyContextType | undefined>(undefined)
 
+// Una instancia por módulo: Intl.NumberFormat es caro de construir y el
+// formato nunca cambia (MXN fijo).
+const mxnFormatter = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN",
+})
+
 /** Precios siempre en MXN. Sin toggle de moneda. */
 export function CurrencyProvider({ children }: { children: ReactNode }) {
   const formatPrice = (priceInMXN: number): string =>
-    new Intl.NumberFormat("es-MX", {
-      style: "currency",
-      currency: "MXN",
-    }).format(priceInMXN)
+    mxnFormatter.format(priceInMXN)
 
   return (
     <CurrencyContext.Provider value={{ formatPrice }}>

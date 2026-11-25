@@ -12,7 +12,11 @@ RUN npx prisma generate && npm run bot:build && npm prune --omit=dev --ignore-sc
 
 FROM node:24-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
+# SHA del commit compilado (paridad con la imagen app): el deploy lo inyecta
+# vía build-arg y queda visible con `docker inspect` — no hay UI de bot, pero
+# sirve para confirmar qué build corre junto a APP_BUILD_SHA de la app.
+ARG GIT_SHA=unknown
+ENV NODE_ENV=production APP_BUILD_SHA=${GIT_SHA}
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/package*.json ./
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules

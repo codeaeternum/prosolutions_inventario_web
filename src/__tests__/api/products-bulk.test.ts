@@ -135,6 +135,11 @@ describe("validación del body", () => {
     ["set vacío", { ids: ["p1"], set: {} }],
     ["precio negativo", { ids: ["p1"], set: { retailPrice: -5 } }],
     ["internalPrice negativo", { ids: ["p1"], set: { internalPrice: -5 } }],
+    // El modo set RECHAZA 3+ decimales (priceSchema compartido): un ajuste a
+    // 19.999 dejaría la pieza incobrable — 400 explícito, no redondeo mudo.
+    ["precio con tres decimales", { ids: ["p1"], set: { retailPrice: 19.999 } }],
+    ["allyPrice con tres decimales", { ids: ["p1"], set: { allyPrice: 5.555 } }],
+    ["costPrice con tres decimales", { ids: ["p1"], set: { costPrice: 1.001 } }],
     ["ids no string", { ids: [1, 2], percent: 10 }],
     ["idempotencyKey inválida", { ids: ["p1"], percent: 10, idempotencyKey: "x" }],
   ])("400 cuando %s", async (_label, body) => {

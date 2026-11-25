@@ -26,11 +26,13 @@ export function formatDay(date: Date | string): string {
   })
 }
 
+const mxnFormatter = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "MXN",
+})
+
 export function formatPrice(price: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(price)
+  return mxnFormatter.format(price)
 }
 
 /** Atajo para los importes que la API devuelve en centavos. */

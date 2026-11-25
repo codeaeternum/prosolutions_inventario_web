@@ -652,6 +652,9 @@ function CatalogoView() {
       </header>
 
       <main id="main-content" className="container mx-auto max-w-7xl px-4 py-4" role="main">
+        {/* La página no tiene encabezado visible; el h1 sr-only completa la jerarquía. */}
+        <h1 className="sr-only">Catálogo</h1>
+
         {/* Mobile search + filter button */}
         <div className="md:hidden flex gap-2 mb-4">
           <div className="relative flex-1">
